@@ -1,0 +1,12 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# Generated data — all regenerable via edgar_ingest.py -> chunk_documents.py -> index_chunks.py
+data/
+chunks/
+chroma_db/
+
+# Local Claude Code settings (personal, not shared project config)
+.claude/settings.local.json
