@@ -1,0 +1,68 @@
+[
+  {
+    "id": "crm-rpo-fy26",
+    "ticker": "CRM",
+    "question": "What is Salesforce's total remaining performance obligation as of January 31, 2026?",
+    "type": "numeric",
+    "passed": true,
+    "detail": "found matching value: 72.4 (billion)",
+    "has_citation": true,
+    "answer": "Salesforce's total remaining performance obligation as of January 31, 2026 was approximately $72.4 billion [1].",
+    "n_chunks_retrieved": 5
+  },
+  {
+    "id": "aapl-employees-fy25",
+    "ticker": "AAPL",
+    "question": "How many full-time equivalent employees did Apple have as of September 27, 2025?",
+    "type": "numeric",
+    "passed": true,
+    "detail": "found matching value: 166000.0 (raw)",
+    "has_citation": true,
+    "answer": "As of September 27, 2025, Apple had approximately 166,000 full-time equivalent employees [1].",
+    "n_chunks_retrieved": 5
+  },
+  {
+    "id": "msft-tax-rate-q2fy26",
+    "ticker": "MSFT",
+    "question": "What was Microsoft's effective tax rate for the three months ended December 31, 2025?",
+    "type": "numeric",
+    "passed": true,
+    "detail": "found matching value: 20.0 (percent)",
+    "has_citation": true,
+    "answer": "Microsoft's effective tax rate was 20% for the three months ended December 31, 2025 [1].",
+    "n_chunks_retrieved": 5
+  },
+  {
+    "id": "aapl-ai-risk",
+    "ticker": "AAPL",
+    "question": "What risks does Apple describe related to artificial intelligence?",
+    "type": "judged",
+    "passed": true,
+    "detail": "The answer clearly mentions various types of risks (reputational, financial, legal, competitive) related to AI that Apple describes and includes a citation marker as required.",
+    "has_citation": true,
+    "answer": "Apple describes several risks related to artificial intelligence (AI) [1]:\n\n- **Reputational, competitive, and financial harm**: Issues related to AI may result in reputational, competitive, and financial harm to the company [1].\n\n- **Regulatory action and legal liability**: The integration of AI technologies into products and services presents emerging legal, regulatory, ethical, and operational risks that could lead to regulatory actions and legal liabilities [1].\n\n- **Product liability**: AI efforts may give rise to product liability issues [1].\n\n- **Intellectual property infringement**: There is a risk of intellectual property infringement related to AI [1].\n\n- **Data privacy**: Data privacy concerns are associated with the use of AI technologies [1].\n\n- **Cybersecurity**: The advancement and widespread dissemination of AI technologies increase cybersecurity risks, such as targeted phishing campaigns, automated vulnerability discovery or exploitation, deepfake content, and accelerated identification and exploitation of vulnerabilities [2].\n\n- **Sanctions and export controls**: AI development and deployment may expose the company to additional sanctions and export control risks [1].\n\nThese risks highlight the multifaceted challenges Apple faces in integrating AI into its business operations.",
+    "n_chunks_retrieved": 5
+  },
+  {
+    "id": "nvda-supply-chain-risk",
+    "ticker": "NVDA",
+    "question": "What supply chain risks does NVIDIA describe?",
+    "type": "judged",
+    "passed": true,
+    "detail": "The answer mentions manufacturing lead times, risk of mismatch between supply and demand, and includes citation markers as required.",
+    "has_citation": true,
+    "answer": "NVIDIA describes several supply chain risks that could impact its business:\n\n- **Long manufacturing lead times**: These can be extended to more than 12 months during periods of shortages or limited supply in the semiconductor industry [1, 3].\n\n- **Uncertain supply and capacity availability**: This uncertainty can lead to mismatches between supply and demand, resulting in both product shortages and excess inventory [1, 3].\n\n- **Inaccurate demand estimation**: If NVIDIA inaccurately estimates customer demand, it may not be able to adjust its supply commitments quickly enough, leading to potential financial harm [1].\n\n- **Regulatory controls on exports**: Export controls imposed by the USG could disrupt supply chains and negatively impact sales of certain products in various markets [4].\n\nThese risks highlight the complexities involved in managing a global semiconductor company's supply chain.",
+    "n_chunks_retrieved": 5
+  },
+  {
+    "id": "pltr-dividend-2019-refusal",
+    "ticker": "PLTR",
+    "question": "What was Palantir's dividend per share in 2019?",
+    "type": "judged",
+    "passed": true,
+    "detail": "The response correctly states that the provided filing excerpts do not contain information about dividends in 2019 and avoids speculating on a specific dividend-per-share figure for that year.",
+    "has_citation": true,
+    "answer": "The provided filing excerpts do not contain information about dividends paid in 2019. Therefore, I cannot determine Palantir's dividend per share for that year based on the given data. [3] mentions no dividends were declared as of December 31, 2025, but it does not provide historical dividend information going back to 2019.",
+    "n_chunks_retrieved": 5
+  }
+]

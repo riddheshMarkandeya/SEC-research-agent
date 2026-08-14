@@ -53,8 +53,9 @@ Last 5 10-K/10-Q filings each.
 2. **Week 2a — table→markdown + chunking** ✅ DONE
 3. **Week 2b — embeddings + Chroma indexing** ✅ DONE
 4. **Week 3 — hybrid retrieval (vector + BM25) + reranking + citation-grounded answers** ✅ DONE (v0 prototype — see below)
-5. **Week 4 — eval harness** ⬅️ **NEXT** (build BEFORE the agent — 30-50
-   FinanceBench-style numeric Q&A, exact-match on figures, LLM-as-judge on prose)
+5. **Week 4 — eval harness** 🟡 SCAFFOLDING DONE, question set still small
+   — see below. ⬅️ **NEXT: grow to the full 30-50 FinanceBench-style set**
+   before starting Week 5
 6. Week 5 — agent layer + tool calling
 7. Week 6 — expose tools as an MCP server
 8. Week 7 — guardrails (no numeric claim without citation), retry/backoff,
@@ -259,6 +260,65 @@ ticker(s) a question is actually about before calling `hybrid_search()`.
 That's squarely a Week 5 agent-layer responsibility (tool-calling/query
 routing), not something to bolt onto the retrieval module.
 
+### `eval_harness.py` + `eval_questions.jsonl` (Week 4) — scaffolding done
+
+Runs every question in `eval_questions.jsonl` through
+`answer.generate_answer()` and grades the result, so future changes
+(Week 5's agent, prompt tweaks, a different rerank model, etc.) can be
+measured against a saved baseline instead of eyeballed like Week 2b's
+manual queries were. Two grading strategies, chosen per-question by a
+`"type"` field:
+
+- **`"numeric"` — exact-match, no LLM involved.** `extract_numbers()`
+  regex-scans the generated answer for every number-like token ($, commas,
+  decimals, unit words), normalizes each to a comparable scale (percent
+  stays its own category — 20 raw and 20% must never compare equal; `bill
+  ion`/`million`/`thousand` become multipliers on a shared "scale"
+  category), and passes if *any* extracted number lands within ~1%
+  relative tolerance of the question's `expected_value`. Deterministic
+  and free to run.
+- **`"judged"` — LLM-as-judge, for qualitative or refusal questions**
+  where there's no single correct number to diff against (e.g. "what
+  risks does NVIDIA describe" or "what was PLTR's 2019 dividend," which
+  should be refused). A second Ollama call (`qwen2.5:7b-instruct`, same
+  model as `answer.py`) is given the question, the answer, and a short
+  pass/fail `"criteria"` string, and returns PASS/FAIL + a one-sentence
+  reason. `temperature: 0.0` here (stricter than `answer.py`'s `0.1`) —
+  a grader should be as consistent as possible run-to-run.
+- Every graded answer also gets a citation-marker check (`[\d+]` regex)
+  reported alongside the pass/fail, independent of question type — this
+  is the "does every claim actually carry a `[n]`" check that Week 3
+  flagged as an unverified gap in `answer.py`'s prompt-only enforcement.
+- Each run's full results (question, answer text, pass/fail, reasoning,
+  citation flag) are saved as timestamped JSON under `./eval_results/`
+  — tracked in git (unlike `data/`/`chunks/`/`chroma_db/`) since the
+  whole point is comparing runs over time, not regenerating them.
+
+**Seed set is intentionally small (6 questions)**, reusing ground-truth
+facts already verified earlier in this project rather than new filing
+research — this pass was about proving the harness mechanics work, not
+building the real eval set:
+- 3 numeric: CRM's $72.4B remaining performance obligation, AAPL's
+  166,000 FTE employees, MSFT's 20% effective tax rate
+- 2 judged (qualitative): AAPL's AI-related risk disclosure, NVDA's
+  supply-chain risk disclosure
+- 1 judged (refusal): the PLTR 2019 dividend question from Week 3,
+  which should be declined rather than answered with a fabricated number
+
+**Sanity-checked the grading itself, not just the pipeline:** ran a
+4-question negative-control set with deliberately wrong expected values
+and inverted criteria (e.g. "the answer must claim Apple faces zero AI
+risk"), and confirmed all 4 correctly FAIL — both grading paths
+discriminate real answers rather than rubber-stamping. (Baseline run: 6/6
+pass, 6/6 cited — saved at `eval_results/20260814T040434Z.json`.)
+
+**Explicitly deferred:** growing this to the full 30-50 question,
+FinanceBench-style set (harder comparison/multi-hop questions, more
+even coverage across all 5 companies and both 10-K/10-Q forms, more
+adversarial refusal cases) — that requires going back into the actual
+filings to find and verify ground truth, which is real research work,
+not scaffolding. Tracked as the next immediate step below.
+
 ## Verified working
 
 Ingestion + chunking have been run across all 5 companies (25 filings,
@@ -286,20 +346,29 @@ Ingestion + chunking have been run across all 5 companies (25 filings,
 
 ## Immediate next steps
 
-**Week 4 — eval harness (build BEFORE the agent):**
-- 30-50 FinanceBench-style questions across the 5 companies, mixing
-  exact-numeric ("what was X's net sales in Q3") and prose/qualitative
-  ("what risks does X describe related to Y") questions
-- Exact-match grading on numeric answers against the source filing;
-  LLM-as-judge for prose answers (grounding + relevance, not just fluency)
-- Should exercise `answer.py` end-to-end, including the citation-check
-  gap noted above (does every claim actually carry a valid `[n]`? does
-  the cited excerpt actually contain the claimed number?) — this is
-  where that gets caught mechanically instead of by spot-checking
-- Worth deliberately including a few questions like the employee-count
-  one (ambiguous company, or asked without ticker context) to get a
-  baseline score *before* Week 5's agent adds query routing, so the
-  improvement is measurable rather than assumed
+**Finish Week 4 — grow `eval_questions.jsonl` to the full 30-50 question set**
+(the harness itself is done; this is populating it):
+- Go back into the actual filings to find and verify ground-truth figures
+  — this is real research, not something to shortcut by guessing
+  plausible-looking numbers
+- Cover all 5 companies and both 10-K/10-Q forms more evenly (current 6
+  lean AAPL/CRM/MSFT-heavy)
+- Add harder cases: multi-hop/comparison questions ("how did revenue
+  change year-over-year"), questions that require reading a table (not
+  just prose) for grading — current seed set is prose-only
+- Deliberately include a few ambiguous/no-ticker-context questions like
+  the employee-count case from Week 2b/3, to get a *baseline* score
+  before Week 5's agent adds query routing, so that improvement is
+  measurable rather than assumed
+- One `expected_value`/`expected_unit` numeric check has a real
+  weakness worth fixing as the set grows: it only checks that the
+  right number appears *somewhere* in the answer, not that it's
+  correctly attributed to the right metric — fine for today's simple
+  single-fact questions, will need tightening once comparison-style
+  questions (with multiple numbers in one answer) are added
+
+**Then Week 5 — agent layer + tool calling**, now that there's a graded
+baseline to measure it against.
 
 ## Design principles to carry forward
 
