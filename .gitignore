@@ -2,6 +2,7 @@
 __pycache__/
 *.pyc
 .venv/
+.pytest_cache/
 
 # Generated data — all regenerable via edgar_ingest.py -> chunk_documents.py -> index_chunks.py
 data/

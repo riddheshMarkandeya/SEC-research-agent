@@ -32,6 +32,42 @@ companies, grounded in their SEC filings, with:
 | MCP | official Python MCP SDK |
 | Observability | Langfuse, self-hosted via Docker |
 
+## Development workflow
+
+**Tests are written alongside new code, not after — and nothing gets
+committed with a failing test suite.** This started from Week 4 onward
+(retroactively covering Weeks 2-4's pure/deterministic logic); apply it
+to all new code going forward.
+
+- Test suite: `pytest`, in `./tests/`, one file per module
+  (`tests/test_chunk_documents.py` etc.). Config lives in `pyproject.toml`.
+  Install dev deps with `pip install -r requirements-dev.txt`.
+- **Scope, deliberately:** only pure/deterministic functions are unit
+  tested (string/data transforms, grading logic, formatting) — no live
+  network calls, no loading embedding/rerank models, no live Ollama
+  calls. Code that inherently requires those (EDGAR HTTP calls, Chroma +
+  embedding indexing, `generate_answer()`, `grade_judged()`'s actual
+  LLM round-trip) is exercised by the manual runs already documented
+  per-module below, not mocked into unit tests — mocking an embedding
+  model's output would test the mock, not the code. The one exception:
+  `grade_judged()`'s *response-parsing* logic (splitting "PASS\n<reason>"
+  out of a reply) is tested with a mocked `requests.post`, since that
+  parsing logic is itself pure and worth covering without needing a live
+  server.
+- Run the whole suite: `pytest` (or `pytest -v` for per-test output)
+  from the project root.
+- **Enforced via a git pre-commit hook**, not just convention: `git
+  commit` runs the full suite first and refuses to commit if anything
+  fails. The hook's source is tracked at `githooks/pre-commit` (git
+  itself never version-controls hooks — that's a general git
+  limitation, not specific to this repo), so a fresh clone needs one
+  manual step to activate it:
+  `cp githooks/pre-commit .git/hooks/pre-commit` (then ensure it's
+  executable). Verified the hook actually blocks by committing a
+  deliberately failing test and confirming the commit was rejected,
+  same "test the test" principle as the eval harness's negative-control
+  check.
+
 ## Companies in scope
 
 5 tech companies, chosen because the user knows the sector and can
@@ -318,6 +354,16 @@ even coverage across all 5 companies and both 10-K/10-Q forms, more
 adversarial refusal cases) — that requires going back into the actual
 filings to find and verify ground truth, which is real research work,
 not scaffolding. Tracked as the next immediate step below.
+
+**Considered and deferred:** RAGAS/DeepEval (open-source RAG eval
+libraries with built-in metrics like *faithfulness* — do the answer's
+claims actually trace back to the retrieved chunks, not just "a
+plausible number appears somewhere"). Decided to keep the hand-rolled
+grading for now — transparent, zero new dependencies, already
+validated with the negative-control test — but a faithfulness-style
+check is a good candidate to add as a *third* grading path once the
+question set grows, since it catches a class of error (right number,
+wrong citation) the current numeric/judged split doesn't.
 
 ## Verified working
 

@@ -1,0 +1,24 @@
+#!/bin/sh
+# Blocks a commit if the test suite fails. Git never version-controls
+# hooks themselves (that's a git limitation, not specific to this repo),
+# so this tracked copy is the source of truth — install it by copying to
+# .git/hooks/pre-commit (see PROJECT_CONTEXT.md's Development workflow
+# section for the one-time setup command).
+
+echo "Running test suite before commit..."
+
+PYTHON=".venv/Scripts/python.exe"
+if [ ! -f "$PYTHON" ]; then
+    PYTHON="python"
+fi
+
+"$PYTHON" -m pytest -q
+status=$?
+
+if [ "$status" -ne 0 ]; then
+    echo ""
+    echo "Commit blocked: tests failed. Fix them, or use 'git commit --no-verify' to bypass (not recommended)."
+    exit 1
+fi
+
+exit 0
