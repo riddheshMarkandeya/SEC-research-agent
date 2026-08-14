@@ -6,3 +6,11 @@ lxml==6.1.1
 # Embeddings + vector store (index_chunks.py, query_chunks.py)
 sentence-transformers==5.7.0
 chromadb==1.5.9
+
+# Hybrid retrieval (retrieval.py) — lexical half of BM25 + vector search.
+# Reranking reuses sentence-transformers' CrossEncoder, no new dependency.
+rank_bm25==0.2.2
+
+# answer.py calls a local Ollama server over HTTP (uses `requests` above).
+# Not pip-installed — see PROJECT_CONTEXT.md for the Ollama setup this
+# code expects (qwen2.5:7b-instruct pulled, `ollama serve` running).

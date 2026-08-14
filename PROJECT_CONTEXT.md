@@ -52,9 +52,9 @@ Last 5 10-K/10-Q filings each.
 1. **Week 1 — EDGAR ingestion** ✅ DONE
 2. **Week 2a — table→markdown + chunking** ✅ DONE
 3. **Week 2b — embeddings + Chroma indexing** ✅ DONE
-4. **Week 3 — hybrid retrieval (vector + BM25) + reranking + citation-grounded answers** ⬅️ **NEXT**
-5. Week 4 — eval harness (build BEFORE the agent — 30-50 FinanceBench-style
-   numeric Q&A, exact-match on figures, LLM-as-judge on prose)
+4. **Week 3 — hybrid retrieval (vector + BM25) + reranking + citation-grounded answers** ✅ DONE (v0 prototype — see below)
+5. **Week 4 — eval harness** ⬅️ **NEXT** (build BEFORE the agent — 30-50
+   FinanceBench-style numeric Q&A, exact-match on figures, LLM-as-judge on prose)
 6. Week 5 — agent layer + tool calling
 7. Week 6 — expose tools as an MCP server
 8. Week 7 — guardrails (no numeric claim without citation), retry/backoff,
@@ -180,6 +180,85 @@ form, table/prose flag, and a text preview — for human eyeballing, not
 scoring. `python query_chunks.py "custom question" --ticker MSFT --n 5`
 for ad-hoc queries.
 
+### `retrieval.py` (Week 3) — working
+
+Hybrid retrieval: BM25 (lexical) + Chroma (vector) → Reciprocal Rank
+Fusion → cross-encoder rerank. This is the module future code (Week 4
+eval harness, Week 5 agent) should import (`hybrid_search()`) rather than
+querying Chroma directly.
+
+- **Why hybrid, concretely:** Week 2b's manual sanity queries surfaced a
+  real miss — "What is Salesforce's remaining performance obligation?"
+  retrieved zero CRM chunks in the top 3 on pure vector search, despite
+  CRM's filing stating "remaining performance obligation" almost
+  verbatim. Embeddings can smear an exact term-of-art match across many
+  "semantically similar" but wrong chunks; BM25 catches the literal
+  phrase. After adding BM25 + fusion, all top-5 results for that query
+  are CRM chunks about RPO — one containing the actual $72.4B figure.
+- BM25 index is built in-process from the same `./chunks/*.jsonl` files
+  `index_chunks.py` reads (`_load_bm25_index()`), so the two retrieval
+  paths can't drift out of sync. Tokenizer is deliberately simple
+  (lowercase, no stemming) — financial terms of art are exact phrases
+  where stemming risks merging distinct terms rather than helping.
+- **Fusion via RRF, not raw score averaging:** BM25 scores and cosine
+  similarities live on incomparable scales, so blending them directly
+  would let whichever method happens to produce larger numbers dominate.
+  Reciprocal Rank Fusion (`1/(k + rank)`, summed across each ranked list
+  a document appears in, `k=60`) fuses rank *position* instead, which is
+  scale-free.
+- **Reranking:** the fused candidate pool (~25-40 chunks) is rescored
+  with `cross-encoder/ms-marco-MiniLM-L-6-v2`, which scores each
+  (query, passage) pair jointly rather than independently embedding
+  them. Cross-encoders are too slow to run over the full 3,207-chunk
+  corpus but are cheap over a few dozen candidates, and are meaningfully
+  more accurate at the top of the ranking — which is what matters most
+  since only the top few chunks become LLM context.
+- CLI: `python retrieval.py "question" [--ticker MSFT] [--n 5] [--no-rerank]`.
+
+### `answer.py` (Week 3) — working, v0 prototype
+
+Retrieves via `hybrid_search()`, feeds numbered excerpts to a local LLM
+through Ollama with a "cite everything or refuse" system prompt, prints
+the answer plus a citation key mapping each `[n]` back to a real filing
+(ticker/form/reportDate/accessionNumber).
+
+- **LLM: `qwen2.5:7b-instruct` via Ollama**, not the smaller `qwen3.5:4b`
+  that happened to already be pulled. Chose to pull a stronger model
+  rather than default to what was on hand — a 4B model's weaker
+  instruction-following on strict citation formatting would have made it
+  hard to tell, in Week 4's evals, whether a failure was a retrieval
+  problem or a model-capability problem. Runs locally, zero cost, no
+  external API — this machine's GPU (Quadro P1000, 4GB VRAM) doesn't
+  fully fit a 7B model, so Ollama partially offloads to CPU; slower per
+  query but fine at this project's query volume.
+- Requires `ollama serve` running locally (defaults to
+  `http://localhost:11434`) with `qwen2.5:7b-instruct` pulled.
+- **This is explicitly a v0 prototype, not the final agent** (that's
+  Week 5). Grounding is currently enforced only by prompt instruction —
+  nothing here parses the output to verify every claim actually carries
+  a `[n]` marker, or that a cited number matches the source text
+  character-for-character. That verification gap is exactly what Week
+  4's eval suite should be built to catch, per this project's
+  evals-before-agent ordering.
+- Spot-checked both success and refusal paths: correctly cites only the
+  one CRM chunk (of 5 retrieved) that actually contains RPO figures
+  rather than citing all 5 indiscriminately; correctly refuses to
+  fabricate a 2019 dividend figure for PLTR when asked, stating the
+  excerpts don't cover that period instead of guessing.
+- CLI: `python answer.py "question" [--ticker CRM] [--k 5]`.
+
+**Residual finding — not a bug, a scoping note for Week 5:** the
+employee-count query (Gap 2, above) still doesn't reliably surface the
+right chunk in an *unfiltered* top-5 across all 5 companies, even after
+hybrid search + reranking — some off-topic PLTR prose about "employees"
+in a risk-factor context outranks AAPL/MSFT's real headcount
+disclosures. But filtered to the correct ticker, the real answer ranks
+#1 by a wide margin every time. This means the retrieval layer itself is
+sound; what's missing is *company disambiguation* — figuring out which
+ticker(s) a question is actually about before calling `hybrid_search()`.
+That's squarely a Week 5 agent-layer responsibility (tool-calling/query
+routing), not something to bolt onto the retrieval module.
+
 ## Verified working
 
 Ingestion + chunking have been run across all 5 companies (25 filings,
@@ -207,14 +286,20 @@ Ingestion + chunking have been run across all 5 companies (25 filings,
 
 ## Immediate next steps
 
-**Week 3 — hybrid retrieval + reranking + citation-grounded answers:**
-- Add BM25 (or similar lexical search) alongside the Chroma vector search
-  and combine results — motivated directly by Gap 1 above
-- Investigate Gap 2 (employee-count retrieval) before assuming hybrid
-  search alone fixes it
-- Add a reranking step over the combined candidate set
-- Start wiring retrieved chunks into citation-grounded answers (ticker,
-  form, reportDate, accessionNumber are already on every chunk for this)
+**Week 4 — eval harness (build BEFORE the agent):**
+- 30-50 FinanceBench-style questions across the 5 companies, mixing
+  exact-numeric ("what was X's net sales in Q3") and prose/qualitative
+  ("what risks does X describe related to Y") questions
+- Exact-match grading on numeric answers against the source filing;
+  LLM-as-judge for prose answers (grounding + relevance, not just fluency)
+- Should exercise `answer.py` end-to-end, including the citation-check
+  gap noted above (does every claim actually carry a valid `[n]`? does
+  the cited excerpt actually contain the claimed number?) — this is
+  where that gets caught mechanically instead of by spot-checking
+- Worth deliberately including a few questions like the employee-count
+  one (ambiguous company, or asked without ticker context) to get a
+  baseline score *before* Week 5's agent adds query routing, so the
+  improvement is measurable rather than assumed
 
 ## Design principles to carry forward
 
