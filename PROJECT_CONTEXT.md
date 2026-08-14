@@ -89,17 +89,25 @@ Last 5 10-K/10-Q filings each.
 2. **Week 2a — table→markdown + chunking** ✅ DONE
 3. **Week 2b — embeddings + Chroma indexing** ✅ DONE
 4. **Week 3 — hybrid retrieval (vector + BM25) + reranking + citation-grounded answers** ✅ DONE (v0 prototype — see below)
-5. **Week 4 — eval harness** 🟡 SCAFFOLDING DONE, question set still small
-   — see below. ⬅️ **NEXT: grow to the full 30-50 FinanceBench-style set**
-   before starting Week 5
-6. Week 5 — agent layer + tool calling
+5. **Week 4 — eval harness** 🟡 SCAFFOLDING DONE, question set still only 6
+   questions — see below. Growing it to 30-50 was explicitly deferred
+   (twice) in favor of moving to Week 5.
+6. **Week 5 — agent layer + tool calling** ✅ DONE (v0 — see below) ⬅️
+   **loop back and grow the Week 4 question set before Week 6**, ideally
+   including comparison-style questions (see Week 5's synthesis finding)
 7. Week 6 — expose tools as an MCP server
 8. Week 7 — guardrails (no numeric claim without citation), retry/backoff,
    rate limits, Langfuse tracing
 9. Week 8 — polish + write-up
 
 Note the deliberate ordering: **evals come before the agent**, so there's a
-way to measure whether each change helps before iterating on agent behavior.
+way to measure whether each change helps before iterating on agent
+behavior. **This project deviated from that ordering** — Week 5 was built
+on a 6-question baseline instead of the full 30-50 — a conscious tradeoff
+to keep momentum, not an accident. Worth being honest that this makes it
+harder to say precisely whether Week 5 "helped" in any measured sense;
+Week 5's own manual testing already surfaced a real quality gap (below)
+that a proper eval set would very likely have caught faster.
 
 ## Code written so far
 
@@ -365,6 +373,73 @@ check is a good candidate to add as a *third* grading path once the
 question set grows, since it catches a class of error (right number,
 wrong citation) the current numeric/judged split doesn't.
 
+### `agent.py` (Week 5) — v0 tool-calling agent
+
+`answer.py` (Week 3) is a single-shot pipeline: the caller must already
+know the ticker (`--ticker CRM`). That's exactly what Week 3's residual
+finding flagged as out of scope for the retrieval layer — an unscoped
+question like "how many employees does the company have" doesn't
+reliably surface the right chunk, even though retrieval is fine once
+properly scoped. `agent.py` closes that gap by giving the LLM a callable
+`search_filings` tool (wrapping `retrieval.hybrid_search`) instead of
+us pre-fetching context — the model decides what to search, which
+ticker to restrict to, and whether to search again, rather than the
+caller deciding upfront.
+
+- **Real tool-calling via Ollama's OpenAI-style `tools` API**, not a
+  hand-rolled "parse the model's text for a command" hack. Verified the
+  actual wire format empirically before writing the loop, since getting
+  this wrong would fail silently: `tool_calls[].function.arguments`
+  comes back as an already-parsed dict (not a JSON string, unlike
+  OpenAI's API), and the follow-up tool-result message only needs
+  `{"role": "tool", "content": ...}` — no `tool_call_id` required.
+- **The model doesn't reliably fill every schema field.** Observed
+  qwen2.5:7b-instruct calling `search_filings` with only `ticker`, no
+  `query`, despite `query` being marked `"required"` in the schema.
+  `_resolve_search_args()` falls back to the original question in that
+  case rather than searching on an empty string or crashing — schemas
+  are a strong hint to the model, not a guarantee.
+- **Company name resolution is baked into the system prompt** (a static
+  ticker → company-name table for the 5 covered companies), not a
+  separate tool call — five static facts don't justify a round trip,
+  and every model tried so far already knows "Salesforce" → CRM
+  unprompted; the prompt just makes the covered-company scope explicit.
+- **Citations stay globally numbered across multiple tool calls**
+  within one conversation (`_format_results_block(results,
+  start_index)` continues numbering from where the previous call left
+  off) — necessary so a comparison question's final answer can cite
+  `[1]`-`[5]` from the first company's search and `[6]`-`[10]` from the
+  second without renumbering collisions.
+- `MAX_TOOL_ITERATIONS = 6` as a basic runaway-loop guardrail — full
+  guardrails (rate limits, retry/backoff) are Week 7's job, this is just
+  "don't loop forever."
+- **Known simplification:** no deduplication if two tool calls surface
+  the same chunk. Cosmetic (a duplicate citation), not a correctness
+  issue — noted rather than fixed.
+
+**Manually verified two real scenarios** (no live-model integration
+tests yet — deferred, see Development workflow section):
+- *"How many full-time employees does Apple have?"* (no `--ticker`
+  flag, company named in prose) → agent called
+  `search_filings(query="full-time employees", ticker="AAPL")` on its
+  own and answered correctly with citation — this is the direct fix for
+  Week 3's residual finding.
+- *"Compare Apple's and Microsoft's effective tax rates."* → agent
+  correctly called the tool twice (once per company) and citation
+  numbering stayed consistent ([1]-[5] AAPL, [6]-[10] MSFT). **But the
+  final answer didn't actually compare** — it discussed MSFT's tax
+  rate and IRS dispute at length and never stated Apple's numbers,
+  despite [2] (an AAPL chunk) containing an exact effective-tax-rate
+  table (17.9%/16.4%/17.6%/15.4% across quarters). Manually confirmed
+  by inspecting the retrieved chunk directly: **this is a synthesis/
+  generation-quality gap, not a retrieval or tool-calling gap** — the
+  right context was in front of the model, it just didn't use it
+  faithfully for a *comparison*. Left unfixed rather than prompt-
+  patched blind; this is precisely the kind of failure a "comparison"
+  eval question type (already on the Week 4 backlog) would catch
+  mechanically instead of by manual luck, and is a concrete argument for
+  not deferring the eval set growth much further.
+
 ## Verified working
 
 Ingestion + chunking have been run across all 5 companies (25 filings,
@@ -392,29 +467,36 @@ Ingestion + chunking have been run across all 5 companies (25 filings,
 
 ## Immediate next steps
 
-**Finish Week 4 — grow `eval_questions.jsonl` to the full 30-50 question set**
-(the harness itself is done; this is populating it):
+**Now genuinely urgent, not just "next": grow `eval_questions.jsonl`
+beyond 6 questions**, run it against `agent.py` (not just `answer.py`),
+and route new questions through `agent.run_agent()`. Week 5's manual
+testing already found a real bug (the AAPL/MSFT tax-rate comparison
+that silently dropped Apple's numbers) that a comparison-type eval
+question would have caught mechanically instead of by luck during a
+demo. Specifically:
 - Go back into the actual filings to find and verify ground-truth figures
   — this is real research, not something to shortcut by guessing
   plausible-looking numbers
 - Cover all 5 companies and both 10-K/10-Q forms more evenly (current 6
   lean AAPL/CRM/MSFT-heavy)
-- Add harder cases: multi-hop/comparison questions ("how did revenue
-  change year-over-year"), questions that require reading a table (not
-  just prose) for grading — current seed set is prose-only
-- Deliberately include a few ambiguous/no-ticker-context questions like
-  the employee-count case from Week 2b/3, to get a *baseline* score
-  before Week 5's agent adds query routing, so that improvement is
-  measurable rather than assumed
-- One `expected_value`/`expected_unit` numeric check has a real
-  weakness worth fixing as the set grows: it only checks that the
-  right number appears *somewhere* in the answer, not that it's
-  correctly attributed to the right metric — fine for today's simple
-  single-fact questions, will need tightening once comparison-style
-  questions (with multiple numbers in one answer) are added
+- **Add comparison-style questions as a priority**, not just "nice to
+  have" — motivated directly by the tax-rate finding above. These need
+  a different grading approach than today's single-value
+  `grade_numeric()`: checking that *both* entities' figures appear
+  correctly attributed, not just that some number appears somewhere.
+  The `expected_value`/`expected_unit` schema doesn't support this yet
+  — will need extending (e.g. a list of `(entity, expected_value,
+  expected_unit)` tuples) before comparison questions can be graded
+  automatically rather than eyeballed.
+- Include a few ambiguous/no-company-context questions to verify
+  `agent.py`'s disambiguation genuinely holds up beyond the two cases
+  spot-checked so far
+- Once the harness targets `agent.py`, decide whether `answer.py`
+  (Week 3) stays as a simpler fallback/baseline or gets retired —
+  `agent.py` is a strict superset of what it does
 
-**Then Week 5 — agent layer + tool calling**, now that there's a graded
-baseline to measure it against.
+**Then Week 6 — expose tools as an MCP server**, wrapping the same
+`search_filings` tool `agent.py` already defines.
 
 ## Design principles to carry forward
 
