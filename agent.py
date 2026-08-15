@@ -31,24 +31,22 @@ import argparse
 import requests
 
 from answer import MODEL_NAME, OLLAMA_URL
+from companies import load_companies
 from retrieval import hybrid_search
 
 MAX_TOOL_ITERATIONS = 6
 CHUNKS_PER_SEARCH = 5
 
-# The five companies this agent is scoped to. Baked directly into the
-# system prompt rather than exposed as a "list_companies" tool — five
-# static facts don't justify a round trip, and every model tested so far
-# already knows "Salesforce" -> CRM without help; this just makes it
-# explicit and removes any ambiguity about which five companies are
-# actually indexed.
-COMPANIES = {
-    "AAPL": "Apple Inc.",
-    "MSFT": "Microsoft Corporation",
-    "NVDA": "NVIDIA Corporation",
-    "CRM": "Salesforce, Inc.",
-    "PLTR": "Palantir Technologies Inc.",
-}
+# The companies this agent is scoped to, read from companies.json (see
+# companies.py) rather than hardcoded here — this used to be its own
+# ticker->name dict, duplicating edgar_ingest.py's separate ticker->CIK
+# dict under the same COMPANIES name, which is exactly the kind of
+# two-copies-of-the-truth setup that drifts silently. Baked into the
+# system prompt below rather than exposed as a "list_companies" tool —
+# a handful of static facts don't justify a round trip, and every model
+# tested so far already knows "Salesforce" -> CRM without help; this
+# just makes explicit which companies are actually indexed.
+COMPANIES = {ticker: info["name"] for ticker, info in load_companies().items()}
 
 SYSTEM_PROMPT = f"""You are a financial research assistant answering questions about SEC filings for five companies:
 {chr(10).join(f"- {ticker}: {name}" for ticker, name in COMPANIES.items())}

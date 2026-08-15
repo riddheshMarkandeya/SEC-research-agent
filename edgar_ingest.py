@@ -29,6 +29,8 @@ import warnings
 import requests
 from bs4 import BeautifulSoup, XMLParsedAsHTMLWarning
 
+from companies import load_companies
+
 # SEC filings are often iXBRL (XHTML with embedded XML tags for financial
 # data). bs4 sometimes misdetects these as pure XML and warns about it —
 # harmless here since we're deliberately using the HTML parser to get
@@ -42,15 +44,6 @@ YOUR_NAME = "Rid"
 YOUR_EMAIL = "riddhesh2307@gmail.com"  # <-- put a real email here, SEC checks format
 
 HEADERS = {"User-Agent": f"{YOUR_NAME} {YOUR_EMAIL}"}
-
-# 10-digit zero-padded CIKs for the 5 starter companies
-COMPANIES = {
-    "AAPL": "0000320193",
-    "MSFT": "0000789019",
-    "NVDA": "0001045810",
-    "CRM":  "0001108524",
-    "PLTR": "0001321655",
-}
 
 FORM_TYPES = {"10-K", "10-Q"}
 FILINGS_PER_COMPANY = 5  # last N matching filings (mix of 10-K/10-Q)
@@ -171,7 +164,8 @@ def main():
               "SEC will reject requests without a real-looking User-Agent.")
         return
 
-    for ticker, cik in COMPANIES.items():
+    for ticker, info in load_companies().items():
+        cik = info["cik"]
         print(f"\n=== {ticker} (CIK {cik}) ===")
         out_dir = OUTPUT_DIR / ticker
         out_dir.mkdir(parents=True, exist_ok=True)

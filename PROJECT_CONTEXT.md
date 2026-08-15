@@ -71,17 +71,28 @@ to all new code going forward.
 ## Companies in scope
 
 5 tech companies, chosen because the user knows the sector and can
-sanity-check answers:
+sanity-check answers. **`companies.json` is the source of truth** for
+the ticker/name/CIK list — this table is just a human-readable summary
+of it, kept for quick reference; edit `companies.json` (via
+`companies.py`'s `load_companies()`), not this table, when adding a
+company. Both `edgar_ingest.py` (needs the CIK) and `agent.py` (needs
+the name, for its system prompt) read from it now, instead of each
+keeping its own copy — they used to, under the same `COMPANIES` name
+but different shapes, which is exactly the kind of duplication that
+drifts silently.
 
-| Ticker | CIK (10-digit) |
-|---|---|
-| AAPL | 0000320193 |
-| MSFT | 0000789019 |
-| NVDA | 0001045810 |
-| CRM  | 0001108524 |
-| PLTR | 0001321655 |
+| Ticker | Name | CIK (10-digit) |
+|---|---|---|
+| AAPL | Apple Inc. | 0000320193 |
+| MSFT | Microsoft Corporation | 0000789019 |
+| NVDA | NVIDIA Corporation | 0001045810 |
+| CRM  | Salesforce, Inc. | 0001108524 |
+| PLTR | Palantir Technologies Inc. | 0001321655 |
 
-Last 5 10-K/10-Q filings each.
+Last 5 10-K/10-Q filings each. To add a company: add a row to
+`companies.json` (find its CIK via SEC's company search), then run
+`edgar_ingest.py` → `chunk_documents.py` → `index_chunks.py` for it —
+no code changes needed elsewhere.
 
 ## 8-week plan (where we are)
 
@@ -110,6 +121,18 @@ Week 5's own manual testing already surfaced a real quality gap (below)
 that a proper eval set would very likely have caught faster.
 
 ## Code written so far
+
+### `companies.py` + `companies.json` — shared ticker/company registry
+
+Single source of truth for the ticker → {name, CIK} lookup. Added after
+`agent.py`'s ticker→name dict and `edgar_ingest.py`'s ticker→CIK dict
+were noticed to be two separately-hardcoded copies of the same list
+(under the identically-named `COMPANIES` variable, which made the
+duplication easy to miss). `load_companies()` reads `companies.json`
+fresh on every call — no caching — since it's small and rarely changes,
+and not caching means an edit takes effect without restarting anything.
+Both `edgar_ingest.py` and `agent.py` now import `load_companies()`
+instead of hardcoding their own list.
 
 ### `edgar_ingest.py` (Week 1) — working
 
