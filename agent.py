@@ -131,9 +131,19 @@ def _call_ollama(messages: list[dict]) -> dict:
             "messages": messages,
             "tools": [SEARCH_TOOL_SCHEMA],
             "stream": False,
-            "options": {"temperature": 0.1},
+            # Ollama defaults to a 4096-token context window regardless of
+            # what the model actually supports, which is dangerously small
+            # here: a single search returns up to 5 chunks (~3000 chars
+            # each), so a comparison question's SECOND tool call already
+            # risks silently truncating the first company's results out of
+            # context before the model ever writes its final answer. Found
+            # this by inspecting `ollama ps` output (context_length: 4096)
+            # after a real comparison-question run behaved suspiciously —
+            # worth checking before assuming a synthesis failure is a pure
+            # model-capability limit rather than a truncation bug.
+            "options": {"temperature": 0.1, "num_ctx": 8192},
         },
-        timeout=120,
+        timeout=240,
     )
     response.raise_for_status()
     return response.json()["message"]

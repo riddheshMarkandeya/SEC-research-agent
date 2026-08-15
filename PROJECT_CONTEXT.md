@@ -327,74 +327,110 @@ ticker(s) a question is actually about before calling `hybrid_search()`.
 That's squarely a Week 5 agent-layer responsibility (tool-calling/query
 routing), not something to bolt onto the retrieval module.
 
-### `eval_harness.py` + `eval_questions.jsonl` (Week 4) — scaffolding done
+### `eval_harness.py` + `eval_questions.jsonl` (Week 4/5) — scaffolding done, 8 questions, real findings surfaced
 
-Runs every question in `eval_questions.jsonl` through
-`answer.generate_answer()` and grades the result, so future changes
-(Week 5's agent, prompt tweaks, a different rerank model, etc.) can be
-measured against a saved baseline instead of eyeballed like Week 2b's
-manual queries were. Two grading strategies, chosen per-question by a
-`"type"` field:
+Runs every question in `eval_questions.jsonl` through **`agent.run_agent()`**
+(switched from `answer.generate_answer()` as of Week 5 — the agent resolves
+which ticker(s) a question is about itself, matching real usage, and lets
+comparison questions exercise the multi-tool-call path) and grades the
+result, so changes can be measured against a saved baseline instead of
+eyeballed. A question's `"ticker"`/`"tickers"` field is now purely
+documentation for a human skimming the file — it's not passed into the
+call. Three grading strategies, chosen per-question by a `"type"` field:
 
 - **`"numeric"` — exact-match, no LLM involved.** `extract_numbers()`
   regex-scans the generated answer for every number-like token ($, commas,
   decimals, unit words), normalizes each to a comparable scale (percent
-  stays its own category — 20 raw and 20% must never compare equal; `bill
-  ion`/`million`/`thousand` become multipliers on a shared "scale"
+  stays its own category — 20 raw and 20% must never compare equal;
+  `billion`/`million`/`thousand` become multipliers on a shared "scale"
   category), and passes if *any* extracted number lands within ~1%
   relative tolerance of the question's `expected_value`. Deterministic
   and free to run.
+- **`"comparison"` — like `"numeric"`, but for multi-company questions.**
+  `expected` is a list of `{"ticker", "expected_value", "expected_unit"}`
+  entries; passes only if *every* entity's value is found, via
+  `grade_numeric()` run once per entity. Added specifically to catch, by
+  design, an answer that correctly retrieves multiple companies' figures
+  but only reports one of them. Known limitation: doesn't check that a
+  found number is *attributed* to the right entity, only that both
+  numbers appear somewhere in the text — good enough for the failure mode
+  it was built to catch, not a full faithfulness check.
 - **`"judged"` — LLM-as-judge, for qualitative or refusal questions**
-  where there's no single correct number to diff against (e.g. "what
-  risks does NVIDIA describe" or "what was PLTR's 2019 dividend," which
-  should be refused). A second Ollama call (`qwen2.5:7b-instruct`, same
-  model as `answer.py`) is given the question, the answer, and a short
-  pass/fail `"criteria"` string, and returns PASS/FAIL + a one-sentence
-  reason. `temperature: 0.0` here (stricter than `answer.py`'s `0.1`) —
-  a grader should be as consistent as possible run-to-run.
+  where there's no single correct number to diff against. A second Ollama
+  call is given the question, the answer, and a short pass/fail
+  `"criteria"` string, and returns PASS/FAIL + a one-sentence reason.
+  `temperature: 0.0` here (stricter than generation's `0.1`) — a grader
+  should be as consistent as possible run-to-run.
 - Every graded answer also gets a citation-marker check (`[\d+]` regex)
-  reported alongside the pass/fail, independent of question type — this
-  is the "does every claim actually carry a `[n]`" check that Week 3
-  flagged as an unverified gap in `answer.py`'s prompt-only enforcement.
-- Each run's full results (question, answer text, pass/fail, reasoning,
-  citation flag) are saved as timestamped JSON under `./eval_results/`
-  — tracked in git (unlike `data/`/`chunks/`/`chroma_db/`) since the
-  whole point is comparing runs over time, not regenerating them.
-
-**Seed set is intentionally small (6 questions)**, reusing ground-truth
-facts already verified earlier in this project rather than new filing
-research — this pass was about proving the harness mechanics work, not
-building the real eval set:
-- 3 numeric: CRM's $72.4B remaining performance obligation, AAPL's
-  166,000 FTE employees, MSFT's 20% effective tax rate
-- 2 judged (qualitative): AAPL's AI-related risk disclosure, NVDA's
-  supply-chain risk disclosure
-- 1 judged (refusal): the PLTR 2019 dividend question from Week 3,
-  which should be declined rather than answered with a fabricated number
+  reported alongside the pass/fail, independent of question type.
+- Each run's full results are saved as timestamped JSON under
+  `./eval_results/` — tracked in git, since the whole point is comparing
+  runs over time.
 
 **Sanity-checked the grading itself, not just the pipeline:** ran a
 4-question negative-control set with deliberately wrong expected values
-and inverted criteria (e.g. "the answer must claim Apple faces zero AI
-risk"), and confirmed all 4 correctly FAIL — both grading paths
-discriminate real answers rather than rubber-stamping. (Baseline run: 6/6
-pass, 6/6 cited — saved at `eval_results/20260814T040434Z.json`.)
+and inverted criteria, and confirmed all 4 correctly FAIL.
+
+**Found a bug in `num_ctx` before any of this eval work meant anything:**
+the very first live run against `agent.py` timed out, and `ollama ps`
+showed `context_length: 4096` — Ollama's default, far too small once a
+tool call returns 5 chunks (~3000 chars each) plus the system prompt, let
+alone a comparison question's *second* tool call stacking on top. Fixed
+by setting `"num_ctx": 8192` explicitly in every Ollama call
+(`agent.py`, `answer.py`, `eval_harness.py`'s judge) — worth flagging
+because this could easily have been misdiagnosed as a pure model-
+capability limitation instead of silent context truncation.
+
+**8-question run, post-fix: 6/8 passed, 8/8 cited** (saved at
+`eval_results/20260815T030212Z.json`). Both failures were investigated
+down to a root cause, not left as "the model got it wrong":
+
+1. **`aapl-msft-employee-comparison` FAILED — a real, diagnosed retrieval
+   bug, not a model-capability problem.** The agent stated a fabricated
+   MSFT employee count (verified: the exact string it output doesn't
+   appear anywhere in the source data) attached to a citation for a real
+   but unrelated chunk (share-repurchase/dividend tables). Root cause,
+   confirmed by direct comparison: the correct chunk (containing
+   "we employed approximately 223,000 people... on a full-time basis")
+   ranks **#3** in the fused BM25+vector results for the agent's actual
+   query — comfortably inside the top 5 — but **the cross-encoder
+   reranker demotes it out of the top 10 entirely**, promoting several
+   irrelevant financial tables instead. The model never saw the right
+   number, so it filled the gap with a plausible-looking one. This is a
+   `retrieval.py` reranking-quality bug, reproduced on demand via
+   `python retrieval.py "full-time employees as of June 30, 2026"
+   --ticker MSFT --n 15 --no-rerank` vs. the same command with reranking
+   on. **Not yet fixed — flagged for the next retrieval-quality pass.**
+2. **`pltr-dividend-2019-refusal` FAILED — a grading-criteria problem,
+   not an agent bug.** The agent inferred "Palantir did not pay a
+   dividend in 2019" from the filing's actual statement ("No dividends
+   have been declared as of December 31, 2025") — a logically valid
+   inference (if none had *ever* been declared by 2025, none were
+   declared in 2019), not a fabrication. The eval criteria was written
+   against the more conservative `answer.py` behavior and didn't
+   anticipate the agent reasoning this confidently forward from a stated
+   fact. The criteria needs revisiting, not the agent.
+
+**This is exactly the outcome the "get real signal before deciding
+anything" plan was for:** neither failure supports swapping to a bigger/
+cloud model as the fix — one is a reranker bug, the other is a test-
+design issue. Concrete argument for finishing the retrieval-quality fix
+*before* spending any more effort on model choice or company/history
+expansion.
 
 **Explicitly deferred:** growing this to the full 30-50 question,
-FinanceBench-style set (harder comparison/multi-hop questions, more
-even coverage across all 5 companies and both 10-K/10-Q forms, more
-adversarial refusal cases) — that requires going back into the actual
+FinanceBench-style set — that requires going back into the actual
 filings to find and verify ground truth, which is real research work,
-not scaffolding. Tracked as the next immediate step below.
+not scaffolding.
 
 **Considered and deferred:** RAGAS/DeepEval (open-source RAG eval
-libraries with built-in metrics like *faithfulness* — do the answer's
-claims actually trace back to the retrieved chunks, not just "a
-plausible number appears somewhere"). Decided to keep the hand-rolled
-grading for now — transparent, zero new dependencies, already
-validated with the negative-control test — but a faithfulness-style
-check is a good candidate to add as a *third* grading path once the
-question set grows, since it catches a class of error (right number,
-wrong citation) the current numeric/judged split doesn't.
+libraries with built-in *faithfulness* metrics — do the answer's claims
+actually trace back to the retrieved chunks). Notably, this project's own
+`grade_comparison()` just caught exactly the kind of error a faithfulness
+metric is designed for (a citation pointing at content that doesn't
+support the claim) — reinforces that this is worth adding as a *third*
+grading path once the question set grows, rather than a purely
+theoretical nice-to-have.
 
 ### `agent.py` (Week 5) — v0 tool-calling agent
 
@@ -449,19 +485,23 @@ tests yet — deferred, see Development workflow section):
   Week 3's residual finding.
 - *"Compare Apple's and Microsoft's effective tax rates."* → agent
   correctly called the tool twice (once per company) and citation
-  numbering stayed consistent ([1]-[5] AAPL, [6]-[10] MSFT). **But the
-  final answer didn't actually compare** — it discussed MSFT's tax
-  rate and IRS dispute at length and never stated Apple's numbers,
-  despite [2] (an AAPL chunk) containing an exact effective-tax-rate
-  table (17.9%/16.4%/17.6%/15.4% across quarters). Manually confirmed
-  by inspecting the retrieved chunk directly: **this is a synthesis/
-  generation-quality gap, not a retrieval or tool-calling gap** — the
-  right context was in front of the model, it just didn't use it
-  faithfully for a *comparison*. Left unfixed rather than prompt-
-  patched blind; this is precisely the kind of failure a "comparison"
-  eval question type (already on the Week 4 backlog) would catch
-  mechanically instead of by manual luck, and is a concrete argument for
-  not deferring the eval set growth much further.
+  numbering stayed consistent ([1]-[5] AAPL, [6]-[10] MSFT), but the
+  final answer didn't actually compare — it discussed MSFT at length and
+  never stated Apple's numbers. **Initial hypothesis (recorded here at
+  the time) was a pure synthesis/generation-quality gap.** That
+  hypothesis turned out to be incomplete: the eval harness's follow-up
+  investigation (see `eval_harness.py`'s section below) found Ollama was
+  silently running with a 4096-token context window — likely truncating
+  content mid-conversation for a two-tool-call question — *and*
+  separately found the cross-encoder reranker actively demoting correct
+  chunks out of the top results for at least one real query. Both are
+  concrete, fixable pipeline bugs that could each independently explain
+  what looked like a synthesis failure. **Lesson worth keeping:** a
+  single manually-observed failure with no chunk-level or context-level
+  inspection can look like "the model isn't smart enough" when the real
+  cause is upstream — this is why the eval harness's evidence-based
+  diagnosis (grep the source data, compare reranked vs. non-reranked
+  output) mattered more than the original hypothesis.
 
 ## Verified working
 
@@ -490,33 +530,40 @@ Ingestion + chunking have been run across all 5 companies (25 filings,
 
 ## Immediate next steps
 
-**Now genuinely urgent, not just "next": grow `eval_questions.jsonl`
-beyond 6 questions**, run it against `agent.py` (not just `answer.py`),
-and route new questions through `agent.run_agent()`. Week 5's manual
-testing already found a real bug (the AAPL/MSFT tax-rate comparison
-that silently dropped Apple's numbers) that a comparison-type eval
-question would have caught mechanically instead of by luck during a
-demo. Specifically:
+**Top priority — fix the reranker bug found by the 8-question eval run**,
+before anything else in this list. `retrieval.py`'s cross-encoder
+reranking step demotes at least one confirmed-correct chunk out of the
+top 10 (see `eval_harness.py`'s section above for the exact repro
+command), directly causing a fabricated-number-with-real-citation
+failure. This is now the best-understood, most concretely evidenced bug
+in the whole system — worth fixing before company/history expansion or
+any model-swap decision, both of which were explicitly deferred pending
+"real signal," and this is exactly that signal. Options to investigate:
+blending the fused RRF score with the rerank score instead of letting
+rerank fully override ranking, trying a different/larger cross-encoder,
+or increasing `CANDIDATE_POOL_SIZE` so more candidates survive to the
+generation step regardless of rerank order.
+
+**Second priority — revisit the PLTR refusal question's grading
+criteria.** Not an agent bug: the agent's inference was logically valid,
+the eval criteria was written too strictly for how confidently the agent
+now reasons. Fix the criteria wording (or accept the inference as
+correct behavior and change the expected type), not the agent.
+
+**Then — grow `eval_questions.jsonl` beyond 8 questions**, now informed
+by real findings instead of guessing what might break:
 - Go back into the actual filings to find and verify ground-truth figures
-  — this is real research, not something to shortcut by guessing
-  plausible-looking numbers
-- Cover all 5 companies and both 10-K/10-Q forms more evenly (current 6
-  lean AAPL/CRM/MSFT-heavy)
-- **Add comparison-style questions as a priority**, not just "nice to
-  have" — motivated directly by the tax-rate finding above. These need
-  a different grading approach than today's single-value
-  `grade_numeric()`: checking that *both* entities' figures appear
-  correctly attributed, not just that some number appears somewhere.
-  The `expected_value`/`expected_unit` schema doesn't support this yet
-  — will need extending (e.g. a list of `(entity, expected_value,
-  expected_unit)` tuples) before comparison questions can be graded
-  automatically rather than eyeballed.
-- Include a few ambiguous/no-company-context questions to verify
-  `agent.py`'s disambiguation genuinely holds up beyond the two cases
-  spot-checked so far
-- Once the harness targets `agent.py`, decide whether `answer.py`
-  (Week 3) stays as a simpler fallback/baseline or gets retired —
-  `agent.py` is a strict superset of what it does
+  — real research, not guessing plausible-looking numbers
+- Cover all 5 companies and both 10-K/10-Q forms more evenly (currently
+  AAPL/CRM/MSFT-heavy)
+- More comparison-style questions, now that `grade_comparison()` exists
+  and is proven to catch real failures — including ones that require
+  correct *attribution* (which entity a number belongs to), since the
+  current comparison grading doesn't check that yet
+- A few ambiguous/no-company-context questions, to verify `agent.py`'s
+  disambiguation holds up beyond the cases spot-checked so far
+- Decide whether `answer.py` (Week 3) stays as a simpler fallback/
+  baseline or gets retired — `agent.py` is a strict superset of what it does
 
 **Then Week 6 — expose tools as an MCP server**, wrapping the same
 `search_filings` tool `agent.py` already defines.

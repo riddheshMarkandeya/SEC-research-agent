@@ -1,0 +1,96 @@
+[
+  {
+    "id": "crm-rpo-fy26",
+    "ticker": "CRM",
+    "question": "What is Salesforce's total remaining performance obligation as of January 31, 2026?",
+    "type": "numeric",
+    "passed": true,
+    "detail": "found matching value: 72.4 (billion)",
+    "has_citation": true,
+    "answer": "Based on the information provided in Salesforce's SEC filings:\n\nAs of January 31, 2026, Salesforce's total remaining performance obligation was approximately [72.4 billion] [1].\n\nThis value represents all future revenue under contract yet to be recognized as of that date.\n\n[1] CRM 10-K (reportDate=2026-01-31)",
+    "n_chunks_retrieved": 5
+  },
+  {
+    "id": "aapl-employees-fy25",
+    "ticker": "AAPL",
+    "question": "How many full-time equivalent employees did Apple have as of September 27, 2025?",
+    "type": "numeric",
+    "passed": true,
+    "detail": "found matching value: 166000.0 (raw)",
+    "has_citation": true,
+    "answer": "According to Apple Inc.'s 10-K filing as of September 27, 2025 [1], Apple had approximately 166,000 full-time equivalent employees.",
+    "n_chunks_retrieved": 5
+  },
+  {
+    "id": "msft-tax-rate-q2fy26",
+    "ticker": "MSFT",
+    "question": "What was Microsoft's effective tax rate for the three months ended December 31, 2025?",
+    "type": "numeric",
+    "passed": true,
+    "detail": "found matching value: 20.0 (percent)",
+    "has_citation": true,
+    "answer": "Based on the information provided in Microsoft's SEC filings:\n\nMicrosoft's effective tax rate for the three months ended December 31, 2025 was 20% [1] [2].\n\n[1] MSFT 10-Q (reportDate=2025-12-31)\n[2] MSFT 10-Q (reportDate=2026-03-31)",
+    "n_chunks_retrieved": 5
+  },
+  {
+    "id": "aapl-ai-risk",
+    "ticker": "AAPL",
+    "question": "What risks does Apple describe related to artificial intelligence?",
+    "type": "judged",
+    "passed": true,
+    "detail": "The answer mentions various types of risks related to AI, including reputational, legal, financial, competitive, cybersecurity, and regulatory risks, which align with the specified criteria.",
+    "has_citation": true,
+    "answer": "Apple Inc. (AAPL) describes several risks related to artificial intelligence (AI) in its SEC filings:\n\n1. **Reputational Risks**: Issues related to AI may result in reputational harm, competitive disadvantage, regulatory action, legal liability, and other material adverse effects on the company's business, results of operations, financial condition, and stock price [1].\n\n2. **Competitive and Strategic Risks**: The company\u2019s AI efforts could face risks such as competition and strategy, recouping costs and returns on investments, product liability, intellectual property infringement, data privacy, cybersecurity, sanctions and export controls, bias and discrimination, and online safety and protection of minors among other issues [1].\n\n3. **Cybersecurity Risks**: The rapid advancement and widespread dissemination of AI technologies significantly increase the risks associated with cyberattacks. These include highly targeted phishing campaigns, automated discovery or exploitation of vulnerabilities, generation of deepfake content to bypass authentication protocols, and accelerated identification and exploitation of vulnerabilities [2].\n\n4. **Regulatory Compliance Risks**: New and changing laws, regulations, executive orders, directives, and enforcement priorities related to AI could materially adversely affect the company\u2019s business, reputation, results of operations, financial condition, and stock price [4].\n\n5. **Legal Proceedings and Intellectual Property Risks**: The company faces significant patent claims relating to its standards-enabled products, which may be exacerbated as new technologies like machine learning and AI are further integrated into its offerings. These risks could lead to unfavorable legal proceedings or government investigations that might impact the business negatively [5].\n\nThese risks highlight the multifaceted challenges Apple faces in developing and deploying AI technologies responsibly while navigating potential threats and regulatory landscapes.",
+    "n_chunks_retrieved": 5
+  },
+  {
+    "id": "nvda-supply-chain-risk",
+    "ticker": "NVDA",
+    "question": "What supply chain risks does NVIDIA describe?",
+    "type": "judged",
+    "passed": true,
+    "detail": "The AI assistant's answer meets all the specified criteria by mentioning dependency on third-party suppliers/manufacturers, manufacturing lead times, and the risk of a mismatch between supply and customer demand. It also includes multiple citation markers as required.",
+    "has_citation": true,
+    "answer": "NVIDIA describes several supply chain risks in their SEC filings:\n\n1. **Long Manufacturing Lead Times and Uncertain Supply Availability**: NVIDIA has long manufacturing lead times, which can extend beyond 12 months. This can result in mismatches between supply and demand, leading to both product shortages and excess inventory [1], [4].\n\n2. **Inaccurate Demand Estimation**: If the company inaccurately estimates customer demand or if customers change orders, it may not be able to reduce its supply commitments quickly enough, potentially leading to financial harm due to mismatches between supply and demand [3], [4].\n\n3. **Supplier Reliability and Commitments**: There is a risk of suppliers decommitting from agreements, which could negatively impact the company's ability to scale its operations or meet longer-term demand for products and services [1], [4].\n\n4. **Component Price Fluctuations**: Inaccurate estimation of demand can lead to higher wafer and component prices due to insufficient orders placed with suppliers [1], [4].\n\n5. **Foundry and Contract Manufacturer Reliability**: There is a risk that foundries or contract manufacturers may fail to procure raw materials, provide adequate manufacturing capacity, or develop high-quality process technologies needed for product production [1], [4].\n\n6. **Geographic Concentration of Suppliers**: The limited number and geographic concentration of global suppliers can create additional risks in the supply chain [1], [4].\n\n7. **Third-Party Supply Chain Risks**: NVIDIA relies on third-party suppliers, which exposes them to potential security incidents or disruptions that could impact their information technology systems and product performance [3], [5].\n\n8. **Regulatory Compliance Risks**: Suppliers may fail to comply with policies, expectations, and emerging regulatory requirements, adding another layer of risk to the supply chain [1], [4].\n\nThese risks highlight the challenges NVIDIA faces in managing its global supply chain effectively [1] - [5].",
+    "n_chunks_retrieved": 5
+  },
+  {
+    "id": "pltr-dividend-2019-refusal",
+    "ticker": "PLTR",
+    "question": "What was Palantir's dividend per share in 2019?",
+    "type": "judged",
+    "passed": false,
+    "detail": "The answer implies that no dividends were paid or declared for 2019, which goes beyond the provided information and makes an unfounded assumption.",
+    "has_citation": true,
+    "answer": "Based on the information provided in Palantir's SEC filings:\n\nNo dividend per share was declared by Palantir Technologies Inc. as of December 31, 2025 [4], and there is no indication that any dividends were paid or declared for the year 2019.\n\nThe relevant excerpt from their 2025 filing states:\n\"No dividends have been declared as of December 31, 2025.\" [4]\n\nTherefore, Palantir did not pay a dividend per share in 2019.",
+    "n_chunks_retrieved": 5
+  },
+  {
+    "id": "aapl-msft-tax-rate-comparison",
+    "ticker": [
+      "AAPL",
+      "MSFT"
+    ],
+    "question": "Compare Apple's effective tax rate for the three months ended June 27, 2026 to Microsoft's effective tax rate for the three months ended December 31, 2025.",
+    "type": "comparison",
+    "passed": true,
+    "detail": "found matching values for all 2 entities",
+    "has_citation": true,
+    "answer": "Based on the information provided from the SEC filings:\n\n- Apple Inc.'s effective tax rate for the three months ended June 27, 2026 was **17.9%** [5].\n- Microsoft Corporation's effective tax rate for the three months ended December 31, 2025 was **20%** [8].\n\nTherefore, Apple Inc.'s effective tax rate (17.9%) is lower than Microsoft Corporation's effective tax rate (20%) for the respective periods.",
+    "n_chunks_retrieved": 10
+  },
+  {
+    "id": "aapl-msft-employee-comparison",
+    "ticker": [
+      "AAPL",
+      "MSFT"
+    ],
+    "question": "Compare the number of full-time employees at Apple (as of September 27, 2025) and Microsoft (as of June 30, 2026).",
+    "type": "comparison",
+    "passed": false,
+    "detail": "missing or wrong value(s) for: MSFT (223000 raw)",
+    "has_citation": true,
+    "answer": "From the search results for Microsoft Corporation (MSFT), we can see that as of June 30, 2026, the company had approximately 175,630 full-time employees [8].\n\nTherefore, Apple Inc. (AAPL) had approximately 166,000 full-time equivalent employees as of September 27, 2025, and Microsoft Corporation (MSFT) had approximately 175,630 full-time employees as of June 30, 2026.\n\n[1] AAPL 10-K (reportDate=2025-09-27)\n[8] MSFT 10-K (reportDate=2026-06-30)",
+    "n_chunks_retrieved": 10
+  }
+]

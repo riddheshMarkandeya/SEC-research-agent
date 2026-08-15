@@ -1,19 +1,36 @@
 """
-Week 4 — Eval harness (scaffolding)
+Week 4/5 — Eval harness (scaffolding)
 ----------------------------------------
-Runs every question in eval_questions.jsonl through answer.generate_answer()
-and grades the result, so changes to retrieval/prompting/agent behavior can
-be measured against a fixed baseline instead of eyeballed. This exists
-specifically because Week 3's answer.py enforces "cite everything or
-refuse" only via prompt instruction — nothing checks that it actually
-happened. This harness is where that gets checked mechanically.
+Runs every question in eval_questions.jsonl through agent.run_agent()
+and grades the result, so changes to retrieval/prompting/agent behavior
+can be measured against a fixed baseline instead of eyeballed. This
+exists specifically because Week 3's answer.py (and now Week 5's
+agent.py) enforce "cite everything or refuse" only via prompt
+instruction — nothing checks that it actually happened. This harness is
+where that gets checked mechanically.
 
-Two grading strategies, chosen per-question by its "type" field:
+Routes through agent.run_agent() rather than answer.generate_answer()
+as of Week 5 — the agent resolves which ticker(s) a question is about
+itself (via tool-calling), which is a closer match to how this system
+is actually meant to be used, and lets comparison questions exercise
+the agent's multi-tool-call path. Every existing question's "ticker"
+field is now purely documentation for a human skimming the file — it's
+no longer passed into the call; the agent has to infer it from the
+question text, same as real usage.
+
+Three grading strategies, chosen per-question by its "type" field:
   - "numeric": exact-match. The question has one verifiable ground-truth
     number (e.g. "$72.4 billion"); grading extracts every number-like
     token from the generated answer and checks whether any of them,
     once unit-normalized, is within tolerance of the expected value.
     Deterministic and free — no LLM call needed to grade these.
+  - "comparison": like "numeric", but for questions spanning multiple
+    companies — requires EVERY entity in the question's "expected" list
+    to have its value found in the answer, not just any one of them.
+    Added after finding, by hand, that agent.py could correctly
+    retrieve both companies' figures via two tool calls but only report
+    one of them in its final synthesis — this type exists specifically
+    to catch that failure mode mechanically instead of by manual luck.
   - "judged": LLM-as-judge. For qualitative questions ("what risks does
     X describe...") or refusal questions (no ground-truth number exists
     to match), a second LLM call grades PASS/FAIL against a short
@@ -21,7 +38,7 @@ Two grading strategies, chosen per-question by its "type" field:
     against.
 
 This is scaffolding, not the full eval suite — eval_questions.jsonl has
-6 seed questions (reusing facts already verified earlier in this
+8 seed questions (reusing facts already verified earlier in this
 project rather than new research) to prove the harness works end-to-end.
 Growing it to the full 30-50 question FinanceBench-style set is a
 separate, later task.
@@ -39,7 +56,8 @@ from pathlib import Path
 
 import requests
 
-from answer import MODEL_NAME, OLLAMA_URL, generate_answer
+from agent import run_agent
+from answer import MODEL_NAME, OLLAMA_URL  # still used directly by grade_judged()
 
 QUESTIONS_PATH = Path("./eval_questions.jsonl")
 RESULTS_DIR = Path("./eval_results")
@@ -106,6 +124,32 @@ def grade_numeric(answer_text: str, expected_value: float, expected_unit: str) -
     return False, f"no value matching {expected_value} {expected_unit} found in answer"
 
 
+def grade_comparison(answer_text: str, expected: list[dict]) -> tuple[bool, str]:
+    """Like grade_numeric, but for questions spanning multiple companies:
+    passes only if EVERY entry in `expected` (each a {"ticker",
+    "expected_value", "expected_unit"} dict) has its value found in the
+    answer — not just any one of them. Reuses grade_numeric per entity
+    rather than duplicating the extraction/tolerance logic.
+
+    Known limitation: this doesn't check that a found number is
+    correctly *attributed* to the right entity (e.g. it would still
+    pass if the answer accidentally swapped which company a number was
+    reported for) — only that both numbers appear somewhere in the
+    text. Good enough to catch "dropped an entity entirely," which is
+    the specific failure this type was added for; attribution-checking
+    would need a smarter (likely LLM-judge-based) check layered on top.
+    """
+    missing = []
+    for entry in expected:
+        passed, _ = grade_numeric(answer_text, entry["expected_value"], entry["expected_unit"])
+        if not passed:
+            missing.append(f"{entry['ticker']} ({entry['expected_value']} {entry['expected_unit']})")
+
+    if missing:
+        return False, f"missing or wrong value(s) for: {', '.join(missing)}"
+    return True, f"found matching values for all {len(expected)} entities"
+
+
 # ---------------------------------------------------------------------------
 # LLM-as-judge grading
 # ---------------------------------------------------------------------------
@@ -130,9 +174,14 @@ def grade_judged(question: str, answer_text: str, criteria: str) -> tuple[bool, 
                 {"role": "user", "content": user_prompt},
             ],
             "stream": False,
-            "options": {"temperature": 0.0},
+            # See agent.py's _call_ollama for why num_ctx is set explicitly
+            # rather than left at Ollama's 4096-token default. The judge's
+            # own input (question + criteria + one answer) is smaller than
+            # what generation sees, but the answer being graded can itself
+            # be long, so the same headroom applies.
+            "options": {"temperature": 0.0, "num_ctx": 8192},
         },
-        timeout=120,
+        timeout=240,
     )
     response.raise_for_status()
     verdict_text = response.json()["message"]["content"].strip()
@@ -162,11 +211,13 @@ def run_eval(questions_path: Path) -> list[dict]:
 
     for q in questions:
         print(f"[{q['id']}] {q['question']}")
-        answer_text, retrieved = generate_answer(q["question"], ticker=q.get("ticker"))
+        answer_text, retrieved = run_agent(q["question"])
         has_citation = bool(CITATION_PATTERN.search(answer_text))
 
         if q["type"] == "numeric":
             passed, detail = grade_numeric(answer_text, q["expected_value"], q["expected_unit"])
+        elif q["type"] == "comparison":
+            passed, detail = grade_comparison(answer_text, q["expected"])
         elif q["type"] == "judged":
             passed, detail = grade_judged(q["question"], answer_text, q["criteria"])
         else:
@@ -180,7 +231,7 @@ def run_eval(questions_path: Path) -> list[dict]:
         results.append(
             {
                 "id": q["id"],
-                "ticker": q.get("ticker"),
+                "ticker": q.get("ticker") or q.get("tickers"),
                 "question": q["question"],
                 "type": q["type"],
                 "passed": passed,

@@ -15,6 +15,7 @@ import pytest
 from eval_harness import (
     _normalize,
     extract_numbers,
+    grade_comparison,
     grade_judged,
     grade_numeric,
     load_questions,
@@ -99,6 +100,39 @@ def test_grade_numeric_within_tolerance_passes():
 def test_grade_numeric_outside_tolerance_fails():
     passed, _ = grade_numeric("The figure was 102.", 100, "raw")
     assert passed is False
+
+
+# ---------------------------------------------------------------------------
+# grade_comparison
+# ---------------------------------------------------------------------------
+_TAX_RATE_COMPARISON = [
+    {"ticker": "AAPL", "expected_value": 17.9, "expected_unit": "percent"},
+    {"ticker": "MSFT", "expected_value": 20, "expected_unit": "percent"},
+]
+
+
+def test_grade_comparison_passes_when_all_entities_found():
+    answer = "Apple's effective tax rate was 17.9%, while Microsoft's was 20%."
+    passed, _ = grade_comparison(answer, _TAX_RATE_COMPARISON)
+    assert passed is True
+
+
+def test_grade_comparison_fails_when_one_entity_dropped():
+    # This is the literal regression case: agent.py once produced an
+    # answer covering only Microsoft's figure and silently dropped
+    # Apple's, despite having retrieved both.
+    answer = "Microsoft's effective tax rate was 20%, driven by foreign earnings taxed at lower rates."
+    passed, detail = grade_comparison(answer, _TAX_RATE_COMPARISON)
+    assert passed is False
+    assert "AAPL" in detail
+    assert "MSFT" not in detail
+
+
+def test_grade_comparison_fails_when_both_entities_missing():
+    answer = "I don't have enough information to answer this comparison."
+    passed, detail = grade_comparison(answer, _TAX_RATE_COMPARISON)
+    assert passed is False
+    assert "AAPL" in detail and "MSFT" in detail
 
 
 # ---------------------------------------------------------------------------
