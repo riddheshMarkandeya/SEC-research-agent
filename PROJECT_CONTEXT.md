@@ -449,7 +449,10 @@ down to a root cause, not left as "the model got it wrong":
    declared in 2019), not a fabrication. The eval criteria was written
    against the more conservative `answer.py` behavior and didn't
    anticipate the agent reasoning this confidently forward from a stated
-   fact. The criteria needs revisiting, not the agent. **Still open.**
+   fact. The criteria needs revisiting, not the agent. **Fixed — see the
+   dedicated PLTR-grading writeup further down this section for the full
+   diagnosis (a systematic judge misreading, not run-to-run noise) and
+   the reworded criteria.**
 
 **This is exactly the outcome the "get real signal before deciding
 anything" plan was for:** neither failure supports swapping to a bigger/
@@ -721,25 +724,37 @@ rule with a concrete same-sentence example. Final eval: **7/8 passed,
 8/8 cited** (`eval_results/20260816T073528Z.json`) — both target
 comparison questions pass, no regressions elsewhere.
 
-**Top priority now — revisit the PLTR refusal question's grading
-criteria.** The only remaining failure, and unrelated to anything fixed
-this session. Not an agent bug: the agent's answer is unchanged across
-every run so far (correctly refuses to state a 2019 dividend figure,
-grounded in real citations) — it's the LLM-as-judge that's inconsistent
-about whether this counts as satisfying the criteria (one run's judge
-even flagged unrelated EPS figures as if they implied dividend
-information). Worth either rewording the criteria to be less ambiguous
-for a judge, or replacing `"judged"` grading with a `"numeric"`-style
-refusal check for this question (e.g. assert no dollar figure resembling
-a per-share dividend appears at all) so it doesn't depend on judge mood.
+**PLTR refusal grading criteria: FIXED — 8/8 eval questions now pass.**
+Diagnosed as a systematic (not random) judge misreading, not agent
+behavior: with the original criteria, `grade_judged()` called 5 times at
+`temperature: 0.0` against the exact same (objectively correct) agent
+answer failed all 5 times, every time for the same wrong reason — it
+read the agent's mention of unrelated EPS (earnings-per-share) figures
+as if they were dividend-per-share figures, even though EPS and DPS are
+different metrics and the answer never states a dividend amount. Fixed
+by rewording the criteria to explicitly name EPS as an example of an
+unrelated figure that does *not* violate it, and to state precisely what
+*would* fail it (a dollar amount presented as an actual per-share
+dividend for 2019). **Verified, not assumed:** the reworded criteria
+against the same fixed answer text passed 5/5 times, and against two
+deliberately-bad answers (one with a fabricated dividend figure, one
+that doesn't refuse at all) failed 3/3 times each — same "test the
+grading, not just the pipeline" discipline used earlier for the
+numeric/comparison graders. **Final 8-question re-run: 8/8 passed, 8/8
+cited** (`eval_results/20260816T214953Z.json`) — the first clean run
+since the eval harness was built.
 
-**Second priority — now that both diagnosed retrieval/synthesis bugs are
-fixed, this is a natural point to decide on `qwen2.5:7b-instruct` vs. a
-stronger/cloud model for generation**, if a future eval run (post
-question-set growth) keeps surfacing comprehension-level failures that
-prompt tuning can't reach. Not urgent right now — the last eval run
-found nothing that pointed at a capability ceiling, only fixable pipeline
-issues — but worth keeping in mind as the next lever if that changes.
+**Now that all three diagnosed bugs (reranker, comparison-synthesis,
+PLTR grading) are fixed and the suite is clean, the natural next
+questions are:** whether `qwen2.5:7b-instruct` vs. a stronger/cloud
+model is worth revisiting for generation, and growing the eval set
+beyond 8 questions. Neither is urgent by itself — a clean 8/8 run
+doesn't prove the system is bug-free, it proves *these 8 questions*
+no longer catch anything, which is exactly why growing the question set
+is the more valuable next move: more/harder questions are what would
+surface whether `qwen2.5:7b-instruct` is actually a limiting factor,
+rather than guessing at a model swap with no fresh failing case to test
+it against.
 
 **Then — grow `eval_questions.jsonl` beyond 8 questions**, now informed
 by real findings instead of guessing what might break:
