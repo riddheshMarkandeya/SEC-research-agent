@@ -281,6 +281,45 @@ querying Chroma directly.
   corpus but are cheap over a few dozen candidates, and are meaningfully
   more accurate at the top of the ranking — which is what matters most
   since only the top few chunks become LLM context.
+- **Reranker bug, root cause, and fix (found via `eval_harness.py`'s
+  8-question run — see that section below for the failing eval case):**
+  the cross-encoder was demoting a confirmed-correct chunk (MSFT
+  headcount, "we employed approximately 223,000 people... on a
+  full-time basis") out of the top 10 entirely, despite it ranking #3
+  of 48 in the fused BM25+vector ranking. **Initial hypothesis (512-token
+  truncation cutting off the relevant sentence) was checked directly
+  against the cross-encoder's own tokenizer and ruled out** — the full
+  sequence was only 489 tokens, under the 512 limit, with the relevant
+  text demonstrably present in the decoded tokens. **Real cause:**
+  `ms-marco-MiniLM-L-6-v2` is trained on short (~350 char), single-topic
+  MS MARCO passages, and genuinely scores this long (~2,700 char),
+  multi-topic chunk (device competition → gaming → search ads → human
+  capital) poorly even though the relevant content is present —
+  confirmed by the numbers: rank #3/48 by fused score, but rank ~43/48
+  by raw cross-encoder score. **First fix attempt (rejected):** treat
+  the cross-encoder ranking as a third signal and re-run
+  `reciprocal_rank_fusion()` summing it with the original fused rank.
+  Implemented and empirically tested — did NOT fix it, because several
+  competing chunks were "decent" (not great, not terrible) by both
+  signals, and their summed scores beat the target's "great fused rank +
+  terrible rerank rank" combination. **Fix that worked:** `rerank()`'s
+  ranking math was extracted into `_combine_fused_and_rerank(candidates,
+  cross_encoder_scores, top_n)`, which scores each candidate as the
+  **MAX** (not sum) of its two RRF contributions —
+  `max(1/(k+fused_rank), 1/(k+rerank_rank))` — so a candidate that's
+  excellent by even one signal survives, rather than needing to be
+  decent by both. Verified via: a standalone script showing the target
+  chunk moving to rank ~5 under MAX scoring; a live CLI re-run
+  (`python retrieval.py "full-time employees as of June 30, 2026"
+  --ticker MSFT --n 5`) showing it now at rank 4 of 5 (previously absent
+  from the top 10-48); regression checks against two previously-working
+  queries (CRM RPO, AAPL employee count) showing no change; new unit
+  tests in `tests/test_retrieval.py` including a direct regression test
+  mirroring this exact failure pattern (great-by-one-signal,
+  terrible-by-the-other); and the full eval suite re-run (see
+  `eval_harness.py` section) showing the target question flip from FAIL
+  to PASS with no other regressions. `main()`'s CLI score display now
+  reads `combined_score` (renamed from `rerank_score`).
 - CLI: `python retrieval.py "question" [--ticker MSFT] [--n 5] [--no-rerank]`.
 
 ### `answer.py` (Week 3) — working, v0 prototype
@@ -381,7 +420,7 @@ by setting `"num_ctx": 8192` explicitly in every Ollama call
 because this could easily have been misdiagnosed as a pure model-
 capability limitation instead of silent context truncation.
 
-**8-question run, post-fix: 6/8 passed, 8/8 cited** (saved at
+**8-question run, pre-fix: 6/8 passed, 8/8 cited** (saved at
 `eval_results/20260815T030212Z.json`). Both failures were investigated
 down to a root cause, not left as "the model got it wrong":
 
@@ -400,7 +439,8 @@ down to a root cause, not left as "the model got it wrong":
    `retrieval.py` reranking-quality bug, reproduced on demand via
    `python retrieval.py "full-time employees as of June 30, 2026"
    --ticker MSFT --n 15 --no-rerank` vs. the same command with reranking
-   on. **Not yet fixed — flagged for the next retrieval-quality pass.**
+   on. **Fixed — see the `retrieval.py` section above (`_combine_fused_and_rerank`,
+   MAX-of-RRF-contributions).**
 2. **`pltr-dividend-2019-refusal` FAILED — a grading-criteria problem,
    not an agent bug.** The agent inferred "Palantir did not pay a
    dividend in 2019" from the filing's actual statement ("No dividends
@@ -409,7 +449,7 @@ down to a root cause, not left as "the model got it wrong":
    declared in 2019), not a fabrication. The eval criteria was written
    against the more conservative `answer.py` behavior and didn't
    anticipate the agent reasoning this confidently forward from a stated
-   fact. The criteria needs revisiting, not the agent.
+   fact. The criteria needs revisiting, not the agent. **Still open.**
 
 **This is exactly the outcome the "get real signal before deciding
 anything" plan was for:** neither failure supports swapping to a bigger/
@@ -417,6 +457,46 @@ cloud model as the fix — one is a reranker bug, the other is a test-
 design issue. Concrete argument for finishing the retrieval-quality fix
 *before* spending any more effort on model choice or company/history
 expansion.
+
+**8-question re-run, post reranker-fix: still 6/8 passed, 8/8 cited**
+(saved at `eval_results/20260815T223031Z.json`). The reranker fix worked
+exactly as intended — `aapl-msft-employee-comparison` now **PASSES**
+(MSFT's 223,000 figure is retrieved and correctly attributed). But a
+different question flipped from PASS to FAIL, keeping the total at 6/8:
+
+3. **`aapl-msft-tax-rate-comparison` FAILED (new) — a synthesis bug, not
+   a retrieval bug.** The agent reported MSFT's effective tax rate for
+   "the three months ended December 31, 2025" as 18%, when the correct
+   figure (verified in the source filing) is 20%; 18% is actually the
+   rate for a *different* period (nine months ended March 31, 2026) that
+   appeared in a separate retrieved chunk. Confirmed this is NOT a
+   reranker regression: running the agent's likely retrieval query
+   directly (`python retrieval.py "Microsoft effective tax rate three
+   months ended December 31, 2025" --ticker MSFT --n 5`) puts the
+   correct chunk (20%, explicitly for "three and six months ended
+   December 31, 2025") at **rank 1**. The correct number was sitting
+   right there in context. Notably, the *standalone* version of this same
+   question (`msft-tax-rate-q2fy26`, no comparison) still passes and
+   correctly discriminates between all three quarters' rates (20%/19%/18%)
+   present in its context, explicitly reasoning "for the quarter
+   specifically asked... 20%." So the model *can* do this disambiguation
+   — it just doesn't reliably do it when the prompt is also juggling a
+   second company's figures at the same time. Reads as a genuine
+   qwen2.5:7b-instruct synthesis-reliability limit under multi-entity
+   comparison load, distinct from (and not fixed by) the retrieval-side
+   reranker fix. **Not yet fixed.** Also a reminder that `agent.py` runs
+   generation at `temperature: 0.1`, not 0 — some run-to-run variance in
+   exactly which failure surfaces is expected.
+
+**Net effect of the reranker fix:** proven to fix the specific bug it
+targeted (verified three ways: standalone retrieval CLI check, live eval
+re-run, new unit tests), with no regression on the previously-passing
+questions. The pass count staying at 6/8 is not the fix "not working" —
+it's a different, previously-masked bug (comparison-synthesis reliability)
+becoming visible now that the retrieval layer is no longer the
+dominant failure mode. Worth carrying into any future model-swap
+decision: with retrieval now solid, remaining comparison-question
+failures are a cleaner signal on the *model's* synthesis quality.
 
 **Explicitly deferred:** growing this to the full 30-50 question,
 FinanceBench-style set — that requires going back into the actual
@@ -530,25 +610,35 @@ Ingestion + chunking have been run across all 5 companies (25 filings,
 
 ## Immediate next steps
 
-**Top priority — fix the reranker bug found by the 8-question eval run**,
-before anything else in this list. `retrieval.py`'s cross-encoder
-reranking step demotes at least one confirmed-correct chunk out of the
-top 10 (see `eval_harness.py`'s section above for the exact repro
-command), directly causing a fabricated-number-with-real-citation
-failure. This is now the best-understood, most concretely evidenced bug
-in the whole system — worth fixing before company/history expansion or
-any model-swap decision, both of which were explicitly deferred pending
-"real signal," and this is exactly that signal. Options to investigate:
-blending the fused RRF score with the rerank score instead of letting
-rerank fully override ranking, trying a different/larger cross-encoder,
-or increasing `CANDIDATE_POOL_SIZE` so more candidates survive to the
-generation step regardless of rerank order.
+**Reranker bug: FIXED** (see `retrieval.py` and `eval_harness.py`
+sections above) — `_combine_fused_and_rerank()` now takes the MAX of the
+fused-rank and rerank-rank RRF contributions per candidate. Verified via
+unit tests, a live CLI regression check, and a full eval re-run
+(`aapl-msft-employee-comparison` flipped FAIL → PASS, no regressions on
+previously-passing questions).
+
+**Top priority now — investigate the newly-surfaced comparison-synthesis
+bug.** The eval re-run revealed `aapl-msft-tax-rate-comparison` flipping
+PASS → FAIL: the correct MSFT tax-rate chunk is retrieved (confirmed at
+rank 1 via direct retrieval check), but the agent's final synthesis
+picks the wrong quarter's number when a second company's figures are
+also in play — something it does NOT do when asked the same question
+standalone. This looks like a `qwen2.5:7b-instruct` synthesis-reliability
+limit specific to multi-entity comparison prompts, not a retrieval bug.
+Options to investigate: strengthening the system prompt around
+per-period disambiguation when multiple quarters appear in context,
+having the agent do two single-entity look-ups and a separate final
+synthesis step instead of one combined pass, or treating this as the
+long-deferred signal to try a stronger/cloud model for generation
+specifically (retrieval is now solid, so this would be a cleaner test of
+model capability than earlier attempts).
 
 **Second priority — revisit the PLTR refusal question's grading
-criteria.** Not an agent bug: the agent's inference was logically valid,
-the eval criteria was written too strictly for how confidently the agent
-now reasons. Fix the criteria wording (or accept the inference as
-correct behavior and change the expected type), not the agent.
+criteria.** Still open, unaffected by the reranker fix. Not an agent
+bug: the agent's inference was logically valid, the eval criteria was
+written too strictly for how confidently the agent now reasons. Fix the
+criteria wording (or accept the inference as correct behavior and change
+the expected type), not the agent.
 
 **Then — grow `eval_questions.jsonl` beyond 8 questions**, now informed
 by real findings instead of guessing what might break:

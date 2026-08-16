@@ -1,14 +1,16 @@
 """
 Unit tests for retrieval.py. Covers the pure functions only — _tokenize,
-_make_id, and reciprocal_rank_fusion. bm25_search/vector_search/rerank
-require a live Chroma index and downloaded models, so they're exercised
-by manual runs (python retrieval.py "...") documented in
-PROJECT_CONTEXT.md, not here.
+_make_id, reciprocal_rank_fusion, and _combine_fused_and_rerank (the
+ranking-math half of rerank(), split out specifically so it's testable
+without the live cross-encoder). bm25_search/vector_search/rerank's
+model-calling half require a live Chroma index and downloaded models,
+so they're exercised by manual runs (python retrieval.py "...")
+documented in PROJECT_CONTEXT.md, not here.
 """
 
 import pytest
 
-from retrieval import RRF_K, _make_id, _tokenize, reciprocal_rank_fusion
+from retrieval import RRF_K, _combine_fused_and_rerank, _make_id, _tokenize, reciprocal_rank_fusion
 
 
 # ---------------------------------------------------------------------------
@@ -84,3 +86,64 @@ def test_rrf_includes_docs_that_appear_in_only_one_list():
 
 def test_rrf_empty_lists_produce_empty_result():
     assert reciprocal_rank_fusion([[], []]) == []
+
+
+# ---------------------------------------------------------------------------
+# _combine_fused_and_rerank
+# ---------------------------------------------------------------------------
+def _fake_candidate(doc_id: str):
+    """A minimal (doc_id, text, metadata, fused_score) tuple — the fourth
+    element (fused_score) isn't used by _combine_fused_and_rerank, only
+    candidate order matters, so a placeholder is fine."""
+    return (doc_id, f"text for {doc_id}", {"id": doc_id}, 0.0)
+
+
+def test_combine_rescues_a_candidate_great_by_one_signal_but_terrible_by_the_other():
+    # This is the real regression case: a chunk ranked #3 by fused
+    # BM25+vector search (both methods agreed it was relevant) but #6
+    # (last) by the cross-encoder, which — verified empirically — was
+    # scoring it poorly due to being a long, multi-topic passage where
+    # the relevant sentence was diluted among unrelated content. A pure
+    # cross-encoder override, or even a straight RRF-sum of the two
+    # rankings, both still buried this candidate in real testing; only
+    # taking the max of the two RRF contributions rescued it.
+    # Fused order (as passed in) = candidates' list order: target is #2.
+    candidates = [
+        _fake_candidate("good_by_both"),
+        _fake_candidate("target"),
+        _fake_candidate("c"),
+        _fake_candidate("d"),
+        _fake_candidate("e"),
+        _fake_candidate("f"),
+    ]
+    # Cross-encoder scores: "target" scores worst (last), everything else
+    # scores decently — mirrors the real case where several chunks were
+    # merely "OK" by both signals while the target was great-then-terrible.
+    cross_encoder_scores = [0.5, -9.0, 0.6, 0.4, 0.3, 0.2]  # target's score is the outlier
+
+    result = _combine_fused_and_rerank(candidates, cross_encoder_scores, top_n=3)
+    result_ids = [r["metadata"]["id"] for r in result]
+
+    assert "target" in result_ids
+
+
+def test_combine_top_result_favors_agreement_between_both_signals():
+    candidates = [_fake_candidate(cid) for cid in ["a", "b"]]
+    # "a" is fused rank 1; cross-encoder scores put "b" first.
+    cross_encoder_scores = [0.1, 0.9]  # a=0.1 (rank2), b=0.9 (rank1)
+
+    result = _combine_fused_and_rerank(candidates, cross_encoder_scores, top_n=2)
+
+    # a: max(1/(k+1), 1/(k+2)) = 1/(k+1) (its fused rank)
+    # b: max(1/(k+2), 1/(k+1)) = 1/(k+1) (its rerank rank)
+    # Tied under this scoring scheme — both should be present in the top 2.
+    result_ids = {r["metadata"]["id"] for r in result}
+    assert result_ids == {"a", "b"}
+
+
+def test_combine_respects_top_n():
+    candidates = [_fake_candidate(cid) for cid in ["a", "b", "c", "d"]]
+    cross_encoder_scores = [0.4, 0.3, 0.2, 0.1]
+
+    result = _combine_fused_and_rerank(candidates, cross_encoder_scores, top_n=2)
+    assert len(result) == 2

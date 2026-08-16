@@ -193,9 +193,65 @@ def reciprocal_rank_fusion(
 # ---------------------------------------------------------------------------
 # Reranking
 # ---------------------------------------------------------------------------
+def _combine_fused_and_rerank(
+    candidates: list[tuple[str, str, dict, float]], cross_encoder_scores: list[float], top_n: int
+) -> list[dict]:
+    """Pure ranking-math half of rerank() — separated out so it's unit-
+    testable with fake scores, without needing the live cross-encoder.
+
+    Combines the original fused (BM25+vector) ranking with the cross-
+    encoder's ranking by taking, per candidate, the BETTER of the two
+    RRF contributions — not letting the cross-encoder's ranking fully
+    replace the fused one, and (importantly) not simply summing the two
+    either.
+
+    Found by evidence, not by assumption: `cross-encoder/ms-marco-MiniLM-
+    L-6-v2` was trained on short, single-topic MS MARCO web passages
+    (~350 chars average). Our chunks run up to ~3000 chars and are often
+    multi-topic (e.g. one real MSFT chunk covers device competition,
+    gaming, and search ads before finally reaching a "Human Capital
+    Resources" paragraph with the actual employee count). Verified by
+    inspecting the cross-encoder's own tokenized input directly (no
+    truncation was happening — the relevant sentence was fully present)
+    that the model itself, not a truncation bug, was scoring that chunk
+    very low (rank 43 of 48) despite it being rank 3 of 48 in the fused
+    BM25+vector ranking — two independent signals strongly agreed the
+    chunk was relevant, and a single cross-encoder judgment overrode both.
+
+    A first attempt summed the two rankings' RRF contributions (i.e. ran
+    reciprocal_rank_fusion() again, one layer up). That still buried the
+    chunk: several competing chunks were merely *decent* by both signals
+    (e.g. fused rank ~20, rerank rank ~5), and a sum of two OK scores beat
+    one great score (fused rank 5) plus one terrible one (rerank rank 44).
+    Taking the MAX of the two RRF contributions instead means a candidate
+    only needs to be excellent by ONE signal to survive — which is what
+    actually rescued this chunk in testing (confirmed empirically before
+    committing to this over the sum approach, not assumed to be better).
+    """
+    fused_rank = {doc_id: i for i, (doc_id, _, _, _) in enumerate(candidates, start=1)}
+    rerank_rank = {
+        doc_id: i
+        for i, ((doc_id, _, _, _), _) in enumerate(
+            sorted(zip(candidates, cross_encoder_scores), key=lambda pair: pair[1], reverse=True), start=1
+        )
+    }
+
+    def combined_score(doc_id: str) -> float:
+        return max(1.0 / (RRF_K + fused_rank[doc_id]), 1.0 / (RRF_K + rerank_rank[doc_id]))
+
+    ranked = sorted(candidates, key=lambda c: combined_score(c[0]), reverse=True)
+
+    return [
+        {"text": text, "metadata": metadata, "combined_score": combined_score(doc_id)}
+        for doc_id, text, metadata, _fused_score in ranked[:top_n]
+    ]
+
+
 def rerank(query: str, candidates: list[tuple[str, str, dict, float]], top_n: int) -> list[dict]:
-    """Score each (query, passage) pair jointly with a cross-encoder and
-    return the top_n candidates re-sorted by that score."""
+    """Score each (query, passage) pair jointly with a cross-encoder, then
+    combine with the fused ranking via _combine_fused_and_rerank() — see
+    that function's docstring for why a straight override or sum of the
+    two rankings both failed in testing."""
     if not candidates:
         return []
 
@@ -203,13 +259,7 @@ def rerank(query: str, candidates: list[tuple[str, str, dict, float]], top_n: in
     pairs = [(query, text) for _, text, _, _ in candidates]
     scores = model.predict(pairs)
 
-    scored = list(zip(candidates, scores))
-    scored.sort(key=lambda pair: pair[1], reverse=True)
-
-    return [
-        {"text": text, "metadata": metadata, "rerank_score": float(score)}
-        for (doc_id, text, metadata, fused_score), score in scored[:top_n]
-    ]
+    return _combine_fused_and_rerank(candidates, scores, top_n)
 
 
 # ---------------------------------------------------------------------------
@@ -252,7 +302,7 @@ def main():
         print(f"   (filtered to ticker={args.ticker})")
     for i, r in enumerate(results, start=1):
         meta = r["metadata"]
-        score = r.get("rerank_score", r.get("fused_score"))
+        score = r.get("combined_score", r.get("fused_score"))
         table_flag = "[TABLE]" if meta.get("contains_table") else "[prose]"
         preview = r["text"].replace("\n", " ")[:250]
         print(
