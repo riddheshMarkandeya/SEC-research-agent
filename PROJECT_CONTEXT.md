@@ -498,6 +498,76 @@ dominant failure mode. Worth carrying into any future model-swap
 decision: with retrieval now solid, remaining comparison-question
 failures are a cleaner signal on the *model's* synthesis quality.
 
+**Comparison-synthesis bug — root cause and fix (see `agent.py` section
+below for the code).** Reproduced `aapl-msft-tax-rate-comparison` live
+with `agent.py --verbose` and found it was actually two compounding
+issues, not one:
+
+1. **Query-formulation fragility.** The agent's own tool-call query for
+   MSFT was `'effective tax rate Microsoft Corporation Q4 2025'` — a
+   garbled, self-invented period label — which buried the correct
+   Dec-2025 10-Q chunk near the bottom of the MSFT results while three
+   *annual* 10-K tax-rate chunks crowded the front. **First attempted
+   fix (system prompt rule: "include the exact date in your query")
+   partially backfired** — it fixed MSFT (whose filings restate exact
+   dates in prose: "three and six months ended December 31, 2025") but
+   broke AAPL (whose filings describe periods as "the third quarter of
+   2026," never repeating the literal calendar date — the literal date
+   only appears in unrelated financial-statement table headers, which
+   the more literal query then over-matched instead). No single
+   query-phrasing instruction generalized across both companies' filing
+   styles. **What actually worked, tested directly against both
+   companies:** using the user's own original question text as the
+   search query (untouched by the model) got the correct chunk to rank
+   #1 for *both* AAPL and MSFT, standalone and in the comparison. Implemented
+   as a `_resolve_search_args()` change: the model's own `query` text is
+   now only trusted on a *retry* against a ticker already searched once
+   in the conversation (`searched_tickers` tracks this in `run_agent()`)
+   — the first search against each company always uses the original
+   question verbatim, regardless of what query the model supplies.
+2. **Same-sentence current-vs-prior-year confusion.** Even after query
+   formulation was fixed and the correct chunk was retrieved prominently,
+   the model still sometimes misread it: the source sentence is "Our
+   effective tax rate was 20% for... December 31, 2025, and 18% for...
+   December 31, 2024" — one sentence, two periods — and the model
+   grabbed the prior-year clause instead of the current one. This is a
+   comprehension issue, not a retrieval one; no chunk-ranking fix can
+   address it. Fixed by sharpening the system prompt's period-matching
+   rule with a concrete same-sentence example ("the rate was 20% for the
+   current quarter, and 18% for the same quarter last year") rather than
+   only warning about tables. Verified stable across 3 repeated runs of
+   the same question (temperature is 0.1, so some sampling variance is
+   expected; all 3 completed runs got the current-period value right).
+
+**Final 8-question re-run, both fixes applied: 7/8 passed, 8/8 cited**
+(saved at `eval_results/20260816T073528Z.json`) — the best result yet.
+Both `aapl-msft-tax-rate-comparison` and `aapl-msft-employee-comparison`
+pass, the standalone `msft-tax-rate-q2fy26` regression introduced by an
+earlier interim version of the fix (see below) is resolved, and none of
+the other four questions regressed. The sole failure,
+`pltr-dividend-2019-refusal`, is the same already-documented
+grading-criteria issue — confirmed the agent's actual answer text is
+unchanged from prior runs (still correctly refuses to state a dividend
+figure); this run's judge flagged it for an unrelated reason ("provides
+specific EPS figures, which implies dividend information indirectly" —
+EPS and dividends aren't the same thing, a judge-quality quirk, not an
+agent behavior change).
+
+**A worthwhile detour, kept here rather than erased, because the
+mid-course correction is itself the lesson:** an interim version of this
+fix (system-prompt rules only, no query override) got
+`aapl-msft-tax-rate-comparison` to pass but broke the previously-solid
+standalone `msft-tax-rate-q2fy26` — removing the query-precision
+instruction (because it had broken AAPL) let MSFT's query formulation
+drift vague again, and with only one search's worth of results (5 chunks,
+vs. 10 in a comparison question) there was no second search's results to
+fall back on, so the correct chunk missed the top 5 entirely. This is
+what motivated moving the fix from "tell the model how to phrase its
+query" (fragile, company-dependent) to "don't let the model's phrasing
+matter for the first search" (the `_resolve_search_args` override) —
+each version was tested against the real failing case before being
+accepted, not assumed correct from reasoning alone.
+
 **Explicitly deferred:** growing this to the full 30-50 question,
 FinanceBench-style set — that requires going back into the actual
 filings to find and verify ground truth, which is real research work,
@@ -538,6 +608,26 @@ caller deciding upfront.
   `_resolve_search_args()` falls back to the original question in that
   case rather than searching on an empty string or crashing — schemas
   are a strong hint to the model, not a guarantee.
+- **The model's own search query is only trusted on a retry, not the
+  first search against a company** (`_resolve_search_args()`'s
+  `searched_tickers` parameter, `run_agent()`'s `searched_tickers` set).
+  Added after diagnosing a real comparison-question failure down to the
+  model's self-written first-pass queries: they were prone to being
+  either too vague (dropping the exact date/period a question named,
+  burying the correct chunk among decoys) or, when the system prompt
+  instead told the model to include exact dates, too literal (a query
+  containing "June 27, 2026" over-matched an unrelated financial-
+  statement table that repeats that date as a column header, instead of
+  the tax-rate paragraph that never repeats it in prose). Different
+  companies phrase the same fact differently in their own filings, so no
+  single query-phrasing instruction generalized. What did generalize,
+  tested directly: using the user's own original question as the query
+  retrieved the correct chunk for every case tried. The first search
+  against each not-yet-searched ticker now always uses the original
+  question verbatim; a genuine retry (the model deciding its first
+  search against an already-searched company came up short) still gets
+  to use the model's own reworded query. See `eval_harness.py`'s section
+  below for the full diagnosis and evidence.
 - **Company name resolution is baked into the system prompt** (a static
   ticker → company-name table for the 5 covered companies), not a
   separate tool call — five static facts don't justify a round trip,
@@ -617,28 +707,39 @@ unit tests, a live CLI regression check, and a full eval re-run
 (`aapl-msft-employee-comparison` flipped FAIL → PASS, no regressions on
 previously-passing questions).
 
-**Top priority now — investigate the newly-surfaced comparison-synthesis
-bug.** The eval re-run revealed `aapl-msft-tax-rate-comparison` flipping
-PASS → FAIL: the correct MSFT tax-rate chunk is retrieved (confirmed at
-rank 1 via direct retrieval check), but the agent's final synthesis
-picks the wrong quarter's number when a second company's figures are
-also in play — something it does NOT do when asked the same question
-standalone. This looks like a `qwen2.5:7b-instruct` synthesis-reliability
-limit specific to multi-entity comparison prompts, not a retrieval bug.
-Options to investigate: strengthening the system prompt around
-per-period disambiguation when multiple quarters appear in context,
-having the agent do two single-entity look-ups and a separate final
-synthesis step instead of one combined pass, or treating this as the
-long-deferred signal to try a stronger/cloud model for generation
-specifically (retrieval is now solid, so this would be a cleaner test of
-model capability than earlier attempts).
+**Comparison-synthesis bug: FIXED** (see `agent.py` and `eval_harness.py`
+sections above). Root cause was two compounding issues, not one: the
+agent's self-written search queries were unreliable in company-dependent
+ways (too vague for MSFT, too literal for AAPL once "include the exact
+date" was tried), and separately the model sometimes misread a
+current-vs-prior-year figure sitting in the same sentence. Fixed by (1)
+having `_resolve_search_args()` ignore the model's own query on the
+first search against each company and always use the original question
+instead (a retry against an already-searched company still uses the
+model's query), and (2) sharpening the system prompt's period-matching
+rule with a concrete same-sentence example. Final eval: **7/8 passed,
+8/8 cited** (`eval_results/20260816T073528Z.json`) — both target
+comparison questions pass, no regressions elsewhere.
 
-**Second priority — revisit the PLTR refusal question's grading
-criteria.** Still open, unaffected by the reranker fix. Not an agent
-bug: the agent's inference was logically valid, the eval criteria was
-written too strictly for how confidently the agent now reasons. Fix the
-criteria wording (or accept the inference as correct behavior and change
-the expected type), not the agent.
+**Top priority now — revisit the PLTR refusal question's grading
+criteria.** The only remaining failure, and unrelated to anything fixed
+this session. Not an agent bug: the agent's answer is unchanged across
+every run so far (correctly refuses to state a 2019 dividend figure,
+grounded in real citations) — it's the LLM-as-judge that's inconsistent
+about whether this counts as satisfying the criteria (one run's judge
+even flagged unrelated EPS figures as if they implied dividend
+information). Worth either rewording the criteria to be less ambiguous
+for a judge, or replacing `"judged"` grading with a `"numeric"`-style
+refusal check for this question (e.g. assert no dollar figure resembling
+a per-share dividend appears at all) so it doesn't depend on judge mood.
+
+**Second priority — now that both diagnosed retrieval/synthesis bugs are
+fixed, this is a natural point to decide on `qwen2.5:7b-instruct` vs. a
+stronger/cloud model for generation**, if a future eval run (post
+question-set growth) keeps surfacing comprehension-level failures that
+prompt tuning can't reach. Not urgent right now — the last eval run
+found nothing that pointed at a capability ceiling, only fixable pipeline
+issues — but worth keeping in mind as the next lever if that changes.
 
 **Then — grow `eval_questions.jsonl` beyond 8 questions**, now informed
 by real findings instead of guessing what might break:

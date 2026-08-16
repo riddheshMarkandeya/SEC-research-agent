@@ -57,7 +57,8 @@ Rules:
 1. Every factual or numeric claim in your final answer must end with a citation marker like [1] or [2] referring to a search result.
 2. If your searches don't turn up enough information to answer, say so explicitly rather than guessing.
 3. Do not combine or infer numbers that don't appear directly in a search result (e.g. don't compute a total unless a result states it).
-4. Resolve company names to the right ticker yourself (e.g. "Salesforce" -> CRM) — don't ask the user to clarify."""
+4. Resolve company names to the right ticker yourself (e.g. "Salesforce" -> CRM) — don't ask the user to clarify.
+5. Search results often report the same metric for several different periods in one excerpt — not just in tables, but within a single sentence, e.g. "the rate was 20% for the current quarter, and 18% for the same quarter last year." Before citing a number, check that its stated period exactly matches the period asked about, even when both numbers appear right next to each other in the same sentence — do not substitute a prior-year or prior-quarter value just because it's nearby."""
 
 SEARCH_TOOL_SCHEMA = {
     "type": "function",
@@ -69,7 +70,7 @@ SEARCH_TOOL_SCHEMA = {
             "properties": {
                 "query": {
                     "type": "string",
-                    "description": "What to search for, as a natural-language question or phrase.",
+                    "description": "What to search for, as a natural-language question or phrase. Only used for a follow-up search against a company you've already searched — the first search against each company always uses the user's original question.",
                 },
                 "ticker": {
                     "type": "string",
@@ -83,15 +84,36 @@ SEARCH_TOOL_SCHEMA = {
 }
 
 
-def _resolve_search_args(args: dict, fallback_query: str) -> tuple[str, str | None]:
-    """The model doesn't always include every schema-declared argument —
+def _resolve_search_args(
+    args: dict, fallback_query: str, searched_tickers: set[str | None]
+) -> tuple[str, str | None]:
+    """Extract (query, ticker) from a tool call's arguments.
+
+    The model doesn't always include every schema-declared argument —
     observed in testing: it sometimes calls search_filings with only
     `ticker` and no `query`, despite `query` being marked required.
-    Fall back to the original question rather than search on an empty
-    string or crash on a missing key."""
-    query = args.get("query") or fallback_query
+
+    The model's own `query` text is only trusted on a *retry* against a
+    ticker already searched earlier in this conversation
+    (`searched_tickers`). The first search against each company always
+    uses the original question verbatim instead. Found by testing, not
+    assumed: the model's self-written first-pass queries were the direct
+    cause of two separate eval failures — a too-vague query ("Microsoft
+    ... Q4 2025") buried the correct chunk among annual-report decoys,
+    while a too-literal one (the exact calendar date) over-matched an
+    unrelated financial-statement table instead of the prose paragraph
+    that never repeats that date. Different companies phrase the same
+    fact differently in their filings, so no single query-phrasing
+    instruction generalized across both — but the user's own original
+    question, which already contains the metric name and the period in
+    their own words, retrieved the right chunk in every case tested. A
+    retry search (the model deciding its first attempt came up short)
+    still gets to use its own query, since that's a deliberate
+    refinement rather than a first guess."""
     ticker = args.get("ticker")
-    return query, ticker
+    if ticker not in searched_tickers:
+        return fallback_query, ticker
+    return args.get("query") or fallback_query, ticker
 
 
 def _format_results_block(results: list[dict], start_index: int) -> str:
@@ -165,6 +187,7 @@ def run_agent(question: str, verbose: bool = False) -> tuple[str, list[dict]]:
         {"role": "user", "content": question},
     ]
     all_results: list[dict] = []
+    searched_tickers: set[str | None] = set()
 
     for _ in range(MAX_TOOL_ITERATIONS):
         message = _call_ollama(messages)
@@ -176,7 +199,10 @@ def run_agent(question: str, verbose: bool = False) -> tuple[str, list[dict]]:
         messages.append(message)
 
         for call in tool_calls:
-            query, ticker = _resolve_search_args(call["function"]["arguments"], fallback_query=question)
+            query, ticker = _resolve_search_args(
+                call["function"]["arguments"], fallback_query=question, searched_tickers=searched_tickers
+            )
+            searched_tickers.add(ticker)
             if verbose:
                 print(f"  [tool call] search_filings(query={query!r}, ticker={ticker!r})")
 

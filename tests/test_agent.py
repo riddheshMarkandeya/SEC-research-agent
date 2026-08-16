@@ -12,28 +12,53 @@ from agent import _format_citation_key, _format_results_block, _resolve_search_a
 # ---------------------------------------------------------------------------
 # _resolve_search_args
 # ---------------------------------------------------------------------------
-def test_resolve_search_args_uses_provided_query_and_ticker():
-    query, ticker = _resolve_search_args({"query": "RPO", "ticker": "CRM"}, fallback_query="fallback")
+def test_resolve_search_args_uses_model_query_on_retry_against_same_ticker():
+    # "CRM" is already in searched_tickers, so this counts as a retry —
+    # the model's own query is trusted.
+    query, ticker = _resolve_search_args(
+        {"query": "RPO", "ticker": "CRM"}, fallback_query="fallback", searched_tickers={"CRM"}
+    )
     assert query == "RPO"
     assert ticker == "CRM"
 
 
-def test_resolve_search_args_falls_back_when_query_missing():
+def test_resolve_search_args_ignores_model_query_on_first_search_against_a_ticker():
+    # This is the regression case: testing showed the model's own
+    # first-pass query text (too vague or too literal, depending on how
+    # that company's filings happen to phrase things) was the direct
+    # cause of two eval failures. The first search against a not-yet-
+    # searched ticker must use the original question regardless of what
+    # query the model supplied, even when it supplied a "reasonable"
+    # looking one.
+    query, ticker = _resolve_search_args(
+        {"query": "effective tax rate Q4 2025", "ticker": "MSFT"},
+        fallback_query="original question",
+        searched_tickers=set(),
+    )
+    assert query == "original question"
+    assert ticker == "MSFT"
+
+
+def test_resolve_search_args_falls_back_when_query_missing_even_on_retry():
     # This is the real behavior observed from qwen2.5:7b-instruct: it
     # sometimes calls the tool with only `ticker`, no `query`, despite
     # `query` being schema-required.
-    query, ticker = _resolve_search_args({"ticker": "CRM"}, fallback_query="original question")
+    query, ticker = _resolve_search_args(
+        {"ticker": "CRM"}, fallback_query="original question", searched_tickers={"CRM"}
+    )
     assert query == "original question"
     assert ticker == "CRM"
 
 
 def test_resolve_search_args_ticker_is_none_when_absent():
-    query, ticker = _resolve_search_args({"query": "something"}, fallback_query="fallback")
+    query, ticker = _resolve_search_args(
+        {"query": "something"}, fallback_query="fallback", searched_tickers={"something-else"}
+    )
     assert ticker is None
 
 
 def test_resolve_search_args_empty_args_falls_back_entirely():
-    query, ticker = _resolve_search_args({}, fallback_query="original question")
+    query, ticker = _resolve_search_args({}, fallback_query="original question", searched_tickers=set())
     assert query == "original question"
     assert ticker is None
 
