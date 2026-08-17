@@ -33,6 +33,7 @@ import requests
 from answer import MODEL_NAME, OLLAMA_URL
 from companies import load_companies
 from retrieval import hybrid_search
+from xbrl_facts import get_gross_margin, get_metric, DEFAULT_METRIC_TAGS
 
 MAX_TOOL_ITERATIONS = 6
 CHUNKS_PER_SEARCH = 5
@@ -51,14 +52,19 @@ COMPANIES = {ticker: info["name"] for ticker, info in load_companies().items()}
 SYSTEM_PROMPT = f"""You are a financial research assistant answering questions about SEC filings for five companies:
 {chr(10).join(f"- {ticker}: {name}" for ticker, name in COMPANIES.items())}
 
-You have a `search_filings` tool that searches these companies' 10-K/10-Q filings. Use it to find the information you need before answering — call it once per company if a question spans more than one, and call it again with a different query if your first search doesn't turn up what you need. Do not answer from prior knowledge about these companies; every answer must come from what the tool returns.
+You have two tools:
+- `get_financial_fact` searches structured XBRL data for a small set of standard financial metrics: {", ".join(sorted(DEFAULT_METRIC_TAGS)) + ", gross_margin"}. Prefer this tool FIRST whenever the question asks for one of these specific metrics for a specific fiscal year or fiscal quarter — it returns an exact, unambiguous reported value instead of relying on you to find the right sentence in a filing excerpt. It only works for these metrics and returns "not available" if the company doesn't tag it or the period wasn't recognized — fall back to `search_filings` when that happens, or for anything this tool doesn't cover (risk factors, narrative discussion, any metric not in the list above).
+- `search_filings` searches these companies' 10-K/10-Q filings for anything else. Call it once per company if a question spans more than one, and call it again with a different query if your first search doesn't turn up what you need.
+
+Do not answer from prior knowledge about these companies; every answer must come from what a tool returns.
 
 Rules:
 1. Every factual or numeric claim in your final answer must end with a citation marker like [1] or [2] referring to a search result.
 2. If your searches don't turn up enough information to answer, say so explicitly rather than guessing.
-3. Do not combine or infer numbers that don't appear directly in a search result (e.g. don't compute a total unless a result states it).
+3. Do not combine or infer numbers that don't appear directly in a search result (e.g. don't compute a total unless a result states it) — this does not apply to `get_financial_fact`'s own output, which is already a single reported or tool-computed value.
 4. Resolve company names to the right ticker yourself (e.g. "Salesforce" -> CRM) — don't ask the user to clarify.
-5. Search results often report the same metric for several different periods in one excerpt — not just in tables, but within a single sentence, e.g. "the rate was 20% for the current quarter, and 18% for the same quarter last year." Before citing a number, check that its stated period exactly matches the period asked about, even when both numbers appear right next to each other in the same sentence — do not substitute a prior-year or prior-quarter value just because it's nearby."""
+5. Search results often report the same metric for several different periods in one excerpt — not just in tables, but within a single sentence, e.g. "the rate was 20% for the current quarter, and 18% for the same quarter last year." Before citing a number, check that its stated period exactly matches the period asked about, even when both numbers appear right next to each other in the same sentence — do not substitute a prior-year or prior-quarter value just because it's nearby.
+6. For a question spanning multiple companies, you must query EVERY company mentioned — with `search_filings` if `get_financial_fact` didn't cover it — before writing your final answer. A `get_financial_fact` call returning "not available" for one company is not a reason to stop; it means try `search_filings` for that same company next, and you must still go on to query every other company the question asks about. Do not conclude a company's data is unavailable unless you have actually searched for it."""
 
 SEARCH_TOOL_SCHEMA = {
     "type": "function",
@@ -79,6 +85,51 @@ SEARCH_TOOL_SCHEMA = {
                 },
             },
             "required": ["query"],
+        },
+    },
+}
+
+FACT_TOOL_SCHEMA = {
+    "type": "function",
+    "function": {
+        "name": "get_financial_fact",
+        "description": (
+            "Look up an exact structured value for one standard financial metric, for one "
+            "company and one period. Specify the period ONE of two ways: (a) if the question "
+            "gives a specific calendar date (e.g. 'the quarter ended April 26, 2026'), pass "
+            "period_end_date and leave fiscal_year/fiscal_period out -- the tool converts it to "
+            "the company's own fiscal labeling for you, which you should NOT try to compute "
+            "yourself (a calendar date can fall in a different fiscal year than its calendar "
+            "year for these companies). (b) if the question already states the period in fiscal "
+            "terms (e.g. 'fiscal year 2026', 'the third quarter of fiscal year 2026'), pass "
+            "fiscal_year and fiscal_period directly instead. Returns null if the company doesn't "
+            "tag this metric or the period isn't recognized -- fall back to search_filings when "
+            "that happens."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "ticker": {"type": "string", "enum": list(COMPANIES.keys())},
+                "metric": {
+                    "type": "string",
+                    "enum": sorted(DEFAULT_METRIC_TAGS) + ["gross_margin"],
+                    "description": "Which metric to fetch. gross_margin is computed as gross_profit/revenue and returned as a percent; the rest are returned in USD.",
+                },
+                "period_end_date": {
+                    "type": "string",
+                    "description": "A calendar date 'YYYY-MM-DD' from the question (e.g. the quarter- or fiscal-year-end date stated). Preferred whenever the question states an actual date -- do not convert it to a fiscal year yourself.",
+                },
+                "fiscal_year": {
+                    "type": "integer",
+                    "description": "Only use this when the question states a fiscal year directly instead of a calendar date. The fiscal year as the company itself labels it -- do not guess this from a calendar date, use period_end_date instead.",
+                },
+                "fiscal_period": {
+                    "type": "string",
+                    "enum": ["FY", "Q1", "Q2", "Q3", "Q4"],
+                    "description": "Only used together with fiscal_year. FY for a full fiscal year (from the 10-K), or Q1/Q2/Q3 for a quarter (from a 10-Q). Q4 is not separately available for most of these companies -- fall back to search_filings for Q4-specific figures.",
+                },
+            },
+            "required": ["ticker", "metric"],
         },
     },
 }
@@ -133,6 +184,47 @@ def _format_results_block(results: list[dict], start_index: int) -> str:
     return "\n\n".join(blocks)
 
 
+def _call_get_financial_fact(args: dict) -> dict | None:
+    """This is a real system boundary, not just an internal call — the
+    model doesn't reliably respect the schema. Found live: asked for
+    "effective tax rate" (not a supported metric, not in the schema's
+    enum) and called this with metric omitted entirely rather than
+    picking a valid enum value or skipping the tool, which crashed the
+    whole run with an unhandled ValueError from xbrl_facts._tag_for
+    before this guard existed. Same class of issue as
+    _resolve_search_args's docstring above (the model doesn't always
+    include every schema-declared argument) — validate here, at the
+    boundary, rather than trusting the schema was followed."""
+    ticker = args.get("ticker")
+    metric = args.get("metric")
+    if ticker not in COMPANIES or (metric not in DEFAULT_METRIC_TAGS and metric != "gross_margin"):
+        return None
+    fiscal_year = args.get("fiscal_year")
+    fiscal_period = args.get("fiscal_period", "FY")
+    period_end_date = args.get("period_end_date")
+    if metric == "gross_margin":
+        return get_gross_margin(ticker, fiscal_year, fiscal_period, period_end_date)
+    return get_metric(ticker, metric, fiscal_year, fiscal_period, period_end_date)
+
+
+def _fact_as_result(fact: dict, args: dict) -> dict:
+    """Wrap a get_financial_fact value in the same {text, metadata} shape
+    hybrid_search results use, so it can share all_results/citation-key
+    handling uniformly with search_filings results instead of needing a
+    parallel code path."""
+    return {
+        "text": f"{args['metric']} = {fact['value']} {fact['unit']} (structured XBRL data, not filing prose)",
+        "metadata": {
+            "ticker": args["ticker"],
+            "form": fact["form"],
+            "filingDate": fact.get("filed") or fact["period_end"],
+            "reportDate": fact["period_end"],
+            "accessionNumber": fact["accession"],
+            "chunk_index": "xbrl",
+        },
+    }
+
+
 def _format_citation_key(all_results: list[dict]) -> str:
     lines = []
     for i, r in enumerate(all_results, start=1):
@@ -151,7 +243,7 @@ def _call_ollama(messages: list[dict]) -> dict:
         json={
             "model": MODEL_NAME,
             "messages": messages,
-            "tools": [SEARCH_TOOL_SCHEMA],
+            "tools": [FACT_TOOL_SCHEMA, SEARCH_TOOL_SCHEMA],
             "stream": False,
             # Ollama defaults to a 4096-token context window regardless of
             # what the model actually supports, which is dangerously small
@@ -199,8 +291,29 @@ def run_agent(question: str, verbose: bool = False) -> tuple[str, list[dict]]:
         messages.append(message)
 
         for call in tool_calls:
+            name = call["function"]["name"]
+            args = call["function"]["arguments"]
+
+            if name == "get_financial_fact":
+                if verbose:
+                    print(f"  [tool call] get_financial_fact({args!r})")
+                fact = _call_get_financial_fact(args)
+                if fact is None:
+                    content = (
+                        f"(no structured data found for metric={args.get('metric')!r} "
+                        f"ticker={args.get('ticker')!r} {args.get('fiscal_period')!r} "
+                        f"FY{args.get('fiscal_year')!r} — try search_filings instead)"
+                    )
+                else:
+                    start_index = len(all_results) + 1
+                    result = _fact_as_result(fact, args)
+                    all_results.append(result)
+                    content = _format_results_block([result], start_index)
+                messages.append({"role": "tool", "content": content})
+                continue
+
             query, ticker = _resolve_search_args(
-                call["function"]["arguments"], fallback_query=question, searched_tickers=searched_tickers
+                args, fallback_query=question, searched_tickers=searched_tickers
             )
             searched_tickers.add(ticker)
             if verbose:

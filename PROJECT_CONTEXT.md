@@ -438,6 +438,112 @@ Both bugs are still open as of this writing.
   self-description pattern found for those specific filings — not
   evidence of a problem, just no independent check available for them).
 
+### `xbrl_facts.py` — structured-facts tool, actually fixes the two retrieval-precision bugs (Week 5b)
+
+Where the `period_labels.py` retrieval fix above failed, this succeeds:
+both `nvda-gross-margin-fy26` and `msft-rd-expense-q3fy26` are numbers
+that live in unstructured prose competing against near-duplicate
+boilerplate, but they're also GAAP concepts SEC filers tag as
+**structured XBRL data** — fetchable directly by company + concept +
+period, sidestepping the retrieval-collision problem entirely instead
+of trying to out-rank the decoys. `agent.py` now has a second tool,
+`get_financial_fact`, alongside `search_filings`.
+
+- **Endpoint**: SEC's `companyconcept` API
+  (`data.sec.gov/api/xbrl/companyconcept/CIK{cik}/us-gaap/{tag}.json`)
+  — one concept, one company, full history — not the much larger
+  `companyfacts` endpoint (every concept a company has ever tagged),
+  since a single tool call should fetch one metric.
+- **Metric-to-tag mapping** (`DEFAULT_METRIC_TAGS` /
+  `METRIC_TAG_OVERRIDES`): friendly names (`revenue`, `gross_profit`,
+  `cost_of_revenue`, `rd_expense`, `net_income`) map to real GAAP tags.
+  `gross_margin` isn't a GAAP tag at all (percentages are prose/MD&A,
+  not structured facts) — computed inside the tool from
+  `GrossProfit`/`Revenues` instead of returned raw for the model to
+  divide, so `agent.py`'s "don't infer/combine numbers" rule doesn't
+  need to be relaxed for this tool's output.
+- **Period-entry disambiguation** (`_pick_entry`): the part with real
+  bug risk, structurally the same class of problem as the retrieval
+  period-matching bugs above. A `companyconcept` response isn't
+  one-entry-per-period — a single 10-K/10-Q re-reports 2-3 years of
+  comparative data under the identical `fy`/`fp` label, and a 10-Q
+  additionally reports both the 3-month figure AND the 9-month
+  year-to-date figure under that same label. Disambiguated by duration
+  (quarter ≈80-100 days, year ≈350-380 days) then taking the entry with
+  the latest `end` date. Verified against real captured NVDA/MSFT data
+  in `tests/test_xbrl_facts.py`, not synthetic fixtures.
+- **Result: `nvda-gross-margin-fy26` and `msft-rd-expense-q3fy26` both
+  PASS** with exact values (71.1%, $8,915M) — confirmed via direct
+  live `agent.py` runs before trusting the eval number. Full suite:
+  **16/16**, up from the 14/16 baseline, no regressions.
+
+**Five real bugs found and fixed along the way — kept as documented
+lessons, same discipline as the reverted `period_labels.py` episode
+above:**
+
+1. **Fiscal-year arithmetic the model can't do reliably.** For a
+   comparison question phrased with a calendar date ("the quarter ended
+   April 26, 2026"), the model passed `fiscal_year=2026` directly (the
+   calendar year) instead of realizing NVDA's January fiscal year end
+   means that date falls in fiscal year 2027 — a WRONG-BUT-VALID period
+   match (fy=2026/Q1 exists, just for the wrong, year-earlier quarter),
+   so it failed silently instead of erroring. Reproduced live via
+   `agent.py --verbose` before fixing. **Fix:** added `period_end_date`
+   as an alternative tool input, resolved via `resolve_fiscal_period()`
+   which reuses `period_labels.py`'s `fiscal_year_label()`/
+   `fiscal_quarter()` — the exact "future, more targeted application"
+   flagged as a possibility when that module's embedding-prefix use was
+   reverted above. The model is told explicitly not to compute this
+   itself.
+2. **Wrong revenue tag default.** Checking only HTTP status codes (200
+   vs. 404) on each concept URL suggested `Revenues` worked for
+   AAPL/MSFT/NVDA/CRM. But a 200 only means a company has *ever* tagged
+   a concept, not that it still does in *recent* filings — checking the
+   actual latest entry per company showed AAPL's `Revenues` data stops
+   in 2018 and MSFT's in 2011 (both switched to the more specific ASC
+   606 tag, `RevenueFromContractWithCustomerExcludingAssessedTax`,
+   years ago); CRM's most recent quarter had the same gap. NVDA is the
+   actual outlier, still actively using plain `Revenues` (and NVDA's
+   own past use of the ASC 606 tag stops in 2022, so it can't be the
+   shared default either). **Fix:** swapped the default to the ASC 606
+   tag, made NVDA the sole override — no single tag works for all five
+   companies.
+3. **Unhandled crash on an unsupported metric.** Asked for "effective
+   tax rate" (not in the tool's metric enum); the model called the tool
+   anyway with `metric` omitted entirely rather than skipping it, which
+   crashed the whole eval run with an unhandled `ValueError` from deep
+   inside `_tag_for`. **Fix:** a boundary guard in `agent.py`'s
+   `_call_get_financial_fact` — same category as `_resolve_search_args`'s
+   established lesson that the model doesn't reliably respect the
+   schema; validate at the boundary, don't trust it.
+4. **Unhandled crash on an empty-string date.** For a question with no
+   specific calendar date ("total revenue for 2025"), the model called
+   the tool with `period_end_date=""` instead of omitting it, crashing
+   `date.fromisoformat`. **Fix:** treat a falsy `period_end_date` as
+   "not provided" (falls back to `fiscal_year`/`fiscal_period`), plus a
+   `try/except ValueError` as defense-in-depth for a malformed-but-
+   non-empty date the model might send instead.
+5. **Comparison questions silently incomplete.** After
+   `get_financial_fact` returned "not available" for one company (e.g.
+   AAPL, for the unsupported tax-rate metric), the model sometimes just
+   stopped — never called `search_filings` for the *second* company in
+   the comparison either, and answered as if that company's data simply
+   didn't exist, rather than treating the null result as "try
+   `search_filings` for this company, then continue to the next one."
+   **Fix:** an explicit new system-prompt rule requiring every company
+   in a multi-company question to be queried before answering. Reduces
+   but doesn't provably eliminate the risk — re-verified correct across
+   multiple live repro runs at the model's configured temperature (0.1,
+   not 0, so some run-to-run variance is expected) before trusting the
+   fix.
+
+**Known, deliberately out-of-scope limitation:** NVIDIA (and most
+annual filers) don't separately tag a standalone Q4 duration — Q4 is
+implicitly "FY minus the three 10-Q quarters," not a directly reported
+concept. `fiscal_period="Q4"` returns `None` for such companies,
+falling back to `search_filings`; not solved here since no current eval
+question needs it.
+
 ### `answer.py` (Week 3) — working, v0 prototype
 
 Retrieves via `hybrid_search()`, feeds numbered excerpts to a local LLM
@@ -933,32 +1039,49 @@ comprehension.
 above.** Prepending a computed period label to each chunk's
 embedded/tokenized text produced a net regression on the full eval
 suite (14/16 → 13/16: neither original target flipped to PASS, and a
-previously-passing question newly failed) and was reverted. Both bugs
-are still open. **Both remain currently open — next planned angle is
-different in kind, not another retrieval-ranking tweak:** add a second
-agent tool (`xbrl_facts.py`, in scoping now) that fetches these
-specific numbers directly from SEC's structured XBRL
-`companyconcept` API instead of relying on unstructured-text retrieval
-to find them at all. Both failing questions ask for numbers that are
-almost certainly tagged GAAP concepts (NVIDIA's `Revenues` and
-`GrossProfit`; Microsoft's `ResearchAndDevelopmentExpense`) — sidestepping
-the retrieval-collision problem entirely for this class of question,
-rather than trying to out-rank the decoys. Scoped design: `companyconcept`
-endpoint (one concept, full history, cheaper than `companyfacts`); a
-verified per-company GAAP-tag map (checked against real tag names, not
-assumed — same discipline as `fiscal_year_end_month`); period matching
-filtered on `end`/`form`/`fp`/`fy`, since a concept's history contains
-duplicate/restated entries per quarter, structurally the same pitfall as
-the retrieval-period-matching bugs above; the tool computes known
-derived ratios itself (e.g. gross margin % from `GrossProfit`/`Revenues`)
-rather than returning raw dollar figures for the model to divide, so
-`agent.py`'s existing "don't infer/combine numbers" rule doesn't need to
-be relaxed; falls back to `search_filings` when a concept isn't tagged
-for a company, so it's additive, not a replacement.
-- Worth deferring model-swap questions until after this, since both new
-  failures are demonstrably retrieval-path gaps (verified: the correct
-  content isn't even in the top-25 fused candidates for one, and loses a
-  close fusion race for the other), not generation-quality gaps
+previously-passing question newly failed) and was reverted.
+
+**Second attempted fix — succeeded: see `xbrl_facts.py` section
+above.** A second agent tool (`get_financial_fact`) fetches these
+specific numbers directly from SEC's structured XBRL `companyconcept`
+API instead of relying on unstructured-text retrieval to find them at
+all — sidestepping the retrieval-collision problem entirely rather than
+trying to out-rank the decoys. **Both `nvda-gross-margin-fy26` and
+`msft-rd-expense-q3fy26` now PASS.** Full suite: **16/16**, up from
+14/16, confirmed with no regressions. Five real bugs were found and
+fixed along the way (fiscal-year-from-calendar-date arithmetic, wrong
+revenue tag default, two unhandled crashes on malformed tool-call
+arguments, and a multi-company comparison-completeness gap) — see the
+`xbrl_facts.py` section for full detail on each.
+
+**Next — three follow-up ideas approved but not yet built**, in rough
+priority order:
+1. **`frames` API for cross-company queries.** A fourth SEC XBRL
+   endpoint beyond `submissions`/`companyconcept`/`companyfacts`:
+   `frames/us-gaap/{tag}/USD/CY2026Q1.json` returns one concept for
+   *every* company that reported it in one period, in a single call.
+   Useful for "which of our 5 companies had the best gross margin this
+   quarter" — today that's 5 sequential `companyconcept` calls; with
+   `frames` it's 1. Add as a second function in `xbrl_facts.py` once
+   the current tool has more mileage on it, not before.
+2. **Curated, tool-computed formula registry beyond `gross_margin`.**
+   Deliberately not a general-purpose calculator the model can point at
+   any two numbers — that reopens exactly the failure mode `agent.py`'s
+   "don't combine numbers" rule exists to prevent, and makes eval
+   failures harder to diagnose (retrieval bug vs. bad arithmetic?).
+   Instead, extend the pattern `get_gross_margin` already establishes:
+   a small, named, tool-computed ratio per metric (operating margin, net
+   margin, YoY revenue growth), each verified once against real filing
+   figures the way gross margin was checked against NVIDIA's actual
+   71.1%.
+3. **Cheap citation-verification pass.** After the model writes its
+   final answer, check that each cited `[n]`'s numeric claim actually
+   appears in that result's text/value before returning — catches
+   silent misgrounding for the cost of a regex check, no extra model
+   call needed.
+
+Worth deferring model-swap questions until after these, since none of
+the currently-open work is a generation-quality gap.
 
 **Then — continue growing `eval_questions.jsonl`** toward the full
 30-50 question, FinanceBench-style set, now informed by two full rounds

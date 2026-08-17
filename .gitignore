@@ -9,5 +9,8 @@ data/
 chunks/
 chroma_db/
 
+# Regenerable via xbrl_facts.py's fetch_concept() (disk cache of SEC companyconcept responses)
+xbrl_cache/
+
 # Local Claude Code settings (personal, not shared project config)
 .claude/settings.local.json
