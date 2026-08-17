@@ -100,12 +100,11 @@ no code changes needed elsewhere.
 2. **Week 2a — table→markdown + chunking** ✅ DONE
 3. **Week 2b — embeddings + Chroma indexing** ✅ DONE
 4. **Week 3 — hybrid retrieval (vector + BM25) + reranking + citation-grounded answers** ✅ DONE (v0 prototype — see below)
-5. **Week 4 — eval harness** 🟡 SCAFFOLDING DONE, question set still only 6
-   questions — see below. Growing it to 30-50 was explicitly deferred
-   (twice) in favor of moving to Week 5.
-6. **Week 5 — agent layer + tool calling** ✅ DONE (v0 — see below) ⬅️
-   **loop back and grow the Week 4 question set before Week 6**, ideally
-   including comparison-style questions (see Week 5's synthesis finding)
+5. **Week 4 — eval harness** 🟡 GROWING, 16 questions so far (see below) —
+   started at 6, deferred growth twice in favor of Week 5, then grown to
+   16 in a first incremental pass after Week 5's bugs were fixed. Still
+   short of the full 30-50 FinanceBench-style target.
+6. **Week 5 — agent layer + tool calling** ✅ DONE (v0 — see below)
 7. Week 6 — expose tools as an MCP server
 8. Week 7 — guardrails (no numeric claim without citation), retry/backoff,
    rate limits, Langfuse tracing
@@ -571,6 +570,66 @@ matter for the first search" (the `_resolve_search_args` override) —
 each version was tested against the real failing case before being
 accepted, not assumed correct from reasoning alone.
 
+**First growth pass: 8 → 16 questions, 14/16 passed.** Deliberately kept
+small (per plan: grow incrementally and see what breaks, rather than
+writing 30-50 questions before learning anything) and targeted the
+coverage gaps `PROJECT_CONTEXT.md` had flagged — NVDA and PLTR previously
+had zero `numeric` questions, only one company pair had been compared,
+and no question had used a fiscal-quarter label instead of a calendar
+date. Every new fact was sourced from the raw ingested filing text/tables
+(`./data/<TICKER>/*_text.txt`, `*_tables.json`), not the chunks and not
+the model, and the two new `judged` criteria were negative-control
+tested (3/3 stable pass on a hand-written good answer, 3/3 stable fail
+on a hand-written bad answer, for each) before being added — same
+discipline used for the PLTR fix. All 8 original questions still passed
+(no regression from growing the set). Full report:
+`eval_results/20260816T224625Z.json`.
+
+**Two new questions failed, and both are a genuinely different class of
+bug than anything fixed so far** — not query-formulation, not
+comprehension, but a structural retrieval-precision limit:
+
+1. **`nvda-gross-margin-fy26` — near-duplicate boilerplate across a
+   company's own filings collides at retrieval time.** NVIDIA's 10-K and
+   each of its 4 10-Qs all contain their own copy of the same MD&A
+   definitional paragraph ("Gross profit consists of total net revenue
+   less cost of revenue...") before stating that period's gross margin
+   figure — the paragraphs are near-identical except for the trailing
+   number. Confirmed directly: the correct chunk (containing "Gross
+   margins decreased to 71.1% in fiscal year 2026 from 75.0% in fiscal
+   year 2025") doesn't appear in the top 25 of *either* BM25 or vector
+   search — not a reranking problem, a fusion-stage miss. Since the
+   chunks compete almost entirely on shared boilerplate rather than the
+   period-specific number, retrieval can't reliably tell which filing's
+   copy is relevant.
+2. **`msft-rd-expense-q3fy26` — a different section's phrasing wins
+   retrieval instead of the section with the actual number.** The
+   question's exact words ("third quarter of fiscal year 2026") echo the
+   MD&A's own "Highlights from the third quarter of fiscal year 2026..."
+   bullet-point summary almost verbatim, so that chunk dominates BM25 and
+   vector search (rank 1 and rank 2 respectively) — but it's a business
+   highlights section that never states the R&D dollar figure. The chunk
+   that does (the "OPERATING EXPENSES / Research and Development" table)
+   phrases the period differently ("Three Months Ended March 31, 2026")
+   and lands at rank 8 in vector search only, absent from BM25's top 25,
+   so it loses the fusion race.
+
+**Why this isn't fixed the same way the tax-rate bug was:** that fix
+worked by trusting the user's own question text over the model's
+rewritten query, because the original question's wording reliably
+matched the *correct* chunk's phrasing. Here, the question's wording
+matches a *different, wrong* chunk just as well or better than the
+right one, for reasons specific to how each filing happens to repeat
+period labels in multiple, differently-phrased sections. No query
+rewrite fixes this in general — a real fix would need to change what
+gets retrieved, not how it's asked for (e.g. tagging each chunk more
+strongly with its own period metadata, independent of which section's
+prose phrasing happens to mention it). **Not yet fixed — queued as a
+future retrieval-pipeline investigation, not a quick patch.** Left both
+questions in the eval set rather than swapping them for easier ones,
+since a known, well-diagnosed gap is more useful long-term than a
+higher pass count that hides it.
+
 **Explicitly deferred:** growing this to the full 30-50 question,
 FinanceBench-style set — that requires going back into the actual
 filings to find and verify ground truth, which is real research work,
@@ -744,30 +803,40 @@ numeric/comparison graders. **Final 8-question re-run: 8/8 passed, 8/8
 cited** (`eval_results/20260816T214953Z.json`) — the first clean run
 since the eval harness was built.
 
-**Now that all three diagnosed bugs (reranker, comparison-synthesis,
-PLTR grading) are fixed and the suite is clean, the natural next
-questions are:** whether `qwen2.5:7b-instruct` vs. a stronger/cloud
-model is worth revisiting for generation, and growing the eval set
-beyond 8 questions. Neither is urgent by itself — a clean 8/8 run
-doesn't prove the system is bug-free, it proves *these 8 questions*
-no longer catch anything, which is exactly why growing the question set
-is the more valuable next move: more/harder questions are what would
-surface whether `qwen2.5:7b-instruct` is actually a limiting factor,
-rather than guessing at a model swap with no fresh failing case to test
-it against.
+**Eval set grown from 8 to 16 questions — see the `eval_harness.py`
+section above for the two new findings.** As predicted, growing the
+question set surfaced real signal a clean 8/8 run couldn't: two new
+failures (`nvda-gross-margin-fy26`, `msft-rd-expense-q3fy26`), both a
+genuinely new class of bug — retrieval-precision collisions between
+near-duplicate boilerplate or differently-phrased sections within a
+company's own filings, not query formulation and not model
+comprehension. **Top priority now — a real retrieval-pipeline
+investigation** (not a quick prompt patch, per the diagnosis above):
+- Most promising lead: tag each chunk more strongly with its own
+  period/section context (e.g. prepend the enclosing section header or
+  the filing's period label to the chunk's embedded/indexed text) so
+  retrieval doesn't have to rely on the chunk's prose happening to
+  restate the period the same way the question does
+- Would need before/after testing against both new failing cases
+  specifically, plus a full regression check against all 16 questions —
+  same evidence-based discipline used for the reranker and
+  comparison-synthesis fixes
+- Worth deferring model-swap questions until after this, since both new
+  failures are demonstrably retrieval bugs (verified: the correct
+  content isn't even in the top-25 fused candidates for one, and loses a
+  close fusion race for the other), not generation-quality gaps
 
-**Then — grow `eval_questions.jsonl` beyond 8 questions**, now informed
-by real findings instead of guessing what might break:
+**Then — continue growing `eval_questions.jsonl`** toward the full
+30-50 question, FinanceBench-style set, now informed by two full rounds
+of real findings instead of guessing what might break:
 - Go back into the actual filings to find and verify ground-truth figures
   — real research, not guessing plausible-looking numbers
-- Cover all 5 companies and both 10-K/10-Q forms more evenly (currently
-  AAPL/CRM/MSFT-heavy)
-- More comparison-style questions, now that `grade_comparison()` exists
-  and is proven to catch real failures — including ones that require
-  correct *attribution* (which entity a number belongs to), since the
-  current comparison grading doesn't check that yet
-- A few ambiguous/no-company-context questions, to verify `agent.py`'s
-  disambiguation holds up beyond the cases spot-checked so far
+- Cover PLTR/NVDA/AAPL more evenly across both 10-K and 10-Q forms
+- More comparison-style questions, including ones that require correct
+  *attribution* (which entity a number belongs to), since
+  `grade_comparison()` doesn't check that yet
+- A few genuinely ambiguous/no-company-context questions, to verify
+  `agent.py`'s disambiguation holds up beyond the cases spot-checked so far
 - Decide whether `answer.py` (Week 3) stays as a simpler fallback/
   baseline or gets retired — `agent.py` is a strict superset of what it does
 
