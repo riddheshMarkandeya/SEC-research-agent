@@ -544,6 +544,100 @@ concept. `fiscal_period="Q4"` returns `None` for such companies,
 falling back to `search_filings`; not solved here since no current eval
 question needs it.
 
+### `numeric_utils.py` + `agent.py`'s `verify_citations()` — citation-verification pass (Week 5c)
+
+A cheap, deterministic post-processing step: after `run_agent()` has its
+final answer, check that each cited `[n]`'s numeric claim actually
+appears in that result's own text before returning. No model call
+needed. `run_agent()` now returns a third value, `citation_warnings:
+list[str]`; `main()` prints them, `eval_harness.py` records them per
+question and reports a summary count.
+
+- **`numeric_utils.py`**: `extract_numbers()`/`normalize()`/
+  `NUMBER_PATTERN`/`UNIT_MULTIPLIERS` moved out of `eval_harness.py`
+  into their own module so `agent.py` could reuse them without a
+  circular import (`eval_harness.py` already imports
+  `agent.run_agent`). `tests/test_eval_harness.py`'s corresponding
+  tests moved to `tests/test_numeric_utils.py`.
+- **Motivating case**: `aapl-revenue-growth-q3fy2026` (see
+  `xbrl_facts.py` section above) technically PASSED the eval, but only
+  because the model self-computed a percentage from two retrieved
+  dollar figures — violating `agent.py` rule 3 ("don't combine or infer
+  numbers") — and cited both dollar-figure sources for a percentage
+  that appears in neither. `verify_citations()` is built to catch
+  exactly that shape of problem: a numeric claim near a citation marker
+  whose cited source doesn't contain that number.
+- **Confirmed live** against the real case (not just unit tests): the
+  first working version caught the real misgrounding (16.27%/16.37%
+  flagged correctly) but was nearly unusable — 12 warnings for one
+  answer, only 1 of them the genuinely useful signal. Four real,
+  live-found sources of false-positive noise were fixed, in the order
+  found:
+  1. **Dates** ("June 27, 2026" → 27, 2026 read as bare numbers) —
+     stripped from the claim window via a date-matching regex before
+     extraction.
+  2. **Bare year-like numbers** ("fiscal Q3 2025" → 2025 survives the
+     date-pattern fix since it's not glued to a month name) — any
+     standalone 1900–2099 number is stripped too.
+  3. **"10-K"/"10-Q" mentions** — the model's own prose routinely says
+     "the 10-Q filing [1]"; "10" isn't glued to a preceding letter (a
+     space precedes it), so it wasn't caught by the digit-glued-to-letter
+     fix below. This was the *dominant* remaining noise source, showing
+     up in the majority of a real 21-question run's answers. Stripped
+     the same way as dates.
+  4. **Table-caption-only units** — the most significant fix: a real,
+     *correctly-answered* baseline question (`crm-rpo-fy26`, not one of
+     the intentionally-hard gap questions) got a false "claims 72.4
+     (billion) but that value doesn't appear" warning, because the
+     source chunk states the unit once in a table caption
+     ("...consisted of the following (in billions):") and leaves each
+     cell value bare ("$72.4"), which `extract_numbers()` reads as 72.4
+     *raw*, not 72.4 billion. Fixed with `_source_number_candidates()`:
+     if a source chunk mentions a unit word anywhere, also try that unit
+     against every bare/raw number extracted from it — an additive
+     fallback, so it only creates new ways to verify a claim, never new
+     ways to reject one that would otherwise have matched.
+- **Two bugs found and fixed in the shared `NUMBER_PATTERN` itself**
+  (in `numeric_utils.py`, so they also improve `grade_numeric()`'s
+  extraction, not just `verify_citations()`):
+  1. The leading digit group was capped at `\d{1,3}` (reasonable-looking
+     for comma-grouped numbers like "1,234,567") but regex alternation
+     tries branches left-to-right and stops at the first match, not the
+     longest overall — so a comma-less run of many digits (e.g.
+     `xbrl_facts.py`'s raw float formatting, "109417000000.0") got
+     fragmented into separate wrong candidates (109, 417, 000, 000.0)
+     instead of one correct number. Fixed by removing the cap
+     (`\d+(?:,\d{3})*(?:\.\d+)?`).
+  2. A digit run glued to a preceding letter or digit ("Q3" → read as
+     3; "FY2026" → read as a fragment, "026", once the first fix let
+     the regex retry at a later start position inside the same glued
+     run) wasn't excluded. Fixed with a `(?<!\w)` negative lookbehind
+     immediately before the digit group — `\w` excludes both letters
+     and digits, so every retry position inside a glued alphanumeric
+     run also fails the lookbehind, correctly rejecting the whole token
+     instead of leaking a fragment.
+- **Known, accepted residual limitation**: a self-authored trailing
+  "References:"-style list the model sometimes appends (restating
+  `[1] AAPL 10-K (reportDate=...)` as its own line) gets treated as a
+  fresh citation occurrence like any inline one, and can pick up a
+  nearby summary-sentence number as its "claim" even though it isn't
+  really attached to a specific factual statement. Also, multi-step
+  derivation work shown *between* a claim and its citation (a
+  LaTeX-style calculation block) can still leak intermediate numbers
+  into the window on either side — sometimes hiding a real mismatch,
+  sometimes adding a harmless duplicate warning. Both are narrow enough
+  in practice (residual rate on the 21-question set: 5/21 have at least
+  one warning, mostly single-line and non-blocking) that further
+  chasing was judged not worth it for a tool explicitly scoped as a
+  cheap heuristic, not an exhaustive grounding check — documented here
+  rather than silently accepted.
+- **Full suite after all fixes: 19/21** (`pltr-dividend-2019-refusal`
+  and `aapl-operating-margin-q3fy2026` are the only failures — the
+  former is the already-documented pre-existing judged-grading
+  instability for that specific question, unrelated to this change;
+  the latter is the real, expected formula-registry gap from the
+  `xbrl_facts.py` section above, not a bug).
+
 ### `answer.py` (Week 3) — working, v0 prototype
 
 Retrieves via `hybrid_search()`, feeds numbered excerpts to a local LLM
@@ -1054,9 +1148,11 @@ revenue tag default, two unhandled crashes on malformed tool-call
 arguments, and a multi-company comparison-completeness gap) — see the
 `xbrl_facts.py` section for full detail on each.
 
-**Next — two follow-up ideas approved and in scope now**, both aimed at
-squeezing more out of the SEC API surface itself rather than adding new
-homegrown logic:
+**Citation-verification pass: DONE — see `agent.py`'s `verify_citations()`
+section below.**
+
+**Next — one follow-up idea remaining, aimed at squeezing more out of
+the SEC API surface itself rather than adding new homegrown logic:**
 1. **`frames` API for cross-company queries.** A fourth SEC XBRL
    endpoint beyond `submissions`/`companyconcept`/`companyfacts`:
    `frames/us-gaap/{tag}/USD/CY2026Q1.json` returns one concept for
@@ -1064,11 +1160,6 @@ homegrown logic:
    Useful for "which of our 5 companies had the best gross margin this
    quarter" — today that's 5 sequential `companyconcept` calls; with
    `frames` it's 1. Add as a second function in `xbrl_facts.py`.
-2. **Cheap citation-verification pass.** After the model writes its
-   final answer, check that each cited `[n]`'s numeric claim actually
-   appears in that result's text/value before returning — catches
-   silent misgrounding for the cost of a regex check, no extra model
-   call needed.
 
 **Deliberately deferred to a future round, not next-up: a curated,
 tool-computed formula registry beyond `gross_margin`** (operating

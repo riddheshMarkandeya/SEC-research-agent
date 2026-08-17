@@ -27,11 +27,13 @@ Usage:
 """
 
 import argparse
+import re
 
 import requests
 
 from answer import MODEL_NAME, OLLAMA_URL
 from companies import load_companies
+from numeric_utils import UNIT_MULTIPLIERS, extract_numbers, normalize
 from retrieval import hybrid_search
 from xbrl_facts import get_gross_margin, get_metric, DEFAULT_METRIC_TAGS
 
@@ -225,6 +227,125 @@ def _fact_as_result(fact: dict, args: dict) -> dict:
     }
 
 
+_CITATION_MARKER = re.compile(r"\[(\d+)\]")
+_CITATION_WINDOW_CHARS = 150
+
+# Text that looks number-shaped but isn't a claim to verify -- stripped
+# from the claim window before extraction, not from numeric_utils.py's
+# shared extract_numbers() itself, since grade_numeric() doesn't have
+# this false-positive problem (it only needs ONE number in the whole
+# answer to match, so spurious extras there are harmless noise, not
+# wrong verdicts) and stripping this there could hide a genuine
+# date/form-shaped ground-truth value in some future question type.
+# Three patterns, all found live, not anticipated up front:
+#   - Dates ("June 27, 2026" -> 27, 2026) were the single biggest source
+#     of noise on a real multi-sentence answer (12 warnings for one
+#     answer, only 1 of them the actual misgrounded value).
+#   - Bare year-like numbers ("fiscal Q3 2025" -> the 2025 survives the
+#     date pattern above since it's not glued to a month name) -- a
+#     standalone 1900-2099 number next to a citation is virtually always
+#     a period label, not a numeric claim.
+#   - "10-K"/"10-Q" (the only two form types this project ingests, see
+#     edgar_ingest.py's FORM_TYPES) were producing a "claims 10.0 (raw)"
+#     warning on the majority of a 21-question eval run's answers --
+#     the model routinely writes "the 10-Q filing [1]" in its own prose,
+#     and "10" isn't glued to a preceding letter (there's a space before
+#     it), so the digit-glued-to-letter fix in numeric_utils.py doesn't
+#     catch it.
+_NON_CLAIM_PATTERN = re.compile(
+    r"\b(?:January|February|March|April|May|June|July|August|September|October|November|December)"
+    r"\s+\d{1,2},?\s+\d{4}\b|\b\d{4}-\d{2}-\d{2}\b|\b(?:19|20)\d{2}\b|\b10-[KQ]\b",
+    re.IGNORECASE,
+)
+
+
+def _source_number_candidates(source_text: str) -> list[tuple[str, float]]:
+    """Every (category, comparable_number) a source chunk's text could
+    plausibly support -- not just each number under its own immediately-
+    adjacent unit, but also each bare/raw number under any unit word the
+    chunk mentions ANYWHERE.
+
+    SEC filing tables routinely state a unit once in a caption
+    ("Remaining performance obligation consisted of the following (in
+    billions):") and leave the actual cell values bare ("$72.4"), so a
+    per-cell extract_numbers() reads $72.4 as 72.4 raw, not 72.4
+    billion. Found live: this produced a false "claims 72.4 (billion)
+    but that value doesn't appear in the cited source" warning on
+    crm-rpo-fy26 -- a question that PASSED with the exact correct
+    answer, not one of the intentionally-hard formula-gap questions, so
+    this false positive would have undermined trust in the checker for
+    exactly the simple, correctly-answered questions it should be most
+    reliable on. This only ADDS candidate interpretations (a raw number
+    can still also match as raw) -- it never removes a way for a
+    genuine mismatch to be caught."""
+    numbers = extract_numbers(source_text)
+    candidates = [normalize(v, u) for v, u in numbers]
+    text_lower = source_text.lower()
+    for caption_unit in UNIT_MULTIPLIERS:
+        if caption_unit in text_lower:
+            candidates.extend(normalize(v, caption_unit) for v, u in numbers if u == "raw")
+    return candidates
+
+
+def verify_citations(answer_text: str, all_results: list[dict]) -> list[str]:
+    """Cheap, deterministic check for one specific silent-misgrounding
+    pattern: a numeric claim attributed to a citation whose own cited
+    source text doesn't contain that number. No model call needed —
+    reuses the same number-extraction/normalization eval_harness.py's
+    numeric grading already does (now in numeric_utils.py), applied to
+    the cited result's text instead of a ground-truth expected value.
+
+    Motivated by a real, observed case (see PROJECT_CONTEXT.md,
+    aapl-revenue-growth-q3fy2026): asked for a computed ratio (YoY
+    revenue growth) with no supporting tool, the model retrieved two raw
+    dollar figures via get_financial_fact, self-computed a percentage
+    from them in its own reasoning text (violating rule 3, "don't
+    combine or infer numbers"), and cited both dollar-figure sources for
+    a percentage that appears in NEITHER of them. Built to catch exactly
+    that shape of problem — confirmed live against the real question,
+    which is also where the date-noise and duplicate-warning issues
+    below were found and fixed, not assumed.
+
+    For each citation marker, only the text since the previous citation
+    marker (capped at _CITATION_WINDOW_CHARS) is checked, so a claim
+    isn't accidentally "verified" by a number attributed to an earlier
+    citation elsewhere in the same sentence. Known limitation: an answer
+    that shows multi-step derivation work *between* a claim and its
+    citation (e.g. a LaTeX-style calculation block) can still smuggle
+    the correct intermediate numbers into that window and dodge
+    detection — this is a best-effort heuristic, not an exhaustive
+    grounding check.
+
+    Returns a list of human-readable warning strings (deduplicated),
+    empty if nothing looks unverified."""
+    warnings: list[str] = []
+    seen: set[tuple[int, str]] = set()
+    window_start = 0
+    for match in _CITATION_MARKER.finditer(answer_text):
+        n = int(match.group(1))
+        window = answer_text[max(window_start, match.start() - _CITATION_WINDOW_CHARS) : match.start()]
+        window_start = match.end()
+        if not (1 <= n <= len(all_results)):
+            continue
+
+        claimed = extract_numbers(_NON_CLAIM_PATTERN.sub("", window))
+        if not claimed:
+            continue
+
+        source_normalized = _source_number_candidates(all_results[n - 1]["text"])
+        for value, unit in claimed:
+            category, norm = normalize(value, unit)
+            tolerance = max(0.01 * abs(norm), 0.05)
+            if any(c == category and abs(sn - norm) <= tolerance for c, sn in source_normalized):
+                continue
+            key = (n, f"{value}{unit}")
+            if key in seen:
+                continue
+            seen.add(key)
+            warnings.append(f"[{n}] claims {value} ({unit}) but that value doesn't appear in the cited source")
+    return warnings
+
+
 def _format_citation_key(all_results: list[dict]) -> str:
     lines = []
     for i, r in enumerate(all_results, start=1):
@@ -263,12 +384,13 @@ def _call_ollama(messages: list[dict]) -> dict:
     return response.json()["message"]
 
 
-def run_agent(question: str, verbose: bool = False) -> tuple[str, list[dict]]:
+def run_agent(question: str, verbose: bool = False) -> tuple[str, list[dict], list[str]]:
     """Run the tool-calling loop until the model produces a final answer
     (no more tool calls) or MAX_TOOL_ITERATIONS is hit. Returns the
-    answer text and every chunk retrieved across all tool calls, in the
+    answer text, every chunk retrieved across all tool calls (in the
     same global [n] order the model was shown them in — this is what
-    lets the printed citation key line up with the model's citations.
+    lets the printed citation key line up with the model's citations),
+    and any citation-verification warnings from verify_citations().
 
     Known simplification: no deduplication if two tool calls happen to
     surface the same chunk (e.g. two related queries against the same
@@ -286,7 +408,8 @@ def run_agent(question: str, verbose: bool = False) -> tuple[str, list[dict]]:
         tool_calls = message.get("tool_calls") or []
 
         if not tool_calls:
-            return message.get("content", ""), all_results
+            answer = message.get("content", "")
+            return answer, all_results, verify_citations(answer, all_results)
 
         messages.append(message)
 
@@ -329,6 +452,7 @@ def run_agent(question: str, verbose: bool = False) -> tuple[str, list[dict]]:
         "I wasn't able to finish answering within the allotted number of searches. "
         "Try asking a more specific or narrower question.",
         all_results,
+        [],
     )
 
 
@@ -338,13 +462,17 @@ def main():
     parser.add_argument("--verbose", action="store_true", help="print each tool call as it happens")
     args = parser.parse_args()
 
-    answer, results = run_agent(args.question, verbose=args.verbose)
+    answer, results, citation_warnings = run_agent(args.question, verbose=args.verbose)
 
     print(f"\nQ: {args.question}\n")
     print(answer)
     if results:
         print("\nSources:")
         print(_format_citation_key(results))
+    if citation_warnings:
+        print("\nCitation warnings:")
+        for w in citation_warnings:
+            print(f"  {w}")
 
 
 if __name__ == "__main__":

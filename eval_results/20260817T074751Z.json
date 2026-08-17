@@ -1,0 +1,275 @@
+[
+  {
+    "id": "crm-rpo-fy26",
+    "ticker": "CRM",
+    "question": "What is Salesforce's total remaining performance obligation as of January 31, 2026?",
+    "type": "numeric",
+    "passed": true,
+    "detail": "found matching value: 72.4 (billion)",
+    "has_citation": true,
+    "citation_warnings": [],
+    "answer": "Based on the information provided from Salesforce's (CRM) filings:\n\nAs of January 31, 2026, Salesforce's total remaining performance obligation was approximately $72.4 billion [1].\n\n[1] CRM 10-K (reportDate=2026-01-31)",
+    "n_chunks_retrieved": 5
+  },
+  {
+    "id": "aapl-employees-fy25",
+    "ticker": "AAPL",
+    "question": "How many full-time equivalent employees did Apple have as of September 27, 2025?",
+    "type": "numeric",
+    "passed": true,
+    "detail": "found matching value: 166000.0 (raw)",
+    "has_citation": true,
+    "citation_warnings": [
+      "[3] claims 166000.0 (raw) but that value doesn't appear in the cited source"
+    ],
+    "answer": "Based on the information provided from Apple Inc.'s 10-K filing as of September 27, 2025 [3], Apple had approximately 166,000 full-time equivalent employees. \n\n[3] AAPL 10-K (reportDate=2025-09-27)",
+    "n_chunks_retrieved": 5
+  },
+  {
+    "id": "msft-tax-rate-q2fy26",
+    "ticker": "MSFT",
+    "question": "What was Microsoft's effective tax rate for the three months ended December 31, 2025?",
+    "type": "numeric",
+    "passed": true,
+    "detail": "found matching value: 20.0 (percent)",
+    "has_citation": true,
+    "citation_warnings": [],
+    "answer": "Microsoft's effective tax rate for the three months ended December 31, 2025 was 20% [1].",
+    "n_chunks_retrieved": 5
+  },
+  {
+    "id": "aapl-ai-risk",
+    "ticker": "AAPL",
+    "question": "What risks does Apple describe related to artificial intelligence?",
+    "type": "judged",
+    "passed": true,
+    "detail": "The answer clearly identifies various types of risks related to AI that Apple may face, including reputational, competitive, financial, regulatory, cybersecurity, legal compliance, supply chain, and third-party dependency risks, all supported by citation markers.",
+    "has_citation": true,
+    "citation_warnings": [],
+    "answer": "Apple describes several risks related to artificial intelligence (AI) in its SEC filings. These include:\n\n1. **Reputational Risks**: AI technologies can lead to reputational harm due to issues such as bias, discrimination, exposure of users to harmful content, and online safety concerns [1].\n\n2. **Competitive and Financial Harm**: The Company's AI efforts may face competition and strategy-related risks, product liability, intellectual property infringement, data privacy, cybersecurity, sanctions, and export controls [1].\n\n3. **Regulatory Risks**: As AI technologies are increasingly integrated into the Company\u2019s products and services, there is a risk of regulatory action, legal liability, and other material adverse effects on its business, results of operations, financial condition, and stock price due to emerging legal, regulatory, ethical, and operational risks [1].\n\n4. **Cybersecurity Risks**: The rapid advancement of AI technologies increases the risk of cyberattacks, which can lead to significant security threats and potential disruptions to critical infrastructure and market stability [2].\n\n5. **Legal Compliance Risks**: The Company faces increased costs and potential liability due to new and changing laws, regulations, executive orders, directives, and enforcement priorities related to AI and machine learning features [4].\n\n6. **Supply Chain Risks**: There is a risk of supply shortages and price increases for computing resources necessary for the deployment of AI technologies, which can limit functionality and availability of products and services, delay new feature deployments, or increase operational costs [5].\n\n7. **Third-Party Dependency Risks**: The Company's future performance depends on support from third-party software developers, who may discontinue development and maintenance of applications for Apple\u2019s products, impacting customer satisfaction and sales [5].\n\nThese risks highlight the multifaceted challenges that Apple faces as it integrates AI into its business operations and product offerings.",
+    "n_chunks_retrieved": 5
+  },
+  {
+    "id": "nvda-supply-chain-risk",
+    "ticker": "NVDA",
+    "question": "What supply chain risks does NVIDIA describe?",
+    "type": "judged",
+    "passed": true,
+    "detail": "The AI assistant's answer mentions dependency on third-party suppliers/manufacturers, manufacturing lead times, and the risk of a mismatch between supply and customer demand, all supported by citation markers.",
+    "has_citation": true,
+    "citation_warnings": [],
+    "answer": "NVIDIA describes several supply chain risks in their SEC filings:\n\n1. **Long Manufacturing Lead Times and Uncertain Supply Availability**: NVIDIA mentions having long manufacturing lead times for certain supplies, which can be extended to more than 12 months during periods of shortages or limited capacity in the semiconductor industry [1] [2].\n\n2. **Inaccurate Demand Estimation**: Inaccurately estimating customer demand could result in mismatches between supply and demand, leading to both product shortages and excess inventory [1] [2].\n\n3. **Regulatory Risks**: There are regulatory risks associated with potential export controls from the USG that could restrict sales of gaming products and data center GPUs outside China, impacting NVIDIA's global distribution chain [1] [5].\n\n4. **Resource Shortages**: Shortages in resources such as data centers, energy, and capital can impact the buildout of AI infrastructure by customers, which is crucial for NVIDIA\u2019s future revenue and financial performance [3].\n\nThese risks highlight the challenges NVIDIA faces in maintaining a stable supply chain and managing demand accurately.\n\n[1] NVDA 10-Q (reportDate=2025-04-27)\n[2] NVDA 10-Q (reportDate=2025-10-26)\n[3] NVDA 10-Q (reportDate=2025-07-27)\n[4] NVDA 10-Q (reportDate=2026-04-26)\n[5] NVDA 10-Q (reportDate=2025-04-27)",
+    "n_chunks_retrieved": 5
+  },
+  {
+    "id": "pltr-dividend-2019-refusal",
+    "ticker": "PLTR",
+    "question": "What was Palantir's dividend per share in 2019?",
+    "type": "judged",
+    "passed": false,
+    "detail": "The answer implies that Palantir paid a dividend in 2019 by stating \"this is the conclusion I can draw\" based on the lack of mention, which could be misinterpreted as confirming no dividend was paid.",
+    "has_citation": true,
+    "citation_warnings": [],
+    "answer": "Based on the 10-K filing for Palantir Technologies Inc. (PLTR) from December 31, 2025, there is no mention of any dividend per share paid in 2019. The document states that Palantir has never declared or paid any cash dividends and does not intend to do so in the foreseeable future.\n\nTherefore, based on the information provided, Palantir did not pay a dividend per share in 2019 [6].\n\nIf you need more detailed historical financial data, we would need to search through earlier filings. However, given the current information, this is the conclusion I can draw.",
+    "n_chunks_retrieved": 10
+  },
+  {
+    "id": "aapl-msft-tax-rate-comparison",
+    "ticker": [
+      "AAPL",
+      "MSFT"
+    ],
+    "question": "Compare Apple's effective tax rate for the three months ended June 27, 2026 to Microsoft's effective tax rate for the three months ended December 31, 2025.",
+    "type": "comparison",
+    "passed": true,
+    "detail": "found matching values for all 2 entities",
+    "has_citation": true,
+    "citation_warnings": [
+      "[1] claims 20.0 (percent) but that value doesn't appear in the cited source"
+    ],
+    "answer": "From the 10-Q filing for Microsoft Corporation [6], we can see that the effective tax rate for the three months ended December 31, 2025 was 20%.\n\nComparing Apple Inc.'s effective tax rate for the three months ended June 27, 2026 (17.9%) to Microsoft's effective tax rate for the three months ended December 31, 2025 (20%), we can conclude that:\n\n- Apple Inc.'s effective tax rate was lower than Microsoft's during the respective periods.\n[1] [6]",
+    "n_chunks_retrieved": 10
+  },
+  {
+    "id": "aapl-msft-employee-comparison",
+    "ticker": [
+      "AAPL",
+      "MSFT"
+    ],
+    "question": "Compare the number of full-time employees at Apple (as of September 27, 2025) and Microsoft (as of June 30, 2026).",
+    "type": "comparison",
+    "passed": true,
+    "detail": "found matching values for all 2 entities",
+    "has_citation": true,
+    "citation_warnings": [],
+    "answer": "Based on the information provided:\n\n- As of September 27, 2025, Apple had approximately 166,000 full-time equivalent employees [1].\n\n- Microsoft reported that as of June 30, 2026 (which is close to the date requested), they employed approximately 223,000 people on a full-time basis [9].\n\nTherefore, Apple had about 166,000 full-time equivalent employees and Microsoft had about 223,000 full-time employees as of the respective dates.",
+    "n_chunks_retrieved": 10
+  },
+  {
+    "id": "nvda-revenue-fy26",
+    "ticker": "NVDA",
+    "question": "What was NVIDIA's total revenue for fiscal year 2026?",
+    "type": "numeric",
+    "passed": true,
+    "detail": "found matching value: 215938000000.0 (raw)",
+    "has_citation": true,
+    "citation_warnings": [],
+    "answer": "NVIDIA's total revenue for fiscal year 2026 was $215,938,000,000 [1].",
+    "n_chunks_retrieved": 1
+  },
+  {
+    "id": "nvda-gross-margin-fy26",
+    "ticker": "NVDA",
+    "question": "What was NVIDIA's gross margin for fiscal year 2026?",
+    "type": "numeric",
+    "passed": true,
+    "detail": "found matching value: 71.1 (percent)",
+    "has_citation": true,
+    "citation_warnings": [],
+    "answer": "NVIDIA's gross margin for fiscal year 2026 was 71.1 percent [1].",
+    "n_chunks_retrieved": 1
+  },
+  {
+    "id": "pltr-revenue-2025",
+    "ticker": "PLTR",
+    "question": "What was Palantir's total revenue for 2025?",
+    "type": "numeric",
+    "passed": true,
+    "detail": "found matching value: 4475446000.0 (raw)",
+    "has_citation": true,
+    "citation_warnings": [],
+    "answer": "Palantir's total revenue for the fiscal year 2025 was $4,475,446,000 [1].",
+    "n_chunks_retrieved": 1
+  },
+  {
+    "id": "crm-revenue-q1fy27",
+    "ticker": "CRM",
+    "question": "What was Salesforce's total revenue for the three months ended April 30, 2026?",
+    "type": "numeric",
+    "passed": true,
+    "detail": "found matching value: 11133000000.0 (raw)",
+    "has_citation": true,
+    "citation_warnings": [],
+    "answer": "Salesforce's total revenue for the three months ended April 30, 2026 was $11,133,000,000 [1].",
+    "n_chunks_retrieved": 1
+  },
+  {
+    "id": "nvda-crm-revenue-comparison",
+    "ticker": [
+      "NVDA",
+      "CRM"
+    ],
+    "question": "Compare NVIDIA's total revenue for the quarter ended April 26, 2026 to Salesforce's total revenue for the quarter ended April 30, 2026.",
+    "type": "comparison",
+    "passed": true,
+    "detail": "found matching values for all 2 entities",
+    "has_citation": true,
+    "citation_warnings": [],
+    "answer": "NVIDIA's total revenue for the quarter ended April 26, 2026 was $81.615 billion [1], while Salesforce's total revenue for the quarter ended April 30, 2026 was $11.133 billion [2].",
+    "n_chunks_retrieved": 2
+  },
+  {
+    "id": "crm-ai-risk",
+    "ticker": "CRM",
+    "question": "What risks does Salesforce describe related to artificial intelligence?",
+    "type": "judged",
+    "passed": true,
+    "detail": "The answer mentions multiple types of risks related to AI, including reputational, legal, regulatory, and competitive risks, which align with the specified criteria. It also includes citation markers for references [3], [4], and [5].",
+    "has_citation": true,
+    "citation_warnings": [],
+    "answer": "Salesforce describes several risks related to artificial intelligence (AI) in their SEC filings:\n\n1. **Ethical Issues**: The development of AI offerings like Agentforce and the Salesforce Platform presents emerging ethical issues that could lead to controversy, governmental or regulatory scrutiny, brand or reputational harm, competitive harm, or legal liability [3].\n\n2. **Inadequate or Ineffective AI Development**: If AI solutions are not developed, deployed, content-labeled, or governed effectively, they could result in controversy and undermine confidence in the decisions, predictions, analysis, or other content produced by these applications, leading to competitive harm, legal liability, and brand or reputational harm [4].\n\n3. **Rapid Evolution of AI**: The rapid development and evolution of AI will require significant resources for testing and maintaining products and services to ensure ethical implementation and minimize unintended harmful impacts [4].\n\n4. **Generative AI Risks**: Known risks associated with generative AI include accuracy, bias, toxicity, privacy, security, and data provenance issues. These risks could impact the reliability and trustworthiness of AI-generated content [5].\n\nThese risks highlight the potential challenges Salesforce faces as it integrates advanced AI technologies into its platform and services.",
+    "n_chunks_retrieved": 5
+  },
+  {
+    "id": "pltr-government-contract-risk",
+    "ticker": "PLTR",
+    "question": "What risks does Palantir describe related to its dependence on government contracts?",
+    "type": "judged",
+    "passed": true,
+    "detail": "The AI assistant's answer clearly states that Palantir depends significantly on government contracts and describes at least one specific related risk (fiscal or contracting policies changes), including a citation marker.",
+    "has_citation": true,
+    "citation_warnings": [
+      "[2] claims 3.0 (raw) but that value doesn't appear in the cited source"
+    ],
+    "answer": "Palantir Technologies Inc. describes several risks related to its dependence on government contracts:\n\n1. **Competition and Cost**: Sales to government agencies can be highly competitive, expensive, and time-consuming, often requiring significant upfront time and expense without any assurance that these efforts will generate a sale [2].\n\n2. **Fiscal or Contracting Policies Changes**: Changes in fiscal or contracting policies or decreases in available government funding could adversely affect Palantir's business, results of operations, financial condition, and growth prospects [2][4][5].\n\n3. **Government Program Changes**: Changes in government programs or applicable requirements can also pose risks to the company [2].\n\n4. **Security Clearances**: Restrictions in the grant of personnel security clearances to employees could impact Palantir's ability to perform on classified contracts for U.S. federal and foreign government agencies [5].\n\n5. **Government Certification Maintenance**: The ability to maintain facility clearances required to perform on classified contracts, as well as achieving or maintaining one or more government certifications (such as FedRAMP), is crucial but not guaranteed [5].\n\n6. **Political Environment**: Changes in the political environment, including before or after a change in government administration leadership and due to ongoing conflicts like those involving Russia-Ukraine, Hamas-Israel, and regional instability, can lead to uncertainty and changes in policy priorities that may affect funding [5].",
+    "n_chunks_retrieved": 5
+  },
+  {
+    "id": "msft-rd-expense-q3fy26",
+    "ticker": "MSFT",
+    "question": "What were Microsoft's research and development expenses for the third quarter of fiscal year 2026?",
+    "type": "numeric",
+    "passed": true,
+    "detail": "found matching value: 8915000000.0 (raw)",
+    "has_citation": true,
+    "citation_warnings": [],
+    "answer": "Microsoft's research and development expenses for the third quarter of fiscal year 2026 were 8,915,000,000 USD [1].",
+    "n_chunks_retrieved": 1
+  },
+  {
+    "id": "aapl-net-income-fy2025",
+    "ticker": "AAPL",
+    "question": "What was Apple's net income for fiscal year 2025?",
+    "type": "numeric",
+    "passed": true,
+    "detail": "found matching value: 112010000000.0 (raw)",
+    "has_citation": true,
+    "citation_warnings": [],
+    "answer": "Apple's net income for fiscal year 2025 was $112,010,000,000 [1].",
+    "n_chunks_retrieved": 1
+  },
+  {
+    "id": "nvda-cost-of-revenue-fy2026",
+    "ticker": "NVDA",
+    "question": "What was NVIDIA's cost of revenue for fiscal year 2026?",
+    "type": "numeric",
+    "passed": true,
+    "detail": "found matching value: 62475000000.0 (raw)",
+    "has_citation": true,
+    "citation_warnings": [],
+    "answer": "NVIDIA's cost of revenue for fiscal year 2026 was 62,475,000,000 USD [1].",
+    "n_chunks_retrieved": 1
+  },
+  {
+    "id": "aapl-operating-margin-q3fy2026",
+    "ticker": "AAPL",
+    "question": "What was Apple's operating margin for the three months ended June 27, 2026?",
+    "type": "numeric",
+    "passed": false,
+    "detail": "no value matching 32.6 percent found in answer",
+    "has_citation": true,
+    "citation_warnings": [],
+    "answer": "Apple's operating margin for the three months ended June 27, 2026 was 50.1%. [1]",
+    "n_chunks_retrieved": 1
+  },
+  {
+    "id": "aapl-revenue-growth-q3fy2026",
+    "ticker": "AAPL",
+    "question": "What was Apple's year-over-year revenue growth for the three months ended June 27, 2026?",
+    "type": "numeric",
+    "passed": true,
+    "detail": "found matching value: 16.37 (percent)",
+    "has_citation": true,
+    "citation_warnings": [
+      "[1] claims 100.0 (raw) but that value doesn't appear in the cited source",
+      "[1] claims 16.37 (raw) but that value doesn't appear in the cited source",
+      "[1] claims 16.37 (percent) but that value doesn't appear in the cited source"
+    ],
+    "answer": "The year-over-year revenue growth for Apple Inc. for the three months ended June 27, 2026 can be calculated as follows:\n\n- Revenue in fiscal Q3 2025: $94,036,000,000 USD [2]\n- Revenue in fiscal Q3 2026: $109,417,000,000 USD [1]\n\nThe growth is calculated as:\n\\[ \\text{Growth} = \\left( \\frac{\\text{Revenue}_{\\text{2026}} - \\text{Revenue}_{\\text{2025}}}{\\text{Revenue}_{\\text{2025}}} \\right) \\times 100 \\]\n\n\\[ \\text{Growth} = \\left( \\frac{109,417,000,000 - 94,036,000,000}{94,036,000,000} \\right) \\times 100 \\]\n\n\\[ \\text{Growth} = \\left( \\frac{15,381,000,000}{94,036,000,000} \\right) \\times 100 \\approx 16.37\\% \\]\n\nTherefore, the year-over-year revenue growth for Apple Inc. for the three months ended June 27, 2026 is approximately 16.37%. [1][2]",
+    "n_chunks_retrieved": 2
+  },
+  {
+    "id": "nvda-rd-expense-q4fy26-refusal",
+    "ticker": "NVDA",
+    "question": "What were NVIDIA's research and development expenses for the fourth quarter of fiscal year 2026?",
+    "type": "judged",
+    "passed": true,
+    "detail": "The AI assistant's response correctly states that there is no specific mention of R&D expenses for the fourth quarter of fiscal year 2026 in NVIDIA's filings, and it does not fabricate or estimate a specific dollar amount.",
+    "has_citation": true,
+    "citation_warnings": [
+      "[3] claims 14.5 (billion) but that value doesn't appear in the cited source"
+    ],
+    "answer": "After reviewing NVIDIA's filings, I found that there is no specific mention of research and development (R&D) expenses for the fourth quarter of fiscal year 2026. The closest relevant information comes from their 10-Q filing for the first quarter of fiscal year 2027, where they provide R&D expense figures:\n\n- For the first quarter of fiscal year 2027: $14.5 billion [3]\n\nHowever, this is not the exact period you asked about (Q4 FY2026). Since we couldn't find the specific information for Q4 FY2026 and there's no other filing that directly addresses it, I would need to conclude that the R&D expenses for NVIDIA in the fourth quarter of fiscal year 2026 are not available from their public filings.\n\n[1] NVDA 10-K (reportDate=2026-01-25) - No specific R&D expense figure found.\n[3] NVDA 10-Q (reportDate=2026-04-26) - No specific R&D expense figure for Q4 FY2026 found.",
+    "n_chunks_retrieved": 5
+  }
+]

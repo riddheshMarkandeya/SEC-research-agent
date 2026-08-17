@@ -1,73 +1,24 @@
 """
 Unit tests for eval_harness.py. Covers the deterministic grading logic
-(extract_numbers, _normalize, grade_numeric, load_questions) plus
-grade_judged's response-PARSING logic with a mocked Ollama call — the
-call itself isn't made, only the "split PASS/FAIL + reason out of the
-model's reply" logic is exercised. run_eval()'s end-to-end behavior
-(live retrieval + live LLM calls) is exercised by manual runs
-(python eval_harness.py) documented in PROJECT_CONTEXT.md, not here.
+(grade_numeric, grade_comparison, load_questions) plus grade_judged's
+response-PARSING logic with a mocked Ollama call — the call itself isn't
+made, only the "split PASS/FAIL + reason out of the model's reply" logic
+is exercised. run_eval()'s end-to-end behavior (live retrieval + live
+LLM calls) is exercised by manual runs (python eval_harness.py)
+documented in PROJECT_CONTEXT.md, not here.
+
+extract_numbers()/normalize() moved to numeric_utils.py (shared with
+agent.py's verify_citations()) — see tests/test_numeric_utils.py.
 """
 
 import json
 
-import pytest
-
 from eval_harness import (
-    _normalize,
-    extract_numbers,
     grade_comparison,
     grade_judged,
     grade_numeric,
     load_questions,
 )
-
-
-# ---------------------------------------------------------------------------
-# extract_numbers
-# ---------------------------------------------------------------------------
-def test_extract_numbers_dollar_billion():
-    assert (72.4, "billion") in extract_numbers("The total was approximately $72.4 billion.")
-
-
-def test_extract_numbers_comma_grouped_raw_count():
-    assert (166000.0, "raw") in extract_numbers("Apple had 166,000 full-time equivalent employees.")
-
-
-def test_extract_numbers_percent_sign():
-    assert (20.0, "percent") in extract_numbers("the effective tax rate was 20%")
-
-
-def test_extract_numbers_percent_word():
-    assert (20.0, "percent") in extract_numbers("a statutory rate of 20 percent")
-
-
-def test_extract_numbers_no_digits_returns_empty_list():
-    assert extract_numbers("no numbers in this sentence at all") == []
-
-
-# ---------------------------------------------------------------------------
-# _normalize — the percent/scale category-safety guarantee
-# ---------------------------------------------------------------------------
-def test_normalize_percent_stays_raw_value():
-    assert _normalize(20, "percent") == ("percent", 20)
-
-
-def test_normalize_billion_applies_multiplier():
-    category, value = _normalize(72.4, "billion")
-    assert category == "scale"
-    assert value == pytest.approx(72_400_000_000)
-
-
-def test_normalize_raw_is_unchanged_scale_value():
-    assert _normalize(166000, "raw") == ("scale", 166000)
-
-
-def test_normalize_percent_and_raw_are_different_categories():
-    # This is the exact guarantee grade_numeric depends on: a literal "20"
-    # must never be treated as satisfying an expected "20 percent".
-    percent_category, _ = _normalize(20, "percent")
-    scale_category, _ = _normalize(20, "raw")
-    assert percent_category != scale_category
 
 
 # ---------------------------------------------------------------------------
@@ -86,7 +37,7 @@ def test_grade_numeric_fails_on_wrong_value():
 def test_grade_numeric_fails_when_unit_category_differs_even_if_number_matches():
     # 72.4% and $72.4 billion must never be confused just because "72.4"
     # appears in both — this is the regression test for the category-
-    # safety design in _normalize().
+    # safety design in numeric_utils.normalize().
     passed, _ = grade_numeric("The rate was 72.4%.", 72.4, "billion")
     assert passed is False
 
