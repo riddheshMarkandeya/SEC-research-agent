@@ -16,7 +16,8 @@ Output:
     ./data/<TICKER>/<accession>_tables.json -- extracted tables (list of table dicts)
 
 IMPORTANT: SEC requires a descriptive User-Agent header on every request,
-or it will block you. Set EMAIL below to your real email before running.
+or it will block you. Set SEC_USER_AGENT_NAME/SEC_USER_AGENT_EMAIL in
+.env to your real name/email before running (see .env.example).
 """
 
 import json
@@ -30,6 +31,7 @@ import requests
 from bs4 import BeautifulSoup, XMLParsedAsHTMLWarning
 
 from companies import load_companies
+from config import SEC_USER_AGENT, SEC_USER_AGENT_EMAIL
 
 # SEC filings are often iXBRL (XHTML with embedded XML tags for financial
 # data). bs4 sometimes misdetects these as pure XML and warns about it —
@@ -37,13 +39,7 @@ from companies import load_companies
 # clean text/table extraction.
 warnings.filterwarnings("ignore", category=XMLParsedAsHTMLWarning)
 
-# ---------------------------------------------------------------------------
-# CONFIG — edit this before running
-# ---------------------------------------------------------------------------
-YOUR_NAME = "Rid"
-YOUR_EMAIL = "riddhesh2307@gmail.com"  # <-- put a real email here, SEC checks format
-
-HEADERS = {"User-Agent": f"{YOUR_NAME} {YOUR_EMAIL}"}
+HEADERS = {"User-Agent": SEC_USER_AGENT}
 
 FORM_TYPES = {"10-K", "10-Q"}
 FILINGS_PER_COMPANY = 5  # last N matching filings (mix of 10-K/10-Q)
@@ -159,8 +155,8 @@ def parse_filing(html: str) -> tuple[str, list[dict]]:
 # Main ingestion loop
 # ---------------------------------------------------------------------------
 def main():
-    if "your.email@example.com" in YOUR_EMAIL:
-        print("⚠️  Set YOUR_EMAIL at the top of this script before running — "
+    if "your.email@example.com" in SEC_USER_AGENT_EMAIL:
+        print("⚠️  Set SEC_USER_AGENT_EMAIL in .env before running (see .env.example) — "
               "SEC will reject requests without a real-looking User-Agent.")
         return
 

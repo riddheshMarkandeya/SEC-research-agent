@@ -31,8 +31,8 @@ import re
 
 import requests
 
-from answer import MODEL_NAME, OLLAMA_URL
 from companies import load_companies
+from config import OLLAMA_MODEL_NAME, OLLAMA_URL
 from numeric_utils import UNIT_MULTIPLIERS, extract_numbers, normalize
 from retrieval import hybrid_search
 from xbrl_facts import (
@@ -457,7 +457,7 @@ def _call_ollama(messages: list[dict]) -> dict:
     response = requests.post(
         OLLAMA_URL,
         json={
-            "model": MODEL_NAME,
+            "model": OLLAMA_MODEL_NAME,
             "messages": messages,
             "tools": [FACT_TOOL_SCHEMA, COMPARE_TOOL_SCHEMA, SEARCH_TOOL_SCHEMA],
             "stream": False,

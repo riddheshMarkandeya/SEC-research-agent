@@ -49,6 +49,7 @@ from datetime import date, datetime
 from pathlib import Path
 
 from period_labels import fiscal_quarter, fiscal_year_label
+from xbrl_facts import _ANNUAL_DURATION_DAYS, _duration_days, _tag_for, fetch_concept
 
 DATA_DIR = Path("./data")
 ANCHOR = "SECURITIES AND EXCHANGE COMMISSION"
@@ -150,6 +151,70 @@ def verify() -> tuple[int, int, list[str]]:
     return checked, confirmed, problems
 
 
+def verify_against_xbrl() -> tuple[int, int, list[str]]:
+    """A second, independent cross-check on the same assumption verify()
+    checks above, but against SEC's own structured XBRL data instead of
+    filing prose -- a stronger signal, not a replacement: every
+    10-K-form companyconcept entry's own `end` date IS that company's
+    fiscal year end for that year, straight from SEC, with no regex, no
+    dependency on a specific comparative-quarter phrasing appearing in
+    the text, and no "inconclusive" case the way verify() has when no
+    self-description is found. Complements verify() rather than
+    replacing it -- that check also separately validates reportDate
+    metadata correctness, a concern this one doesn't cover, and this one
+    only covers companies/years we have cached or fetchable XBRL data
+    for.
+
+    Uses whichever tag "gross_profit" resolves to per company --
+    xbrl_facts.py's own DEFAULT_METRIC_TAGS comment already confirms all
+    5 covered companies tag GrossProfit directly through their latest
+    filings (unlike "revenue", which needs a per-company override), so
+    it needs no override handling here; any similarly well-covered
+    metric would do.
+
+    Found live, not anticipated: filtering on `form == "10-K"` alone
+    isn't enough -- SEC's older (pre-~2020) XBRL data has real quality
+    issues where clearly quarter-length entries (e.g. NVDA's
+    2009-04-26/07-26/10-25, ~90 days apart) are tagged with form="10-K"
+    instead of "10-Q", producing spurious mismatches across all 5
+    companies on the first run of this function. The same
+    _ANNUAL_DURATION_DAYS duration filter xbrl_facts.py's own
+    _pick_entry() already relies on for exactly this kind of
+    disambiguation fixes it here too -- restricting to genuinely
+    year-length entries, not just ones labeled "10-K"."""
+    companies = _load_companies_with_fy_end()
+    checked = 0
+    confirmed = 0
+    problems = []
+
+    for ticker, info in companies.items():
+        fy_end_month = info["fiscal_year_end_month"]
+        tag = _tag_for(ticker, "gross_profit")
+        data = fetch_concept(ticker, tag)
+        if data is None:
+            problems.append(f"{ticker}: no {tag} data available (inconclusive)")
+            continue
+        annual_ends = {
+            e["end"]
+            for e in data.get("units", {}).get("USD", [])
+            if e.get("form") == "10-K" and _ANNUAL_DURATION_DAYS[0] <= _duration_days(e) <= _ANNUAL_DURATION_DAYS[1]
+        }
+        if not annual_ends:
+            problems.append(f"{ticker}: no 10-K entries found for {tag} (inconclusive)")
+            continue
+        checked += 1
+        mismatches = sorted(end for end in annual_ends if date.fromisoformat(end).month != fy_end_month)
+        if not mismatches:
+            confirmed += 1
+        else:
+            problems.append(
+                f"{ticker}: fiscal_year_end_month={fy_end_month} but {tag}'s 10-K entries include "
+                f"end date(s) {mismatches} which don't fall in that month -- MISMATCH"
+            )
+
+    return checked, confirmed, problems
+
+
 def main():
     checked, confirmed, problems = verify()
     print(f"Checked {checked} filings, {confirmed} confirmed against their own self-description.\n")
@@ -164,6 +229,22 @@ def main():
         for p in inconclusive:
             print(f"  {p}")
     if not mismatches:
+        print("No mismatches found.")
+
+    print("\n" + "-" * 60)
+    x_checked, x_confirmed, x_problems = verify_against_xbrl()
+    print(f"\nChecked {x_checked} companies, {x_confirmed} confirmed against their own XBRL 10-K data.\n")
+    x_mismatches = [p for p in x_problems if "MISMATCH" in p]
+    x_inconclusive = [p for p in x_problems if "MISMATCH" not in p]
+    if x_mismatches:
+        print(f"MISMATCHES ({len(x_mismatches)}) -- fiscal_year_end_month may be wrong:")
+        for p in x_mismatches:
+            print(f"  {p}")
+    if x_inconclusive:
+        print(f"\nInconclusive ({len(x_inconclusive)}) -- no XBRL data available, not a red flag:")
+        for p in x_inconclusive:
+            print(f"  {p}")
+    if not x_mismatches:
         print("No mismatches found.")
 
 

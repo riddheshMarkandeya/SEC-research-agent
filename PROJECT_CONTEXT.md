@@ -149,6 +149,50 @@ trusting it blindly. Re-run that script after adding a new company or
 pulling in older historical filings, since that's exactly when the risk
 of silently crossing an undetected fiscal-year change goes up.
 
+### `config.py` + `.env`/`.env.example` — shared environment configuration (Week 5g)
+
+Same motivation as `companies.py` right above (single source of truth
+instead of silently-drifting copies), applied to infra config instead of
+ticker/company data. Before this, several values were independently
+hardcoded as module-level constants in 3+ files each:
+
+- `CHROMA_DIR = "./chroma_db"` — separately defined in `index_chunks.py`,
+  `retrieval.py`, AND `query_chunks.py`. All three MUST agree, or one of
+  them silently queries an empty/unrelated store instead of erroring.
+- The embedding model name — same value, but already-diverged variable
+  names (`MODEL_NAME` in two files, `EMBED_MODEL_NAME` in the third) —
+  a live warning sign of the kind of drift `companies.py`'s own
+  `COMPANIES`-variable-name collision already taught this project to
+  watch for.
+- The SEC `User-Agent` header — `edgar_ingest.py` built it from
+  `YOUR_NAME`/`YOUR_EMAIL` constants at the top of the file;
+  `xbrl_facts.py` had the same final string hardcoded a second time,
+  with no shared source.
+- `OLLAMA_URL`/the Ollama chat model name — these were *already*
+  centralized once, in `answer.py`, with `agent.py` and `eval_harness.py`
+  importing them from there — better than the others, but an odd
+  ownership location (an answer-generation script being the source of
+  truth for two other modules' config) and worth folding into the same
+  place as everything else.
+
+**Fix**: `config.py` loads `.env` via `python-dotenv` and exposes typed
+constants — `SEC_USER_AGENT`, `OLLAMA_URL`, `OLLAMA_MODEL_NAME`,
+`CHROMA_DIR`, `EMBED_MODEL_NAME`, `RERANK_MODEL_NAME` — each with a
+fallback equal to what was previously hardcoded, so nothing breaks
+without a `.env` file. `.env.example` is committed as the documented
+template; `.env` itself is gitignored (personal/machine-specific, not
+secret here, but not the shared source of defaults either). Every
+consuming file (`edgar_ingest.py`, `xbrl_facts.py`, `index_chunks.py`,
+`query_chunks.py`, `retrieval.py`, `answer.py`, `agent.py`,
+`eval_harness.py`) now imports from `config.py` instead of redefining.
+Along the way, the Ollama chat model constant was renamed
+`OLLAMA_MODEL_NAME` everywhere (previously ambiguously named
+`MODEL_NAME`, the exact same name `index_chunks.py`/`query_chunks.py`
+already used for a *completely different* model — the embedding model —
+which was confusing on its own even before considering duplication).
+Verified: `python -c "import <module>"` for all 8 consuming modules,
+plus the full 137-test suite, both clean after the change.
+
 ### `edgar_ingest.py` (Week 1) — working
 
 Pulls filings and splits each into prose + tables.
@@ -437,6 +481,32 @@ Both bugs are still open as of this writing.
   against their own text, 0 mismatches, 11 inconclusive** (no reliable
   self-description pattern found for those specific filings — not
   evidence of a problem, just no independent check available for them).
+- **`verify_against_xbrl()`, added in Week 5e/f**: a second, independent
+  check on the same `fiscal_year_end_month` assumption, this time
+  against SEC's own structured XBRL data instead of filing prose —
+  motivated by the period-matching correction below, which raised the
+  question of whether the data itself (rather than regex over prose)
+  could verify this assumption more directly. Every 10-K-form
+  `companyconcept` entry's own `end` date IS that company's fiscal year
+  end for that year, so this is a stronger signal than `verify()`'s
+  prose-regex approach (no "inconclusive" case, no dependency on a
+  specific comparative-quarter phrasing appearing in the text) —
+  complements rather than replaces it, since `verify()` separately
+  checks `reportDate` metadata correctness, which this doesn't cover.
+  **Found a real bug in the checker on its first live run**, same
+  discipline as `verify()`'s own two bugs above: filtering on
+  `form == "10-K"` alone wasn't enough — SEC's older (pre-~2020) XBRL
+  data has real quality issues where clearly quarter-length entries
+  (e.g. NVDA's 2009-04-26/07-26/10-25, ~90 days apart) are tagged with
+  `form="10-K"` instead of `"10-Q"`, producing spurious mismatches
+  across all 5 companies on the first run. Fixed by reusing
+  `xbrl_facts.py`'s own `_ANNUAL_DURATION_DAYS` filter (the same
+  disambiguation `_pick_entry()` already relies on) to restrict to
+  genuinely year-length entries, not just ones labeled "10-K". Final
+  result: **5/5 companies confirmed, 0 mismatches**, verified live
+  against real cached data. No dedicated pytest file, consistent with
+  `verify()`'s own existing convention of being a re-runnable
+  self-verifying script rather than unit-tested.
 
 ### `xbrl_facts.py` — structured-facts tool, actually fixes the two retrieval-precision bugs (Week 5b)
 
@@ -489,12 +559,15 @@ above:**
    match (fy=2026/Q1 exists, just for the wrong, year-earlier quarter),
    so it failed silently instead of erroring. Reproduced live via
    `agent.py --verbose` before fixing. **Fix:** added `period_end_date`
-   as an alternative tool input, resolved via `resolve_fiscal_period()`
-   which reuses `period_labels.py`'s `fiscal_year_label()`/
-   `fiscal_quarter()` — the exact "future, more targeted application"
-   flagged as a possibility when that module's embedding-prefix use was
-   reverted above. The model is told explicitly not to compute this
-   itself.
+   as an alternative tool input, originally resolved via a
+   `resolve_fiscal_period()` helper reusing `period_labels.py`'s
+   `fiscal_year_label()`/`fiscal_quarter()` — the exact "future, more
+   targeted application" flagged as a possibility when that module's
+   embedding-prefix use was reverted above. The model is told explicitly
+   not to compute this itself. **Superseded in Week 5e below**: that
+   resolve-then-match approach had its own latent bug (a computed label
+   can silently mismatch); entries are now matched directly on their own
+   `end` date instead, and `resolve_fiscal_period()` was removed.
 2. **Wrong revenue tag default.** Checking only HTTP status codes (200
    vs. 404) on each concept URL suggested `Revenues` worked for
    AAPL/MSFT/NVDA/CRM. But a 200 only means a company has *ever* tagged
@@ -710,6 +783,58 @@ calling `get_financial_fact` five times.
   highest gross margin... among our five companies" despite only 2
   ever being retrieved; after, it explicitly stated "the other
   companies did not provide a reported gross margin for that period."
+
+### `xbrl_facts.py` — period-matching correction: match on `end`, not a computed label (Week 5e)
+
+A design review question ("is fiscal-year date arithmetic safe to trust,
+and is there something in the data itself we should be leaning on
+instead?") surfaced a real latent bug in bug #1's original fix above,
+not just a style concern.
+
+- **The problem**: `resolve_fiscal_period()` converted a caller-given
+  `period_end_date` into a `(fiscal_year, fiscal_period)` guess via
+  `period_labels.py`'s fiscal-year arithmetic, then matched entries
+  against *that computed label* (`fy`/`fp` equality in `_pick_entry`) —
+  never against the actual date asked about. Every `companyconcept`
+  entry already carries its own authoritative `end` date directly from
+  SEC; computing a second, independent label and matching on that
+  instead of the ground truth already in the response meant a wrong
+  computation wouldn't fail loudly, it would silently match a
+  *different, real* entry that happened to share the (wrong) label —
+  exactly the failure mode bug #1 was originally written to fix, just
+  reintroduced one layer down. Concretely reproduced as a **newly found,
+  not previously eval-covered** bug: `resolve_fiscal_period` has no "FY"
+  case (`fiscal_quarter()` only returns Q1-Q4), so passing a company's
+  own *fiscal-year-end* date (e.g. NVDA's FY2026 end, "2026-01-25") as
+  `period_end_date` computed `fiscal_period="Q4"` and searched for a
+  10-Q-shaped quarterly entry that doesn't exist for a company that
+  doesn't separately tag standalone Q4 — silently returning `None` for a
+  valid annual-figure question phrased with a calendar date. Added as a
+  regression test (`test_get_metric_with_fiscal_year_end_calendar_date_returns_annual_value`)
+  before fixing, confirmed failing under the old code path.
+- **The fix**: `_pick_entry_by_end_date()` replaces the
+  resolve-then-match approach — filters entries directly on
+  `entry["end"] == period_end_date`, using the existing duration buckets
+  only to disambiguate a quarter figure from an annual/YTD figure that
+  happens to share the same end date (preferring quarter when both
+  exist, which in practice is rare — see the function's docstring).
+  Ties among same-end-date, same-duration entries (e.g. a value restated
+  in a later filing) break toward the most recently *filed* one, since
+  `end` is now fixed by construction and the old max(`end`) tiebreak no
+  longer applies. `get_gross_margin()` simplified alongside it — it used
+  to pre-resolve the period once so both legs (`gross_profit`/`revenue`)
+  stayed consistent; now both legs just receive `period_end_date`
+  directly and `get_metric()` matches each independently, with the
+  existing `period_end` equality check still catching any real
+  divergence between the two tags.
+- **`resolve_fiscal_period()` was deleted, not deprecated** — its whole
+  purpose was the intermediate computation this fix removes, and it had
+  no other callers. `period_labels.py`'s `fiscal_year_label()`/
+  `fiscal_quarter()` are unaffected and still power `chunk_period_label()`
+  for retrieval indexing (a genuinely different use case — labeling
+  chunks for BM25/embedding, not selecting which XBRL entry to return).
+- Full suite: 137/137 (5 new tests added, 3 stale `resolve_fiscal_period`
+  tests removed), no regressions.
 
 ### `answer.py` (Week 3) — working, v0 prototype
 

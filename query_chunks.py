@@ -18,9 +18,9 @@ import textwrap
 import chromadb
 from sentence_transformers import SentenceTransformer
 
-CHROMA_DIR = "./chroma_db"
+from config import CHROMA_DIR, EMBED_MODEL_NAME
+
 COLLECTION_NAME = "sec_filings"
-MODEL_NAME = "BAAI/bge-small-en-v1.5"
 
 # bge-small is an asymmetric retrieval model: it was trained so that
 # queries and passages live in comparably-scaled regions of the
@@ -108,7 +108,7 @@ def main():
     collection = client.get_collection(COLLECTION_NAME)
     print(f"Collection '{COLLECTION_NAME}' has {collection.count()} documents.")
 
-    model = SentenceTransformer(MODEL_NAME)
+    model = SentenceTransformer(EMBED_MODEL_NAME)
 
     queries = [args.query] if args.query else SANITY_QUERIES
     for query in queries:

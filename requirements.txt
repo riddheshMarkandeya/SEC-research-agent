@@ -1,3 +1,6 @@
+# Shared config (config.py) — loads .env, see .env.example
+python-dotenv==1.2.2
+
 # Ingestion (edgar_ingest.py)
 requests==2.34.2
 beautifulsoup4==4.15.0

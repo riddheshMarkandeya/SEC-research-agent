@@ -32,9 +32,9 @@ from pathlib import Path
 import requests
 
 from companies import load_companies
-from period_labels import fiscal_quarter, fiscal_year_label
+from config import SEC_USER_AGENT
 
-HEADERS = {"User-Agent": "Rid riddhesh2307@gmail.com"}
+HEADERS = {"User-Agent": SEC_USER_AGENT}
 CACHE_DIR = Path("./xbrl_cache")
 REQUEST_DELAY_SECONDS = 0.3  # match edgar_ingest.py's courtesy delay
 
@@ -171,34 +171,53 @@ def _pick_entry(entries: list[dict], fiscal_year: int, fiscal_period: str) -> di
     return max(candidates, key=lambda e: e["end"])
 
 
-def resolve_fiscal_period(ticker: str, period_end_date: str) -> tuple[int, str]:
-    """Convert a calendar period-end date into the (fiscal_year,
-    fiscal_period) pair XBRL's own fy/fp fields use, via period_labels.py's
-    verified fiscal-year math.
+def _pick_entry_by_end_date(entries: list[dict], period_end_date: str) -> dict | None:
+    """Filter a concept's USD entries down to the one true value ending
+    exactly on `period_end_date`.
 
-    Exists because of a real, reproduced bug: for a comparison question
-    phrased with a calendar date ("the quarter ended April 26, 2026"),
-    the tool-calling model reliably passed fiscal_year=2026 directly
-    (the calendar year), not realizing NVDA/CRM's January fiscal year
-    end means that date falls in fiscal year 2027 -- a WRONG-BUT-VALID
-    period match (fy=2026/Q1 exists, just for the wrong, year-earlier
-    quarter), so it failed silently rather than erroring. Confirmed via
-    a direct agent.py repro before fixing: the model called
-    get_financial_fact(ticker='NVDA', fiscal_year=2026, fiscal_period='Q1')
-    for a question about the quarter ended April 26, 2026, which should
-    have been fiscal_year=2027. Doing this conversion in code instead of
-    asking the model to do fiscal-year arithmetic reuses period_labels.py,
-    which was already built and verified against real filings for
-    exactly this calculation -- see PROJECT_CONTEXT.md for why an
-    earlier, different application of that same module (as an embedding
-    prefix) was tried and reverted; this is the "future, more targeted
-    application" flagged there."""
-    companies = load_companies()
-    fiscal_year_end_month = companies[ticker]["fiscal_year_end_month"]
-    rd = date.fromisoformat(period_end_date)
-    fy = fiscal_year_label(fiscal_year_end_month, rd)
-    q = fiscal_quarter(fiscal_year_end_month, rd)
-    return fy, f"Q{q}"
+    Replaces an earlier approach that first converted the date to a
+    (fiscal_year, fiscal_period) guess (via period_labels.py's fiscal-
+    year arithmetic, mirroring resolve_fiscal_period()'s old role) and
+    matched entries on THAT computed label instead of on the date
+    itself. That had a real, silent-failure-mode risk: fiscal-year
+    arithmetic is a second, independent computation of something the
+    data already states directly (every entry carries its own `end`
+    date) -- if that arithmetic were ever off by one, it wouldn't fail
+    loudly, it would silently match a DIFFERENT real entry that happens
+    to share the (wrong) computed fy/fp label, rather than the one
+    actually asked about. This is exactly the shape of bug already found
+    once for a model-computed fiscal year (see get_metric's "Known
+    limitation" note and PROJECT_CONTEXT.md's NVDA fiscal-year-vs-
+    calendar-year case) -- reproducing the same risk inside our own
+    lookup code, just one level removed from the model, defeated the
+    point of fixing it there. Matching directly against `end` removes
+    the risk by construction: there's no computed label to be wrong,
+    only a string comparison against data SEC already returned.
+
+    Duration still disambiguates a quarter's own figure from an
+    annual/YTD figure that happens to share the same `end` date (see the
+    module-level comment above _QUARTER_DURATION_DAYS) -- a quarter-
+    length entry is preferred when both exist for the same end date.
+    That collision is rare in practice: it would require a fiscal year's
+    own end date to also have a standalone quarter entry, and get_metric's
+    docstring already notes most of these companies don't separately tag
+    a standalone Q4 -- so a fiscal-year-end date usually has ONLY an
+    annual-duration entry to begin with, not a competing quarter one."""
+    candidates = [e for e in entries if e["end"] == period_end_date]
+    if not candidates:
+        return None
+    quarters = [e for e in candidates if _QUARTER_DURATION_DAYS[0] <= _duration_days(e) <= _QUARTER_DURATION_DAYS[1]]
+    pool = quarters or [
+        e for e in candidates if _ANNUAL_DURATION_DAYS[0] <= _duration_days(e) <= _ANNUAL_DURATION_DAYS[1]
+    ]
+    if not pool:
+        return None
+    # Same end date can legitimately appear more than once (e.g. this
+    # year's 10-Q and next year's 10-Q both report last year's comparative
+    # quarter) -- prefer whichever was filed most recently, since a later
+    # filing is never less authoritative than an earlier restatement of
+    # the same period.
+    return max(pool, key=lambda e: e.get("filed") or "")
 
 
 def get_metric(
@@ -216,10 +235,11 @@ def get_metric(
       states the period in fiscal terms ("fiscal year 2026").
     - period_end_date (a calendar "YYYY-MM-DD"): for when a question
       states a calendar date instead ("the quarter ended April 26,
-      2026") -- resolved to the right fiscal_year/fiscal_period via
-      resolve_fiscal_period() rather than trusting the caller to do that
-      arithmetic (see resolve_fiscal_period's docstring for why that
-      matters).
+      2026") -- matched directly against each entry's own `end` date via
+      _pick_entry_by_end_date() rather than trusting the caller (or our
+      own fiscal-year arithmetic) to convert it to a fiscal label first;
+      see that function's docstring for why matching on the date itself
+      is safer than matching on a computed label.
 
     Known limitation: NVIDIA (and most annual filers) don't separately
     tag a standalone Q4 duration -- Q4 is implicitly "FY minus the three
@@ -239,26 +259,27 @@ def get_metric(
     "form": str, "accession": str} or None if unavailable (caller should
     fall back to search_filings).
     """
-    if period_end_date:
-        # Another real, live-observed model quirk (see agent.py's
-        # _call_get_financial_fact docstring for the sibling case): for
-        # a question with no specific calendar date ("total revenue for
-        # 2025"), the model called this with period_end_date="" instead
-        # of omitting it or using fiscal_year/fiscal_period, which
-        # crashed date.fromisoformat with an unhandled ValueError and
-        # took down the whole eval run. The truthy check handles the
-        # empty-string case; the try/except is defense-in-depth for a
-        # non-empty but malformed date the model might send instead.
-        try:
-            fiscal_year, fiscal_period = resolve_fiscal_period(ticker, period_end_date)
-        except ValueError:
-            return None
     tag = _tag_for(ticker, metric)
     data = fetch_concept(ticker, tag)
     if data is None:
         return None
     entries = data.get("units", {}).get("USD", [])
-    entry = _latest_entry(entries) if fiscal_year is None else _pick_entry(entries, fiscal_year, fiscal_period)
+    # The empty-string check matters on its own: a real, live-observed
+    # model quirk (see agent.py's _call_get_financial_fact docstring for
+    # the sibling case) is that for a question with no specific calendar
+    # date ("total revenue for 2025"), the model called this with
+    # period_end_date="" instead of omitting it or using
+    # fiscal_year/fiscal_period -- an empty string must be treated as
+    # "not provided" and fall through to the fiscal_year/fiscal_period
+    # path, not as a date to match against (it never matches any real
+    # `end` value, so this would return None either way, but the
+    # fallback path is the one the caller actually meant).
+    if period_end_date:
+        entry = _pick_entry_by_end_date(entries, period_end_date)
+    elif fiscal_year is None:
+        entry = _latest_entry(entries)
+    else:
+        entry = _pick_entry(entries, fiscal_year, fiscal_period)
     if entry is None:
         return None
     return {
@@ -282,19 +303,17 @@ def get_gross_margin(
     prose/MD&A, not structured facts) -- computed here from two
     structured facts (GrossProfit / Revenues) instead of returned raw
     for the model to divide, so agent.py's "don't infer/combine numbers"
-    rule doesn't need to be relaxed for this tool's output. See
-    get_metric() for the fiscal_year/fiscal_period vs. period_end_date
-    tradeoff -- resolved once here rather than in each get_metric() call
-    so both legs use the identical resolved period, and see get_metric's
-    body for why this is a truthy check + try/except rather than an
-    `is not None` check."""
-    if period_end_date:
-        try:
-            fiscal_year, fiscal_period = resolve_fiscal_period(ticker, period_end_date)
-        except ValueError:
-            return None
-    gross_profit = get_metric(ticker, "gross_profit", fiscal_year, fiscal_period)
-    revenue = get_metric(ticker, "revenue", fiscal_year, fiscal_period)
+    rule doesn't need to be relaxed for this tool's output. Both legs are
+    just handed the same fiscal_year/fiscal_period/period_end_date
+    arguments and each resolves its own entry via get_metric() -- no
+    separate period-resolution step needed here (unlike an earlier
+    version of this function), since get_metric() now matches
+    period_end_date directly against each entry's own `end` date rather
+    than through an intermediate computed label; the period_end check
+    just below is what actually guarantees both legs agree, regardless
+    of how each one got there."""
+    gross_profit = get_metric(ticker, "gross_profit", fiscal_year, fiscal_period, period_end_date)
+    revenue = get_metric(ticker, "revenue", fiscal_year, fiscal_period, period_end_date)
     if gross_profit is None or revenue is None:
         return None
     if gross_profit["period_end"] != revenue["period_end"]:

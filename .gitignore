@@ -14,3 +14,8 @@ xbrl_cache/
 
 # Local Claude Code settings (personal, not shared project config)
 .claude/settings.local.json
+
+# Local environment overrides (see .env.example for the template this
+# is copied from) -- not secret here, but personal/machine-specific and
+# not meant to be the shared source of defaults.
+.env

@@ -20,8 +20,9 @@ from pathlib import Path
 import chromadb
 from sentence_transformers import SentenceTransformer
 
+from config import CHROMA_DIR, EMBED_MODEL_NAME
+
 CHUNKS_DIR = Path("./chunks")
-CHROMA_DIR = "./chroma_db"
 COLLECTION_NAME = "sec_filings"
 
 # bge-small is trained for asymmetric retrieval (short query -> long
@@ -30,8 +31,6 @@ COLLECTION_NAME = "sec_filings"
 # all-MiniLM-L6-v2. The tradeoff for using an asymmetric model: queries
 # need an instruction prefix at search time (see query_chunks.py) but
 # passages being indexed do NOT — encode them raw, as below.
-MODEL_NAME = "BAAI/bge-small-en-v1.5"
-
 EMBED_BATCH_SIZE = 64
 CHROMA_ADD_BATCH_SIZE = 500  # keep well under Chroma's internal max-batch limit
 
@@ -65,8 +64,8 @@ def main():
         return
     print(f"  {len(records)} chunks loaded")
 
-    print(f"Loading embedding model {MODEL_NAME} (first run downloads weights) ...")
-    model = SentenceTransformer(MODEL_NAME)
+    print(f"Loading embedding model {EMBED_MODEL_NAME} (first run downloads weights) ...")
+    model = SentenceTransformer(EMBED_MODEL_NAME)
 
     # Tried prepending a period_labels.py period-label prefix to each
     # chunk's embedded text (to fix nvda-gross-margin-fy26 and

@@ -22,10 +22,8 @@ import argparse
 
 import requests
 
+from config import OLLAMA_MODEL_NAME, OLLAMA_URL
 from retrieval import hybrid_search
-
-OLLAMA_URL = "http://localhost:11434/api/chat"
-MODEL_NAME = "qwen2.5:7b-instruct"
 
 SYSTEM_PROMPT = """You are a financial research assistant. You answer questions ONLY using the numbered filing excerpts provided below — never from prior knowledge about the company.
 
@@ -65,7 +63,7 @@ def generate_answer(query: str, ticker: str | None = None, top_k: int = 5) -> tu
     response = requests.post(
         OLLAMA_URL,
         json={
-            "model": MODEL_NAME,
+            "model": OLLAMA_MODEL_NAME,
             "messages": [
                 {"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user", "content": user_prompt},

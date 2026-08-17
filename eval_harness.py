@@ -57,7 +57,7 @@ from pathlib import Path
 import requests
 
 from agent import run_agent
-from answer import MODEL_NAME, OLLAMA_URL  # still used directly by grade_judged()
+from config import OLLAMA_MODEL_NAME, OLLAMA_URL  # used directly by grade_judged()
 from numeric_utils import extract_numbers, normalize
 
 QUESTIONS_PATH = Path("./eval_questions.jsonl")
@@ -130,7 +130,7 @@ def grade_judged(question: str, answer_text: str, criteria: str) -> tuple[bool, 
     response = requests.post(
         OLLAMA_URL,
         json={
-            "model": MODEL_NAME,
+            "model": OLLAMA_MODEL_NAME,
             "messages": [
                 {"role": "system", "content": JUDGE_SYSTEM_PROMPT},
                 {"role": "user", "content": user_prompt},

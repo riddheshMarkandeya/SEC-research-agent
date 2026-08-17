@@ -42,17 +42,17 @@ import chromadb
 from rank_bm25 import BM25Okapi
 from sentence_transformers import CrossEncoder, SentenceTransformer
 
+from config import CHROMA_DIR, EMBED_MODEL_NAME, RERANK_MODEL_NAME
+
 CHUNKS_DIR = Path("./chunks")
-CHROMA_DIR = "./chroma_db"
 COLLECTION_NAME = "sec_filings"
 
-EMBED_MODEL_NAME = "BAAI/bge-small-en-v1.5"
 QUERY_INSTRUCTION = "Represent this sentence for searching relevant passages: "
 
-# A cross-encoder trained for passage reranking (MS MARCO). Small and
-# CPU-friendly enough to run over ~25-40 candidates per query without
-# noticeable latency, unlike running it over the full 3,207-chunk corpus.
-RERANK_MODEL_NAME = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+# RERANK_MODEL_NAME (from config.py) is a cross-encoder trained for
+# passage reranking (MS MARCO). Small and CPU-friendly enough to run
+# over ~25-40 candidates per query without noticeable latency, unlike
+# running it over the full 3,207-chunk corpus.
 
 RRF_K = 60  # standard constant from the original Reciprocal Rank Fusion paper
 CANDIDATE_POOL_SIZE = 25  # per-method pool size, before fusion/reranking

@@ -8,13 +8,13 @@ verified-real fixture data captured from SEC's own companyconcept API.
 from xbrl_facts import (
     _latest_entry,
     _pick_entry,
+    _pick_entry_by_end_date,
     get_frame,
     get_gross_margin,
     get_gross_margin_all_companies,
     get_metric,
     get_metric_all_companies,
     fetch_concept,
-    resolve_fiscal_period,
 )
 
 # Trimmed, real entries from NVDA's GrossProfit companyconcept response
@@ -41,26 +41,54 @@ MSFT_RD_EXPENSE_ENTRIES = [
 ]
 
 
-def test_resolve_fiscal_period_nvda_q1_fy2027_from_calendar_date():
-    # NVDA's own 10-Q says this exact date is "the first quarter of
-    # fiscal year 2027" (fiscal_year_end_month=1) -- the real bug this
-    # fixes: the calendar year (2026) is NOT the fiscal year here.
-    fy, fp = resolve_fiscal_period("NVDA", "2026-04-26")
-    assert (fy, fp) == (2027, "Q1")
+def test_pick_entry_by_end_date_ignores_wrong_fy_fp_labels_entirely():
+    # Reproduces the shape of the real NVDA bug (a January-fiscal-year-end
+    # company's calendar-year-vs-fiscal-year mismatch) at the entry-
+    # selection layer directly: an entry mislabeled with the "wrong but
+    # valid" fy/fp a naive calendar-year guess would produce sits right
+    # next to the correct one. Matching on `end` alone must pick the
+    # right entry regardless of either one's fy/fp label -- there's no
+    # computed label in the selection path at all to get wrong.
+    entries = [
+        {"start": "2025-01-28", "end": "2025-04-27", "val": 111, "accn": "prior-year-quarter", "fy": 2026, "fp": "Q1", "form": "10-Q", "filed": "2025-05-20"},
+        {"start": "2026-01-26", "end": "2026-04-26", "val": 222, "accn": "correct-quarter", "fy": 2027, "fp": "Q1", "form": "10-Q", "filed": "2026-05-20"},
+    ]
+    entry = _pick_entry_by_end_date(entries, "2026-04-26")
+    assert entry["val"] == 222
+    assert entry["accn"] == "correct-quarter"
 
 
-def test_resolve_fiscal_period_crm_q1_fy2027_from_calendar_date():
-    fy, fp = resolve_fiscal_period("CRM", "2026-04-30")
-    assert (fy, fp) == (2027, "Q1")
+def test_pick_entry_by_end_date_prefers_quarter_over_annual_at_same_end_date():
+    entries = [
+        {"start": "2025-01-27", "end": "2026-01-25", "val": 999, "accn": "annual", "fy": 2026, "fp": "FY", "form": "10-K", "filed": "2026-02-25"},
+        {"start": "2025-11-01", "end": "2026-01-25", "val": 111, "accn": "quarter", "fy": 2026, "fp": "Q4", "form": "10-Q", "filed": "2026-02-20"},
+    ]
+    entry = _pick_entry_by_end_date(entries, "2026-01-25")
+    assert entry["val"] == 111
+    assert entry["accn"] == "quarter"
 
 
-def test_resolve_fiscal_period_pltr_calendar_year_company_matches_directly():
-    # PLTR's fiscal_year_end_month=12, so fiscal year == calendar year --
-    # a case where the naive calendar-year guess the model was making
-    # happens to be right, which is exactly why the bug went unnoticed
-    # until a January-fiscal-year-end company was tested.
-    fy, fp = resolve_fiscal_period("PLTR", "2025-12-31")
-    assert (fy, fp) == (2025, "Q4")
+def test_pick_entry_by_end_date_falls_back_to_annual_when_no_quarter_exists():
+    # The common case for these companies: a fiscal-year-end date usually
+    # has only an annual-duration entry (Q4 isn't separately tagged).
+    entries = [
+        {"start": "2025-01-27", "end": "2026-01-25", "val": 999, "accn": "annual", "fy": 2026, "fp": "FY", "form": "10-K", "filed": "2026-02-25"},
+    ]
+    entry = _pick_entry_by_end_date(entries, "2026-01-25")
+    assert entry["val"] == 999
+
+
+def test_pick_entry_by_end_date_breaks_ties_toward_most_recently_filed():
+    entries = [
+        {"start": "2025-01-01", "end": "2025-03-31", "val": 100, "accn": "original", "fy": 2025, "fp": "Q1", "form": "10-Q", "filed": "2025-05-01"},
+        {"start": "2025-01-01", "end": "2025-03-31", "val": 105, "accn": "restated", "fy": 2026, "fp": "Q1", "form": "10-Q", "filed": "2026-02-15"},
+    ]
+    entry = _pick_entry_by_end_date(entries, "2025-03-31")
+    assert entry["accn"] == "restated"
+
+
+def test_pick_entry_by_end_date_returns_none_when_no_entry_matches():
+    assert _pick_entry_by_end_date(NVDA_GROSS_PROFIT_ENTRIES, "2099-01-01") is None
 
 
 def test_get_metric_with_empty_string_period_end_date_falls_back_to_fiscal_args(monkeypatch):
@@ -97,6 +125,23 @@ def test_get_gross_margin_with_empty_string_period_end_date_falls_back_to_fiscal
     monkeypatch.setattr("xbrl_facts.fetch_concept", fake_fetch)
     result = get_gross_margin("NVDA", fiscal_year=2026, fiscal_period="FY", period_end_date="")
     assert result["value"] == 71.1
+
+
+def test_get_metric_with_fiscal_year_end_calendar_date_returns_annual_value(monkeypatch):
+    # A real latent bug the old resolve_fiscal_period()-based approach
+    # had: for NVDA (fiscal_year_end_month=1), passing its FY2026 end
+    # date "2026-01-25" as period_end_date computed fiscal_period="Q4"
+    # (fiscal-quarter arithmetic has no "FY" case, only Q1-Q4), which
+    # then searched for a 10-Q-shaped quarterly entry that doesn't exist
+    # -- silently returning None for a perfectly valid annual-figure
+    # question phrased with a calendar date instead of "fiscal year
+    # 2026". Matching directly on `end` sidesteps this entirely.
+    monkeypatch.setattr(
+        "xbrl_facts.fetch_concept",
+        lambda ticker, tag: {"units": {"USD": NVDA_GROSS_PROFIT_ENTRIES}},
+    )
+    result = get_metric("NVDA", "gross_profit", period_end_date="2026-01-25")
+    assert result["value"] == 153463000000
 
 
 def test_get_metric_with_period_end_date_matches_equivalent_fiscal_call(monkeypatch):
