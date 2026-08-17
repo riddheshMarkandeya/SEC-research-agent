@@ -1,7 +1,7 @@
 {
-  "AAPL": {"name": "Apple Inc.", "cik": "0000320193"},
-  "MSFT": {"name": "Microsoft Corporation", "cik": "0000789019"},
-  "NVDA": {"name": "NVIDIA Corporation", "cik": "0001045810"},
-  "CRM": {"name": "Salesforce, Inc.", "cik": "0001108524"},
-  "PLTR": {"name": "Palantir Technologies Inc.", "cik": "0001321655"}
+  "AAPL": {"name": "Apple Inc.", "cik": "0000320193", "fiscal_year_end_month": 9},
+  "MSFT": {"name": "Microsoft Corporation", "cik": "0000789019", "fiscal_year_end_month": 6},
+  "NVDA": {"name": "NVIDIA Corporation", "cik": "0001045810", "fiscal_year_end_month": 1},
+  "CRM": {"name": "Salesforce, Inc.", "cik": "0001108524", "fiscal_year_end_month": 1},
+  "PLTR": {"name": "Palantir Technologies Inc.", "cik": "0001321655", "fiscal_year_end_month": 12}
 }

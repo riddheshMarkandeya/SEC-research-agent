@@ -117,6 +117,14 @@ def _load_bm25_index():
     if not records:
         raise RuntimeError(f"No chunks found under {CHUNKS_DIR.resolve()} — run chunk_documents.py first.")
 
+    # Tried tokenizing a period_labels.py period-label-prefixed version
+    # of the text here (mirroring an index_chunks.py embedding change),
+    # to fix nvda-gross-margin-fy26 and msft-rd-expense-q3fy26 -- see
+    # PROJECT_CONTEXT.md. Reverted: it caused a regression on a
+    # previously-passing query (pltr-revenue-2025), diagnosed as an
+    # unrelated chunk gaining a disproportionate rank boost from sharing
+    # the same per-filing prefix as every other chunk in that filing.
+    # Net effect on the eval suite was a regression, not an improvement.
     tokenized_corpus = [_tokenize(r["text"]) for r in records]
     _bm25_index = BM25Okapi(tokenized_corpus)
     _bm25_records = records

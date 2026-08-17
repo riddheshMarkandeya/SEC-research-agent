@@ -68,6 +68,23 @@ def main():
     print(f"Loading embedding model {MODEL_NAME} (first run downloads weights) ...")
     model = SentenceTransformer(MODEL_NAME)
 
+    # Tried prepending a period_labels.py period-label prefix to each
+    # chunk's embedded text (to fix nvda-gross-margin-fy26 and
+    # msft-rd-expense-q3fy26 -- see PROJECT_CONTEXT.md), but reverted:
+    # it caused a regression on a previously-passing query
+    # (pltr-revenue-2025). Diagnosed directly: an unrelated boilerplate
+    # chunk's vector rank jumped from 30 to 8 purely from gaining the
+    # same shared prefix, disproportionately more than the actually
+    # correct chunk improved (157->103) -- embedding models don't
+    # combine a prefix and content additively, so a uniform per-filing
+    # prefix can unpredictably boost the WRONG chunk within a filing
+    # even while it helps the RIGHT chunk across filings. Net effect on
+    # the eval suite was a regression (14/16 -> 13/16), so reverted
+    # rather than kept as a net-negative change. period_labels.py's
+    # functions are still used by verify_period_labels.py and remain
+    # available for a future, more targeted application (e.g. a
+    # reranking-stage signal rather than raw embedding-input
+    # concatenation).
     texts = [r["text"] for r in records]
     print(f"Embedding {len(texts)} chunks (batch size {EMBED_BATCH_SIZE}) ...")
     embeddings = model.encode(

@@ -123,15 +123,31 @@ that a proper eval set would very likely have caught faster.
 
 ### `companies.py` + `companies.json` — shared ticker/company registry
 
-Single source of truth for the ticker → {name, CIK} lookup. Added after
-`agent.py`'s ticker→name dict and `edgar_ingest.py`'s ticker→CIK dict
-were noticed to be two separately-hardcoded copies of the same list
-(under the identically-named `COMPANIES` variable, which made the
-duplication easy to miss). `load_companies()` reads `companies.json`
+Single source of truth for the ticker → {name, CIK, fiscal_year_end_month}
+lookup. Added after `agent.py`'s ticker→name dict and `edgar_ingest.py`'s
+ticker→CIK dict were noticed to be two separately-hardcoded copies of the
+same list (under the identically-named `COMPANIES` variable, which made
+the duplication easy to miss). `load_companies()` reads `companies.json`
 fresh on every call — no caching — since it's small and rarely changes,
 and not caching means an edit takes effect without restarting anything.
 Both `edgar_ingest.py` and `agent.py` now import `load_companies()`
 instead of hardcoding their own list.
+
+**`fiscal_year_end_month` (added for `period_labels.py`, below) is a
+real, if currently low-probability, assumption worth flagging
+explicitly:** it assumes each company's fiscal year end is fixed
+forever. In reality a company *can* change it (via a transition-period
+filing), and if that ever happened here without this field being
+updated, `period_labels.py` would silently compute a confidently WRONG
+period label and bake it into the retrieval index — worse than no label
+at all, since it's wrong with full confidence rather than just absent.
+For the current 5 companies over the ~15-month window of filings
+actually ingested, this is a non-issue (all 5 have long-stable,
+well-known fiscal calendars) — see `verify_period_labels.py` for the
+tool that checks this assumption against real evidence rather than
+trusting it blindly. Re-run that script after adding a new company or
+pulling in older historical filings, since that's exactly when the risk
+of silently crossing an undetected fiscal-year change goes up.
 
 ### `edgar_ingest.py` (Week 1) — working
 
@@ -320,6 +336,107 @@ querying Chroma directly.
   to PASS with no other regressions. `main()`'s CLI score display now
   reads `combined_score` (renamed from `rerank_score`).
 - CLI: `python retrieval.py "question" [--ticker MSFT] [--n 5] [--no-rerank]`.
+
+### `period_labels.py` + `verify_period_labels.py` (retrieval-precision fix attempt, Week 4/5 follow-up — tried, reverted)
+
+Attempted to fix the two retrieval-precision bugs found by growing the
+eval set to 16 questions (`nvda-gross-margin-fy26`,
+`msft-rd-expense-q3fy26` — see `eval_harness.py` section for the
+original diagnosis). **The specific fix described below was reverted
+after the full eval suite showed a net regression** (14/16 → 13/16); it
+is documented here as a tried-and-rejected approach, not a working fix.
+Both bugs are still open as of this writing.
+
+- **The idea**: `period_labels.py` computes a canonical, natural-language
+  period descriptor ("MSFT quarterly report, fiscal year 2026 quarter 3,
+  for the three months ended March 31, 2026.") from a chunk's
+  ticker/form/reportDate metadata plus the company's
+  `fiscal_year_end_month` (now in `companies.json`). `fiscal_year_label()`
+  and `fiscal_quarter()` are pure functions, unit tested directly and
+  independently correct — the math itself was never the problem (see
+  `verify_period_labels.py` below). The attempted fix prepended this
+  label to the text `index_chunks.py` *embeds* and the text
+  `retrieval.py`'s `_load_bm25_index()` *tokenizes*, while leaving the
+  stored/displayed chunk text unprefixed (Chroma's stored `documents`,
+  and `_bm25_records`, kept the original text — the LLM already gets
+  ticker/form/reportDate via `agent.py`'s citation header, so this was
+  meant to be an indexing-time-only change with nothing user-visible
+  different).
+- **Why it looked like it should fix both bugs:** NVIDIA's 10-K and each
+  of its 10-Qs contain near-identical MD&A boilerplate paragraphs,
+  differing only in the trailing number — without a per-filing anchor,
+  BM25/vector search can't tell which filing's copy is relevant.
+  Microsoft's "Highlights" section states a period as "third quarter of
+  fiscal year 2026" while the Notes/table with the actual number says
+  "Three Months Ended March 31, 2026" — completely different vocabulary
+  for the same period, which meant the *wrong* section could win
+  retrieval purely on lexical overlap with the question. The hypothesis
+  was that a uniform, metadata-derived period label on every chunk would
+  give near-duplicate filings a distinguishing anchor, and neutralize
+  the phrasing-convention mismatch.
+- **Validated cheaply before committing to the full rebuild — and this
+  cheap validation is exactly what missed the regression:** simulated
+  the augmentation with a throwaway BM25 index and small embedding
+  batches over just the affected chunks, rather than re-running the full
+  ~3,200-chunk index blind. This confirmed real, substantial rank
+  improvement for both original target chunks in isolation (BM25: not in
+  top 25 → rank 10; vector: rank 87 → rank 28 for NVDA; similar gains for
+  MSFT). But the simulation only ever checked whether the *target*
+  chunk's own rank improved — it never checked whether some *other*,
+  unrelated chunk in the same filing could be boosted even more by the
+  same shared prefix. That's exactly what happened.
+- **The full rebuild and eval run exposed a net regression**: after
+  rebuilding the real ~3,207-chunk Chroma index with the augmented text
+  and running the full 16-question eval suite, the result was 13/16 —
+  down from the pre-fix 14/16. Neither original target
+  (`nvda-gross-margin-fy26`, `msft-rd-expense-q3fy26`) actually flipped
+  to PASS (their rank improved but not enough to clear the top-5 cutoff
+  `agent.py` uses), **and** a previously-passing question
+  (`pltr-revenue-2025`) newly failed.
+- **Root cause, precisely diagnosed**: prepending the same short prefix
+  to every chunk in a filing does not apply a uniform, rank-preserving
+  boost — embedding models don't combine a prefix and existing content
+  additively/linearly. For the PLTR regression, an unrelated boilerplate
+  chunk (generic "Notes to Consolidated Financial Statements...
+  incorporated in Delaware" text, no revenue content) jumped from vector
+  rank 30 to rank 8 purely from gaining the shared per-filing prefix,
+  while the genuinely correct chunks only modestly improved (157→103,
+  165→77) — the decoy gained disproportionately more than the target.
+  Confirmed this wasn't a verbosity artifact: even a much shorter tag
+  reproduced the same regression via the same cheap simulation approach,
+  before committing to a second full rebuild cycle to check.
+- **Resolution**: reverted `index_chunks.py` and `retrieval.py` back to
+  unaugmented text (with comments in both files documenting what was
+  tried and why), rebuilt the Chroma index, and reran the full eval
+  suite to confirm restoration to 14/16 with no new regressions —
+  confirmed. `period_labels.py`, `tests/test_period_labels.py`, and
+  `verify_period_labels.py` were kept: the period-math logic is sound
+  and independently verified, and remains available for a future, more
+  targeted application — e.g. as a reranking-stage signal rather than
+  raw embedding/BM25 input concatenation, which wasn't attempted this
+  round. The two original bugs remain open; see "Immediate next steps."
+- **`verify_period_labels.py`**: a re-runnable safeguard against the
+  `fiscal_year_end_month` assumption described in the `companies.py`
+  section above. Cross-checks the computed fiscal year/quarter for every
+  ingested filing against that filing's OWN self-description, found by
+  searching its raw text — not trusting the assumption, checking it
+  against real evidence. **Building this caught two real bugs in the
+  checker itself before it was trustworthy**, both worth keeping as
+  documented lessons: (1) a naive first-match search kept grabbing a
+  filing's *backward* reference to a prior period ("our Annual Report...
+  for the fiscal year ended January 26, 2025") instead of its own
+  current-period declaration — fixed by requiring the comparative "Nth
+  quarter of fiscal year Y compared to/with the Nth quarter of fiscal
+  year Y-1" construction for quarters, and checking set-membership
+  across *all* matches (not just the first) for annual filings; (2) a
+  regex assumed the day number and comma sat directly adjacent in text
+  ("March 31, 2026"), but the raw ingested text sometimes has a line
+  break in between ("March 31\n, 2026", an artifact of the original HTML
+  table structure) — fixed with a whitespace-tolerant pattern. Final
+  result across all 25 currently-ingested filings: **14 confirmed
+  against their own text, 0 mismatches, 11 inconclusive** (no reliable
+  self-description pattern found for those specific filings — not
+  evidence of a problem, just no independent check available for them).
 
 ### `answer.py` (Week 3) — working, v0 prototype
 
@@ -810,19 +927,36 @@ failures (`nvda-gross-margin-fy26`, `msft-rd-expense-q3fy26`), both a
 genuinely new class of bug — retrieval-precision collisions between
 near-duplicate boilerplate or differently-phrased sections within a
 company's own filings, not query formulation and not model
-comprehension. **Top priority now — a real retrieval-pipeline
-investigation** (not a quick prompt patch, per the diagnosis above):
-- Most promising lead: tag each chunk more strongly with its own
-  period/section context (e.g. prepend the enclosing section header or
-  the filing's period label to the chunk's embedded/indexed text) so
-  retrieval doesn't have to rely on the chunk's prose happening to
-  restate the period the same way the question does
-- Would need before/after testing against both new failing cases
-  specifically, plus a full regression check against all 16 questions —
-  same evidence-based discipline used for the reranker and
-  comparison-synthesis fixes
+comprehension.
+
+**First attempted fix — reverted, see `period_labels.py` section
+above.** Prepending a computed period label to each chunk's
+embedded/tokenized text produced a net regression on the full eval
+suite (14/16 → 13/16: neither original target flipped to PASS, and a
+previously-passing question newly failed) and was reverted. Both bugs
+are still open. **Both remain currently open — next planned angle is
+different in kind, not another retrieval-ranking tweak:** add a second
+agent tool (`xbrl_facts.py`, in scoping now) that fetches these
+specific numbers directly from SEC's structured XBRL
+`companyconcept` API instead of relying on unstructured-text retrieval
+to find them at all. Both failing questions ask for numbers that are
+almost certainly tagged GAAP concepts (NVIDIA's `Revenues` and
+`GrossProfit`; Microsoft's `ResearchAndDevelopmentExpense`) — sidestepping
+the retrieval-collision problem entirely for this class of question,
+rather than trying to out-rank the decoys. Scoped design: `companyconcept`
+endpoint (one concept, full history, cheaper than `companyfacts`); a
+verified per-company GAAP-tag map (checked against real tag names, not
+assumed — same discipline as `fiscal_year_end_month`); period matching
+filtered on `end`/`form`/`fp`/`fy`, since a concept's history contains
+duplicate/restated entries per quarter, structurally the same pitfall as
+the retrieval-period-matching bugs above; the tool computes known
+derived ratios itself (e.g. gross margin % from `GrossProfit`/`Revenues`)
+rather than returning raw dollar figures for the model to divide, so
+`agent.py`'s existing "don't infer/combine numbers" rule doesn't need to
+be relaxed; falls back to `search_filings` when a concept isn't tagged
+for a company, so it's additive, not a replacement.
 - Worth deferring model-swap questions until after this, since both new
-  failures are demonstrably retrieval bugs (verified: the correct
+  failures are demonstrably retrieval-path gaps (verified: the correct
   content isn't even in the top-25 fused candidates for one, and loses a
   close fusion race for the other), not generation-quality gaps
 
