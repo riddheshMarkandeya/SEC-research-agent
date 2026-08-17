@@ -35,7 +35,13 @@ from answer import MODEL_NAME, OLLAMA_URL
 from companies import load_companies
 from numeric_utils import UNIT_MULTIPLIERS, extract_numbers, normalize
 from retrieval import hybrid_search
-from xbrl_facts import get_gross_margin, get_metric, DEFAULT_METRIC_TAGS
+from xbrl_facts import (
+    DEFAULT_METRIC_TAGS,
+    get_gross_margin,
+    get_gross_margin_all_companies,
+    get_metric,
+    get_metric_all_companies,
+)
 
 MAX_TOOL_ITERATIONS = 6
 CHUNKS_PER_SEARCH = 5
@@ -54,8 +60,9 @@ COMPANIES = {ticker: info["name"] for ticker, info in load_companies().items()}
 SYSTEM_PROMPT = f"""You are a financial research assistant answering questions about SEC filings for five companies:
 {chr(10).join(f"- {ticker}: {name}" for ticker, name in COMPANIES.items())}
 
-You have two tools:
-- `get_financial_fact` searches structured XBRL data for a small set of standard financial metrics: {", ".join(sorted(DEFAULT_METRIC_TAGS)) + ", gross_margin"}. Prefer this tool FIRST whenever the question asks for one of these specific metrics for a specific fiscal year or fiscal quarter — it returns an exact, unambiguous reported value instead of relying on you to find the right sentence in a filing excerpt. It only works for these metrics and returns "not available" if the company doesn't tag it or the period wasn't recognized — fall back to `search_filings` when that happens, or for anything this tool doesn't cover (risk factors, narrative discussion, any metric not in the list above).
+You have three tools:
+- `get_financial_fact` searches structured XBRL data for a small set of standard financial metrics: {", ".join(sorted(DEFAULT_METRIC_TAGS)) + ", gross_margin"}. Prefer this tool FIRST whenever the question asks for one of these specific metrics for a specific fiscal year or fiscal quarter, for ONE company — it returns an exact, unambiguous reported value instead of relying on you to find the right sentence in a filing excerpt. It only works for these metrics and returns "not available" if the company doesn't tag it or the period wasn't recognized — fall back to `search_filings` when that happens, or for anything this tool doesn't cover (risk factors, narrative discussion, any metric not in the list above).
+- `compare_financial_metric` gets the SAME metric for ALL FIVE companies at once, for one period. Use this instead of calling `get_financial_fact` five times when a question asks you to compare or rank companies against each other (e.g. "which company had the highest gross margin", "compare revenue across all five companies") — one call instead of five. A company can be missing from the result if it doesn't tag that metric for that period; that's not an error, just note it's unavailable for that company.
 - `search_filings` searches these companies' 10-K/10-Q filings for anything else. Call it once per company if a question spans more than one, and call it again with a different query if your first search doesn't turn up what you need.
 
 Do not answer from prior knowledge about these companies; every answer must come from what a tool returns.
@@ -66,7 +73,8 @@ Rules:
 3. Do not combine or infer numbers that don't appear directly in a search result (e.g. don't compute a total unless a result states it) — this does not apply to `get_financial_fact`'s own output, which is already a single reported or tool-computed value.
 4. Resolve company names to the right ticker yourself (e.g. "Salesforce" -> CRM) — don't ask the user to clarify.
 5. Search results often report the same metric for several different periods in one excerpt — not just in tables, but within a single sentence, e.g. "the rate was 20% for the current quarter, and 18% for the same quarter last year." Before citing a number, check that its stated period exactly matches the period asked about, even when both numbers appear right next to each other in the same sentence — do not substitute a prior-year or prior-quarter value just because it's nearby.
-6. For a question spanning multiple companies, you must query EVERY company mentioned — with `search_filings` if `get_financial_fact` didn't cover it — before writing your final answer. A `get_financial_fact` call returning "not available" for one company is not a reason to stop; it means try `search_filings` for that same company next, and you must still go on to query every other company the question asks about. Do not conclude a company's data is unavailable unless you have actually searched for it."""
+6. For a question spanning multiple companies, you must query EVERY company mentioned — with `search_filings` if `get_financial_fact` didn't cover it — before writing your final answer. A `get_financial_fact` call returning "not available" for one company is not a reason to stop; it means try `search_filings` for that same company next, and you must still go on to query every other company the question asks about. Do not conclude a company's data is unavailable unless you have actually searched for it.
+7. If `compare_financial_metric` returns fewer than all five companies, your final answer must explicitly name which companies were and weren't covered (e.g. "data was only available for AAPL and PLTR; the others hadn't filed a matching quarter yet") — do not phrase a conclusion as if it covers "all five companies" or similar when it only covers the ones that were actually returned."""
 
 SEARCH_TOOL_SCHEMA = {
     "type": "function",
@@ -132,6 +140,53 @@ FACT_TOOL_SCHEMA = {
                 },
             },
             "required": ["ticker", "metric"],
+        },
+    },
+}
+
+COMPARE_TOOL_SCHEMA = {
+    "type": "function",
+    "function": {
+        "name": "compare_financial_metric",
+        "description": (
+            "Get one financial metric for ALL FIVE covered companies at once, for the same "
+            "period -- use this instead of calling get_financial_fact once per company for a "
+            "comparison/ranking question. Anchor the period on whichever company the question "
+            "mentions (or any one of the five if it doesn't specify a particular company's "
+            "date) using the SAME period_end_date OR fiscal_year+fiscal_period rules as "
+            "get_financial_fact; every other company's value for the closest matching period is "
+            "returned automatically -- do not try to compute each company's own fiscal period "
+            "yourself. A company may be missing from the result if it doesn't tag this metric "
+            "for that period; that's not an error, just note it wasn't available for that one."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "anchor_ticker": {
+                    "type": "string",
+                    "enum": list(COMPANIES.keys()),
+                    "description": "Whichever company's date/period you're anchoring on.",
+                },
+                "metric": {
+                    "type": "string",
+                    "enum": sorted(DEFAULT_METRIC_TAGS) + ["gross_margin"],
+                    "description": "Which metric to fetch for every company. gross_margin is computed as gross_profit/revenue and returned as a percent; the rest are returned in USD.",
+                },
+                "period_end_date": {
+                    "type": "string",
+                    "description": "A calendar date 'YYYY-MM-DD' from the question, for the anchor company. Preferred whenever the question states an actual date.",
+                },
+                "fiscal_year": {
+                    "type": "integer",
+                    "description": "Only use this when the question states a fiscal year directly instead of a calendar date, in the anchor company's own fiscal labeling.",
+                },
+                "fiscal_period": {
+                    "type": "string",
+                    "enum": ["FY", "Q1", "Q2", "Q3", "Q4"],
+                    "description": "Only used together with fiscal_year. FY for a full fiscal year, or Q1/Q2/Q3 for a quarter. Q4 is not separately available for most of these companies.",
+                },
+            },
+            "required": ["anchor_ticker", "metric"],
         },
     },
 }
@@ -225,6 +280,46 @@ def _fact_as_result(fact: dict, args: dict) -> dict:
             "chunk_index": "xbrl",
         },
     }
+
+
+def _call_compare_financial_metric(args: dict) -> dict[str, dict]:
+    """Same boundary-validation reasoning as _call_get_financial_fact —
+    don't trust the schema was followed."""
+    anchor_ticker = args.get("anchor_ticker")
+    metric = args.get("metric")
+    if anchor_ticker not in COMPANIES or (metric not in DEFAULT_METRIC_TAGS and metric != "gross_margin"):
+        return {}
+    fiscal_year = args.get("fiscal_year")
+    fiscal_period = args.get("fiscal_period", "FY")
+    period_end_date = args.get("period_end_date")
+    if metric == "gross_margin":
+        return get_gross_margin_all_companies(anchor_ticker, fiscal_year, fiscal_period, period_end_date)
+    return get_metric_all_companies(anchor_ticker, metric, fiscal_year, fiscal_period, period_end_date)
+
+
+def _comparison_as_results(data: dict[str, dict], metric: str) -> list[dict]:
+    """Wrap a {ticker: fact} dict (from compare_financial_metric) as a
+    list of {text, metadata} results, one per company, reusing the same
+    shape _fact_as_result uses for a single company. Unlike a
+    companyconcept entry, a frames entry doesn't carry a "form" field —
+    there's genuinely no per-company form to report here, so "XBRL
+    frame data" stands in for it rather than guessing 10-K vs. 10-Q."""
+    results = []
+    for ticker, fact in sorted(data.items()):
+        results.append(
+            {
+                "text": f"{ticker} {metric} = {fact['value']} {fact['unit']} (structured XBRL data, not filing prose)",
+                "metadata": {
+                    "ticker": ticker,
+                    "form": "XBRL frame data",
+                    "filingDate": fact["period_end"],
+                    "reportDate": fact["period_end"],
+                    "accessionNumber": fact["accession"],
+                    "chunk_index": "xbrl",
+                },
+            }
+        )
+    return results
 
 
 _CITATION_MARKER = re.compile(r"\[(\d+)\]")
@@ -364,7 +459,7 @@ def _call_ollama(messages: list[dict]) -> dict:
         json={
             "model": MODEL_NAME,
             "messages": messages,
-            "tools": [FACT_TOOL_SCHEMA, SEARCH_TOOL_SCHEMA],
+            "tools": [FACT_TOOL_SCHEMA, COMPARE_TOOL_SCHEMA, SEARCH_TOOL_SCHEMA],
             "stream": False,
             # Ollama defaults to a 4096-token context window regardless of
             # what the model actually supports, which is dangerously small
@@ -432,6 +527,23 @@ def run_agent(question: str, verbose: bool = False) -> tuple[str, list[dict], li
                     result = _fact_as_result(fact, args)
                     all_results.append(result)
                     content = _format_results_block([result], start_index)
+                messages.append({"role": "tool", "content": content})
+                continue
+
+            if name == "compare_financial_metric":
+                if verbose:
+                    print(f"  [tool call] compare_financial_metric({args!r})")
+                data = _call_compare_financial_metric(args)
+                if not data:
+                    content = (
+                        f"(no structured data found for metric={args.get('metric')!r} "
+                        f"across companies for this period — try search_filings per company instead)"
+                    )
+                else:
+                    start_index = len(all_results) + 1
+                    results = _comparison_as_results(data, args.get("metric", ""))
+                    all_results.extend(results)
+                    content = _format_results_block(results, start_index)
                 messages.append({"role": "tool", "content": content})
                 continue
 

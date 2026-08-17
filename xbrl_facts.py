@@ -128,6 +128,28 @@ def fetch_concept(ticker: str, tag: str) -> dict | None:
     return data
 
 
+def _latest_entry(entries: list[dict]) -> dict | None:
+    """The most recently reported entry for a concept, across all
+    fiscal years/periods, whatever its duration -- used when the caller
+    doesn't (or can't) specify a period at all, e.g. "the most recent
+    quarter." Found live: a real cross-company comparison question
+    phrased exactly that way ("their most recent quarter") had no
+    calendar date or fiscal label to give get_metric(), so the model
+    called compare_financial_metric with no period at all, which
+    silently returned nothing (fiscal_year=None never matches anything
+    in _pick_entry) and the model abandoned the comparison entirely
+    rather than retrying with an actual period.
+
+    Ties at the same `end` date (a fresh 10-Q's own quarter-length
+    figure and its same-report 9-month year-to-date cumulative share an
+    end date) are broken toward the SHORTER duration — "the most recent
+    quarter" means the quarter itself, not a multi-quarter cumulative
+    figure that happens to end on the same day."""
+    if not entries:
+        return None
+    return max(entries, key=lambda e: (e["end"], -_duration_days(e)))
+
+
 def _pick_entry(entries: list[dict], fiscal_year: int, fiscal_period: str) -> dict | None:
     """Filter a concept's USD entries down to the one true value for
     (fiscal_year, fiscal_period), applying the duration + max(end)
@@ -205,6 +227,14 @@ def get_metric(
     will return None for such companies; not solved here since neither
     target eval question needs it.
 
+    A third way: give NEITHER (fiscal_year stays None, period_end_date
+    stays falsy) to get the single most recently reported value instead
+    -- for "the most recent quarter," where the caller has no specific
+    date or fiscal label to give. See _latest_entry()'s docstring for
+    why this was added (a real cross-company comparison question
+    phrased exactly that way silently returned nothing before this
+    existed).
+
     Returns {"value": float, "unit": "USD", "period_end": "YYYY-MM-DD",
     "form": str, "accession": str} or None if unavailable (caller should
     fall back to search_filings).
@@ -228,7 +258,7 @@ def get_metric(
     if data is None:
         return None
     entries = data.get("units", {}).get("USD", [])
-    entry = _pick_entry(entries, fiscal_year, fiscal_period)
+    entry = _latest_entry(entries) if fiscal_year is None else _pick_entry(entries, fiscal_year, fiscal_period)
     if entry is None:
         return None
     return {
@@ -238,6 +268,7 @@ def get_metric(
         "form": entry["form"],
         "accession": entry["accn"],
         "filed": entry.get("filed"),
+        "frame": entry.get("frame"),
     }
 
 
@@ -276,4 +307,137 @@ def get_gross_margin(
         "form": gross_profit["form"],
         "accession": gross_profit["accession"],
         "filed": gross_profit["filed"],
+        "frame": gross_profit["frame"],
     }
+
+
+# ---------------------------------------------------------------------------
+# frames — one metric, every covered company, one (or few) API calls
+# ---------------------------------------------------------------------------
+# Naive plan was to compute a "CY{year}Q{quarter}" frame label myself
+# from a calendar date using ordinary calendar-quarter math (Jan-Mar =
+# Q1, Apr-Jun = Q2, ...). Checked against real data before writing any
+# of that: NVIDIA's quarter ending April 26 is assigned frame
+# "CY2026Q1" by SEC, not the naively-expected "CY2026Q2" -- SEC's own
+# bucketing tolerates a wider window than strict calendar-month
+# boundaries (to accommodate the many non-calendar fiscal years it
+# aggregates across), and guessing that window would reproduce exactly
+# the class of period-matching bug already fought twice in this file
+# (the fiscal-year-from-calendar-date bug, and the quarter-vs-YTD
+# disambiguation in _pick_entry). Every companyconcept entry already
+# carries the SEC-assigned "frame" label directly (confirmed for all 5
+# covered companies' latest entries), so frame lookups are anchored to
+# one company's own already-verified get_metric() resolution instead of
+# computed independently.
+def fetch_frame(tag: str, frame: str) -> dict | None:
+    """Fetch one us-gaap concept for every SEC filer that reported it
+    for a given frame (e.g. "CY2026Q1"), cached to disk indefinitely —
+    same rationale as fetch_concept(). Returns None on a 404 (the tag
+    isn't reported for that particular frame at all, a real outcome for
+    some tag/frame combinations, not an error)."""
+    CACHE_DIR.mkdir(exist_ok=True)
+    cache_path = CACHE_DIR / f"frame_{tag}_{frame}.json"
+    if cache_path.exists():
+        return json.loads(cache_path.read_text(encoding="utf-8"))
+
+    url = f"https://data.sec.gov/api/xbrl/frames/us-gaap/{tag}/USD/{frame}.json"
+    resp = requests.get(url, headers=HEADERS)
+    time.sleep(REQUEST_DELAY_SECONDS)
+    if resp.status_code == 404:
+        return None
+    resp.raise_for_status()
+    data = resp.json()
+    cache_path.write_text(json.dumps(data), encoding="utf-8")
+    return data
+
+
+def get_frame(metric: str, frame: str) -> dict[str, dict]:
+    """`metric` for every covered company that reported it under
+    `frame`, keyed by ticker. A single frames call only covers filers
+    using ONE specific tag -- since our own companies don't all use the
+    same tag for some metrics (e.g. "revenue": NVDA uses "Revenues",
+    the other four use the ASC 606 tag; see DEFAULT_METRIC_TAGS/
+    METRIC_TAG_OVERRIDES above), a single tag query would silently omit
+    whichever covered companies use a different tag for that metric --
+    the same class of bug as the original revenue-tag-default mistake,
+    just at the frames layer instead of companyconcept. Queries every
+    distinct tag actually in play for `metric` across the 5 covered
+    companies and merges the results, so this is robust to that by
+    construction rather than by remembering to special-case it."""
+    companies = load_companies()
+    cik_to_ticker = {int(info["cik"]): ticker for ticker, info in companies.items()}
+    tags_in_play = {_tag_for(ticker, metric) for ticker in companies}
+
+    results: dict[str, dict] = {}
+    for tag in tags_in_play:
+        data = fetch_frame(tag, frame)
+        if data is None:
+            continue
+        for entry in data.get("data", []):
+            ticker = cik_to_ticker.get(entry["cik"])
+            if ticker is None or ticker in results:
+                continue
+            results[ticker] = {
+                "value": entry["val"],
+                "unit": "USD",
+                "period_end": entry["end"],
+                "accession": entry["accn"],
+            }
+    return results
+
+
+def get_metric_all_companies(
+    ticker: str,
+    metric: str,
+    fiscal_year: int | None = None,
+    fiscal_period: str = "FY",
+    period_end_date: str | None = None,
+) -> dict[str, dict]:
+    """`metric` for every covered company, for the same period bucket as
+    `ticker`'s own period (specified the same way as get_metric() —
+    fiscal_year+fiscal_period, or period_end_date). Resolves `ticker`'s
+    own fact first via get_metric() to read off its SEC-assigned
+    `frame` label, then fetches that frame for every covered company —
+    see the module-level comment above for why this doesn't compute the
+    frame label independently. Returns {} if `ticker`'s own fact isn't
+    available (no frame to anchor to) or has no frame at all (some
+    entries genuinely lack one, e.g. certain annual-only concepts)."""
+    anchor = get_metric(ticker, metric, fiscal_year, fiscal_period, period_end_date)
+    if anchor is None or anchor.get("frame") is None:
+        return {}
+    return get_frame(metric, anchor["frame"])
+
+
+def get_gross_margin_all_companies(
+    ticker: str,
+    fiscal_year: int | None = None,
+    fiscal_period: str = "FY",
+    period_end_date: str | None = None,
+) -> dict[str, dict]:
+    """Gross margin for every covered company, for the same period
+    bucket as `ticker`'s own period — the cross-company counterpart to
+    get_gross_margin(), same reasoning: computed here from two frames
+    (gross_profit / revenue) rather than returned raw for the model to
+    divide per company. A company is included only if BOTH frames have
+    an entry for it with matching period_end -- gross_profit and
+    revenue can use different underlying tags (see get_frame's
+    docstring), so their per-company period boundaries aren't
+    guaranteed to align by construction, only checked."""
+    anchor = get_gross_margin(ticker, fiscal_year, fiscal_period, period_end_date)
+    if anchor is None or anchor.get("frame") is None:
+        return {}
+    gross_profits = get_frame("gross_profit", anchor["frame"])
+    revenues = get_frame("revenue", anchor["frame"])
+
+    results: dict[str, dict] = {}
+    for t, gp in gross_profits.items():
+        rev = revenues.get(t)
+        if rev is None or rev["period_end"] != gp["period_end"]:
+            continue
+        results[t] = {
+            "value": round(gp["value"] / rev["value"] * 100, 1),
+            "unit": "percent",
+            "period_end": gp["period_end"],
+            "accession": gp["accession"],
+        }
+    return results

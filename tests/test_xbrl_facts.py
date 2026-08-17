@@ -5,7 +5,17 @@ elsewhere in this project) -- everything else is thin plumbing around
 verified-real fixture data captured from SEC's own companyconcept API.
 """
 
-from xbrl_facts import _pick_entry, get_gross_margin, get_metric, fetch_concept, resolve_fiscal_period
+from xbrl_facts import (
+    _latest_entry,
+    _pick_entry,
+    get_frame,
+    get_gross_margin,
+    get_gross_margin_all_companies,
+    get_metric,
+    get_metric_all_companies,
+    fetch_concept,
+    resolve_fiscal_period,
+)
 
 # Trimmed, real entries from NVDA's GrossProfit companyconcept response
 # (CIK0001045810, fetched 2026-08-16) -- one filing (FY2026 10-K)
@@ -103,7 +113,44 @@ def test_get_metric_with_period_end_date_matches_equivalent_fiscal_call(monkeypa
         "form": "10-Q",
         "accession": "0001193125-26-191507",
         "filed": None,
+        "frame": None,
     }
+
+
+def test_latest_entry_picks_max_end_date():
+    entry = _latest_entry(NVDA_GROSS_PROFIT_ENTRIES)
+    assert entry["end"] == "2026-01-25"
+    assert entry["val"] == 153463000000
+
+
+def test_latest_entry_breaks_ties_toward_shorter_duration():
+    # MSFT_RD_EXPENSE_ENTRIES has two entries sharing the same max end
+    # date (2026-03-31): a 9-month year-to-date figure and the 3-month
+    # quarter itself. "Most recent quarter" should mean the quarter,
+    # not the longer cumulative figure that happens to end the same day.
+    entry = _latest_entry(MSFT_RD_EXPENSE_ENTRIES)
+    assert entry["end"] == "2026-03-31"
+    assert entry["val"] == 8915000000
+
+
+def test_latest_entry_empty_list_returns_none():
+    assert _latest_entry([]) is None
+
+
+def test_get_metric_with_no_period_given_returns_latest(monkeypatch):
+    # Real, live-found gap: a cross-company comparison question asked
+    # for "their most recent quarter" -- no calendar date or fiscal
+    # label to give get_metric(), so the model called the comparison
+    # tool with no period at all, which used to silently return nothing
+    # (fiscal_year=None never matched anything in _pick_entry) and the
+    # model abandoned the whole comparison rather than retrying.
+    monkeypatch.setattr(
+        "xbrl_facts.fetch_concept",
+        lambda ticker, tag: {"units": {"USD": NVDA_GROSS_PROFIT_ENTRIES}},
+    )
+    result = get_metric("NVDA", "gross_profit")
+    assert result["value"] == 153463000000
+    assert result["period_end"] == "2026-01-25"
 
 
 def test_pick_entry_annual_picks_latest_end_among_comparative_years():
@@ -148,6 +195,7 @@ def test_get_metric_reads_through_fetch_concept(monkeypatch):
         "form": "10-K",
         "accession": "0001045810-26-000021",
         "filed": "2026-02-25",
+        "frame": None,
     }
 
 
@@ -213,3 +261,177 @@ def test_fetch_concept_returns_none_on_404(monkeypatch, tmp_path):
     monkeypatch.setattr(xbrl_facts.time, "sleep", lambda s: None)
 
     assert fetch_concept("PLTR", "Revenues") is None
+
+
+# ---------------------------------------------------------------------------
+# frames — get_frame / get_metric_all_companies
+# ---------------------------------------------------------------------------
+# Trimmed, real entries from the GrossProfit CY2026Q1 frames response
+# (fetched 2026-08-17), filtered to our 5 covered CIKs. Confirms the
+# frames endpoint really does return meaningfully different period
+# boundaries per company (AAPL ends 2026-03-28, NVDA ends 2026-04-26)
+# all bucketed under the same nominal frame -- not four separate calls.
+GROSS_PROFIT_CY2026Q1_FRAME = {
+    "data": [
+        {"accn": "0000320193-26-000013", "cik": 320193, "entityName": "Apple Inc.", "start": "2025-12-28", "end": "2026-03-28", "val": 54781000000},
+        {"accn": "0001193125-26-191507", "cik": 789019, "entityName": "MICROSOFT CORPORATION", "start": "2026-01-01", "end": "2026-03-31", "val": 56058000000},
+        {"accn": "0001045810-26-000052", "cik": 1045810, "entityName": "NVIDIA CORP", "start": "2026-01-26", "end": "2026-04-26", "val": 61157000000},
+        {"accn": "0001108524-26-000127", "cik": 1108524, "entityName": "Salesforce, Inc.", "start": "2026-02-01", "end": "2026-04-30", "val": 8563000000},
+        {"accn": "0001321655-26-000028", "cik": 1321655, "entityName": "Palantir Technologies Inc.", "start": "2026-01-01", "end": "2026-03-31", "val": 1416785000},
+        # A non-covered filer, to confirm it gets filtered out.
+        {"accn": "0000012345-26-000001", "cik": 999999999, "entityName": "SOME OTHER COMPANY", "start": "2026-01-01", "end": "2026-03-31", "val": 1000000},
+    ]
+}
+
+
+def test_get_frame_filters_to_covered_companies_only(monkeypatch):
+    monkeypatch.setattr("xbrl_facts.fetch_frame", lambda tag, frame: GROSS_PROFIT_CY2026Q1_FRAME)
+    result = get_frame("gross_profit", "CY2026Q1")
+    assert set(result.keys()) == {"AAPL", "MSFT", "NVDA", "CRM", "PLTR"}
+    assert result["NVDA"]["value"] == 61157000000
+    assert result["NVDA"]["period_end"] == "2026-04-26"
+    assert result["AAPL"]["period_end"] == "2026-03-28"  # different from NVDA's, same frame
+
+
+def test_get_frame_merges_across_distinct_tags_for_divergent_metrics(monkeypatch):
+    # "revenue" uses a different tag for NVDA than the other four (see
+    # DEFAULT_METRIC_TAGS/METRIC_TAG_OVERRIDES) -- a single-tag frames
+    # query would silently omit NVDA. Simulate two distinct frame
+    # responses, one per tag, and confirm both contribute companies.
+    nvda_only = {"data": [{"accn": "x", "cik": 1045810, "end": "2026-04-26", "val": 81615000000}]}
+    everyone_else = {
+        "data": [
+            {"accn": "y", "cik": 320193, "end": "2026-03-28", "val": 95400000000},
+            {"accn": "z", "cik": 789019, "end": "2026-03-31", "val": 70066000000},
+        ]
+    }
+
+    def fake_fetch_frame(tag, frame):
+        return nvda_only if tag == "Revenues" else everyone_else
+
+    monkeypatch.setattr("xbrl_facts.fetch_frame", fake_fetch_frame)
+    result = get_frame("revenue", "CY2026Q1")
+    assert "NVDA" in result
+    assert "AAPL" in result
+    assert "MSFT" in result
+
+
+def test_get_frame_skips_tags_with_no_frame_data(monkeypatch):
+    monkeypatch.setattr("xbrl_facts.fetch_frame", lambda tag, frame: None)
+    assert get_frame("gross_profit", "CY2026Q1") == {}
+
+
+def test_get_metric_all_companies_anchors_on_the_given_tickers_frame(monkeypatch):
+    monkeypatch.setattr(
+        "xbrl_facts.get_metric",
+        lambda ticker, metric, fiscal_year, fiscal_period, period_end_date: {
+            "value": 61157000000,
+            "unit": "USD",
+            "period_end": "2026-04-26",
+            "form": "10-Q",
+            "accession": "x",
+            "filed": "2026-05-20",
+            "frame": "CY2026Q1",
+        },
+    )
+    # get_frame is mocked directly here (not fetch_frame), so this just
+    # checks get_metric_all_companies calls it with the anchor's own
+    # SEC-assigned frame, not a self-computed one.
+    calls = []
+    monkeypatch.setattr(
+        "xbrl_facts.get_frame",
+        lambda metric, frame: calls.append((metric, frame)) or {},
+    )
+    get_metric_all_companies("NVDA", "gross_profit", fiscal_year=2026, fiscal_period="Q1")
+    assert calls == [("gross_profit", "CY2026Q1")]
+
+
+def test_get_metric_all_companies_returns_empty_when_anchor_unavailable(monkeypatch):
+    monkeypatch.setattr(
+        "xbrl_facts.get_metric",
+        lambda ticker, metric, fiscal_year, fiscal_period, period_end_date: None,
+    )
+    assert get_metric_all_companies("NVDA", "gross_profit", fiscal_year=2026, fiscal_period="Q1") == {}
+
+
+def test_get_metric_all_companies_returns_empty_when_anchor_has_no_frame(monkeypatch):
+    monkeypatch.setattr(
+        "xbrl_facts.get_metric",
+        lambda ticker, metric, fiscal_year, fiscal_period, period_end_date: {
+            "value": 1,
+            "unit": "USD",
+            "period_end": "2026-04-26",
+            "form": "10-Q",
+            "accession": "x",
+            "filed": None,
+            "frame": None,
+        },
+    )
+    assert get_metric_all_companies("NVDA", "gross_profit", fiscal_year=2026, fiscal_period="Q1") == {}
+
+
+def test_get_gross_margin_all_companies_computes_ratio_per_company(monkeypatch):
+    monkeypatch.setattr(
+        "xbrl_facts.get_gross_margin",
+        lambda ticker, fiscal_year, fiscal_period, period_end_date: {
+            "value": 74.9,
+            "unit": "percent",
+            "period_end": "2026-04-26",
+            "form": "10-Q",
+            "accession": "x",
+            "filed": None,
+            "frame": "CY2026Q1",
+        },
+    )
+
+    def fake_get_frame(metric, frame):
+        if metric == "gross_profit":
+            return {"NVDA": {"value": 61157000000, "unit": "USD", "period_end": "2026-04-26", "accession": "a"}}
+        return {"NVDA": {"value": 81615000000, "unit": "USD", "period_end": "2026-04-26", "accession": "b"}}
+
+    monkeypatch.setattr("xbrl_facts.get_frame", fake_get_frame)
+    result = get_gross_margin_all_companies("NVDA", period_end_date="2026-04-26")
+    assert result == {
+        "NVDA": {"value": 74.9, "unit": "percent", "period_end": "2026-04-26", "accession": "a"}
+    }
+
+
+def test_get_gross_margin_all_companies_excludes_company_with_mismatched_period_end(monkeypatch):
+    monkeypatch.setattr(
+        "xbrl_facts.get_gross_margin",
+        lambda ticker, fiscal_year, fiscal_period, period_end_date: {
+            "value": 74.9,
+            "unit": "percent",
+            "period_end": "2026-04-26",
+            "form": "10-Q",
+            "accession": "x",
+            "filed": None,
+            "frame": "CY2026Q1",
+        },
+    )
+
+    def fake_get_frame(metric, frame):
+        if metric == "gross_profit":
+            return {
+                "NVDA": {"value": 61157000000, "unit": "USD", "period_end": "2026-04-26", "accession": "a"},
+                "AAPL": {"value": 54781000000, "unit": "USD", "period_end": "2026-03-28", "accession": "c"},
+            }
+        # AAPL's revenue frame entry has a DIFFERENT period_end than its
+        # gross_profit entry -- the two tags aren't guaranteed to line
+        # up per company, only checked.
+        return {
+            "NVDA": {"value": 81615000000, "unit": "USD", "period_end": "2026-04-26", "accession": "b"},
+            "AAPL": {"value": 95400000000, "unit": "USD", "period_end": "2025-12-27", "accession": "d"},
+        }
+
+    monkeypatch.setattr("xbrl_facts.get_frame", fake_get_frame)
+    result = get_gross_margin_all_companies("NVDA", period_end_date="2026-04-26")
+    assert set(result.keys()) == {"NVDA"}
+
+
+def test_get_gross_margin_all_companies_returns_empty_when_anchor_unavailable(monkeypatch):
+    monkeypatch.setattr(
+        "xbrl_facts.get_gross_margin",
+        lambda ticker, fiscal_year, fiscal_period, period_end_date: None,
+    )
+    assert get_gross_margin_all_companies("NVDA", period_end_date="2026-04-26") == {}

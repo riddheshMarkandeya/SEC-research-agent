@@ -6,7 +6,13 @@ so they're exercised by manual runs (python agent.py "...") documented
 in PROJECT_CONTEXT.md, not here.
 """
 
-from agent import _format_citation_key, _format_results_block, _resolve_search_args, verify_citations
+from agent import (
+    _comparison_as_results,
+    _format_citation_key,
+    _format_results_block,
+    _resolve_search_args,
+    verify_citations,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -235,3 +241,22 @@ def test_verify_citations_tolerance_matches_grade_numeric_tolerance():
     results = [_fake_result(text="revenue = 109417000000.0 USD")]
     answer = "Apple's revenue was approximately $109.4 billion [1]."
     assert verify_citations(answer, results) == []
+
+
+# ---------------------------------------------------------------------------
+# _comparison_as_results (compare_financial_metric)
+# ---------------------------------------------------------------------------
+def test_comparison_as_results_one_entry_per_company_sorted_by_ticker():
+    data = {
+        "NVDA": {"value": 74.9, "unit": "percent", "period_end": "2026-04-26", "accession": "b"},
+        "AAPL": {"value": 49.3, "unit": "percent", "period_end": "2026-03-28", "accession": "a"},
+    }
+    results = _comparison_as_results(data, "gross_margin")
+    assert [r["metadata"]["ticker"] for r in results] == ["AAPL", "NVDA"]
+    assert "AAPL gross_margin = 49.3 percent" in results[0]["text"]
+    assert results[0]["metadata"]["form"] == "XBRL frame data"
+    assert results[0]["metadata"]["accessionNumber"] == "a"
+
+
+def test_comparison_as_results_empty_dict_returns_empty_list():
+    assert _comparison_as_results({}, "revenue") == []

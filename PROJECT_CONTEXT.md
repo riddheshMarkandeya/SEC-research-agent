@@ -638,6 +638,79 @@ question and reports a summary count.
   the latter is the real, expected formula-registry gap from the
   `xbrl_facts.py` section above, not a bug).
 
+### `xbrl_facts.py`'s `frames` API — cross-company comparison in one call (Week 5d)
+
+A second agent tool, `compare_financial_metric`, alongside
+`get_financial_fact`/`search_filings`: gets one metric for all five
+covered companies at once, for the same period, instead of the model
+calling `get_financial_fact` five times.
+
+- **Endpoint**: SEC's `frames` API
+  (`data.sec.gov/api/xbrl/frames/us-gaap/{tag}/USD/{frame}.json`,
+  e.g. `CY2026Q1`) — one concept, *every* filer that reported it for
+  that period, in one call. `fetch_frame()`/`get_frame()` filter the
+  (large, whole-market) response down to our 5 covered CIKs.
+- **The frame label is never computed independently — it's read off an
+  anchor company's own already-resolved fact.** First design considered
+  computing a `"CY{year}Q{quarter}"` label from a raw calendar date with
+  ordinary Jan-Mar/Apr-Jun quarter math. Checked against real data
+  before writing any of that: NVIDIA's quarter ending April 26 is
+  assigned frame `CY2026Q1` by SEC, not the naively-expected `CY2026Q2`
+  — SEC's own bucketing tolerates a wider window than strict
+  calendar-month boundaries (to accommodate the many non-calendar
+  fiscal years it aggregates across). Guessing that window would have
+  reproduced the exact class of period-matching bug already fought
+  twice in this file. Instead, every `companyconcept` entry already
+  carries its own SEC-assigned `frame` label directly (confirmed for
+  all 5 covered companies' latest entries) — `get_metric()` now returns
+  it, and `get_metric_all_companies()`/`get_gross_margin_all_companies()`
+  resolve one company's own fact first (reusing all the already-tested
+  period-resolution logic), then use *that* frame to fetch every
+  covered company's value for the same bucket.
+- **`get_frame()` merges across every distinct tag in play for a
+  metric**, not just one — the same class of bug as the original
+  revenue-tag-default mistake (see `xbrl_facts.py` section above), just
+  at the frames layer: since NVDA uses `Revenues` while the other four
+  use the ASC 606 tag for "revenue," a single-tag frames query would
+  silently omit NVDA. Verified with real data: a `get_metric_all_companies`
+  call for "revenue" correctly returns all 5 companies, each sourced
+  from whichever tag it actually uses.
+- **`get_gross_margin_all_companies()`** mirrors `get_gross_margin()`'s
+  pattern: computed per-company from two frames (`gross_profit` /
+  `revenue`) rather than returned raw, and only includes a company if
+  both frames agree on its `period_end` — the two tags aren't
+  guaranteed to line up per company, only checked.
+- **A real gap found via a live natural-language test, not assumed**:
+  asking "which company had the highest gross margin in *their most
+  recent quarter*" gave the model no calendar date or fiscal label to
+  anchor on, so it called `compare_financial_metric` with no period
+  args at all — which used to silently return nothing
+  (`fiscal_year=None` never matched anything in `_pick_entry`), and the
+  model abandoned the whole comparison rather than retrying. Fixed with
+  `_latest_entry()`: when no period is given at all, `get_metric()`
+  (and by extension `get_gross_margin()`) now falls back to the single
+  most-recently-reported entry, breaking ties at the same `end` date
+  toward the *shorter* duration (a fresh 10-Q's own quarter figure over
+  its same-report 9-month year-to-date cumulative, which share an end
+  date) — "most recent quarter" should mean the quarter, not a longer
+  cumulative that happens to end the same day.
+- **A related, genuinely expected characteristic, not a bug**:
+  anchoring on a company that's filed a more recent quarter than its
+  peers gives partial coverage — confirmed live: anchoring on AAPL or
+  MSFT (both had already filed their next quarter) returned only 1-2
+  of 5 companies, while anchoring on NVDA or CRM returned all 5.
+  Companies file on different, asynchronous calendars; "most recent"
+  is anchor-relative, not a single shared moment. Rather than trying to
+  merge across multiple anchors to force full coverage, this is
+  surfaced honestly: **system-prompt rule 7** requires the model to
+  explicitly name which companies were/weren't covered when
+  `compare_financial_metric` returns fewer than five, rather than
+  phrasing a partial comparison as if it covered "all five companies."
+  Verified live: before the rule, a real answer said "PLTR had the
+  highest gross margin... among our five companies" despite only 2
+  ever being retrieved; after, it explicitly stated "the other
+  companies did not provide a reported gross margin for that period."
+
 ### `answer.py` (Week 3) — working, v0 prototype
 
 Retrieves via `hybrid_search()`, feeds numbered excerpts to a local LLM
@@ -1151,15 +1224,9 @@ arguments, and a multi-company comparison-completeness gap) — see the
 **Citation-verification pass: DONE — see `agent.py`'s `verify_citations()`
 section below.**
 
-**Next — one follow-up idea remaining, aimed at squeezing more out of
-the SEC API surface itself rather than adding new homegrown logic:**
-1. **`frames` API for cross-company queries.** A fourth SEC XBRL
-   endpoint beyond `submissions`/`companyconcept`/`companyfacts`:
-   `frames/us-gaap/{tag}/USD/CY2026Q1.json` returns one concept for
-   *every* company that reported it in one period, in a single call.
-   Useful for "which of our 5 companies had the best gross margin this
-   quarter" — today that's 5 sequential `companyconcept` calls; with
-   `frames` it's 1. Add as a second function in `xbrl_facts.py`.
+**`frames` API for cross-company queries: DONE — see `xbrl_facts.py`'s
+frames section below.** Both approved follow-up ideas are now built;
+no further items queued here.
 
 **Deliberately deferred to a future round, not next-up: a curated,
 tool-computed formula registry beyond `gross_margin`** (operating
