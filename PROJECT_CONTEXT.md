@@ -1054,34 +1054,89 @@ revenue tag default, two unhandled crashes on malformed tool-call
 arguments, and a multi-company comparison-completeness gap) — see the
 `xbrl_facts.py` section for full detail on each.
 
-**Next — three follow-up ideas approved but not yet built**, in rough
-priority order:
+**Next — two follow-up ideas approved and in scope now**, both aimed at
+squeezing more out of the SEC API surface itself rather than adding new
+homegrown logic:
 1. **`frames` API for cross-company queries.** A fourth SEC XBRL
    endpoint beyond `submissions`/`companyconcept`/`companyfacts`:
    `frames/us-gaap/{tag}/USD/CY2026Q1.json` returns one concept for
    *every* company that reported it in one period, in a single call.
    Useful for "which of our 5 companies had the best gross margin this
    quarter" — today that's 5 sequential `companyconcept` calls; with
-   `frames` it's 1. Add as a second function in `xbrl_facts.py` once
-   the current tool has more mileage on it, not before.
-2. **Curated, tool-computed formula registry beyond `gross_margin`.**
-   Deliberately not a general-purpose calculator the model can point at
-   any two numbers — that reopens exactly the failure mode `agent.py`'s
-   "don't combine numbers" rule exists to prevent, and makes eval
-   failures harder to diagnose (retrieval bug vs. bad arithmetic?).
-   Instead, extend the pattern `get_gross_margin` already establishes:
-   a small, named, tool-computed ratio per metric (operating margin, net
-   margin, YoY revenue growth), each verified once against real filing
-   figures the way gross margin was checked against NVIDIA's actual
-   71.1%.
-3. **Cheap citation-verification pass.** After the model writes its
+   `frames` it's 1. Add as a second function in `xbrl_facts.py`.
+2. **Cheap citation-verification pass.** After the model writes its
    final answer, check that each cited `[n]`'s numeric claim actually
    appears in that result's text/value before returning — catches
    silent misgrounding for the cost of a regex check, no extra model
    call needed.
 
-Worth deferring model-swap questions until after these, since none of
-the currently-open work is a generation-quality gap.
+**Deliberately deferred to a future round, not next-up: a curated,
+tool-computed formula registry beyond `gross_margin`** (operating
+margin, net margin, YoY revenue growth). This is NOT the rejected
+general-purpose-calculator idea — the model would never do arithmetic
+itself, it'd ask for a named metric and the tool computes it
+deterministically from XBRL facts, same pattern as `get_gross_margin`.
+But it carries a different risk than the arithmetic-tool one: an
+open-ended, ever-growing list of hand-written formulas to maintain.
+Parked rather than built now, on the reasoning that it's better to let
+real demand (from eval questions, like `aapl-operating-margin-q3fy2026`
+and `aapl-revenue-growth-q3fy2026` added below, both of which currently
+have no way to be answered correctly) justify which specific formulas
+are worth the maintenance cost, rather than pre-building a list.
+
+Worth deferring model-swap questions until after `frames` and citation
+verification, since neither currently-open item is a generation-quality
+gap.
+
+**Eval set grown again, 16 → 21 questions, deliberately including two
+questions the current system can't yet answer correctly** — the point
+was to generate real evidence for the formula-registry deferral
+decision above, not to hunt bugs. Verified ground truth by computing
+each new value from real `get_metric()` calls (and spot-checking two
+directly against the raw filing tables, not just the API) before
+writing the question: `aapl-net-income-fy2025` and
+`nvda-cost-of-revenue-fy2026` broaden coverage of metrics
+`xbrl_facts.py` already supports (both PASS, confirming the tool
+generalizes beyond the two metrics the original bug-fix touched);
+`nvda-rd-expense-q4fy26-refusal` tests the documented Q4 limitation
+(PASS — the agent correctly admits NVIDIA doesn't separately report a
+standalone Q4 figure, rather than fabricating one from the annual
+total); `aapl-operating-margin-q3fy2026` and
+`aapl-revenue-growth-q3fy2026` target the formula-registry gap
+directly. Result: **20/21**, no regressions on the original 16.
+
+The two formula-registry-gap questions surfaced something more
+specific and more useful than a simple pass/fail:
+- `aapl-operating-margin-q3fy2026` **FAILED**, but not uniformly the
+  same way twice. The recorded eval run answered a fabricated **50.1%**
+  cited as if directly retrieved. A live repro immediately after instead
+  self-computed **32.68%** (close to the verified 32.6%) by retrieving
+  operating income and revenue as separate dollar figures via
+  `search_filings` and doing the division itself in its reasoning text
+  — a real violation of `agent.py` rule 3 ("don't combine or infer
+  numbers"), just one that happened to land close to correct this time.
+  Two runs, two different failure modes (fabrication vs. rule-violating
+  self-computation), same underlying cause: no deterministic path to
+  this number exists yet.
+- `aapl-revenue-growth-q3fy2026` **technically PASSED** (16.27% against
+  an expected 16.4%), but for the same underlying reason as the
+  above — the agent retrieved two `get_financial_fact` dollar values
+  (one via a follow-up `period_end_date` call for the prior-year
+  quarter) and computed the percentage itself, again violating rule 3,
+  and got its own arithmetic slightly wrong in the process (16.27% vs.
+  the mathematically correct ~16.36% from its own stated inputs) — the
+  eval's numeric-match tolerance was loose enough to accept the
+  difference as a pass, which masked the rule violation rather than
+  catching it.
+
+This is concrete, not hypothetical, evidence for two things: (1) the
+formula-registry idea is solving a real problem, not a speculative one
+— the model reaches for self-computation on its own, unprompted, the
+moment it has retrievable raw ingredients, and doesn't do so reliably;
+(2) the eval harness's current numeric-tolerance matching can mask a
+rule-3 violation as a clean pass, which is itself worth tightening
+before the formula registry (or any future numeric feature) gets built
+and needs trustworthy eval signal.
 
 **Then — continue growing `eval_questions.jsonl`** toward the full
 30-50 question, FinanceBench-style set, now informed by two full rounds
