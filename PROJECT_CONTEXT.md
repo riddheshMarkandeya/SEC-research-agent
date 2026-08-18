@@ -767,6 +767,120 @@ is exactly the flagged-but-unfixed masking problem from the
   the harness now being honest about problems it used to silently
   paper over, not a regression.
 
+### `agent.py` system-prompt rule 8 — per-claim citation placement (Week 5i) — kept
+
+Discussing the Week 5h eval results (`nvda-crm-revenue-comparison`) surfaced a
+distinct pattern from plain misattribution: the model answered
+`"NVIDIA's revenue was $81.6 billion, while Salesforce's was $11.1
+billion [1][2]."` — both citations bundled at the sentence's end, after
+*both* facts. Given how `_iter_citation_claims()`'s windowing works,
+`[1]`'s window captures both numbers (nothing resets it between them)
+while `[2]`'s window is empty (nothing between two back-to-back
+brackets) — so `[1]` gets blamed for "claiming" a number that's
+probably really backed by `[2]`'s own source. Whether or not the
+underlying retrieval was actually correct, bundled citations make
+per-claim attribution ambiguous to both a human reader and this
+project's own verification tooling.
+
+- **Fix**: system-prompt rule 8 requires a citation immediately after
+  each individual fact in a multi-company sentence, not bundled at the
+  end. Verified live: the exact motivating question went from
+  `"...$81.6 billion, while...$11.1 billion [1][2]."` to
+  `"...$81.6 billion [1], while...$11.1 billion [2]."`, and the full
+  eval's `nvda-crm-revenue-comparison` became a reliable PASS.
+- **A real regression found immediately after, via live testing, not
+  assumed**: the first wording of rule 8 broke a previously rock-solid
+  question (`nvda-rd-expense-q4fy26-refusal`) 3 times in a row —
+  tool-loop exhaustion or complete topic derailment (once querying
+  AAPL/MSFT filings for a question purely about NVIDIA), where 5
+  historical runs (3 before rule 8 existed, 2 with it stashed out
+  during isolation testing) were all clean. **Root-caused via variable
+  isolation** (`git stash` rule 8 in/out, same question, multiple
+  samples each way) before attempting a fix — confirmed causation, not
+  coincidence. **Fix**: narrowed rule 8's wording to explicitly scope it
+  to multi-company sentences only and explicitly state it adds no
+  requirement to single-company or refusal answers ("never search for
+  extra facts just to have something to cite per-sentence"). This
+  improved but did not fully restore baseline reliability (roughly 2-3
+  clean out of 4 samples with the reworded rule, vs. 5/5 clean with no
+  rule 8 at all) — accepted as a real, documented trade-off: rule 8's
+  bundled-citation fix addresses a correctness/trust issue in graded
+  numeric comparisons, while its cost is an occasional ungraceful
+  failure (a safe fallback message or an unhelpful answer) on one
+  specific fragile refusal-style question, not a wrong-but-confident
+  answer. Current rule 8 wording is the accepted version; further
+  wording iteration was deliberately stopped once two attempts showed a
+  persistent pattern rather than continued unilateral guessing (see
+  systematic-debugging discipline below).
+
+### Citation-verification retry loop — tried and reverted, deferred to a more capable model (Week 5j)
+
+With Week 5h's numeric/comparison citation gate showing real,
+recurring misattribution (not just the one originally-diagnosed case,
+but also `crm-revenue-q1fy27` — a previously 100%-reliable question,
+confirmed via direct retrieval inspection to cite an unrelated
+dividend-program chunk instead of the actual revenue chunk), the
+earlier-deferred idea of having `run_agent()` self-correct on its own
+unverified citations was revisited with much stronger justifying
+evidence than when it was first deferred.
+
+- **Design**: when the final answer has an unverified citation (per
+  `verify_citations()`) and the run hasn't already retried once, feed
+  the model its own draft answer plus the specific warning strings back
+  as a corrective follow-up, and let it try again — sharing the
+  existing `MAX_TOOL_ITERATIONS` budget rather than a separate one, so
+  it can't compound with an already-long tool-calling sequence. Built
+  via TDD as two pure, unit-tested helpers
+  (`_should_retry_for_citations()`, `_format_citation_retry_message()`)
+  wired into `run_agent()`'s existing loop.
+- **The mechanism worked exactly as designed** — triggered correctly,
+  capped at one retry, fed back the real warnings — but **did not
+  reliably improve answer quality** on live testing against the two
+  confirmed misattribution cases: `aapl-employees-fy25`'s retry gave up
+  entirely ("I cannot confirm the exact number") instead of finding the
+  correct number among the 4 other already-retrieved chunks;
+  `crm-revenue-q1fy27`'s retry *did* re-locate and quote the correct
+  passage, but still mislabeled which citation index it belonged to.
+- **A real, worse regression found via live testing**: the first retry
+  message's closing line — "This is your final attempt — give a
+  complete answer now" — pushed the model to fabricate an "estimated"
+  R&D figure (extrapolated from an unrelated quarter) on
+  `nvda-rd-expense-q4fy26-refusal`, a question it had answered correctly
+  (an honest refusal) before any retry mechanism existed — a direct
+  rule-2 violation *caused by* the fix meant to improve correctness.
+  Reworded the message to explicitly say an honest refusal is a
+  completely acceptable retry outcome and to explicitly prohibit
+  inventing/estimating — **this did not fully fix it either**: the same
+  question, re-tested, still concluded with a fabricated "estimate"
+  despite the explicit instruction not to.
+- **Two real fix attempts at the retry message both fell short in the
+  same way rule 8's two attempts did** — a pattern, not a coincidence:
+  `qwen2.5:7b-instruct` appears to have a real, not-fully-wording-
+  fixable difficulty overriding its own prior-turn framing on this
+  specific fragile refusal-style question, whether the added pressure
+  comes from a new system-prompt rule or a mid-conversation correction.
+  Per this project's systematic-debugging discipline (question the
+  architecture after repeated fixes land in the same failure mode
+  rather than keep guessing at wording), this was brought back for a
+  decision rather than attempting a third wording tweak.
+- **Decision: reverted.** The retry mechanism costs one extra ~60-90s
+  Ollama round trip on every citation warning without reliably
+  improving the answer on this model — not a good trade. `agent.py`'s
+  `run_agent()` is back to returning `verify_citations()`'s warnings
+  without acting on them itself. **The eval-harness pass/fail gate
+  (Week 5h) and `verify_citations()`/`value_is_citation_verified()`
+  themselves are all still fully in place** — only the runtime
+  self-correction attempt was removed; the warnings remain valuable for
+  eval grading and are expected to matter again for tracing/observability
+  in Week 7.
+- **Marked as a future step**: revisit a runtime citation-retry loop
+  once working with a more capable model than `qwen2.5:7b-instruct` —
+  the design (`_should_retry_for_citations`/`_format_citation_retry_message`
+  pattern, sharing the existing iteration budget) is sound and cheap to
+  rebuild; what's missing is a model that can reliably act on corrective
+  feedback without abandoning a previously-correct answer or fabricating
+  under pressure to "complete" a final attempt.
+
 ### `xbrl_facts.py`'s `frames` API — cross-company comparison in one call (Week 5d)
 
 A second agent tool, `compare_financial_metric`, alongside
@@ -1485,6 +1599,17 @@ fails now, along with a live-found second real bug
 formula registry remains a separate, still-deferred piece of work — its
 justification is unchanged, just no longer resting on untrustworthy
 eval signal.
+
+**Also deliberately deferred: a runtime citation-verification retry
+loop in `run_agent()` itself** (as opposed to the eval-harness gate
+above, which stays). Built, tested, and verified live — see "Citation-
+verification retry loop — tried and reverted" (Week 5j) below for the
+full account. Reverted because `qwen2.5:7b-instruct` couldn't reliably
+act on the corrective feedback (sometimes abandoning a previously-
+correct refusal, once fabricating an estimate despite an explicit
+instruction not to), so the extra ~60-90s retry cost wasn't buying
+real quality. Revisit once working with a more capable model — the
+design and its tests are still there if this repo trades models later.
 
 **Then — continue growing `eval_questions.jsonl`** toward the full
 30-50 question, FinanceBench-style set, now informed by two full rounds

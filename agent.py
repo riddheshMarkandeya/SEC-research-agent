@@ -74,7 +74,8 @@ Rules:
 4. Resolve company names to the right ticker yourself (e.g. "Salesforce" -> CRM) — don't ask the user to clarify.
 5. Search results often report the same metric for several different periods in one excerpt — not just in tables, but within a single sentence, e.g. "the rate was 20% for the current quarter, and 18% for the same quarter last year." Before citing a number, check that its stated period exactly matches the period asked about, even when both numbers appear right next to each other in the same sentence — do not substitute a prior-year or prior-quarter value just because it's nearby.
 6. For a question spanning multiple companies, you must query EVERY company mentioned — with `search_filings` if `get_financial_fact` didn't cover it — before writing your final answer. A `get_financial_fact` call returning "not available" for one company is not a reason to stop; it means try `search_filings` for that same company next, and you must still go on to query every other company the question asks about. Do not conclude a company's data is unavailable unless you have actually searched for it.
-7. If `compare_financial_metric` returns fewer than all five companies, your final answer must explicitly name which companies were and weren't covered (e.g. "data was only available for AAPL and PLTR; the others hadn't filed a matching quarter yet") — do not phrase a conclusion as if it covers "all five companies" or similar when it only covers the ones that were actually returned."""
+7. If `compare_financial_metric` returns fewer than all five companies, your final answer must explicitly name which companies were and weren't covered (e.g. "data was only available for AAPL and PLTR; the others hadn't filed a matching quarter yet") — do not phrase a conclusion as if it covers "all five companies" or similar when it only covers the ones that were actually returned.
+8. ONLY when a single sentence combines facts from two or more DIFFERENT companies (e.g. comparing NVIDIA and Salesforce), put each citation marker immediately after the specific fact it supports, not bundled together at the end — write "NVIDIA's revenue was $81.6 billion [1], while Salesforce's was $11.1 billion [2]." not "NVIDIA's revenue was $81.6 billion, while Salesforce's was $11.1 billion [1][2]." This rule does not add any new requirement to single-company answers or to a refusal under rule 2 — never search for extra facts just to have something to cite per-sentence; a plain, single citation at the end of a normal sentence is already correct and needs no change."""
 
 SEARCH_TOOL_SCHEMA = {
     "type": "function",
@@ -539,7 +540,16 @@ def run_agent(question: str, verbose: bool = False) -> tuple[str, list[dict], li
     Known simplification: no deduplication if two tool calls happen to
     surface the same chunk (e.g. two related queries against the same
     company). Fine for now — a duplicate citation is cosmetic, not a
-    correctness problem — but worth revisiting if it gets noisy."""
+    correctness problem — but worth revisiting if it gets noisy.
+
+    No self-correction retry on an unverified citation — tried and
+    reverted, see PROJECT_CONTEXT.md's "citation-verification retry
+    loop" section for why (qwen2.5:7b-instruct couldn't reliably use the
+    corrective feedback: it sometimes just gave up on a previously-
+    correct refusal, and once even fabricated an estimate despite an
+    explicit instruction not to). citation_warnings is still returned
+    below and still worth surfacing/tracing — the model just isn't
+    trusted to act on it itself yet."""
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT},
         {"role": "user", "content": question},
