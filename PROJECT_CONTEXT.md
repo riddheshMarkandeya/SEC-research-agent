@@ -881,6 +881,51 @@ evidence than when it was first deferred.
   feedback without abandoning a previously-correct answer or fabricating
   under pressure to "complete" a final attempt.
 
+### Formula registry — `operating_margin`, `net_margin`, `yoy_growth` (Week 5k)
+
+The previously-deferred formula registry, now built: the two hard eval
+questions that motivated deferring it in the first place
+(`aapl-operating-margin-q3fy2026`, `aapl-revenue-growth-q3fy2026`) both
+now PASS with the exact expected values (32.6%, 16.4%), via a single
+clean tool call each — no self-computation, no rounding drift.
+
+- **`operating_income` verified live before adding**, same discipline as
+  the original revenue-tag lesson: `OperatingIncomeLoss` has recent,
+  clean entries for all 5 companies, no per-company override needed
+  (unlike revenue).
+- **`xbrl_facts.py`**: `_compute_ratio_metric()` extracted from
+  `get_gross_margin()`'s body once `get_operating_margin()`/
+  `get_net_margin()` would otherwise have been copies of it differing
+  only in the numerator metric — same duplication class `config.py`
+  fixed earlier for infra constants, this time for margin formulas. Same
+  consolidation for the cross-company versions
+  (`_compute_ratio_metric_all_companies()`).
+- **`get_yoy_growth()` does zero date arithmetic, by design**: the prior
+  comparable period isn't computed as "one year before" a calendar date
+  (which would reproduce the exact bug class `_pick_entry_by_end_date()`
+  already fixed once) — it's found by reading the CURRENT period's own
+  SEC-assigned `fiscal_year` back off `get_metric()`'s result (which now
+  also exposes `fiscal_year`/`fiscal_period` for this reason) and asking
+  for `fiscal_year - 1` at the same `fiscal_period`. Integer subtraction
+  on a label the data already supplied, not an independent computation
+  that could silently disagree with it.
+- **Scoped deliberately**: `yoy_growth` only applies to the raw tagged
+  metrics, not the margin ratios (no current evidence "growth of a
+  percentage" is a real question shape) — rejected at the `agent.py`
+  boundary rather than passed through. Not exposed on
+  `compare_financial_metric` either, for the same reason (no evidence
+  for a cross-company YoY-growth comparison yet).
+- **Live eval confirms both target questions now pass** with the exact
+  values, and the Q4-refusal question correctly still refuses without
+  fabricating (`nvda-rd-expense-q4fy26-refusal` PASS). Full suite:
+  168/168 unit tests. The eval run's remaining 4 failures are all
+  pre-existing, already-documented comparison-type flakiness (missing
+  citation markers, misattribution) — unrelated to this change, and
+  themselves part of the motivation for the next planned step: testing
+  against a cloud model to see how much of that flakiness is a
+  `qwen2.5:7b-instruct` capability ceiling versus something still worth
+  fixing locally.
+
 ### `xbrl_facts.py`'s `frames` API — cross-company comparison in one call (Week 5d)
 
 A second agent tool, `compare_financial_metric`, alongside
@@ -1595,10 +1640,11 @@ and needs trustworthy eval signal.
 "wiring citation-verification into pass/fail" section below (Week 5h).**
 `aapl-revenue-growth-q3fy2026` no longer masks as a pass; it correctly
 fails now, along with a live-found second real bug
-(`aapl-employees-fy25`) the eval hadn't caught before either. The
-formula registry remains a separate, still-deferred piece of work — its
-justification is unchanged, just no longer resting on untrustworthy
-eval signal.
+(`aapl-employees-fy25`) the eval hadn't caught before either.
+
+**The formula registry itself is now DONE too — see "Formula registry"
+(Week 5k) below.** Both `aapl-operating-margin-q3fy2026` and
+`aapl-revenue-growth-q3fy2026` pass with the exact expected values now.
 
 **Also deliberately deferred: a runtime citation-verification retry
 loop in `run_agent()` itself** (as opposed to the eval-harness gate

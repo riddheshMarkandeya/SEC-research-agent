@@ -58,13 +58,16 @@ REQUEST_DELAY_SECONDS = 0.3  # match edgar_ingest.py's courtesy delay
 # and not one shared default. All five companies do tag "GrossProfit"
 # directly through their latest filings (checked the same way), which
 # is what makes gross-margin-as-a-tool-computed-ratio viable without an
-# extra concept lookup or override per company.
+# extra concept lookup or override per company. "OperatingIncomeLoss"
+# (added for operating_margin) checked the same way: all five companies
+# have recent entries, no overrides needed there either.
 DEFAULT_METRIC_TAGS = {
     "revenue": "RevenueFromContractWithCustomerExcludingAssessedTax",
     "gross_profit": "GrossProfit",
     "cost_of_revenue": "CostOfRevenue",
     "rd_expense": "ResearchAndDevelopmentExpense",
     "net_income": "NetIncomeLoss",
+    "operating_income": "OperatingIncomeLoss",
 }
 METRIC_TAG_OVERRIDES = {
     "NVDA": {"revenue": "Revenues"},
@@ -256,8 +259,12 @@ def get_metric(
     existed).
 
     Returns {"value": float, "unit": "USD", "period_end": "YYYY-MM-DD",
-    "form": str, "accession": str} or None if unavailable (caller should
-    fall back to search_filings).
+    "form": str, "accession": str, "fiscal_year": int, "fiscal_period":
+    str, ...} or None if unavailable (caller should fall back to
+    search_filings). fiscal_year/fiscal_period are read directly off the
+    matched entry's own fy/fp fields (not recomputed) -- get_yoy_growth()
+    anchors on these to find the prior-year period without doing any
+    date arithmetic itself.
     """
     tag = _tag_for(ticker, metric)
     data = fetch_concept(ticker, tag)
@@ -290,6 +297,51 @@ def get_metric(
         "accession": entry["accn"],
         "filed": entry.get("filed"),
         "frame": entry.get("frame"),
+        "fiscal_year": entry.get("fy"),
+        "fiscal_period": entry.get("fp"),
+    }
+
+
+def _compute_ratio_metric(
+    ticker: str,
+    numerator_metric: str,
+    denominator_metric: str,
+    fiscal_year: int | None,
+    fiscal_period: str,
+    period_end_date: str | None,
+) -> dict | None:
+    """Shared body for every tool-computed percentage metric (gross/
+    operating/net margin) -- none of these are themselves GAAP-tagged
+    concepts (percentages are prose/MD&A, not structured facts), so each
+    is computed here from two structured facts instead of returned raw
+    for the model to divide, so agent.py's "don't infer/combine numbers"
+    rule doesn't need to be relaxed for any of their output. Extracted
+    once operating_margin/net_margin were added alongside gross_margin,
+    since all three are otherwise identical bodies differing only in
+    which metric is the numerator -- copy-pasting a third time would
+    reproduce exactly the kind of duplication this project already
+    fixed once (see config.py's own history).
+
+    Both legs are just handed the same fiscal_year/fiscal_period/
+    period_end_date arguments and each resolves its own entry via
+    get_metric() independently -- the period_end check below is what
+    actually guarantees both legs agree, regardless of how each one got
+    there."""
+    numerator = get_metric(ticker, numerator_metric, fiscal_year, fiscal_period, period_end_date)
+    denominator = get_metric(ticker, denominator_metric, fiscal_year, fiscal_period, period_end_date)
+    if numerator is None or denominator is None:
+        return None
+    if numerator["period_end"] != denominator["period_end"]:
+        return None
+    ratio_pct = numerator["value"] / denominator["value"] * 100
+    return {
+        "value": round(ratio_pct, 1),
+        "unit": "percent",
+        "period_end": numerator["period_end"],
+        "form": numerator["form"],
+        "accession": numerator["accession"],
+        "filed": numerator["filed"],
+        "frame": numerator["frame"],
     }
 
 
@@ -299,35 +351,32 @@ def get_gross_margin(
     fiscal_period: str = "FY",
     period_end_date: str | None = None,
 ) -> dict | None:
-    """Gross margin isn't itself a GAAP-tagged concept (percentages are
-    prose/MD&A, not structured facts) -- computed here from two
-    structured facts (GrossProfit / Revenues) instead of returned raw
-    for the model to divide, so agent.py's "don't infer/combine numbers"
-    rule doesn't need to be relaxed for this tool's output. Both legs are
-    just handed the same fiscal_year/fiscal_period/period_end_date
-    arguments and each resolves its own entry via get_metric() -- no
-    separate period-resolution step needed here (unlike an earlier
-    version of this function), since get_metric() now matches
-    period_end_date directly against each entry's own `end` date rather
-    than through an intermediate computed label; the period_end check
-    just below is what actually guarantees both legs agree, regardless
-    of how each one got there."""
-    gross_profit = get_metric(ticker, "gross_profit", fiscal_year, fiscal_period, period_end_date)
-    revenue = get_metric(ticker, "revenue", fiscal_year, fiscal_period, period_end_date)
-    if gross_profit is None or revenue is None:
-        return None
-    if gross_profit["period_end"] != revenue["period_end"]:
-        return None
-    margin_pct = gross_profit["value"] / revenue["value"] * 100
-    return {
-        "value": round(margin_pct, 1),
-        "unit": "percent",
-        "period_end": gross_profit["period_end"],
-        "form": gross_profit["form"],
-        "accession": gross_profit["accession"],
-        "filed": gross_profit["filed"],
-        "frame": gross_profit["frame"],
-    }
+    """Gross profit / revenue, as a percent. See _compute_ratio_metric()
+    for why this is computed here rather than returned raw."""
+    return _compute_ratio_metric(ticker, "gross_profit", "revenue", fiscal_year, fiscal_period, period_end_date)
+
+
+def get_operating_margin(
+    ticker: str,
+    fiscal_year: int | None = None,
+    fiscal_period: str = "FY",
+    period_end_date: str | None = None,
+) -> dict | None:
+    """Operating income / revenue, as a percent. See
+    _compute_ratio_metric() for why this is computed here rather than
+    returned raw."""
+    return _compute_ratio_metric(ticker, "operating_income", "revenue", fiscal_year, fiscal_period, period_end_date)
+
+
+def get_net_margin(
+    ticker: str,
+    fiscal_year: int | None = None,
+    fiscal_period: str = "FY",
+    period_end_date: str | None = None,
+) -> dict | None:
+    """Net income / revenue, as a percent. See _compute_ratio_metric()
+    for why this is computed here rather than returned raw."""
+    return _compute_ratio_metric(ticker, "net_income", "revenue", fiscal_year, fiscal_period, period_end_date)
 
 
 # ---------------------------------------------------------------------------
@@ -427,6 +476,41 @@ def get_metric_all_companies(
     return get_frame(metric, anchor["frame"])
 
 
+def _compute_ratio_metric_all_companies(
+    anchor: dict | None, numerator_metric: str, denominator_metric: str
+) -> dict[str, dict]:
+    """Shared body for every cross-company tool-computed percentage
+    metric — the frames-layer counterpart to _compute_ratio_metric(),
+    extracted for the same reason (operating_margin_all_companies/
+    net_margin_all_companies would otherwise be copies of
+    gross_margin_all_companies differing only in which metric is the
+    numerator). `anchor` is the caller's own already-resolved
+    get_X_margin() result, passed in rather than recomputed here, since
+    each margin function already knows which two metrics it's a ratio
+    of. A company is included only if BOTH frames have an entry for it
+    with matching period_end -- the two metrics can use different
+    underlying tags (see get_frame's docstring), so their per-company
+    period boundaries aren't guaranteed to align by construction, only
+    checked."""
+    if anchor is None or anchor.get("frame") is None:
+        return {}
+    numerators = get_frame(numerator_metric, anchor["frame"])
+    denominators = get_frame(denominator_metric, anchor["frame"])
+
+    results: dict[str, dict] = {}
+    for t, num in numerators.items():
+        den = denominators.get(t)
+        if den is None or den["period_end"] != num["period_end"]:
+            continue
+        results[t] = {
+            "value": round(num["value"] / den["value"] * 100, 1),
+            "unit": "percent",
+            "period_end": num["period_end"],
+            "accession": num["accession"],
+        }
+    return results
+
+
 def get_gross_margin_all_companies(
     ticker: str,
     fiscal_year: int | None = None,
@@ -434,29 +518,92 @@ def get_gross_margin_all_companies(
     period_end_date: str | None = None,
 ) -> dict[str, dict]:
     """Gross margin for every covered company, for the same period
-    bucket as `ticker`'s own period — the cross-company counterpart to
-    get_gross_margin(), same reasoning: computed here from two frames
-    (gross_profit / revenue) rather than returned raw for the model to
-    divide per company. A company is included only if BOTH frames have
-    an entry for it with matching period_end -- gross_profit and
-    revenue can use different underlying tags (see get_frame's
-    docstring), so their per-company period boundaries aren't
-    guaranteed to align by construction, only checked."""
+    bucket as `ticker`'s own period. See _compute_ratio_metric_all_companies()
+    for the shared computation."""
     anchor = get_gross_margin(ticker, fiscal_year, fiscal_period, period_end_date)
-    if anchor is None or anchor.get("frame") is None:
-        return {}
-    gross_profits = get_frame("gross_profit", anchor["frame"])
-    revenues = get_frame("revenue", anchor["frame"])
+    return _compute_ratio_metric_all_companies(anchor, "gross_profit", "revenue")
 
-    results: dict[str, dict] = {}
-    for t, gp in gross_profits.items():
-        rev = revenues.get(t)
-        if rev is None or rev["period_end"] != gp["period_end"]:
-            continue
-        results[t] = {
-            "value": round(gp["value"] / rev["value"] * 100, 1),
-            "unit": "percent",
-            "period_end": gp["period_end"],
-            "accession": gp["accession"],
-        }
-    return results
+
+def get_operating_margin_all_companies(
+    ticker: str,
+    fiscal_year: int | None = None,
+    fiscal_period: str = "FY",
+    period_end_date: str | None = None,
+) -> dict[str, dict]:
+    """Operating margin for every covered company, for the same period
+    bucket as `ticker`'s own period. See _compute_ratio_metric_all_companies()
+    for the shared computation."""
+    anchor = get_operating_margin(ticker, fiscal_year, fiscal_period, period_end_date)
+    return _compute_ratio_metric_all_companies(anchor, "operating_income", "revenue")
+
+
+def get_net_margin_all_companies(
+    ticker: str,
+    fiscal_year: int | None = None,
+    fiscal_period: str = "FY",
+    period_end_date: str | None = None,
+) -> dict[str, dict]:
+    """Net margin for every covered company, for the same period bucket
+    as `ticker`'s own period. See _compute_ratio_metric_all_companies()
+    for the shared computation."""
+    anchor = get_net_margin(ticker, fiscal_year, fiscal_period, period_end_date)
+    return _compute_ratio_metric_all_companies(anchor, "net_income", "revenue")
+
+
+# ---------------------------------------------------------------------------
+# get_yoy_growth — the formula-registry metric this module was missing.
+# Motivated by two real eval failures (aapl-operating-margin-q3fy2026's
+# sibling, aapl-revenue-growth-q3fy2026): with no deterministic tool for
+# a YoY growth figure, the model reached for self-computation on its
+# own -- retrieving two raw dollar values via get_financial_fact and
+# dividing them in its own reasoning text, violating agent.py's "don't
+# combine numbers" rule (and getting its own arithmetic slightly wrong
+# in the process). Computed here instead, same pattern as the margins
+# above: a deterministic tool result, not model arithmetic.
+# ---------------------------------------------------------------------------
+def get_yoy_growth(
+    ticker: str,
+    metric: str,
+    fiscal_year: int | None = None,
+    fiscal_period: str = "FY",
+    period_end_date: str | None = None,
+) -> dict | None:
+    """Year-over-year percent change in `metric`, comparing the current
+    period to the SAME fiscal_period one year earlier.
+
+    No date arithmetic, by design: the prior period isn't computed as
+    "one year before" a calendar date (which would reproduce the exact
+    bug class _pick_entry_by_end_date()'s docstring already fixed once)
+    -- it's found by reading the CURRENT period's own SEC-assigned
+    fiscal_year straight off get_metric()'s result and asking for
+    `fiscal_year - 1` at the same fiscal_period instead. Simple integer
+    subtraction on a label the data already supplied, not an independent
+    computation that could silently disagree with it.
+
+    Scoped to the raw tagged metrics only (revenue, gross_profit,
+    cost_of_revenue, rd_expense, net_income, operating_income) -- NOT
+    the margin ratios (gross_margin/operating_margin/net_margin), since
+    there's no current evidence "growth of a percentage" is a question
+    this needs to answer; passing one of those raises the same
+    ValueError _tag_for() already raises for any unrecognized metric.
+
+    Returns {"value": float (percent), "unit": "percent", "period_end",
+    "form", "accession", "filed", "frame"} for the CURRENT period, or
+    None if either period is unavailable or the prior value is zero
+    (growth is undefined)."""
+    current = get_metric(ticker, metric, fiscal_year, fiscal_period, period_end_date)
+    if current is None or current.get("fiscal_year") is None:
+        return None
+    prior = get_metric(ticker, metric, fiscal_year=current["fiscal_year"] - 1, fiscal_period=current["fiscal_period"])
+    if prior is None or prior["value"] == 0:
+        return None
+    growth_pct = (current["value"] - prior["value"]) / prior["value"] * 100
+    return {
+        "value": round(growth_pct, 1),
+        "unit": "percent",
+        "period_end": current["period_end"],
+        "form": current["form"],
+        "accession": current["accession"],
+        "filed": current["filed"],
+        "frame": current["frame"],
+    }

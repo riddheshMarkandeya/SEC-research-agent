@@ -1,12 +1,16 @@
 """
-Unit tests for agent.py. Covers the pure helpers only —
-_resolve_search_args, _format_results_block, _format_citation_key.
-run_agent()/_call_ollama() drive a live tool-calling loop against Ollama,
-so they're exercised by manual runs (python agent.py "...") documented
-in PROJECT_CONTEXT.md, not here.
+Unit tests for agent.py. Covers the pure helpers, plus the
+_call_get_financial_fact/_call_compare_financial_metric dispatch/
+boundary-validation logic (via monkeypatched xbrl_facts functions, no
+network). run_agent()/_call_ollama() drive a live tool-calling loop
+against Ollama, so they're exercised by manual runs (python agent.py
+"...") documented in PROJECT_CONTEXT.md, not here.
 """
 
 from agent import (
+    MARGIN_METRIC_FUNCTIONS,
+    _call_compare_financial_metric,
+    _call_get_financial_fact,
     _comparison_as_results,
     _format_citation_key,
     _format_results_block,
@@ -307,3 +311,78 @@ def test_comparison_as_results_one_entry_per_company_sorted_by_ticker():
 
 def test_comparison_as_results_empty_dict_returns_empty_list():
     assert _comparison_as_results({}, "revenue") == []
+
+
+# ---------------------------------------------------------------------------
+# _call_get_financial_fact / _call_compare_financial_metric
+# (margin dispatch + yoy_growth boundary validation)
+# ---------------------------------------------------------------------------
+def test_call_get_financial_fact_dispatches_operating_margin(monkeypatch):
+    # MARGIN_METRIC_FUNCTIONS binds function objects once at import time,
+    # so patching agent.get_operating_margin afterward wouldn't reach
+    # the dispatch code (which reads from the dict, not the module
+    # attribute) -- patch the dict entry itself instead.
+    monkeypatch.setitem(
+        MARGIN_METRIC_FUNCTIONS,
+        "operating_margin",
+        (lambda ticker, fiscal_year, fiscal_period, period_end_date: {"value": 60.0, "unit": "percent"}, None),
+    )
+    result = _call_get_financial_fact(
+        {"ticker": "NVDA", "metric": "operating_margin", "fiscal_year": 2026, "fiscal_period": "FY"}
+    )
+    assert result == {"value": 60.0, "unit": "percent"}
+
+
+def test_call_get_financial_fact_dispatches_net_margin(monkeypatch):
+    monkeypatch.setitem(
+        MARGIN_METRIC_FUNCTIONS,
+        "net_margin",
+        (lambda ticker, fiscal_year, fiscal_period, period_end_date: {"value": 45.0, "unit": "percent"}, None),
+    )
+    result = _call_get_financial_fact(
+        {"ticker": "NVDA", "metric": "net_margin", "fiscal_year": 2026, "fiscal_period": "FY"}
+    )
+    assert result == {"value": 45.0, "unit": "percent"}
+
+
+def test_call_get_financial_fact_dispatches_yoy_growth_for_raw_metric(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        "agent.get_yoy_growth",
+        lambda ticker, metric, fiscal_year, fiscal_period, period_end_date: calls.append((ticker, metric))
+        or {"value": 10.0, "unit": "percent"},
+    )
+    result = _call_get_financial_fact(
+        {"ticker": "AAPL", "metric": "revenue", "yoy_growth": True, "fiscal_year": 2026, "fiscal_period": "Q3"}
+    )
+    assert result == {"value": 10.0, "unit": "percent"}
+    assert calls == [("AAPL", "revenue")]
+
+
+def test_call_get_financial_fact_rejects_yoy_growth_combined_with_margin_metric():
+    # get_yoy_growth() doesn't support ratio metrics (see its own
+    # docstring) -- caught here at the boundary, same reasoning as this
+    # function's existing invalid-metric guard, rather than letting
+    # xbrl_facts raise or silently compute something nonsensical.
+    result = _call_get_financial_fact({"ticker": "AAPL", "metric": "gross_margin", "yoy_growth": True})
+    assert result is None
+
+
+def test_call_compare_financial_metric_dispatches_operating_margin(monkeypatch):
+    monkeypatch.setitem(
+        MARGIN_METRIC_FUNCTIONS,
+        "operating_margin",
+        (None, lambda ticker, fiscal_year, fiscal_period, period_end_date: {"NVDA": {"value": 60.0}}),
+    )
+    result = _call_compare_financial_metric({"anchor_ticker": "NVDA", "metric": "operating_margin"})
+    assert result == {"NVDA": {"value": 60.0}}
+
+
+def test_call_compare_financial_metric_dispatches_net_margin(monkeypatch):
+    monkeypatch.setitem(
+        MARGIN_METRIC_FUNCTIONS,
+        "net_margin",
+        (None, lambda ticker, fiscal_year, fiscal_period, period_end_date: {"NVDA": {"value": 45.0}}),
+    )
+    result = _call_compare_financial_metric({"anchor_ticker": "NVDA", "metric": "net_margin"})
+    assert result == {"NVDA": {"value": 45.0}}
