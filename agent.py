@@ -382,6 +382,45 @@ def _source_number_candidates(source_text: str) -> list[tuple[str, float]]:
     return candidates
 
 
+def _iter_citation_claims(answer_text: str, all_results: list[dict]):
+    """Shared walk over every numeric claim found near a citation marker
+    in `answer_text` — yields (citation_index, claimed_value,
+    claimed_unit, verified) for each one, where `verified` is whether
+    the claim's own cited source text actually contains a matching
+    number. verify_citations() and value_is_citation_verified() are both
+    just different ways of consuming this same walk: the former collects
+    every unverified claim into warning strings, the latter checks
+    whether a single target value's claims are ever verified.
+
+    For each citation marker, only the text since the previous citation
+    marker (capped at _CITATION_WINDOW_CHARS) is checked, so a claim
+    isn't accidentally "verified" by a number attributed to an earlier
+    citation elsewhere in the same sentence. Known limitation: an answer
+    that shows multi-step derivation work *between* a claim and its
+    citation (e.g. a LaTeX-style calculation block) can still smuggle
+    the correct intermediate numbers into that window and dodge
+    detection — this is a best-effort heuristic, not an exhaustive
+    grounding check."""
+    window_start = 0
+    for match in _CITATION_MARKER.finditer(answer_text):
+        n = int(match.group(1))
+        window = answer_text[max(window_start, match.start() - _CITATION_WINDOW_CHARS) : match.start()]
+        window_start = match.end()
+        if not (1 <= n <= len(all_results)):
+            continue
+
+        claimed = extract_numbers(_NON_CLAIM_PATTERN.sub("", window))
+        if not claimed:
+            continue
+
+        source_normalized = _source_number_candidates(all_results[n - 1]["text"])
+        for value, unit in claimed:
+            category, norm = normalize(value, unit)
+            tolerance = max(0.01 * abs(norm), 0.05)
+            verified = any(c == category and abs(sn - norm) <= tolerance for c, sn in source_normalized)
+            yield n, value, unit, verified
+
+
 def verify_citations(answer_text: str, all_results: list[dict]) -> list[str]:
     """Cheap, deterministic check for one specific silent-misgrounding
     pattern: a numeric claim attributed to a citation whose own cited
@@ -401,44 +440,54 @@ def verify_citations(answer_text: str, all_results: list[dict]) -> list[str]:
     which is also where the date-noise and duplicate-warning issues
     below were found and fixed, not assumed.
 
-    For each citation marker, only the text since the previous citation
-    marker (capped at _CITATION_WINDOW_CHARS) is checked, so a claim
-    isn't accidentally "verified" by a number attributed to an earlier
-    citation elsewhere in the same sentence. Known limitation: an answer
-    that shows multi-step derivation work *between* a claim and its
-    citation (e.g. a LaTeX-style calculation block) can still smuggle
-    the correct intermediate numbers into that window and dodge
-    detection — this is a best-effort heuristic, not an exhaustive
-    grounding check.
-
     Returns a list of human-readable warning strings (deduplicated),
     empty if nothing looks unverified."""
     warnings: list[str] = []
     seen: set[tuple[int, str]] = set()
-    window_start = 0
-    for match in _CITATION_MARKER.finditer(answer_text):
-        n = int(match.group(1))
-        window = answer_text[max(window_start, match.start() - _CITATION_WINDOW_CHARS) : match.start()]
-        window_start = match.end()
-        if not (1 <= n <= len(all_results)):
+    for n, value, unit, verified in _iter_citation_claims(answer_text, all_results):
+        if verified:
             continue
-
-        claimed = extract_numbers(_NON_CLAIM_PATTERN.sub("", window))
-        if not claimed:
+        key = (n, f"{value}{unit}")
+        if key in seen:
             continue
-
-        source_normalized = _source_number_candidates(all_results[n - 1]["text"])
-        for value, unit in claimed:
-            category, norm = normalize(value, unit)
-            tolerance = max(0.01 * abs(norm), 0.05)
-            if any(c == category and abs(sn - norm) <= tolerance for c, sn in source_normalized):
-                continue
-            key = (n, f"{value}{unit}")
-            if key in seen:
-                continue
-            seen.add(key)
-            warnings.append(f"[{n}] claims {value} ({unit}) but that value doesn't appear in the cited source")
+        seen.add(key)
+        warnings.append(f"[{n}] claims {value} ({unit}) but that value doesn't appear in the cited source")
     return warnings
+
+
+def value_is_citation_verified(value: float, unit: str, answer_text: str, all_results: list[dict]) -> bool:
+    """Whether `value` is properly grounded everywhere it's cited in
+    `answer_text` — the targeted counterpart to verify_citations() above,
+    used by eval_harness.py to check ONE specific expected value instead
+    of scanning every claim in the answer.
+
+    Built for eval_harness.py's grade_numeric()/grade_comparison(): they
+    only check whether the expected value appears somewhere in the
+    answer text, which can't tell a correctly-cited answer from one that
+    states the right number but attaches it to the wrong source. Found
+    live, not hypothetical: aapl-employees-fy25 used to "pass" (166,000
+    appears in the answer) even though its citation actually points at a
+    chunk about debt notes and share repurchases, not employee count —
+    the wrong-chunk citation is exactly the kind of silent misgrounding
+    verify_citations() already catches for OTHER claims; this is what
+    wires that same check into what decides pass/fail for the specific
+    value a question is graded on.
+
+    Returns True if `value` is never attached to a citation at all
+    (nothing to contradict a plain-text match), or if AT LEAST ONE of
+    its citations is properly grounded — a redundant second, wrong
+    citation for an otherwise-correct value shouldn't fail the check.
+    Returns False only if every citation attached to it fails
+    verification."""
+    target_category, target_norm = normalize(value, unit)
+    tolerance = max(0.01 * abs(target_norm), 0.05)
+
+    matches = []
+    for _, claimed_value, claimed_unit, verified in _iter_citation_claims(answer_text, all_results):
+        category, norm = normalize(claimed_value, claimed_unit)
+        if category == target_category and abs(norm - target_norm) <= tolerance:
+            matches.append(verified)
+    return True if not matches else any(matches)
 
 
 def _format_citation_key(all_results: list[dict]) -> str:

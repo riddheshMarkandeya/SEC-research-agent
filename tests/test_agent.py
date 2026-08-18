@@ -11,6 +11,7 @@ from agent import (
     _format_citation_key,
     _format_results_block,
     _resolve_search_args,
+    value_is_citation_verified,
     verify_citations,
 )
 
@@ -241,6 +242,52 @@ def test_verify_citations_tolerance_matches_grade_numeric_tolerance():
     results = [_fake_result(text="revenue = 109417000000.0 USD")]
     answer = "Apple's revenue was approximately $109.4 billion [1]."
     assert verify_citations(answer, results) == []
+
+
+# ---------------------------------------------------------------------------
+# value_is_citation_verified (eval_harness.py's numeric/comparison gate)
+# ---------------------------------------------------------------------------
+def test_value_is_citation_verified_true_when_cited_source_backs_it():
+    results = [_fake_result(text="revenue = 109417000000.0 USD")]
+    answer = "Apple's revenue was $109,417 million [1]."
+    assert value_is_citation_verified(109417000000.0, "raw", answer, results) is True
+
+
+def test_value_is_citation_verified_false_when_only_citation_is_unrelated():
+    # Reproduces the real, live-found aapl-employees-fy25 bug: the answer
+    # states the correct headcount, but the cited chunk is actually about
+    # debt notes/share repurchases -- grade_numeric() alone can't see
+    # this, since it only checks whether the number appears anywhere in
+    # the answer text, not whether its own citation supports it.
+    results = [_fake_result(text="Future principal payments for the Company's Notes...")]
+    answer = "Apple had approximately 166,000 full-time equivalent employees [1]."
+    assert value_is_citation_verified(166000.0, "raw", answer, results) is False
+
+
+def test_value_is_citation_verified_true_when_value_never_cited_at_all():
+    # Nothing to contradict a plain-text match if the target value isn't
+    # attached to any citation marker in the first place.
+    results = [_fake_result(text="Some unrelated source text.")]
+    answer = "The company grew steadily over the period. [1]"
+    assert value_is_citation_verified(166000.0, "raw", answer, results) is True
+
+
+def test_value_is_citation_verified_true_when_at_least_one_citation_backs_it():
+    # A redundant second (wrong) citation for the same value shouldn't
+    # poison an otherwise properly-supported claim -- verified via ANY
+    # matching citation, not ALL of them.
+    results = [
+        _fake_result(text="revenue = 109417000000.0 USD"),
+        _fake_result(text="Unrelated debt notes text."),
+    ]
+    answer = "Apple's revenue was $109,417 million [1] [2]."
+    assert value_is_citation_verified(109417000000.0, "raw", answer, results) is True
+
+
+def test_value_is_citation_verified_respects_grade_numeric_tolerance():
+    results = [_fake_result(text="revenue = 109417000000.0 USD")]
+    answer = "Apple's revenue was approximately $109.4 billion [1]."
+    assert value_is_citation_verified(109417000000.0, "raw", answer, results) is True
 
 
 # ---------------------------------------------------------------------------

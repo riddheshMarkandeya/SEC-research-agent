@@ -711,6 +711,62 @@ question and reports a summary count.
   the latter is the real, expected formula-registry gap from the
   `xbrl_facts.py` section above, not a bug).
 
+### `eval_harness.py` + `agent.py` — wiring citation-verification into pass/fail, not just a warning (Week 5h)
+
+`verify_citations()` above was informational only — printed as a
+warning alongside whatever `grade_numeric()`/`grade_comparison()`
+already decided, never affecting the verdict. This left a real,
+previously-just-documented gap: those graders only check whether the
+expected value appears *somewhere* in the answer text, which can't
+distinguish a correctly-cited answer from one that states the right
+number but attaches it to the wrong (or no) source. Concretely, this
+is exactly the flagged-but-unfixed masking problem from the
+`xbrl_facts.py`/eval-growth section above (`aapl-revenue-growth-q3fy2026`
+"technically PASSED" despite a rule-3 violation).
+
+- **Confirmed live, not assumed, before designing the fix**: re-ran
+  `aapl-employees-fy25` directly — it "passes" today (166,000 appears in
+  the answer), but the cited chunk `[3]` is entirely about debt notes
+  and share repurchases, nothing to do with employee count. A real
+  misattribution bug, not eval-harness noise.
+- **`agent.py`**: `verify_citations()`'s internals were refactored
+  (public signature and all 13 existing tests unchanged) into a shared
+  `_iter_citation_claims()` generator yielding `(citation_index, value,
+  unit, verified)` per numeric claim found near a marker. A new
+  `value_is_citation_verified(value, unit, answer_text, all_results)`
+  consumes the same generator to answer a narrower question: is *this
+  one* expected value ever properly grounded, anywhere it's cited?
+  Returns True if the value is never cited at all (nothing to
+  contradict a plain match) or if *any* of its citations check out — a
+  redundant wrong second citation shouldn't fail an otherwise-correct
+  claim; False only if every citation attached to it fails.
+- **`eval_harness.py`**: `grade_numeric()`/`grade_comparison()` gained
+  an optional `all_results` parameter (defaults to `None`, preserving
+  old pure-text-match behavior for existing tests/callers that don't
+  have citation context) — when given, a numeric match that fails
+  `value_is_citation_verified()` now flips the verdict to FAIL with an
+  explanatory detail, instead of silently passing. Scoped to `numeric`/
+  `comparison` question types only; `judged` questions are untouched,
+  since a stray unrelated number near a qualitative claim is much
+  lower-stakes than a wrong number backing the specific value being
+  graded.
+- **Built via TDD** (red-green-refactor): tests for
+  `value_is_citation_verified()` written and confirmed failing (missing
+  function) before implementation; same for `grade_numeric()`/
+  `grade_comparison()`'s new parameter.
+- **Live eval re-run confirmed the fix catches real bugs, not just
+  passes tests**: `aapl-employees-fy25` and `aapl-revenue-growth-q3fy2026`
+  both flipped from a masked PASS to a correctly-diagnosed FAIL (the
+  latter being the exact case this was built to catch);
+  `nvda-crm-revenue-comparison` also newly failed on an apparent
+  misattributed CRM citation. `aapl-msft-tax-rate-comparison` also
+  failed the same run, but for an unrelated reason (the model produced
+  no citation markers at all that run) — pre-existing model-output
+  variance, not something this change caused. Full suite: 148/148 unit
+  tests; live eval dropped from 19/21 to 16/21 on this run, which is
+  the harness now being honest about problems it used to silently
+  paper over, not a regression.
+
 ### `xbrl_facts.py`'s `frames` API — cross-company comparison in one call (Week 5d)
 
 A second agent tool, `compare_financial_metric`, alongside
@@ -1420,6 +1476,15 @@ moment it has retrievable raw ingredients, and doesn't do so reliably;
 rule-3 violation as a clean pass, which is itself worth tightening
 before the formula registry (or any future numeric feature) gets built
 and needs trustworthy eval signal.
+
+**Point (2) is now FIXED — see the `eval_harness.py` + `agent.py`
+"wiring citation-verification into pass/fail" section below (Week 5h).**
+`aapl-revenue-growth-q3fy2026` no longer masks as a pass; it correctly
+fails now, along with a live-found second real bug
+(`aapl-employees-fy25`) the eval hadn't caught before either. The
+formula registry remains a separate, still-deferred piece of work — its
+justification is unchanged, just no longer resting on untrustworthy
+eval signal.
 
 **Then — continue growing `eval_questions.jsonl`** toward the full
 30-50 question, FinanceBench-style set, now informed by two full rounds

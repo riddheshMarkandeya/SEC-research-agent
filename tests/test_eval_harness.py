@@ -53,6 +53,33 @@ def test_grade_numeric_outside_tolerance_fails():
     assert passed is False
 
 
+def test_grade_numeric_skips_citation_check_when_all_results_not_given():
+    # Backward compatible: existing callers that don't pass all_results
+    # (including every test above) keep the old pure-text-match
+    # behavior -- no citation markers to check against anyway.
+    passed, _ = grade_numeric("Total RPO was approximately $72.4 billion.", 72.4, "billion")
+    assert passed is True
+
+
+def test_grade_numeric_fails_when_matched_values_only_citation_is_unverified():
+    # The real, live-found bug this closes: aapl-employees-fy25 "passes"
+    # today because 166,000 appears in the answer text, even though its
+    # citation actually points at a chunk about debt notes and share
+    # repurchases -- nothing to do with employee count.
+    results = [{"text": "Future principal payments for the Company's Notes..."}]
+    answer = "Apple had approximately 166,000 full-time equivalent employees [1]."
+    passed, detail = grade_numeric(answer, 166000, "raw", all_results=results)
+    assert passed is False
+    assert "citation" in detail.lower()
+
+
+def test_grade_numeric_passes_when_matched_values_citation_is_verified():
+    results = [{"text": "employees = 166000 raw"}]
+    answer = "Apple had approximately 166,000 full-time equivalent employees [1]."
+    passed, _ = grade_numeric(answer, 166000, "raw", all_results=results)
+    assert passed is True
+
+
 # ---------------------------------------------------------------------------
 # grade_comparison
 # ---------------------------------------------------------------------------
@@ -84,6 +111,27 @@ def test_grade_comparison_fails_when_both_entities_missing():
     passed, detail = grade_comparison(answer, _TAX_RATE_COMPARISON)
     assert passed is False
     assert "AAPL" in detail and "MSFT" in detail
+
+
+def test_grade_comparison_skips_citation_check_when_all_results_not_given():
+    answer = "Apple's effective tax rate was 17.9%, while Microsoft's was 20%."
+    passed, _ = grade_comparison(answer, _TAX_RATE_COMPARISON)
+    assert passed is True
+
+
+def test_grade_comparison_fails_when_one_entitys_citation_is_unverified():
+    results = [{"text": "AAPL tax rate = 17.9 percent"}, {"text": "unrelated MSFT text"}]
+    answer = "Apple's effective tax rate was 17.9% [1], while Microsoft's was 20% [2]."
+    passed, detail = grade_comparison(answer, _TAX_RATE_COMPARISON, all_results=results)
+    assert passed is False
+    assert "MSFT" in detail
+
+
+def test_grade_comparison_passes_when_all_entities_citations_verified():
+    results = [{"text": "AAPL tax rate = 17.9 percent"}, {"text": "MSFT tax rate = 20 percent"}]
+    answer = "Apple's effective tax rate was 17.9% [1], while Microsoft's was 20% [2]."
+    passed, _ = grade_comparison(answer, _TAX_RATE_COMPARISON, all_results=results)
+    assert passed is True
 
 
 # ---------------------------------------------------------------------------

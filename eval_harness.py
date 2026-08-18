@@ -56,7 +56,7 @@ from pathlib import Path
 
 import requests
 
-from agent import run_agent
+from agent import run_agent, value_is_citation_verified
 from config import OLLAMA_MODEL_NAME, OLLAMA_URL  # used directly by grade_judged()
 from numeric_utils import extract_numbers, normalize
 
@@ -72,7 +72,9 @@ CITATION_PATTERN = re.compile(r"\[\d+\]")
 # agent.py's verify_citations() -- see that module's docstring for why.
 
 
-def grade_numeric(answer_text: str, expected_value: float, expected_unit: str) -> tuple[bool, str]:
+def grade_numeric(
+    answer_text: str, expected_value: float, expected_unit: str, all_results: list[dict] | None = None
+) -> tuple[bool, str]:
     expected_category, expected_norm = normalize(expected_value, expected_unit)
     tolerance = max(0.01 * abs(expected_norm), 0.05)  # 1% relative, with a small floor
 
@@ -81,29 +83,48 @@ def grade_numeric(answer_text: str, expected_value: float, expected_unit: str) -
         if category != expected_category:
             continue
         if abs(norm - expected_norm) <= tolerance:
+            # A plain-text match isn't enough on its own -- found live,
+            # not hypothetical: aapl-employees-fy25 used to "pass" here
+            # even though its citation actually pointed at a chunk about
+            # debt notes, nothing to do with employee count. all_results
+            # is optional (None skips this) so existing/simple callers
+            # that don't have citation context keep working unchanged.
+            if all_results is not None and not value_is_citation_verified(
+                expected_value, expected_unit, answer_text, all_results
+            ):
+                return False, (
+                    f"found matching value: {value} ({unit}) but its citation isn't actually "
+                    "supported by the source (likely self-computed or misattributed)"
+                )
             return True, f"found matching value: {value} ({unit})"
 
     return False, f"no value matching {expected_value} {expected_unit} found in answer"
 
 
-def grade_comparison(answer_text: str, expected: list[dict]) -> tuple[bool, str]:
+def grade_comparison(
+    answer_text: str, expected: list[dict], all_results: list[dict] | None = None
+) -> tuple[bool, str]:
     """Like grade_numeric, but for questions spanning multiple companies:
     passes only if EVERY entry in `expected` (each a {"ticker",
     "expected_value", "expected_unit"} dict) has its value found in the
     answer — not just any one of them. Reuses grade_numeric per entity
-    rather than duplicating the extraction/tolerance logic.
+    rather than duplicating the extraction/tolerance logic, including
+    its citation-verification check when `all_results` is given.
 
     Known limitation: this doesn't check that a found number is
-    correctly *attributed* to the right entity (e.g. it would still
-    pass if the answer accidentally swapped which company a number was
-    reported for) — only that both numbers appear somewhere in the
-    text. Good enough to catch "dropped an entity entirely," which is
-    the specific failure this type was added for; attribution-checking
-    would need a smarter (likely LLM-judge-based) check layered on top.
+    correctly *attributed* to the right entity in the general case (e.g.
+    it would still pass if the answer accidentally swapped which
+    company a number was reported for while still citing SOME source for
+    it) — only that both numbers appear somewhere in the text and, if
+    `all_results` is given, that each is backed by an actual citation
+    somewhere. Good enough to catch "dropped an entity entirely" and
+    "cited a value that isn't actually in any source," the two failure
+    modes this type has concretely hit; a full entity-swap check would
+    need a smarter (likely LLM-judge-based) check layered on top.
     """
     missing = []
     for entry in expected:
-        passed, _ = grade_numeric(answer_text, entry["expected_value"], entry["expected_unit"])
+        passed, _ = grade_numeric(answer_text, entry["expected_value"], entry["expected_unit"], all_results)
         if not passed:
             missing.append(f"{entry['ticker']} ({entry['expected_value']} {entry['expected_unit']})")
 
@@ -177,9 +198,9 @@ def run_eval(questions_path: Path) -> list[dict]:
         has_citation = bool(CITATION_PATTERN.search(answer_text))
 
         if q["type"] == "numeric":
-            passed, detail = grade_numeric(answer_text, q["expected_value"], q["expected_unit"])
+            passed, detail = grade_numeric(answer_text, q["expected_value"], q["expected_unit"], retrieved)
         elif q["type"] == "comparison":
-            passed, detail = grade_comparison(answer_text, q["expected"])
+            passed, detail = grade_comparison(answer_text, q["expected"], retrieved)
         elif q["type"] == "judged":
             passed, detail = grade_judged(q["question"], answer_text, q["criteria"])
         else:
