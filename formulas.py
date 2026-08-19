@@ -220,3 +220,85 @@ def get_yoy_growth(
         "filed": current["filed"],
         "frame": current["frame"],
     }
+
+
+def _get_annual_value(ticker: str, metric: str, fiscal_year: int) -> dict | None:
+    """Resolves either a margin ratio or a raw tagged metric for one
+    fiscal year, uniformly, so get_multi_year_average() can average
+    either kind without caring which it is. Always fiscal_period="FY" --
+    a multi-YEAR average is fundamentally an annual concept with no
+    natural quarterly reading, unlike get_yoy_growth()'s same-quarter
+    comparison.
+
+    Deliberately an if/elif chain calling each margin function by its
+    own bare name, not a {metric: function} dict built once at module
+    load -- a dict would bind the ORIGINAL function objects at import
+    time, the exact gotcha already hit twice in this project (agent.py's
+    MARGIN_METRIC_FUNCTIONS, and this module's own split from
+    xbrl_facts.py): a test monkeypatching formulas.get_operating_margin
+    would silently miss a dict-based dispatch, since the dict's own
+    entry would still point at the pre-patch function. Calling the bare
+    name here instead resolves it fresh from the module's own namespace
+    every time, so a monkeypatch on the module attribute is always seen."""
+    if metric == "gross_margin":
+        return get_gross_margin(ticker, fiscal_year=fiscal_year, fiscal_period="FY")
+    if metric == "operating_margin":
+        return get_operating_margin(ticker, fiscal_year=fiscal_year, fiscal_period="FY")
+    if metric == "net_margin":
+        return get_net_margin(ticker, fiscal_year=fiscal_year, fiscal_period="FY")
+    return get_metric(ticker, metric, fiscal_year=fiscal_year, fiscal_period="FY")
+
+
+def get_multi_year_average(
+    ticker: str, metric: str, start_fiscal_year: int, end_fiscal_year: int
+) -> dict | None:
+    """Average of `metric` across every fiscal year from
+    start_fiscal_year through end_fiscal_year, inclusive.
+
+    Motivated by a real eval failure with no deterministic path before
+    this existed (aapl-3yr-avg-operating-margin-fy2023-fy2025): with
+    nothing to call, the model reached for self-computation on its own,
+    fetching each year's value via 3 separate get_financial_fact calls
+    and averaging them in its own reasoning text -- a rule-3 violation
+    ("don't combine numbers") the citation-verification gate correctly
+    caught once, and once misparsing the whole request as a Q4-specific
+    one instead. Computed here deterministically, same pattern as every
+    other formula in this module.
+
+    Unlike get_yoy_growth() (deliberately scoped to raw metrics only),
+    this supports BOTH margin ratios and raw tagged metrics -- the
+    actual failing question needs a margin average, so margins can't be
+    excluded the way yoy_growth excludes them.
+
+    Averages the RAW per-year values (not display-rounded ones) --
+    ground truth for the motivating question was itself derived this
+    way, from unrounded per-year margins, not by averaging
+    get_operating_margin()'s own 1-decimal-rounded output.
+
+    Returns None if the range has fewer than 2 years (a 1-year "average"
+    isn't meaningful -- checked before any fetching, not after), if
+    start comes after end, or if ANY year in the range is unavailable.
+    Metadata (period_end/form/accession/filed/frame) in the result comes
+    from the most recent (end_fiscal_year) year -- fiscal years are
+    monotonic, so the last one fetched in the range is always the most
+    recent, no separate comparison needed."""
+    if end_fiscal_year - start_fiscal_year < 1:
+        return None
+    values = []
+    latest = None
+    for fiscal_year in range(start_fiscal_year, end_fiscal_year + 1):
+        result = _get_annual_value(ticker, metric, fiscal_year)
+        if result is None:
+            return None
+        values.append(result["value"])
+        latest = result
+    average = sum(values) / len(values)
+    return {
+        "value": round(average, 1) if latest["unit"] == "percent" else average,
+        "unit": latest["unit"],
+        "period_end": latest["period_end"],
+        "form": latest["form"],
+        "accession": latest["accession"],
+        "filed": latest["filed"],
+        "frame": latest.get("frame"),
+    }

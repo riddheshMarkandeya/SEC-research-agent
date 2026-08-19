@@ -148,6 +148,35 @@ def test_format_no_comparison_message_omits_q4_hint_for_other_periods():
     assert "estimate" not in message.lower()
 
 
+def test_format_no_fact_message_includes_never_tagged_hint_when_concept_not_tagged_at_all(monkeypatch):
+    # Regression case: pltr-inventory-turnover-fy2025-refusal. Palantir
+    # genuinely never tags inventory at all (a real fact about its
+    # business model, not a missing period) -- a bare "not found, try
+    # search" message left the model treating it as ordinary missing
+    # data, so it self-computed a fabricated ratio from an unrelated
+    # cost-of-revenue figure instead of explaining why.
+    monkeypatch.setattr("agent.is_metric_tagged", lambda ticker, metric: False)
+    message = _format_no_fact_message({"metric": "inventory", "ticker": "PLTR", "fiscal_period": "FY", "fiscal_year": 2025})
+    assert "does not report" in message.lower() or "not applicable" in message.lower() or "business model" in message.lower()
+    assert "fabricate" in message.lower() or "estimate" in message.lower()
+
+
+def test_format_no_fact_message_omits_never_tagged_hint_when_concept_is_tagged(monkeypatch):
+    monkeypatch.setattr("agent.is_metric_tagged", lambda ticker, metric: True)
+    message = _format_no_fact_message({"metric": "inventory", "ticker": "NVDA", "fiscal_period": "FY", "fiscal_year": 2020})
+    assert "business model" not in message.lower()
+
+
+def test_format_no_fact_message_skips_never_tagged_check_for_margin_metrics(monkeypatch):
+    # is_metric_tagged()/_tag_for() only understand raw DEFAULT_METRIC_TAGS
+    # names -- a margin metric name would raise ValueError there, so this
+    # must never even be called for one.
+    calls = []
+    monkeypatch.setattr("agent.is_metric_tagged", lambda ticker, metric: calls.append((ticker, metric)) or False)
+    _format_no_fact_message({"metric": "gross_margin", "ticker": "PLTR", "fiscal_period": "FY", "fiscal_year": 2025})
+    assert calls == []
+
+
 # ---------------------------------------------------------------------------
 # _format_citation_key
 # ---------------------------------------------------------------------------
@@ -408,6 +437,83 @@ def test_call_get_financial_fact_rejects_yoy_growth_combined_with_margin_metric(
     # xbrl_facts raise or silently compute something nonsensical.
     result = _call_get_financial_fact({"ticker": "AAPL", "metric": "gross_margin", "yoy_growth": True})
     assert result is None
+
+
+def test_call_get_financial_fact_dispatches_multi_year_average(monkeypatch):
+    # Regression case: aapl-3yr-avg-operating-margin-fy2023-fy2025. With
+    # no deterministic path before this existed, the model self-computed
+    # an average from 3 separate calls (a rule-3 violation) or misparsed
+    # the whole request as Q4-specific.
+    calls = []
+    monkeypatch.setattr(
+        "agent.get_multi_year_average",
+        lambda ticker, metric, start_fiscal_year, end_fiscal_year: calls.append(
+            (ticker, metric, start_fiscal_year, end_fiscal_year)
+        )
+        or {"value": 31.1, "unit": "percent"},
+    )
+    result = _call_get_financial_fact(
+        {"ticker": "AAPL", "metric": "operating_margin", "start_fiscal_year": 2023, "end_fiscal_year": 2025}
+    )
+    assert result == {"value": 31.1, "unit": "percent"}
+    assert calls == [("AAPL", "operating_margin", 2023, 2025)]
+
+
+def test_call_get_financial_fact_rejects_multi_year_average_combined_with_yoy_growth():
+    # Nonsensical combination -- caught explicitly rather than silently
+    # picking one, same discipline as the yoy_growth+margin rejection.
+    result = _call_get_financial_fact(
+        {"ticker": "AAPL", "metric": "revenue", "start_fiscal_year": 2023, "end_fiscal_year": 2025, "yoy_growth": True}
+    )
+    assert result is None
+
+
+def test_call_get_financial_fact_rejects_partial_multi_year_average_range(monkeypatch):
+    # Only one of start/end given -- malformed, not a valid single-period
+    # lookup either (fiscal_year/fiscal_period/period_end_date are all
+    # absent), so this must reject rather than silently falling through
+    # to a plain get_metric() call with fiscal_year=None.
+    monkeypatch.setattr("agent.get_metric", lambda *a, **k: {"value": 999})
+    result = _call_get_financial_fact({"ticker": "AAPL", "metric": "revenue", "start_fiscal_year": 2023})
+    assert result is None
+
+
+def test_call_get_financial_fact_rejects_unrecognized_extra_argument(monkeypatch):
+    # Regression case: nvda-segment-revenue-comparison-q1fy27. The model
+    # invented a `segment` filter this tool doesn't support; the old code
+    # silently ignored it (only ever read known keys via args.get(...)),
+    # so both a "Compute & Networking" and a "Graphics" call silently
+    # returned the SAME consolidated total -- a plausible-looking but
+    # wrong value, not an error the model could react to. An unrecognized
+    # key must reject the call entirely (falls through to the "no
+    # structured data found -- try search_filings" message) rather than
+    # silently succeeding with a misleading result.
+    calls = []
+    monkeypatch.setattr("agent.get_metric", lambda *a, **k: calls.append((a, k)) or {"value": 1})
+    result = _call_get_financial_fact(
+        {"ticker": "NVDA", "metric": "revenue", "period_end_date": "2026-04-26", "segment": "Graphics"}
+    )
+    assert result is None
+    assert calls == []  # never even reached the real lookup
+
+
+def test_call_get_financial_fact_still_works_with_only_known_keys(monkeypatch):
+    # Sanity check for the test above: a call using ONLY recognized keys
+    # must still reach the real lookup, so the new guard isn't
+    # accidentally rejecting legitimate calls too.
+    monkeypatch.setattr("agent.get_metric", lambda *a, **k: {"value": 42})
+    result = _call_get_financial_fact(
+        {"ticker": "AAPL", "metric": "revenue", "fiscal_year": 2026, "fiscal_period": "FY", "period_end_date": None}
+    )
+    assert result == {"value": 42}
+
+
+def test_call_compare_financial_metric_rejects_unrecognized_extra_argument(monkeypatch):
+    calls = []
+    monkeypatch.setattr("agent.get_metric_all_companies", lambda *a, **k: calls.append((a, k)) or {"NVDA": {}})
+    result = _call_compare_financial_metric({"anchor_ticker": "NVDA", "metric": "revenue", "segment": "Graphics"})
+    assert result == {}
+    assert calls == []
 
 
 def test_call_compare_financial_metric_dispatches_operating_margin(monkeypatch):

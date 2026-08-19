@@ -19,6 +19,7 @@ for agent.py's MARGIN_METRIC_FUNCTIONS.
 from formulas import (
     get_gross_margin,
     get_gross_margin_all_companies,
+    get_multi_year_average,
     get_net_margin,
     get_net_margin_all_companies,
     get_operating_margin,
@@ -165,6 +166,79 @@ def test_get_yoy_growth_returns_none_when_prior_value_is_zero(monkeypatch):
     ]
     monkeypatch.setattr("xbrl_facts.fetch_concept", lambda ticker, tag: {"units": {"USD": entries}})
     assert get_yoy_growth("NVDA", "revenue", fiscal_year=2026, fiscal_period="FY") is None
+
+
+# ---------------------------------------------------------------------------
+# get_multi_year_average -- regression case: aapl-3yr-avg-operating-margin-
+# fy2023-fy2025. With no deterministic tool for an N-year average, the
+# model reached for self-computation on its own (once landing close via
+# 3 separate get_financial_fact calls averaged in its own reasoning text,
+# a rule-3 violation the citation-verification gate correctly caught;
+# once misparsing the whole request as a Q4-specific one instead).
+# Supports both margin ratios (formulas.get_operating_margin, etc.) and
+# raw tagged metrics (xbrl_facts.get_metric) uniformly, unlike
+# get_yoy_growth() which is deliberately scoped to raw metrics only --
+# the actual failing question needs a margin average, so this can't
+# exclude margins the way yoy_growth does.
+# ---------------------------------------------------------------------------
+def test_get_multi_year_average_averages_margin_across_years(monkeypatch):
+    # Real AAPL operating margin values (verified via get_metric() before
+    # this formula existed): 29.82%, 31.51%, 31.97% for FY2023-FY2025.
+    per_year = {
+        2023: {"value": 29.8, "unit": "percent", "period_end": "2023-09-30", "form": "10-K", "accession": "a23", "filed": "2023-11-03", "frame": None},
+        2024: {"value": 31.5, "unit": "percent", "period_end": "2024-09-28", "form": "10-K", "accession": "a24", "filed": "2024-11-01", "frame": None},
+        2025: {"value": 32.0, "unit": "percent", "period_end": "2025-09-27", "form": "10-K", "accession": "a25", "filed": "2025-10-31", "frame": "CY2025"},
+    }
+    monkeypatch.setattr(
+        "formulas.get_operating_margin",
+        lambda ticker, fiscal_year, fiscal_period: per_year[fiscal_year],
+    )
+    result = get_multi_year_average("AAPL", "operating_margin", 2023, 2025)
+    assert result["value"] == round((29.8 + 31.5 + 32.0) / 3, 1)
+    assert result["unit"] == "percent"
+    # Metadata comes from the most recent (end_fiscal_year) year, not an
+    # arbitrary one -- fiscal years are monotonic, so the last one fetched
+    # in the range is always the most recent, no separate comparison needed.
+    assert result["period_end"] == "2025-09-27"
+    assert result["accession"] == "a25"
+
+
+def test_get_multi_year_average_averages_raw_metric_across_years(monkeypatch):
+    per_year = {
+        2024: {"value": 383285000000, "unit": "USD", "period_end": "2024-09-28", "form": "10-K", "accession": "a24", "filed": "2024-11-01", "frame": None},
+        2025: {"value": 391035000000, "unit": "USD", "period_end": "2025-09-27", "form": "10-K", "accession": "a25", "filed": "2025-10-31", "frame": None},
+    }
+    monkeypatch.setattr(
+        "formulas.get_metric",
+        lambda ticker, metric, fiscal_year, fiscal_period: per_year[fiscal_year],
+    )
+    result = get_multi_year_average("AAPL", "revenue", 2024, 2025)
+    # Not rounded -- only percent-unit results are (matching
+    # _compute_ratio_metric's own rounding convention); a dollar average
+    # stays exact, like get_metric()'s own raw values do.
+    assert result["value"] == (383285000000 + 391035000000) / 2
+    assert result["unit"] == "USD"
+
+
+def test_get_multi_year_average_returns_none_if_any_year_missing(monkeypatch):
+    def fake_get_metric(ticker, metric, fiscal_year, fiscal_period):
+        if fiscal_year == 2024:
+            return None
+        return {"value": 100, "unit": "USD", "period_end": "2025-09-27", "form": "10-K", "accession": "x", "filed": "2025-10-31", "frame": None}
+
+    monkeypatch.setattr("formulas.get_metric", fake_get_metric)
+    assert get_multi_year_average("AAPL", "revenue", 2024, 2025) is None
+
+
+def test_get_multi_year_average_returns_none_for_single_year_range():
+    # A 1-year "average" isn't a meaningful multi-year average -- and
+    # this must return None WITHOUT calling get_metric/get_operating_margin
+    # at all, checked before any fetching, not after collecting one value.
+    assert get_multi_year_average("AAPL", "revenue", 2025, 2025) is None
+
+
+def test_get_multi_year_average_returns_none_when_start_after_end():
+    assert get_multi_year_average("AAPL", "revenue", 2025, 2023) is None
 
 
 # ---------------------------------------------------------------------------

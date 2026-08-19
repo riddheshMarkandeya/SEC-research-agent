@@ -1633,6 +1633,233 @@ Ingestion + chunking have been run across all 5 companies (25 filings,
   whether it's a phrasing issue or the Human Capital sections are poorly
   chunked/embedded.
 
+### Eval growth round 3 — 21 → 25 questions, priorities 1 and 2 from the FinanceBench analysis (Week 5o)
+
+Added 4 questions targeting the top two priorities from Week 5l's
+FinanceBench analysis: 2 statement-scoped (a metric outside
+`DEFAULT_METRIC_TAGS`, forcing unstructured retrieval), 2 same-company
+segment comparisons (also covering priority 4, Yes/No-style judged
+questions, since segment comparisons naturally fit that shape).
+Ground truth verified directly against real retrieved chunks and/or
+`fetch_concept()` before writing any question — same discipline as
+every prior eval-growth round, not guessed:
+- `nvda-total-assets-q1fy27`: $259,474M as of 2026-04-26, verified via
+  `fetch_concept('NVDA', 'Assets')`.
+- `aapl-cash-equivalents-q3fy2026`: $39,544M as of 2026-06-27, verified
+  via `fetch_concept('AAPL', 'CashAndCashEquivalentsAtCarryingValue')`.
+- `nvda-segment-revenue-comparison-q1fy27`: Compute & Networking
+  $74,550M vs. Graphics $7,065M, quarter ended 2026-04-26 — verified
+  against the exact "Revenue by Reportable Segments" table chunk.
+- `msft-segment-revenue-comparison-q3fy2026`: Productivity and Business
+  Processes $35,013M narrowly ahead of Intelligent Cloud $34,681M
+  (More Personal Computing $13,192M), three months ended 2026-03-31 —
+  deliberately close numbers, verified against one single table chunk
+  containing all three segments together.
+
+**Result: all 4 new questions FAIL, each for a different, real reason**
+— not noise, and not something to "fix" by picking easier questions.
+Original 21 held steady at 18/21 (same pre-existing, already-documented
+local-model flakiness); nothing regressed.
+- `nvda-total-assets-q1fy27`: complete miss. `total_assets` isn't in
+  `DEFAULT_METRIC_TAGS`, and unstructured search genuinely can't find
+  the balance sheet table for this query — confirmed directly with a
+  standalone `hybrid_search()` call before writing the question, which
+  returned inventory/goodwill/fair-value chunks instead, never the
+  balance sheet. The live run fabricated numbers (6.0, 25797.0, 35665.0)
+  from that irrelevant context, none matching the real $259,474M.
+- `aapl-cash-equivalents-q3fy2026`: subtler. The model landed on the
+  textually correct value (39,544) — retrieval CAN find the right
+  chunk, confirmed directly beforehand — but the citation-verification
+  gate caught that it wasn't actually grounded in the cited source. Real
+  signal that retrievability alone doesn't guarantee correct attribution.
+- `nvda-segment-revenue-comparison-q1fy27`: the model concluded both
+  segments had *equal* revenue — a real misread of the segment table,
+  not a defensible near-miss.
+- `msft-segment-revenue-comparison-q3fy2026`: picked the wrong segment,
+  and its cited figures ($45.7B, $38.9B, $18.2B) don't match any number
+  in the real three-month table at all — suggests it may have pulled
+  from a different period/table entirely rather than misreading close
+  numbers.
+
+**Decided: keep growing the eval set through the remaining
+FinanceBench-informed priorities first, then fix the accumulated
+findings one by one** (rather than stopping to fix each new failure as
+it's found) — same reasoning as the very first XBRL-tool round: let
+enough real findings accumulate before deciding what's worth building,
+instead of reacting to one failure at a time.
+
+### `eval_harness.py` — `--ids` / `skip` question filtering (Week 5p)
+
+With eval questions now growing past what's comfortable to re-run in
+full at local Ollama speed (each full 25-question run takes 25-30
+minutes), added a way to run a specific subset instead of all-or-one:
+
+- **`--ids id1,id2,...`** on `eval_harness.py`'s CLI — runs only the
+  named questions, any count from one to many, in the file's own order
+  (not the order given on the command line). Verified live: `--ids
+  aapl-net-income-fy2025,nvda-revenue-fy26` ran exactly those 2 of 25,
+  printed in file order.
+- **Optional `"skip": true` field** on individual questions in
+  `eval_questions.jsonl` — excluded from the default full run without
+  deleting the question. `--include-skipped` forces them back in. Not
+  applied to any of the Week 5o failures yet — that was a deliberate
+  choice, not an oversight, since those are being tracked as findings
+  to fix, not permanently parked.
+- **Precedence, by design**: explicit `--ids` always wins over a
+  question's own `skip` flag — asking for a question by ID is a
+  stronger, more specific signal than the file's default, and is how
+  you'd re-run a skipped question on demand without editing the file.
+  An unknown ID raises immediately (`ValueError`, live-verified via the
+  CLI) rather than silently running fewer questions than asked for.
+- New pure helper `_select_questions(questions, ids, include_skipped)`
+  in `eval_harness.py`, kept separate from `run_eval()`'s live-agent
+  loop specifically so the filtering logic is unit-testable without any
+  network/Ollama calls — 6 new tests, 179/179 full suite.
+
+### Eval growth round 4 — 25 → 27 questions, priorities 3 and 5 from the FinanceBench analysis (Week 5q)
+
+Added the remaining two priority items: a multi-year-average ratio
+(beyond the formula registry's current single-period scope) and an
+inapplicable-metric-recognition question. Ground truth verified before
+writing, same discipline as every round:
+- `aapl-3yr-avg-operating-margin-fy2023-fy2025`: 31.1%, computed from
+  real unrounded per-year margins (29.82%, 31.51%, 31.97% — FY2023
+  through FY2025, via `xbrl_facts.get_metric()` directly), not from
+  averaging the formula registry's already-rounded 1-decimal outputs.
+- `pltr-inventory-turnover-fy2025-refusal`: confirmed via
+  `fetch_concept('PLTR', 'InventoryNet')` → 404 (not tagged at all,
+  unlike NVDA/AAPL/MSFT which all tag it) — Palantir, as a
+  software/data-analytics company, genuinely has no inventory line
+  item to compute a turnover ratio from. Also confirmed live that
+  `search_filings` returns nothing inventory-related for PLTR (cash
+  flow tables, investment-agreement text) — there's no chunk to find
+  because there's nothing to find.
+
+**Both FAIL, in genuinely different, more specific ways than
+predicted**:
+- `aapl-3yr-avg-operating-margin-fy2023-fy2025`: the model completely
+  **misparsed the question** — it interpreted "3-year average" as a
+  request for Q4-specific figures, called `get_financial_fact` with
+  `fiscal_period='Q4'` for FY2023/2024/2025, hit Week 5m's own
+  Q4-not-disclosed hint, and echoed that hint's text verbatim as its
+  final answer. A new bug class: multi-year-average questions get
+  misread as intra-year quarterly ones, not (as expected) a rule-3
+  self-computation violation.
+- `pltr-inventory-turnover-fy2025-refusal`: closer to correct than a
+  bare pass/fail suggests — it did say it couldn't compute the ratio —
+  but never identified the *actual* reason (no inventory line item at
+  all, structural to the business model), framing it as generic
+  missing data instead, and pointlessly cited an unrelated cost-of-
+  revenue figure ($192,934,000) as if relevant to an inventory
+  question. Distinct failure shape from the Q4-refusal case: not
+  fabrication, but an incomplete/imprecise refusal.
+
+Neither yet addressed — added to the same accumulating-findings queue
+as round 3 (Week 5o). All 5 FinanceBench-analysis priorities are done
+as of this round.
+
+### Fixing the 6 accumulated eval findings (Week 5r)
+
+Worked through all 6 findings from rounds 3/5o and 4/5q. **4 of 6
+solidly fixed, 1 partially improved, 1 still open** — verified via
+repeated live re-runs, not a single sample, given this whole batch
+started from run-to-run flakiness.
+
+**Solid fixes (3+ consecutive clean re-runs each):**
+- `nvda-total-assets-q1fy27` + `aapl-cash-equivalents-q3fy2026`:
+  added `total_assets`/`cash_and_equivalents` to `DEFAULT_METRIC_TAGS`
+  (tags `Assets`/`CashAndCashEquivalentsAtCarryingValue`, verified clean
+  across all 5 companies, no overrides needed — same discipline as
+  `operating_income`). **Found a real, previously-unexercised bug along
+  the way**: every metric this module supported before these two was an
+  XBRL *duration* concept (revenue, income — has both `start` and
+  `end`); balance-sheet items like these are *instant* concepts (a
+  point-in-time snapshot, `end` only) — `_duration_days()` crashed with
+  `TypeError`/`KeyError` on them. Fixed by having `_duration_days()`
+  return `None` for an instant entry, and having `_pick_entry()`/
+  `_pick_entry_by_end_date()`/`_latest_entry()` skip duration-bucket
+  disambiguation for instant facts (unnecessary anyway — a point-in-time
+  balance has no quarter-vs-YTD accumulation-window collision to
+  disambiguate, unlike a duration fact). 6 new tests using real captured
+  NVDA `Assets` data, 185/185 full suite.
+- `nvda-segment-revenue-comparison-q1fy27` +
+  `msft-segment-revenue-comparison-q3fy2026` (partially — see below):
+  root-caused via a live `--verbose` repro, not guessed: the model
+  invented a `segment` filter `get_financial_fact` has never supported,
+  and the old code only ever read known keys (`args.get(...)`), so the
+  invented key was silently dropped — both a "Compute & Networking" and
+  a "Graphics" call silently returned the SAME consolidated total
+  instead of erroring, and the model concluded the two segments had
+  equal revenue. Fixed by rejecting any call containing an unrecognized
+  key outright (`_FACT_ARG_KEYS`/`_COMPARE_ARG_KEYS` allow-lists on both
+  `_call_get_financial_fact`/`_call_compare_financial_metric`), forcing
+  a clean fallback to `search_filings` instead of a silently-wrong
+  "success." `nvda-segment-revenue-comparison-q1fy27` went 3/3 clean
+  after this fix (previously flaky: sometimes right via search_filings
+  luck, sometimes badly wrong via the invented-param bug).
+- `aapl-3yr-avg-operating-margin-fy2023-fy2025`: no deterministic path
+  existed for an N-year average, so the model reached for
+  self-computation on its own (once landing at 31.03% via 3 separate
+  calls averaged in its own reasoning text — a rule-3 violation the
+  citation gate correctly caught; once misparsing the whole request as
+  Q4-specific, echoing Week 5m's own hint verbatim) — the exact same
+  "model improvises the moment no tool exists" pattern that originally
+  motivated the margin/yoy_growth formulas. Fixed by building
+  `get_multi_year_average(ticker, metric, start_fiscal_year,
+  end_fiscal_year)` in `formulas.py`, exposed on `get_financial_fact` as
+  a `start_fiscal_year`/`end_fiscal_year` pair (same "alternate mode on
+  the same tool" pattern as `yoy_growth`). Supports both margin ratios
+  and raw metrics uniformly, unlike `yoy_growth` (raw metrics only) —
+  the actual failing question needs a margin average. **Hit the exact
+  `MARGIN_METRIC_FUNCTIONS`-style import-time-binding gotcha a third
+  time** while building this: a `{metric: function}` dict built once at
+  module load doesn't see a test's `monkeypatch.setattr("formulas.get_operating_margin",
+  ...)` afterward — fixed by dispatching via a plain if/elif chain
+  calling each function by its bare name instead of a dict, so every
+  call re-resolves the name fresh from the module's current namespace.
+  2/2 clean re-runs with the exact expected value (31.1%) after the fix.
+
+**Partial improvement, not fully reliable:**
+- `pltr-inventory-turnover-fy2025-refusal`: added `inventory` to
+  `DEFAULT_METRIC_TAGS` (tag `InventoryNet` — verified clean for
+  AAPL/MSFT/NVDA, and genuinely 404 for PLTR/CRM, a real fact about
+  their business model, not a data-quality gap) plus a new
+  `is_metric_tagged(ticker, metric)` helper and `_never_tagged_hint()`
+  in `agent.py` that fires when a company never tags a metric at all
+  (as opposed to just not having it for the asked-about period) —
+  same "explain why, not just that" principle as the Q4 hint. **Works
+  when exercised, but the model doesn't reliably reach it**: live
+  testing showed it twice calling `get_financial_fact` with an invented
+  metric name (`inventory_turnover_ratio`, not the schema's actual
+  `inventory`) that gets rejected by the ordinary unsupported-metric
+  check, never reaching the new hint at all. 1 PASS / 2 FAIL across 3
+  live re-runs — a real, tested improvement (verified via direct
+  `is_metric_tagged()` calls and a case where it did fire correctly),
+  just not a full fix given this separate metric-naming-discoverability
+  gap. Not investigated further this round.
+
+**Still open, root cause not found:**
+- `msft-segment-revenue-comparison-q3fy2026`: FAILED 3/3 times across
+  this session, in 3 DIFFERENT ways each time — "no specific figures
+  found," then answering about Apple instead of Microsoft entirely,
+  then "doesn't correctly identify... nor provide exact figures." The
+  boundary-validation fix that reliably fixed NVDA's equivalent segment
+  question didn't reliably fix this one, and the failure shapes are too
+  inconsistent to point at one specific mechanism yet the way the NVDA
+  case's invented-`segment`-parameter bug did. Needs a dedicated
+  `--verbose` investigation session, not more blind re-runs.
+
+**Verified no regressions**: full 27-question re-runs after each fix
+held the original 21 questions steady at their known baseline (same
+pre-existing local-model flakiness on `aapl-employees-fy25`/
+`msft-tax-rate-q2fy26`/the two comparison questions — confirmed via a
+direct `--verbose` repro that one apparent new failure
+(`aapl-operating-margin-q3fy2026`, self-computed 32.4% instead of the
+tool-computed 32.6%) was pre-existing temperature variance, not caused
+by the new `start_fiscal_year`/`end_fiscal_year` schema fields — a
+clean re-run called the tool correctly with no extra keys). 202/202
+unit tests.
+
 ## Next steps
 
 > This section used to be a running "X: FIXED, see above" log that
@@ -1644,25 +1871,17 @@ Ingestion + chunking have been run across all 5 companies (25 filings,
 > order. Git history and the `###` sections are the changelog; this is
 > the todo list.
 
-**1. Fix the 6 accumulated eval findings from rounds 3 and 4** (Week
-5o/5q above), before doing anything else eval-related — this is the
-explicit reason eval growth paused at 27 questions instead of
-continuing to 30-50:
-- `nvda-total-assets-q1fy27` — pure retrieval miss; `total_assets` isn't
-  in `DEFAULT_METRIC_TAGS`, and `search_filings` can't find the balance
-  sheet table for this query at all.
-- `aapl-cash-equivalents-q3fy2026` — right value, wrong/missing citation
-  grounding (retrieval CAN find the chunk; attribution still fails).
-- `nvda-segment-revenue-comparison-q1fy27` — misread the segment table,
-  concluded both segments had equal revenue.
-- `msft-segment-revenue-comparison-q3fy2026` — picked the wrong segment;
-  cited figures don't match the real table at all.
-- `aapl-3yr-avg-operating-margin-fy2023-fy2025` — misparsed "3-year
-  average" as a Q4-specific request, echoed the Q4-not-disclosed hint
-  verbatim instead of attempting the actual question.
-- `pltr-inventory-turnover-fy2025-refusal` — got close (admitted it
-  couldn't compute the ratio) but never named the real reason (no
-  inventory line item at all) and cited an unrelated figure.
+**1. DONE, mostly — see "Fixing the 6 accumulated eval findings" (Week
+5r) above.** 4 of 6 solidly fixed (`nvda-total-assets-q1fy27`,
+`aapl-cash-equivalents-q3fy2026`, `nvda-segment-revenue-comparison-q1fy27`,
+`aapl-3yr-avg-operating-margin-fy2023-fy2025`), 1 partially improved
+(`pltr-inventory-turnover-fy2025-refusal` — a real, tested fix that the
+model doesn't reliably reach due to a separate metric-naming issue).
+**Still open, carried forward: `msft-segment-revenue-comparison-q3fy2026`**
+— failed 3/3 times this session in 3 different ways, no single
+mechanism identified yet the way the NVDA segment question's invented-
+parameter bug was. Needs a dedicated `--verbose` investigation session
+before attempting another fix, not another blind re-run.
 
 **2. Then: build the Gemini swappable-backend design** (deferred from
 Week 5l's spike). Two things this unblocks at once: (a) re-testing
@@ -1936,132 +2155,6 @@ borrowed. Patterns worth adopting, in priority order:
   questions from 8-Ks; we only ingest 10-K/10-Q. Not extending ingestion
   for this — revisit once the core product is done and there's appetite
   to grow filing-type coverage generally, not as a side effect of eval growth.
-
-### Eval growth round 3 — 21 → 25 questions, priorities 1 and 2 from the FinanceBench analysis (Week 5o)
-
-Added 4 questions targeting the top two priorities from Week 5l's
-FinanceBench analysis: 2 statement-scoped (a metric outside
-`DEFAULT_METRIC_TAGS`, forcing unstructured retrieval), 2 same-company
-segment comparisons (also covering priority 4, Yes/No-style judged
-questions, since segment comparisons naturally fit that shape).
-Ground truth verified directly against real retrieved chunks and/or
-`fetch_concept()` before writing any question — same discipline as
-every prior eval-growth round, not guessed:
-- `nvda-total-assets-q1fy27`: $259,474M as of 2026-04-26, verified via
-  `fetch_concept('NVDA', 'Assets')`.
-- `aapl-cash-equivalents-q3fy2026`: $39,544M as of 2026-06-27, verified
-  via `fetch_concept('AAPL', 'CashAndCashEquivalentsAtCarryingValue')`.
-- `nvda-segment-revenue-comparison-q1fy27`: Compute & Networking
-  $74,550M vs. Graphics $7,065M, quarter ended 2026-04-26 — verified
-  against the exact "Revenue by Reportable Segments" table chunk.
-- `msft-segment-revenue-comparison-q3fy2026`: Productivity and Business
-  Processes $35,013M narrowly ahead of Intelligent Cloud $34,681M
-  (More Personal Computing $13,192M), three months ended 2026-03-31 —
-  deliberately close numbers, verified against one single table chunk
-  containing all three segments together.
-
-**Result: all 4 new questions FAIL, each for a different, real reason**
-— not noise, and not something to "fix" by picking easier questions.
-Original 21 held steady at 18/21 (same pre-existing, already-documented
-local-model flakiness); nothing regressed.
-- `nvda-total-assets-q1fy27`: complete miss. `total_assets` isn't in
-  `DEFAULT_METRIC_TAGS`, and unstructured search genuinely can't find
-  the balance sheet table for this query — confirmed directly with a
-  standalone `hybrid_search()` call before writing the question, which
-  returned inventory/goodwill/fair-value chunks instead, never the
-  balance sheet. The live run fabricated numbers (6.0, 25797.0, 35665.0)
-  from that irrelevant context, none matching the real $259,474M.
-- `aapl-cash-equivalents-q3fy2026`: subtler. The model landed on the
-  textually correct value (39,544) — retrieval CAN find the right
-  chunk, confirmed directly beforehand — but the citation-verification
-  gate caught that it wasn't actually grounded in the cited source. Real
-  signal that retrievability alone doesn't guarantee correct attribution.
-- `nvda-segment-revenue-comparison-q1fy27`: the model concluded both
-  segments had *equal* revenue — a real misread of the segment table,
-  not a defensible near-miss.
-- `msft-segment-revenue-comparison-q3fy2026`: picked the wrong segment,
-  and its cited figures ($45.7B, $38.9B, $18.2B) don't match any number
-  in the real three-month table at all — suggests it may have pulled
-  from a different period/table entirely rather than misreading close
-  numbers.
-
-**Decided: keep growing the eval set through the remaining
-FinanceBench-informed priorities first, then fix the accumulated
-findings one by one** (rather than stopping to fix each new failure as
-it's found) — same reasoning as the very first XBRL-tool round: let
-enough real findings accumulate before deciding what's worth building,
-instead of reacting to one failure at a time.
-
-### `eval_harness.py` — `--ids` / `skip` question filtering (Week 5p)
-
-With eval questions now growing past what's comfortable to re-run in
-full at local Ollama speed (each full 25-question run takes 25-30
-minutes), added a way to run a specific subset instead of all-or-one:
-
-- **`--ids id1,id2,...`** on `eval_harness.py`'s CLI — runs only the
-  named questions, any count from one to many, in the file's own order
-  (not the order given on the command line). Verified live: `--ids
-  aapl-net-income-fy2025,nvda-revenue-fy26` ran exactly those 2 of 25,
-  printed in file order.
-- **Optional `"skip": true` field** on individual questions in
-  `eval_questions.jsonl` — excluded from the default full run without
-  deleting the question. `--include-skipped` forces them back in. Not
-  applied to any of the Week 5o failures yet — that was a deliberate
-  choice, not an oversight, since those are being tracked as findings
-  to fix, not permanently parked.
-- **Precedence, by design**: explicit `--ids` always wins over a
-  question's own `skip` flag — asking for a question by ID is a
-  stronger, more specific signal than the file's default, and is how
-  you'd re-run a skipped question on demand without editing the file.
-  An unknown ID raises immediately (`ValueError`, live-verified via the
-  CLI) rather than silently running fewer questions than asked for.
-- New pure helper `_select_questions(questions, ids, include_skipped)`
-  in `eval_harness.py`, kept separate from `run_eval()`'s live-agent
-  loop specifically so the filtering logic is unit-testable without any
-  network/Ollama calls — 6 new tests, 179/179 full suite.
-
-### Eval growth round 4 — 25 → 27 questions, priorities 3 and 5 from the FinanceBench analysis (Week 5q)
-
-Added the remaining two priority items: a multi-year-average ratio
-(beyond the formula registry's current single-period scope) and an
-inapplicable-metric-recognition question. Ground truth verified before
-writing, same discipline as every round:
-- `aapl-3yr-avg-operating-margin-fy2023-fy2025`: 31.1%, computed from
-  real unrounded per-year margins (29.82%, 31.51%, 31.97% — FY2023
-  through FY2025, via `xbrl_facts.get_metric()` directly), not from
-  averaging the formula registry's already-rounded 1-decimal outputs.
-- `pltr-inventory-turnover-fy2025-refusal`: confirmed via
-  `fetch_concept('PLTR', 'InventoryNet')` → 404 (not tagged at all,
-  unlike NVDA/AAPL/MSFT which all tag it) — Palantir, as a
-  software/data-analytics company, genuinely has no inventory line
-  item to compute a turnover ratio from. Also confirmed live that
-  `search_filings` returns nothing inventory-related for PLTR (cash
-  flow tables, investment-agreement text) — there's no chunk to find
-  because there's nothing to find.
-
-**Both FAIL, in genuinely different, more specific ways than
-predicted**:
-- `aapl-3yr-avg-operating-margin-fy2023-fy2025`: the model completely
-  **misparsed the question** — it interpreted "3-year average" as a
-  request for Q4-specific figures, called `get_financial_fact` with
-  `fiscal_period='Q4'` for FY2023/2024/2025, hit Week 5m's own
-  Q4-not-disclosed hint, and echoed that hint's text verbatim as its
-  final answer. A new bug class: multi-year-average questions get
-  misread as intra-year quarterly ones, not (as expected) a rule-3
-  self-computation violation.
-- `pltr-inventory-turnover-fy2025-refusal`: closer to correct than a
-  bare pass/fail suggests — it did say it couldn't compute the ratio —
-  but never identified the *actual* reason (no inventory line item at
-  all, structural to the business model), framing it as generic
-  missing data instead, and pointlessly cited an unrelated cost-of-
-  revenue figure ($192,934,000) as if relevant to an inventory
-  question. Distinct failure shape from the Q4-refusal case: not
-  fabrication, but an incomplete/imprecise refusal.
-
-Neither yet addressed — added to the same accumulating-findings queue
-as round 3 (Week 5o). All 5 FinanceBench-analysis priorities are done
-as of this round. See "Next steps" at the top of this section for what
-comes next (fixing these 6, then the still-open question-type gaps).
 
 </details>
 

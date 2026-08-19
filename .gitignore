@@ -19,3 +19,6 @@ xbrl_cache/
 # is copied from) -- not secret here, but personal/machine-specific and
 # not meant to be the shared source of defaults.
 .env
+
+# Personal notes while talking to Claude
+notes.md

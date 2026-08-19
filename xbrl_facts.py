@@ -62,7 +62,21 @@ REQUEST_DELAY_SECONDS = 0.3  # match edgar_ingest.py's courtesy delay
 # is what makes gross-margin-as-a-tool-computed-ratio viable without an
 # extra concept lookup or override per company. "OperatingIncomeLoss"
 # (added for operating_margin) checked the same way: all five companies
-# have recent entries, no overrides needed there either.
+# have recent entries, no overrides needed there either. "Assets" and
+# "CashAndCashEquivalentsAtCarryingValue" (added to fix
+# nvda-total-assets-q1fy27/aapl-cash-equivalents-q3fy2026 -- both were
+# retrieval/attribution failures for values that turned out to be
+# perfectly clean structured facts) checked the same way too: all five
+# companies have recent entries for both, no overrides needed.
+# "InventoryNet" (added to fix pltr-inventory-turnover-fy2025-refusal)
+# checked the same way, with a twist worth keeping: it's clean for
+# AAPL/MSFT/NVDA (recent entries, no overrides needed) but Palantir and
+# Salesforce genuinely never tag it at all (404) -- not a data-quality
+# gap to override, a real structural fact about their business models
+# (software/services companies, no physical goods inventory). See
+# is_metric_tagged() below for how that distinction gets surfaced to
+# the model instead of silently looking identical to "just not tagged
+# for this specific period."
 DEFAULT_METRIC_TAGS = {
     "revenue": "RevenueFromContractWithCustomerExcludingAssessedTax",
     "gross_profit": "GrossProfit",
@@ -70,6 +84,9 @@ DEFAULT_METRIC_TAGS = {
     "rd_expense": "ResearchAndDevelopmentExpense",
     "net_income": "NetIncomeLoss",
     "operating_income": "OperatingIncomeLoss",
+    "total_assets": "Assets",
+    "cash_and_equivalents": "CashAndCashEquivalentsAtCarryingValue",
+    "inventory": "InventoryNet",
 }
 METRIC_TAG_OVERRIDES = {
     "NVDA": {"revenue": "Revenues"},
@@ -94,7 +111,16 @@ _QUARTER_DURATION_DAYS = (80, 100)
 _ANNUAL_DURATION_DAYS = (350, 380)
 
 
-def _duration_days(entry: dict) -> int:
+def _duration_days(entry: dict) -> int | None:
+    """None for an XBRL "instant" fact (a point-in-time balance, e.g.
+    Assets or CashAndCashEquivalentsAtCarryingValue) -- these have no
+    `start`, only `end`, unlike a "duration" fact (revenue, income,
+    expenses) which is measured over a period and has both. Every
+    metric this module supported before total_assets/cash_and_equivalents
+    was duration-type, so this case was never exercised until adding
+    those two crashed here with a bare KeyError."""
+    if "start" not in entry:
+        return None
     start = date.fromisoformat(entry["start"])
     end = date.fromisoformat(entry["end"])
     return (end - start).days
@@ -133,6 +159,21 @@ def fetch_concept(ticker: str, tag: str) -> dict | None:
     return data
 
 
+def is_metric_tagged(ticker: str, metric: str) -> bool:
+    """True if `ticker` tags `metric` in its XBRL filings AT ALL (any
+    period, ever) -- distinct from get_metric() returning None for one
+    SPECIFIC period that isn't available. Motivated by
+    pltr-inventory-turnover-fy2025-refusal: Palantir genuinely never
+    tags InventoryNet at all, unlike "just not this quarter" -- the
+    model needs to know WHICH kind of missing this is to correctly
+    explain why instead of fabricating, the same "why, not just that"
+    principle behind the Q4-not-disclosed hint. Reuses fetch_concept()'s
+    own disk cache, so this is a cache read, not a second network call,
+    whenever get_metric() already tried (and failed at) the same lookup
+    moments earlier."""
+    return fetch_concept(ticker, _tag_for(ticker, metric)) is not None
+
+
 def _latest_entry(entries: list[dict]) -> dict | None:
     """The most recently reported entry for a concept, across all
     fiscal years/periods, whatever its duration -- used when the caller
@@ -149,16 +190,28 @@ def _latest_entry(entries: list[dict]) -> dict | None:
     figure and its same-report 9-month year-to-date cumulative share an
     end date) are broken toward the SHORTER duration — "the most recent
     quarter" means the quarter itself, not a multi-quarter cumulative
-    figure that happens to end on the same day."""
+    figure that happens to end on the same day. An instant fact (no
+    duration to break ties with -- see `_duration_days()`) falls back to
+    a third-level tiebreak on `filed`, most recent wins; this never
+    interacts with the duration tiebreak above since one concept's
+    entries are consistently either all-instant or all-duration, never
+    a mix."""
     if not entries:
         return None
-    return max(entries, key=lambda e: (e["end"], -_duration_days(e)))
+    return max(entries, key=lambda e: (e["end"], -(_duration_days(e) or 0), e.get("filed") or ""))
 
 
 def _pick_entry(entries: list[dict], fiscal_year: int, fiscal_period: str) -> dict | None:
     """Filter a concept's USD entries down to the one true value for
     (fiscal_year, fiscal_period), applying the duration + max(end)
-    disambiguation documented above. Returns None if nothing matches."""
+    disambiguation documented above. Returns None if nothing matches.
+
+    An instant fact (`_duration_days()` returns None -- see its
+    docstring) skips the duration-bucket check entirely: there's no
+    quarter-vs-YTD-cumulative collision to disambiguate for a
+    point-in-time balance, so fy/fp/form matching alone is already
+    unambiguous (confirmed against real NVDA Assets data, where two
+    entries share an `end` date but differ on fy/fp/form)."""
     is_annual = fiscal_period == "FY"
     lo, hi = _ANNUAL_DURATION_DAYS if is_annual else _QUARTER_DURATION_DAYS
     expected_form = "10-K" if is_annual else "10-Q"
@@ -169,7 +222,7 @@ def _pick_entry(entries: list[dict], fiscal_year: int, fiscal_period: str) -> di
         if e.get("fy") == fiscal_year
         and e.get("fp") == fiscal_period
         and e.get("form") == expected_form
-        and lo <= _duration_days(e) <= hi
+        and (_duration_days(e) is None or lo <= _duration_days(e) <= hi)
     ]
     if not candidates:
         return None
@@ -207,14 +260,26 @@ def _pick_entry_by_end_date(entries: list[dict], period_end_date: str) -> dict |
     own end date to also have a standalone quarter entry, and get_metric's
     docstring already notes most of these companies don't separately tag
     a standalone Q4 -- so a fiscal-year-end date usually has ONLY an
-    annual-duration entry to begin with, not a competing quarter one."""
+    annual-duration entry to begin with, not a competing quarter one.
+
+    An instant fact (`_duration_days()` returns None -- see its
+    docstring) has no quarter-vs-annual collision to disambiguate at
+    all, since a point-in-time balance has no accumulation window --
+    falls back to a third pool matched on end-date alone, still broken
+    by the same most-recently-filed tiebreak below."""
     candidates = [e for e in entries if e["end"] == period_end_date]
     if not candidates:
         return None
-    quarters = [e for e in candidates if _QUARTER_DURATION_DAYS[0] <= _duration_days(e) <= _QUARTER_DURATION_DAYS[1]]
-    pool = quarters or [
-        e for e in candidates if _ANNUAL_DURATION_DAYS[0] <= _duration_days(e) <= _ANNUAL_DURATION_DAYS[1]
+    quarters = [
+        e for e in candidates
+        if _duration_days(e) is not None and _QUARTER_DURATION_DAYS[0] <= _duration_days(e) <= _QUARTER_DURATION_DAYS[1]
     ]
+    annual = [
+        e for e in candidates
+        if _duration_days(e) is not None and _ANNUAL_DURATION_DAYS[0] <= _duration_days(e) <= _ANNUAL_DURATION_DAYS[1]
+    ]
+    instant = [e for e in candidates if _duration_days(e) is None]
+    pool = quarters or annual or instant
     if not pool:
         return None
     # Same end date can legitimately appear more than once (e.g. this

@@ -6,6 +6,7 @@ verified-real fixture data captured from SEC's own companyconcept API.
 """
 
 from xbrl_facts import (
+    _duration_days,
     _latest_entry,
     _pick_entry,
     _pick_entry_by_end_date,
@@ -13,6 +14,7 @@ from xbrl_facts import (
     get_frame,
     get_metric,
     get_metric_all_companies,
+    is_metric_tagged,
 )
 
 # Trimmed, real entries from NVDA's GrossProfit companyconcept response
@@ -37,6 +39,58 @@ MSFT_RD_EXPENSE_ENTRIES = [
     {"start": "2025-07-01", "end": "2026-03-31", "val": 25565000000, "accn": "0001193125-26-191507", "fy": 2026, "fp": "Q3", "form": "10-Q"},
     {"start": "2026-01-01", "end": "2026-03-31", "val": 8915000000, "accn": "0001193125-26-191507", "fy": 2026, "fp": "Q3", "form": "10-Q"},
 ]
+
+# Real entries from NVDA's Assets companyconcept response (CIK0001045810,
+# fetched 2026-08-19) -- an "instant" (point-in-time balance) concept,
+# unlike the two duration fixtures above: no "start" key at all. The
+# Q1 FY27 10-Q's own balance sheet reports both the current quarter
+# (Apr 26, 2026) AND a prior-fiscal-year-end comparative column (Jan 25,
+# 2026, same value the 10-K itself reported) under its own fy=2027/fp=Q1
+# label -- the same "one filing re-reports comparative data under its
+# own label" pattern the duration fixtures already exercise, just for
+# an instant concept.
+NVDA_ASSETS_ENTRIES = [
+    {"end": "2026-01-25", "val": 206803000000, "accn": "0001045810-26-000021", "fy": 2026, "fp": "FY", "form": "10-K", "filed": "2026-02-25"},
+    {"end": "2026-01-25", "val": 206803000000, "accn": "0001045810-26-000052", "fy": 2027, "fp": "Q1", "form": "10-Q", "filed": "2026-05-20"},
+    {"end": "2026-04-26", "val": 259474000000, "accn": "0001045810-26-000052", "fy": 2027, "fp": "Q1", "form": "10-Q", "filed": "2026-05-20"},
+]
+
+
+# ---------------------------------------------------------------------------
+# _duration_days / instant-fact handling -- balance-sheet items (Assets,
+# CashAndCashEquivalentsAtCarryingValue) are XBRL "instant" concepts with
+# no `start`, unlike every metric this module supported before them
+# (revenue, income, expenses, all "duration" concepts). Regression cases:
+# nvda-total-assets-q1fy27, aapl-cash-equivalents-q3fy2026 -- adding
+# these metrics crashed _duration_days with TypeError until this fix.
+# ---------------------------------------------------------------------------
+def test_duration_days_returns_none_for_instant_entry_without_start():
+    assert _duration_days({"end": "2026-04-26", "val": 1}) is None
+
+
+def test_pick_entry_matches_instant_entry_by_fy_fp_form_without_duration():
+    # Both entries share end=2026-01-25, but only one has fy=2026/fp=FY/
+    # form=10-K -- fy/fp/form matching alone is already unambiguous for
+    # instant facts, no duration bucket needed.
+    entry = _pick_entry(NVDA_ASSETS_ENTRIES, fiscal_year=2026, fiscal_period="FY")
+    assert entry["val"] == 206803000000
+    assert entry["accn"] == "0001045810-26-000021"
+
+
+def test_pick_entry_by_end_date_matches_instant_entry_and_breaks_tie_toward_most_recent_filed():
+    # Two entries share end=2026-01-25 (the 10-K's own figure, and the
+    # following quarter's 10-Q restating it as a comparative) -- with no
+    # duration to bucket by, the most-recently-filed one wins, same
+    # tiebreak principle as the duration-fact case.
+    entry = _pick_entry_by_end_date(NVDA_ASSETS_ENTRIES, "2026-01-25")
+    assert entry["val"] == 206803000000
+    assert entry["accn"] == "0001045810-26-000052"
+
+
+def test_latest_entry_handles_instant_entries_without_crashing():
+    entry = _latest_entry(NVDA_ASSETS_ENTRIES)
+    assert entry["end"] == "2026-04-26"
+    assert entry["val"] == 259474000000
 
 
 def test_pick_entry_by_end_date_ignores_wrong_fy_fp_labels_entirely():
@@ -231,6 +285,76 @@ def test_get_metric_reads_through_fetch_concept(monkeypatch):
         "fiscal_year": 2026,
         "fiscal_period": "FY",
     }
+
+
+def test_get_metric_resolves_total_assets_to_the_assets_tag(monkeypatch):
+    # Regression case: nvda-total-assets-q1fy27. total_assets wasn't in
+    # DEFAULT_METRIC_TAGS at all, so the model had no structured path
+    # and fell back to search_filings, which can't find the balance
+    # sheet table for this query -- confirmed the "Assets" tag is clean
+    # (no per-company override needed) for all 5 companies before adding it.
+    entries = [
+        {"end": "2026-04-26", "val": 259474000000, "accn": "x", "fy": 2027, "fp": "Q1", "form": "10-Q", "filed": "2026-05-20"},
+    ]
+
+    def fake_fetch(ticker, tag):
+        assert tag == "Assets"
+        return {"units": {"USD": entries}}
+
+    monkeypatch.setattr("xbrl_facts.fetch_concept", fake_fetch)
+    result = get_metric("NVDA", "total_assets", fiscal_year=2027, fiscal_period="Q1")
+    assert result["value"] == 259474000000
+
+
+def test_get_metric_resolves_cash_and_equivalents_to_the_cash_tag(monkeypatch):
+    # Regression case: aapl-cash-equivalents-q3fy2026. Retrieval COULD
+    # find the right chunk for this one, but citation attribution still
+    # failed -- routing it through the structured tool (like every other
+    # DEFAULT_METRIC_TAGS metric) sidesteps attribution risk entirely
+    # instead of trying to make unstructured citation more reliable.
+    entries = [
+        {"end": "2026-06-27", "val": 39544000000, "accn": "x", "fy": 2026, "fp": "Q3", "form": "10-Q", "filed": "2026-07-31"},
+    ]
+
+    def fake_fetch(ticker, tag):
+        assert tag == "CashAndCashEquivalentsAtCarryingValue"
+        return {"units": {"USD": entries}}
+
+    monkeypatch.setattr("xbrl_facts.fetch_concept", fake_fetch)
+    result = get_metric("AAPL", "cash_and_equivalents", fiscal_year=2026, fiscal_period="Q3")
+    assert result["value"] == 39544000000
+
+
+def test_get_metric_resolves_inventory_to_the_inventorynet_tag(monkeypatch):
+    # Regression case: pltr-inventory-turnover-fy2025-refusal. Palantir
+    # genuinely never tags InventoryNet at all (confirmed via
+    # fetch_concept 404) -- verified the tag is clean (no per-company
+    # override needed) for the 3 companies that DO tag it before adding.
+    entries = [
+        {"end": "2026-04-26", "val": 25797000000, "accn": "x", "fy": 2027, "fp": "Q1", "form": "10-Q", "filed": "2026-05-20"},
+    ]
+
+    def fake_fetch(ticker, tag):
+        assert tag == "InventoryNet"
+        return {"units": {"USD": entries}}
+
+    monkeypatch.setattr("xbrl_facts.fetch_concept", fake_fetch)
+    result = get_metric("NVDA", "inventory", fiscal_year=2027, fiscal_period="Q1")
+    assert result["value"] == 25797000000
+
+
+def test_is_metric_tagged_true_when_concept_has_data(monkeypatch):
+    monkeypatch.setattr("xbrl_facts.fetch_concept", lambda ticker, tag: {"units": {"USD": []}})
+    assert is_metric_tagged("NVDA", "inventory") is True
+
+
+def test_is_metric_tagged_false_when_concept_never_tagged(monkeypatch):
+    # PLTR's real behavior: fetch_concept returns None on a 404, distinct
+    # from get_metric() returning None for a specific period that just
+    # isn't available -- this is what lets _format_no_fact_message()
+    # distinguish the two cases and explain the right one.
+    monkeypatch.setattr("xbrl_facts.fetch_concept", lambda ticker, tag: None)
+    assert is_metric_tagged("PLTR", "inventory") is False
 
 
 def test_get_metric_exposes_the_matched_entrys_own_fiscal_year_and_period(monkeypatch):

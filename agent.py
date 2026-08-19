@@ -36,6 +36,7 @@ from config import OLLAMA_MODEL_NAME, OLLAMA_URL
 from formulas import (
     get_gross_margin,
     get_gross_margin_all_companies,
+    get_multi_year_average,
     get_net_margin,
     get_net_margin_all_companies,
     get_operating_margin,
@@ -44,7 +45,7 @@ from formulas import (
 )
 from numeric_utils import UNIT_MULTIPLIERS, extract_numbers, normalize
 from retrieval import hybrid_search
-from xbrl_facts import DEFAULT_METRIC_TAGS, get_metric, get_metric_all_companies
+from xbrl_facts import DEFAULT_METRIC_TAGS, get_metric, get_metric_all_companies, is_metric_tagged
 
 MAX_TOOL_ITERATIONS = 6
 CHUNKS_PER_SEARCH = 5
@@ -77,7 +78,7 @@ SYSTEM_PROMPT = f"""You are a financial research assistant answering questions a
 {chr(10).join(f"- {ticker}: {name}" for ticker, name in COMPANIES.items())}
 
 You have three tools:
-- `get_financial_fact` searches structured XBRL data for a small set of standard financial metrics: {", ".join(sorted(DEFAULT_METRIC_TAGS)) + ", " + ", ".join(sorted(MARGIN_METRIC_FUNCTIONS))}. Prefer this tool FIRST whenever the question asks for one of these specific metrics for a specific fiscal year or fiscal quarter, for ONE company — it returns an exact, unambiguous reported value instead of relying on you to find the right sentence in a filing excerpt. It only works for these metrics and returns "not available" if the company doesn't tag it or the period wasn't recognized — fall back to `search_filings` when that happens, or for anything this tool doesn't cover (risk factors, narrative discussion, any metric not in the list above). To ask for year-over-year growth of one of the raw metrics (not the margins) instead of its plain value, add `yoy_growth: true` — never compute a growth percentage yourself from two separate calls to this tool, always use this flag.
+- `get_financial_fact` searches structured XBRL data for a small set of standard financial metrics: {", ".join(sorted(DEFAULT_METRIC_TAGS)) + ", " + ", ".join(sorted(MARGIN_METRIC_FUNCTIONS))}. Prefer this tool FIRST whenever the question asks for one of these specific metrics for a specific fiscal year or fiscal quarter, for ONE company — it returns an exact, unambiguous reported value instead of relying on you to find the right sentence in a filing excerpt. It only works for these metrics and returns "not available" if the company doesn't tag it or the period wasn't recognized — fall back to `search_filings` when that happens, or for anything this tool doesn't cover (risk factors, narrative discussion, any metric not in the list above, per-segment/per-product breakdowns). Only pass the arguments this tool actually defines — never invent an extra filter argument (e.g. there is no `segment` parameter); an unrecognized argument is rejected outright, so search_filings instead if you need something this tool doesn't support. To ask for year-over-year growth of one of the raw metrics (not the margins) instead of its plain value, add `yoy_growth: true` — never compute a growth percentage yourself from two separate calls to this tool, always use this flag. To ask for a multi-year average (e.g. "3-year average operating margin"), pass `start_fiscal_year` and `end_fiscal_year` instead of `fiscal_year`/`fiscal_period`/`period_end_date` — never average multiple years yourself from separate calls, always use these.
 - `compare_financial_metric` gets the SAME metric for ALL FIVE companies at once, for one period. Use this instead of calling `get_financial_fact` five times when a question asks you to compare or rank companies against each other (e.g. "which company had the highest gross margin", "compare revenue across all five companies") — one call instead of five. A company can be missing from the result if it doesn't tag that metric for that period; that's not an error, just note it's unavailable for that company.
 - `search_filings` searches these companies' 10-K/10-Q filings for anything else. Call it once per company if a question spans more than one, and call it again with a different query if your first search doesn't turn up what you need.
 
@@ -158,6 +159,14 @@ FACT_TOOL_SCHEMA = {
                 "yoy_growth": {
                     "type": "boolean",
                     "description": "Set true to get year-over-year percent growth of `metric` instead of its plain value (e.g. 'revenue growth' questions). Only valid for the raw metrics, NOT for gross_margin/operating_margin/net_margin -- returns null for that combination. Compares the requested period to the SAME fiscal_period one year earlier automatically; never compute growth yourself from two separate calls.",
+                },
+                "start_fiscal_year": {
+                    "type": "integer",
+                    "description": "Only for a multi-year-average question (e.g. '3-year average operating margin from fiscal year 2023 through 2025'). Set together with end_fiscal_year, and leave fiscal_year/fiscal_period/period_end_date out -- averages `metric` across every fiscal year in the range (always full-year, FY). Never average multiple years yourself from separate calls, always use this.",
+                },
+                "end_fiscal_year": {
+                    "type": "integer",
+                    "description": "The last fiscal year of a multi-year-average range -- see start_fiscal_year.",
                 },
             },
             "required": ["ticker", "metric"],
@@ -273,13 +282,42 @@ _Q4_NOT_DISCLOSED_HINT = (
 )
 
 
+def _never_tagged_hint(ticker: str, metric: str) -> str | None:
+    """None unless `ticker` genuinely never tags `metric` at all (as
+    opposed to just not having it for the specific period asked about)
+    -- see xbrl_facts.is_metric_tagged()'s own docstring. Scoped to raw
+    DEFAULT_METRIC_TAGS metrics only: is_metric_tagged()/_tag_for() only
+    understand those names, and would raise for a margin metric name
+    like "gross_margin" (not itself a GAAP tag) rather than telling us
+    anything meaningful about it."""
+    if metric not in DEFAULT_METRIC_TAGS or ticker not in COMPANIES:
+        return None
+    if is_metric_tagged(ticker, metric):
+        return None
+    return (
+        f"{ticker} does not report {metric!r} in its financial statements at all -- for some "
+        "metrics (e.g. inventory) this is because it genuinely doesn't apply to the company's "
+        "business model (a software/services company with no physical goods has nothing to "
+        "report there), not because this specific period is missing. Do not fabricate, "
+        "estimate, or infer a value for it; state plainly that this metric isn't reported for "
+        "this company, and explain why if the reason is evident (e.g. the business model)."
+    )
+
+
 def _format_no_fact_message(args: dict) -> str:
     """Built as its own function (not inlined at the call site) so the Q4
     hint below is unit-testable without a live Ollama round-trip. Found
     live: a bare "not found, try search_filings" message left the model
     unaware this was a structural reporting gap rather than a retrieval
     miss, so it trusted noisy search results back and fabricated a wrong-
-    quarter number instead of refusing (nvda-rd-expense-q4fy26-refusal)."""
+    quarter number instead of refusing (nvda-rd-expense-q4fy26-refusal).
+
+    The never-tagged hint below is the same principle applied to a
+    different structural gap: asked for Palantir's inventory turnover,
+    the model got only as far as "I can't compute this ratio" without
+    ever saying WHY (no inventory line item at all, not just an
+    unavailable period), and filled the gap with an unrelated cost-of-
+    revenue figure instead (pltr-inventory-turnover-fy2025-refusal)."""
     message = (
         f"(no structured data found for metric={args.get('metric')!r} "
         f"ticker={args.get('ticker')!r} {args.get('fiscal_period')!r} "
@@ -287,6 +325,9 @@ def _format_no_fact_message(args: dict) -> str:
     )
     if args.get("fiscal_period") == "Q4":
         message += f" {_Q4_NOT_DISCLOSED_HINT}"
+    never_tagged = _never_tagged_hint(args.get("ticker"), args.get("metric"))
+    if never_tagged:
+        message += f" {never_tagged}"
     return message
 
 
@@ -301,6 +342,18 @@ def _format_no_comparison_message(args: dict) -> str:
     if args.get("fiscal_period") == "Q4":
         message += f" {_Q4_NOT_DISCLOSED_HINT}"
     return message
+
+
+_FACT_ARG_KEYS = {
+    "ticker",
+    "metric",
+    "fiscal_year",
+    "fiscal_period",
+    "period_end_date",
+    "yoy_growth",
+    "start_fiscal_year",
+    "end_fiscal_year",
+}
 
 
 def _call_get_financial_fact(args: dict) -> dict | None:
@@ -318,7 +371,27 @@ def _call_get_financial_fact(args: dict) -> dict | None:
     `yoy_growth=True` combined with a margin metric is rejected the same
     way: get_yoy_growth() only supports the raw tagged metrics (see its
     own docstring for why), so that combination isn't just unsupported,
-    it's meaningless -- caught here rather than passed through."""
+    it's meaningless -- caught here rather than passed through.
+
+    An unrecognized EXTRA key is a different, newer-found shape of the
+    same "don't trust the schema" lesson: asked to compare NVIDIA's
+    Compute & Networking segment against its Graphics segment, the model
+    invented a `segment` filter this tool has never supported. The old
+    code only ever read known keys (`args.get(...)`), so the invented
+    key was silently dropped -- both "segment" calls quietly returned
+    the SAME consolidated total instead of erroring, and the model
+    concluded the two segments had equal revenue. Rejecting any
+    unrecognized key outright (rather than silently ignoring it) turns
+    that into a clean "not supported, try search_filings" fallback.
+
+    `start_fiscal_year`/`end_fiscal_year` (both required together, and
+    rejected if combined with yoy_growth) dispatch to
+    get_multi_year_average() instead of a single-period lookup -- built
+    after the model reached for self-computation on its own for a
+    3-year-average question with no deterministic path (see that
+    function's own docstring)."""
+    if set(args) - _FACT_ARG_KEYS:
+        return None
     ticker = args.get("ticker")
     metric = args.get("metric")
     if ticker not in COMPANIES or (metric not in DEFAULT_METRIC_TAGS and metric not in MARGIN_METRIC_FUNCTIONS):
@@ -326,6 +399,12 @@ def _call_get_financial_fact(args: dict) -> dict | None:
     fiscal_year = args.get("fiscal_year")
     fiscal_period = args.get("fiscal_period", "FY")
     period_end_date = args.get("period_end_date")
+    start_fiscal_year = args.get("start_fiscal_year")
+    end_fiscal_year = args.get("end_fiscal_year")
+    if start_fiscal_year is not None or end_fiscal_year is not None:
+        if args.get("yoy_growth") or start_fiscal_year is None or end_fiscal_year is None:
+            return None
+        return get_multi_year_average(ticker, metric, start_fiscal_year, end_fiscal_year)
     if args.get("yoy_growth"):
         if metric in MARGIN_METRIC_FUNCTIONS:
             return None
@@ -354,12 +433,19 @@ def _fact_as_result(fact: dict, args: dict) -> dict:
     }
 
 
+_COMPARE_ARG_KEYS = {"anchor_ticker", "metric", "fiscal_year", "fiscal_period", "period_end_date"}
+
+
 def _call_compare_financial_metric(args: dict) -> dict[str, dict]:
     """Same boundary-validation reasoning as _call_get_financial_fact —
-    don't trust the schema was followed. No yoy_growth here: there's no
-    current evidence/use case for a cross-company YoY-growth comparison,
-    so it isn't exposed on this tool (see MARGIN_METRIC_FUNCTIONS'
-    comment and get_yoy_growth()'s docstring)."""
+    don't trust the schema was followed, including rejecting an
+    unrecognized extra key (e.g. an invented `segment` filter) rather
+    than silently ignoring it. No yoy_growth here: there's no current
+    evidence/use case for a cross-company YoY-growth comparison, so it
+    isn't exposed on this tool (see MARGIN_METRIC_FUNCTIONS' comment and
+    get_yoy_growth()'s docstring)."""
+    if set(args) - _COMPARE_ARG_KEYS:
+        return {}
     anchor_ticker = args.get("anchor_ticker")
     metric = args.get("metric")
     if anchor_ticker not in COMPANIES or (metric not in DEFAULT_METRIC_TAGS and metric not in MARGIN_METRIC_FUNCTIONS):
