@@ -264,6 +264,47 @@ def _format_results_block(results: list[dict], start_index: int) -> str:
     return "\n\n".join(blocks)
 
 
+_Q4_NOT_DISCLOSED_HINT = (
+    "No company files a separate quarterly report for Q4 -- only Q1-Q3 get a "
+    "standalone 10-Q, so a discrete Q4 figure is never independently disclosed "
+    "via XBRL; it only exists implicitly as FY minus Q1-Q3. Tell the user this "
+    "figure isn't reported as a standalone figure, and stop there -- do not "
+    "state, estimate, or mention ANY dollar amount in your answer, not for Q4, "
+    "not the full fiscal year total, not from search results or any other "
+    "period. Simply explain that quarterly figures aren't broken out this way."
+)
+
+
+def _format_no_fact_message(args: dict) -> str:
+    """Built as its own function (not inlined at the call site) so the Q4
+    hint below is unit-testable without a live Ollama round-trip. Found
+    live: a bare "not found, try search_filings" message left the model
+    unaware this was a structural reporting gap rather than a retrieval
+    miss, so it trusted noisy search results back and fabricated a wrong-
+    quarter number instead of refusing (nvda-rd-expense-q4fy26-refusal)."""
+    message = (
+        f"(no structured data found for metric={args.get('metric')!r} "
+        f"ticker={args.get('ticker')!r} {args.get('fiscal_period')!r} "
+        f"FY{args.get('fiscal_year')!r} — try search_filings instead)"
+    )
+    if args.get("fiscal_period") == "Q4":
+        message += f" {_Q4_NOT_DISCLOSED_HINT}"
+    return message
+
+
+def _format_no_comparison_message(args: dict) -> str:
+    """compare_financial_metric counterpart to _format_no_fact_message --
+    the same Q4 reporting gap applies just as much to a cross-company
+    comparison question as to a single-company one."""
+    message = (
+        f"(no structured data found for metric={args.get('metric')!r} "
+        "across companies for this period — try search_filings per company instead)"
+    )
+    if args.get("fiscal_period") == "Q4":
+        message += f" {_Q4_NOT_DISCLOSED_HINT}"
+    return message
+
+
 def _call_get_financial_fact(args: dict) -> dict | None:
     """This is a real system boundary, not just an internal call — the
     model doesn't reliably respect the schema. Found live: asked for
@@ -612,11 +653,7 @@ def run_agent(question: str, verbose: bool = False) -> tuple[str, list[dict], li
                     print(f"  [tool call] get_financial_fact({args!r})")
                 fact = _call_get_financial_fact(args)
                 if fact is None:
-                    content = (
-                        f"(no structured data found for metric={args.get('metric')!r} "
-                        f"ticker={args.get('ticker')!r} {args.get('fiscal_period')!r} "
-                        f"FY{args.get('fiscal_year')!r} — try search_filings instead)"
-                    )
+                    content = _format_no_fact_message(args)
                 else:
                     start_index = len(all_results) + 1
                     result = _fact_as_result(fact, args)
@@ -630,10 +667,7 @@ def run_agent(question: str, verbose: bool = False) -> tuple[str, list[dict], li
                     print(f"  [tool call] compare_financial_metric({args!r})")
                 data = _call_compare_financial_metric(args)
                 if not data:
-                    content = (
-                        f"(no structured data found for metric={args.get('metric')!r} "
-                        f"across companies for this period — try search_filings per company instead)"
-                    )
+                    content = _format_no_comparison_message(args)
                 else:
                     start_index = len(all_results) + 1
                     results = _comparison_as_results(data, args.get("metric", ""))

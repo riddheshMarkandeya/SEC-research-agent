@@ -924,7 +924,92 @@ clean tool call each — no self-computation, no rounding drift.
   themselves part of the motivation for the next planned step: testing
   against a cloud model to see how much of that flakiness is a
   `qwen2.5:7b-instruct` capability ceiling versus something still worth
-  fixing locally.
+  fixing locally. **Correction: `nvda-rd-expense-q4fy26-refusal`'s PASS
+  here turned out not to be reliable** — later runs this session showed
+  it fabricating under rule 8 and again under Gemini; see Week 5m below
+  for the actual root cause and fix.
+
+### Cloud-model spike — Gemini free tier, throwaway (Week 5l)
+
+Tested whether `qwen2.5:7b-instruct`'s capability was the bottleneck
+behind the session's recurring citation-misattribution and
+comparison-question flakiness, by running the exact same system prompt,
+tool schemas, and tool-dispatch logic (imported from `agent.py`, not
+copied) against Google Gemini's free tier instead of local Ollama.
+Spike script: `spike_gemini_eval.py` — deliberately throwaway per
+`superpowers:brainstorming`'s Spike path (uncommitted, `google-genai`
+installed directly into `.venv`, not added to `requirements.txt`).
+
+- **Model**: `gemini-flash-lite-latest` (free tier). `gemini-2.5-flash`
+  404'd ("no longer available to new users"); the `gemini-flash-latest`
+  alias resolved to `gemini-3.7-flash`, whose free tier is only 20
+  requests/day — too restrictive for a 21-question eval with multi-call
+  tool loops. `gemini-flash-lite-latest` had a workable free quota.
+- **Result: 19/21 passed, 20/21 cited.** Critically, **all three
+  comparison-type questions passed cleanly** — the single most
+  persistently flaky category on the local model all session (missing
+  citations, garbled numbers) — and both previously-diagnosed
+  misattribution cases (`aapl-employees-fy25`, `crm-revenue-q1fy27`)
+  passed with zero citation warnings, confirming the earlier direct
+  chunk-inspection finding: Gemini picks the right chunk out of the same
+  5 retrieved results the local model gets wrong.
+- **Two failures, both different in character from local-model
+  failures**: `pltr-dividend-2019-refusal` failed on a stricter
+  grading-criteria technicality (said "$0" instead of an explicit
+  no-data refusal — arguably still correct, just phrased in a way the
+  strict criteria disallows). `nvda-rd-expense-q4fy26-refusal` failed by
+  not addressing the question at all with no citation — root-caused and
+  fixed independent of the model, see Week 5m below.
+- **Conclusion**: strong evidence the citation-misattribution/comparison
+  flakiness fought all session was a `qwen2.5:7b-instruct` capability
+  ceiling, not a retrieval or system-design problem — a free-tier cloud
+  model closed nearly all the gaps with zero retrieval changes. Argues
+  against building query rewriting next (recall wasn't the bottleneck,
+  attribution was) and gives real evidence before pursuing stricter
+  citation checks.
+
+### Q4-refusal fix — tool message now explains *why*, not just *that*, data is missing (Week 5m)
+
+`nvda-rd-expense-q4fy26-refusal` had been flaky all session (fabricated
+under rule 8, flaky again under the reverted retry loop, then failed
+differently under Gemini) — root-caused via
+`superpowers:systematic-debugging` instead of another prompt tweak.
+
+- **Root cause, confirmed directly**: `get_metric('NVDA', 'rd_expense',
+  fiscal_year=2026, fiscal_period='Q4')` returns `None` — no company
+  files a standalone Q4 report (only Q1-Q3 get a 10-Q; Q4 only exists
+  implicitly as `FY − Q1 − Q2 − Q3`), so there's no discrete XBRL fact
+  to find. The existing "no structured data found ... try
+  search_filings instead" fallback message didn't say *why*, so the
+  model trusted the follow-up search back — which returned pure noise
+  for this query (cash flow tables, buybacks, segment revenue, nothing
+  about R&D) — and fabricated a wrong-quarter number, once citing a
+  chunk that didn't even contain the value it claimed.
+- **Fix**: `_format_no_fact_message()`/`_format_no_comparison_message()`
+  (new pure helpers, extracted from inline f-strings in `run_agent()`
+  for testability) append a `_Q4_NOT_DISCLOSED_HINT` whenever
+  `fiscal_period == "Q4"`, explaining the structural gap and instructing
+  the model not to state any figure. Applied to both
+  `get_financial_fact` and `compare_financial_metric` fallbacks — the
+  same gap applies to any Q4 comparison question, not just
+  single-company ones.
+- **The hint needed two iterations, both caught by live re-testing, not
+  assumed**: v1 said "you may mention the annual figure as context"
+  (matching the eval criteria's optional allowance) — 2/3 clean, but the
+  third run fabricated a wrong FY figure ($5.9B vs the real $18.5B)
+  anyway. v2 dropped the explicit invitation but kept a soft "don't
+  estimate" — 3/5 clean; the model still volunteered "the full fiscal
+  year total is available" unprompted and fabricated a number in 1 of
+  the 2 failures. v3 forbids stating *any* dollar amount at all
+  (mentioning the annual figure is optional per the grading criteria, so
+  a hard ban stays compliant) — **5/5 clean**, and the model now answers
+  directly from the tool hint without even needing a follow-up search.
+- **Verified**: 173/173 unit tests (5 new, covering both helpers' Q4
+  hint behavior and message-content preservation). Full 21-question
+  eval: **18/21**, target question now PASS; the 3 failures are the
+  pre-existing local-model comparison/tax-rate flakiness Week 5l's
+  Gemini spike already diagnosed as a model-capability limit, unrelated
+  to this change.
 
 ### `xbrl_facts.py`'s `frames` API — cross-company comparison in one call (Week 5d)
 
@@ -1656,6 +1741,30 @@ correct refusal, once fabricating an estimate despite an explicit
 instruction not to), so the extra ~60-90s retry cost wasn't buying
 real quality. Revisit once working with a more capable model — the
 design and its tests are still there if this repo trades models later.
+
+**Cloud-model spike (Gemini, free tier): DONE — see "Cloud-model spike"
+(Week 5l) below.** 19/21, with every previously-flaky comparison
+question passing cleanly — strong evidence the session's recurring
+citation-misattribution/comparison flakiness was a local-model
+capability ceiling, not a retrieval or design gap. Recommends against
+building query rewriting next (recall wasn't the bottleneck).
+
+**`nvda-rd-expense-q4fy26-refusal` fragile-question fix: DONE — see
+"Q4-refusal fix" (Week 5m) below.** Root-caused (not another prompt
+tweak): the tool's "no data found" message never explained *why* Q4 has
+no structured fact, so the model trusted noisy search results back and
+fabricated. Fixed with a Q4-specific hint in the tool response itself.
+5/5 clean on live re-testing after two hint-wording iterations; full
+eval 18/21 with no regressions.
+
+**Not yet decided: what to do with the cloud-model finding.** Options
+on the table, undecided: (a) treat Gemini as a documented capability
+ceiling and keep working locally, accepting the residual flakiness as a
+known cost; (b) formalize a swappable-backend design so the agent can
+run against either Ollama or Gemini's free tier; (c) revisit the
+retry loop (Week 5j) now that there's a capable-enough free model to
+test it against. `spike_gemini_eval.py` remains an uncommitted
+throwaway pending this decision.
 
 **Then — continue growing `eval_questions.jsonl`** toward the full
 30-50 question, FinanceBench-style set, now informed by two full rounds

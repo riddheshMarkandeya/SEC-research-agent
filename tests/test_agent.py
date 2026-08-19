@@ -13,6 +13,8 @@ from agent import (
     _call_get_financial_fact,
     _comparison_as_results,
     _format_citation_key,
+    _format_no_comparison_message,
+    _format_no_fact_message,
     _format_results_block,
     _resolve_search_args,
     value_is_citation_verified,
@@ -104,6 +106,46 @@ def test_format_results_block_numbers_from_start_index():
 def test_format_results_block_empty_results_returns_placeholder_text():
     block = _format_results_block([], start_index=1)
     assert "no matching filing excerpts" in block.lower()
+
+
+# ---------------------------------------------------------------------------
+# _format_no_fact_message / _format_no_comparison_message
+# ---------------------------------------------------------------------------
+def test_format_no_fact_message_includes_q4_hint():
+    # Regression case: nvda-rd-expense-q4fy26-refusal. No company files a
+    # standalone Q4 report (only Q1-Q3 get a 10-Q; Q4 only exists inside
+    # the 10-K), so a bare "not found, try search" message left the model
+    # unaware this was a structural gap rather than a retrieval miss --
+    # it trusted the noisy search results back and fabricated a number.
+    message = _format_no_fact_message({"metric": "rd_expense", "ticker": "NVDA", "fiscal_period": "Q4", "fiscal_year": 2026})
+    assert "estimate" in message.lower()
+    assert "q4" in message.lower()
+
+
+def test_format_no_fact_message_omits_q4_hint_for_other_periods():
+    message = _format_no_fact_message({"metric": "rd_expense", "ticker": "NVDA", "fiscal_period": "Q2", "fiscal_year": 2026})
+    assert "estimate" not in message.lower()
+
+
+def test_format_no_fact_message_preserves_existing_detail():
+    message = _format_no_fact_message({"metric": "rd_expense", "ticker": "NVDA", "fiscal_period": "Q2", "fiscal_year": 2026})
+    assert "rd_expense" in message
+    assert "NVDA" in message
+    assert "Q2" in message
+    assert "2026" in message
+
+
+def test_format_no_comparison_message_includes_q4_hint():
+    # Same structural gap applies to compare_financial_metric -- a user
+    # could just as easily ask to compare Q4 figures across companies.
+    message = _format_no_comparison_message({"metric": "revenue", "fiscal_period": "Q4", "fiscal_year": 2026})
+    assert "estimate" in message.lower()
+    assert "q4" in message.lower()
+
+
+def test_format_no_comparison_message_omits_q4_hint_for_other_periods():
+    message = _format_no_comparison_message({"metric": "revenue", "fiscal_period": "FY", "fiscal_year": 2026})
+    assert "estimate" not in message.lower()
 
 
 # ---------------------------------------------------------------------------
