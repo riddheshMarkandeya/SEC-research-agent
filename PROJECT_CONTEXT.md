@@ -1922,10 +1922,50 @@ minutes), added a way to run a specific subset instead of all-or-one:
   loop specifically so the filtering logic is unit-testable without any
   network/Ollama calls — 6 new tests, 179/179 full suite.
 
-**Then — continue writing more new questions**, following the
-remaining priority order (3: multi-year averages, 5: inapplicable-
-metric recognition) plus the general growth principles already
-established:
+### Eval growth round 4 — 25 → 27 questions, priorities 3 and 5 from the FinanceBench analysis (Week 5q)
+
+Added the remaining two priority items: a multi-year-average ratio
+(beyond the formula registry's current single-period scope) and an
+inapplicable-metric-recognition question. Ground truth verified before
+writing, same discipline as every round:
+- `aapl-3yr-avg-operating-margin-fy2023-fy2025`: 31.1%, computed from
+  real unrounded per-year margins (29.82%, 31.51%, 31.97% — FY2023
+  through FY2025, via `xbrl_facts.get_metric()` directly), not from
+  averaging the formula registry's already-rounded 1-decimal outputs.
+- `pltr-inventory-turnover-fy2025-refusal`: confirmed via
+  `fetch_concept('PLTR', 'InventoryNet')` → 404 (not tagged at all,
+  unlike NVDA/AAPL/MSFT which all tag it) — Palantir, as a
+  software/data-analytics company, genuinely has no inventory line
+  item to compute a turnover ratio from. Also confirmed live that
+  `search_filings` returns nothing inventory-related for PLTR (cash
+  flow tables, investment-agreement text) — there's no chunk to find
+  because there's nothing to find.
+
+**Both FAIL, in genuinely different, more specific ways than
+predicted**:
+- `aapl-3yr-avg-operating-margin-fy2023-fy2025`: the model completely
+  **misparsed the question** — it interpreted "3-year average" as a
+  request for Q4-specific figures, called `get_financial_fact` with
+  `fiscal_period='Q4'` for FY2023/2024/2025, hit Week 5m's own
+  Q4-not-disclosed hint, and echoed that hint's text verbatim as its
+  final answer. A new bug class: multi-year-average questions get
+  misread as intra-year quarterly ones, not (as expected) a rule-3
+  self-computation violation.
+- `pltr-inventory-turnover-fy2025-refusal`: closer to correct than a
+  bare pass/fail suggests — it did say it couldn't compute the ratio —
+  but never identified the *actual* reason (no inventory line item at
+  all, structural to the business model), framing it as generic
+  missing data instead, and pointlessly cited an unrelated cost-of-
+  revenue figure ($192,934,000) as if relevant to an inventory
+  question. Distinct failure shape from the Q4-refusal case: not
+  fabrication, but an incomplete/imprecise refusal.
+
+Neither yet addressed — added to the same accumulating-findings queue
+as round 3 (Week 5o), per the "grow first, fix in a batch" decision
+above.
+
+**Then — continue writing more new questions**, following the general
+growth principles already established:
 - Go back into the actual filings to find and verify ground-truth figures
   — real research, not guessing plausible-looking numbers
 - A few genuinely ambiguous/no-company-context questions, to verify
