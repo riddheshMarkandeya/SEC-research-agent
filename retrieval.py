@@ -57,6 +57,13 @@ QUERY_INSTRUCTION = "Represent this sentence for searching relevant passages: "
 RRF_K = 60  # standard constant from the original Reciprocal Rank Fusion paper
 CANDIDATE_POOL_SIZE = 25  # per-method pool size, before fusion/reranking
 
+# See _rescue_demoted_table_chunk's docstring: distinguishes a real
+# financial data table (32-37 "$" occurrences in verified real chunks)
+# from a glossary/definitions table (0) that's also flagged
+# contains_table=True. Set well below the observed real minimum to leave
+# margin for smaller-but-genuine tables.
+_MIN_DOLLAR_FIGURES_FOR_TABLE_RESCUE = 5
+
 
 # ---------------------------------------------------------------------------
 # Lazy singletons — models and indexes are expensive to load, so build
@@ -248,11 +255,83 @@ def _combine_fused_and_rerank(
         return max(1.0 / (RRF_K + fused_rank[doc_id]), 1.0 / (RRF_K + rerank_rank[doc_id]))
 
     ranked = sorted(candidates, key=lambda c: combined_score(c[0]), reverse=True)
+    ranked = _rescue_demoted_table_chunk(candidates, fused_rank, ranked, top_n)
 
     return [
         {"text": text, "metadata": metadata, "combined_score": combined_score(doc_id)}
         for doc_id, text, metadata, _fused_score in ranked[:top_n]
     ]
+
+
+def _rescue_demoted_table_chunk(
+    candidates: list[tuple[str, str, dict, float]],
+    fused_rank: dict[str, int],
+    ranked: list[tuple[str, str, dict, float]],
+    top_n: int,
+) -> list[tuple[str, str, dict, float]]:
+    """If the reranker's top_n contains no table chunk at all, but a table
+    chunk already ranked in the top half of the fused BM25+vector pool
+    (i.e. both base retrievers considered it relevant), swap it in for the
+    weakest surviving slot.
+
+    Regression case: msft-segment-revenue-comparison-q3fy2026. The chunk
+    with the actual segment revenue table ($35,013M/$34,681M/$13,192M)
+    ranked #14 of ~40 in the fused pool but was reranked to #17 by
+    cross-encoder/ms-marco-MiniLM-L-6-v2, outside top_n, in favor of
+    near-duplicate MD&A boilerplate that lexically echoes the segment
+    names without containing the actual figures. combined_score()'s
+    existing MAX-of-two-RRF-contributions logic (see
+    _combine_fused_and_rerank's docstring) doesn't cover this: a fused
+    rank of ~14 isn't good enough to win on its own -- it loses to
+    anything reranked into roughly the top 5 -- so this is a genuinely
+    separate rescue, not a duplicate of that mechanism.
+
+    Deliberately gated on the base retrievers' OWN pre-rerank confidence,
+    not on guessing the question is fact/metric-seeking (hybrid_search has
+    no such signal at inference time, and pattern-matching question
+    phrasing would be exactly the kind of fragile heuristic
+    period_labels.py's reverted reranking-signal fix already risked). This
+    is why it's self-limiting: a table with no lexical/semantic match to a
+    prose question (e.g. an AI-risk question) won't rank in the top half
+    of the fused pool to begin with, so the rescue never fires for it --
+    verified by test_combine_does_not_rescue_a_table_chunk_that_also_
+    ranked_poorly_pre_rerank.
+
+    `contains_table` alone (chunk_documents.py's "<TABLE>" in chunk_text
+    check) isn't enough of a filter, found while live-verifying this fix
+    against the real MSFT question: 10-Qs also carry a recurring
+    "Microsoft Cloud" metrics GLOSSARY table (term -> definition, e.g.
+    "Microsoft 365 Commercial cloud revenue growth" -> its definition) --
+    also flagged contains_table=True, also boilerplate repeated near-
+    verbatim every quarter, and it out-ranked the real segment-revenue
+    table in the fused pool (rank 6 vs rank 14) precisely because it's
+    MORE consistently similar across quarters, the same "near-duplicate
+    boilerplate" pattern this project keeps re-encountering, one level
+    deeper than expected. A real financial data table and a glossary
+    table are both syntactically "a table" but only one contains actual
+    reported figures -- checked directly against real chunk text: MSFT's
+    genuine segment-revenue table chunks had 32-37 "$" occurrences, its
+    glossary-table chunks had 0. Requiring a minimum dollar-figure count
+    is a cheap, general way to tell them apart without hardcoding any
+    business-specific term."""
+    if any(metadata.get("contains_table") for _, _, metadata, _ in ranked[:top_n]):
+        return ranked  # a table chunk already survived on its own merits
+
+    threshold = len(candidates) // 2
+    top_n_ids = {doc_id for doc_id, _, _, _ in ranked[:top_n]}
+    table_candidates = [
+        c
+        for c in candidates
+        if c[2].get("contains_table")
+        and fused_rank[c[0]] <= threshold
+        and c[0] not in top_n_ids
+        and c[1].count("$") >= _MIN_DOLLAR_FIGURES_FOR_TABLE_RESCUE
+    ]
+    if not table_candidates:
+        return ranked
+
+    best_table = min(table_candidates, key=lambda c: fused_rank[c[0]])
+    return ranked[: top_n - 1] + [best_table]
 
 
 def rerank(query: str, candidates: list[tuple[str, str, dict, float]], top_n: int) -> list[dict]:

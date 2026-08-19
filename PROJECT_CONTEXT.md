@@ -1892,6 +1892,77 @@ inventory --recent-only` returns 3 (`InventoryNet` plus finished-goods/
 raw-materials breakdowns not previously known about). 7 new tests
 (`tests/test_discover_tags.py`), 209/209 full suite.
 
+### `retrieval.py` — table-chunk rescue in reranking (Week 5t)
+
+Root-caused `msft-segment-revenue-comparison-q3fy2026` (carried forward
+from Week 5r) via a dedicated `--verbose` session, per the plan. NOT the
+same bug as the NVDA segment question: the invented-`segment`-parameter
+boundary-validation fix from Week 5r is still working correctly here too
+(the model still invents `segment`, `_FACT_ARG_KEYS` still rejects it,
+still falls back to `search_filings` as designed). The real failure is
+downstream, in retrieval itself:
+
+- The chunk with the real numbers ($35,013M/$34,681M/$13,192M) entered
+  the fused BM25+vector candidate pool at a perfectly reasonable rank
+  (#14 of ~40 -- both base retrievers considered it relevant) but the
+  cross-encoder reranker (`cross-encoder/ms-marco-MiniLM-L-6-v2`) pushed
+  it DOWN to #17 -- worse than its pre-rerank position, and outside
+  top_n=5 -- in favor of near-duplicate MD&A boilerplate paragraphs
+  repeated almost verbatim across 4 quarters' filings, which echo the
+  question's segment names more than a dense numeric table does.
+- No structured-XBRL escape hatch exists here the way there was for
+  gross margin/R&D: `discover_tags.py MSFT --keyword segment --recent-
+  only` confirms MSFT has no segment-revenue tag exposed via
+  companyconcept/companyfacts (only `NumberOfReportableSegments`) --
+  segment breakdowns are dimensional facts that API doesn't expose. This
+  one had to be fixed in retrieval, not sidestepped.
+- Fix: `_rescue_demoted_table_chunk()` in `retrieval.py`, called from
+  `_combine_fused_and_rerank()`. If the reranker's own top_n contains no
+  `contains_table` chunk at all, but one ranked in the top half of the
+  fused pool (i.e. both base retrievers already considered it relevant),
+  swap it in for the reranker's weakest surviving pick. Deliberately
+  gated on the base retrievers' OWN pre-rerank confidence, not on
+  guessing the question is fact/metric-seeking -- `hybrid_search` has no
+  such signal at inference time, and pattern-matching question phrasing
+  would repeat the same fragile-heuristic risk as the already-dropped
+  `period_labels.py` reranking-signal idea. Self-limiting by
+  construction: a table with no lexical/semantic match to a prose
+  question (e.g. an AI-risk question) won't rank in the top half of the
+  fused pool to begin with, so the rescue never fires for it.
+- **Found a second bug while live-verifying the first fix**: MSFT's
+  10-Qs also carry a recurring "Microsoft Cloud" metrics GLOSSARY table
+  (term -> definition, zero `$` figures) that's ALSO flagged
+  `contains_table=True` -- and being boilerplate repeated every quarter,
+  it out-ranked the real segment-revenue table in the fused pool (rank 6
+  vs rank 14). The first version of the rescue picked it by mistake,
+  which would have surfaced a plausible-looking but useless table
+  instead of failing loudly. Checked real chunk text directly: genuine
+  financial tables had 32-37 `$` occurrences, the glossary table had 0.
+  Added `_MIN_DOLLAR_FIGURES_FOR_TABLE_RESCUE = 5` as a cheap, general
+  filter -- distinguishes "a table with actual reported figures" from "a
+  table shaped like a table" without hardcoding any business-specific
+  term.
+- 8 new tests (`tests/test_retrieval.py`), including the exact glossary-
+  vs-financial-table regression shape found live. 214/214 full suite.
+- **Live-verified 4/4**: the correct chunk (right period, right figures)
+  is now retrieved reliably (`python retrieval.py "..." --ticker MSFT
+  --n 5` and 3x `python agent.py "..." --verbose`, plus the eval harness
+  run itself) -- a real, solid fix for the retrieval-ranking problem this
+  session set out to solve.
+
+**But the question still FAILS** (`eval_harness.py --ids msft-segment-
+revenue-comparison-q3fy2026`) -- for a new, different reason, exposed
+only once the retrieval problem stopped masking it: the model
+consistently (4/4 runs) states Intelligent Cloud ($34,681M) is the
+highest-revenue segment despite Productivity and Business Processes
+($35,013M) being right there in its own correctly-cited answer text --
+a comparison/reasoning error, not a retrieval or citation problem this
+time. Citation attribution was also inconsistent across runs (sometimes
+every figure correctly cited to the table chunk, sometimes misattributed
+to a descriptive chunk instead) -- a second, smaller open thread. Neither
+investigated further yet; explicitly left open, reported to the user
+rather than assumed-fixed.
+
 ## Next steps
 
 > This section used to be a running "X: FIXED, see above" log that
@@ -1909,11 +1980,18 @@ raw-materials breakdowns not previously known about). 7 new tests
 `aapl-3yr-avg-operating-margin-fy2023-fy2025`), 1 partially improved
 (`pltr-inventory-turnover-fy2025-refusal` — a real, tested fix that the
 model doesn't reliably reach due to a separate metric-naming issue).
-**Still open, carried forward: `msft-segment-revenue-comparison-q3fy2026`**
-— failed 3/3 times this session in 3 different ways, no single
-mechanism identified yet the way the NVDA segment question's invented-
-parameter bug was. Needs a dedicated `--verbose` investigation session
-before attempting another fix, not another blind re-run.
+**`msft-segment-revenue-comparison-q3fy2026`: retrieval half FIXED (Week
+5t), a NEW comparison-reasoning bug found underneath it, still open.**
+The retrieval-ranking root cause (a reranker demoting the real
+segment-revenue table below near-duplicate boilerplate) is solved and
+live-verified 4/4 — see the Week 5t section above. But the question
+still fails: the model now sees the correct, correctly-cited numbers
+($35,013M vs. $34,681M) and picks the smaller one as "highest," 4/4
+runs. Not yet investigated at the same depth as the retrieval bug —
+next session should treat this the same way (dedicated `--verbose`
+session, form a real hypothesis, don't just re-run and hope). Citation
+misattribution on this question was also inconsistent run-to-run;
+worth a look in the same session since it may share a cause.
 
 **2. Then: build the Gemini swappable-backend design** (deferred from
 Week 5l's spike). Two things this unblocks at once: (a) re-testing
