@@ -1011,6 +1011,48 @@ differently under Gemini) — root-caused via
   Gemini spike already diagnosed as a model-capability limit, unrelated
   to this change.
 
+### `formulas.py` — formula registry split out of `xbrl_facts.py` (Week 5n)
+
+By the time Week 5k's formula registry existed, 9 of `xbrl_facts.py`'s
+16 top-level functions were already formula/ratio logic
+(`_compute_ratio_metric`, the three margin wrappers + their
+all-companies counterparts, `_compute_ratio_metric_all_companies`,
+`get_yoy_growth`), not raw XBRL fetching — more than half the file, and
+about to grow further once the FinanceBench-informed eval growth
+(Week 5l's roadmap) adds multi-year averages, cash-flow ratios, etc.
+Unlike the raw XBRL tags (a small, bounded set SEC actually defines),
+the list of financial ratios a user might ask for has no natural upper
+limit — the same reasoning `config.py` used for scattered constants,
+applied here to a different kind of duplication risk.
+
+- **`formulas.py`** now owns every derived metric: `get_gross_margin`/
+  `get_operating_margin`/`get_net_margin` (+ all-companies versions),
+  `get_yoy_growth`, and both shared `_compute_ratio_metric*` bodies. It
+  imports `get_metric`/`get_frame` from `xbrl_facts.py`.
+- **`xbrl_facts.py`** shrinks back to just raw-fact fetching: tag
+  resolution, period-entry disambiguation, `get_metric`, the `frames`
+  API. One responsibility, matching what it was before margins got
+  bolted on.
+- **`agent.py`** updates its imports accordingly; `MARGIN_METRIC_FUNCTIONS`
+  itself stays in `agent.py` (tool-dispatch wiring, not a formula).
+- **A real gotcha, caught before it caused silent test bugs**: tests
+  that monkeypatch `get_frame`/`get_gross_margin`/etc. for functions now
+  living in `formulas.py` had to retarget their patches to
+  `"formulas.X"`, not `"xbrl_facts.X"` — `from xbrl_facts import
+  get_frame` binds a separate name in `formulas.py`'s own namespace at
+  import time, so patching `xbrl_facts.get_frame` doesn't reach a call
+  made via `formulas.py`'s own bare `get_frame` name. Exact same shape
+  of gotcha already documented for `agent.py`'s `MARGIN_METRIC_FUNCTIONS`
+  (Week 5k) — worth remembering as a general pattern, not a one-off.
+- **Pure refactor, no behavior change**: 173/173 tests before and after
+  the split (19 moved into a new `test_formulas.py`, none added/removed).
+  Verified live through the real (unmocked) import chain too — real
+  `get_operating_margin`/`get_yoy_growth` calls still return the
+  previously-verified values (32.6%, 16.4% for AAPL), and
+  `agent.MARGIN_METRIC_FUNCTIONS["operating_margin"][0] is
+  formulas.get_operating_margin` confirms the dispatch table is wired to
+  the real function, not a stale reference.
+
 ### `xbrl_facts.py`'s `frames` API — cross-company comparison in one call (Week 5d)
 
 A second agent tool, `compare_financial_metric`, alongside
@@ -1757,24 +1799,53 @@ fabricated. Fixed with a Q4-specific hint in the tool response itself.
 5/5 clean on live re-testing after two hint-wording iterations; full
 eval 18/21 with no regressions.
 
-**Not yet decided: what to do with the cloud-model finding.** Options
-on the table, undecided: (a) treat Gemini as a documented capability
-ceiling and keep working locally, accepting the residual flakiness as a
-known cost; (b) formalize a swappable-backend design so the agent can
-run against either Ollama or Gemini's free tier; (c) revisit the
-retry loop (Week 5j) now that there's a capable-enough free model to
-test it against. `spike_gemini_eval.py` remains an uncommitted
-throwaway pending this decision.
+**Decided: eval growth comes first, Gemini swappable-backend comes
+after.** `spike_gemini_eval.py` stays an uncommitted throwaway until
+then — once the eval set is bigger/harder, revisit it as a proper
+swappable-backend design so "local vs. cloud" can be re-tested on
+demand rather than as a one-off spike.
 
-**Then — continue growing `eval_questions.jsonl`** toward the full
-30-50 question, FinanceBench-style set, now informed by two full rounds
-of real findings instead of guessing what might break:
+**FinanceBench analysis: DONE, informing the next eval-growth round.**
+Fetched the public 150-question open-source set
+(`PatronusAI/financebench` on GitHub) to study structure before writing
+new questions ourselves — **zero usable company/period overlap**
+(only 2 MSFT questions total, both old fiscal years; AAPL/NVDA/PLTR/CRM
+absent entirely), confirming questions can't be imported, only patterns
+borrowed. Patterns worth adopting, in priority order:
+1. **Statement-scoped questions** ("...using the income statement") —
+   targets the exact retrieval-precision-collision failure mode already
+   found twice (`nvda-gross-margin-fy26`, `msft-rd-expense-q3fy26`).
+2. **Same-company cross-segment comparisons** ("which segment had the
+   lowest revenue") — a genuinely untested retrieval shape (correct
+   attribution within one filing, not across companies); may pull in
+   1-2 additional companies' filings if needed to get good segment-level
+   coverage.
+3. Multi-year-average ratios (3-year average capex-as-%-revenue, etc.)
+   — extends the formula registry (Week 5n) beyond single-period ratios.
+4. Yes/No + one-line-justification judged questions — a category we
+   have zero of today (all 4 current `judged` questions are open-ended
+   risk-description essays).
+5. "Metric doesn't apply to this business" recognition — lowest
+   priority, our company set doesn't have a natural forcing case the
+   way FinanceBench's bank/JPM questions do.
+- **What we already do that FinanceBench doesn't**: zero of its 150
+  answers are refusal-style ("not disclosed", "not available") — it
+  doesn't test "recognize data genuinely isn't there, don't fabricate"
+  at all. Our Q4-refusal/PLTR-dividend questions (and the Week 5m fix)
+  are testing something this benchmark doesn't — keep investing here,
+  it's a real differentiator, not a distraction from "real" eval growth.
+- **Explicitly out of scope for now**: FinanceBench pulls some
+  questions from 8-Ks; we only ingest 10-K/10-Q. Not extending ingestion
+  for this — revisit once the core product is done and there's appetite
+  to grow filing-type coverage generally, not as a side effect of eval growth.
+
+**Then — write the actual new questions**, following the priority order
+above, plus the general growth principles already established:
 - Go back into the actual filings to find and verify ground-truth figures
   — real research, not guessing plausible-looking numbers
-- Cover PLTR/NVDA/AAPL more evenly across both 10-K and 10-Q forms
-- More comparison-style questions, including ones that require correct
-  *attribution* (which entity a number belongs to), since
-  `grade_comparison()` doesn't check that yet
+- More comparison-style questions that require correct *attribution*
+  (which entity/segment a number belongs to), since `grade_comparison()`
+  doesn't check that yet
 - A few genuinely ambiguous/no-company-context questions, to verify
   `agent.py`'s disambiguation holds up beyond the cases spot-checked so far
 - Decide whether `answer.py` (Week 3) stays as a simpler fallback/

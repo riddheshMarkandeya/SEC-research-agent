@@ -33,20 +33,18 @@ import requests
 
 from companies import load_companies
 from config import OLLAMA_MODEL_NAME, OLLAMA_URL
-from numeric_utils import UNIT_MULTIPLIERS, extract_numbers, normalize
-from retrieval import hybrid_search
-from xbrl_facts import (
-    DEFAULT_METRIC_TAGS,
+from formulas import (
     get_gross_margin,
     get_gross_margin_all_companies,
-    get_metric,
-    get_metric_all_companies,
     get_net_margin,
     get_net_margin_all_companies,
     get_operating_margin,
     get_operating_margin_all_companies,
     get_yoy_growth,
 )
+from numeric_utils import UNIT_MULTIPLIERS, extract_numbers, normalize
+from retrieval import hybrid_search
+from xbrl_facts import DEFAULT_METRIC_TAGS, get_metric, get_metric_all_companies
 
 MAX_TOOL_ITERATIONS = 6
 CHUNKS_PER_SEARCH = 5
