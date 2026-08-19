@@ -188,8 +188,29 @@ def load_questions(path: Path) -> list[dict]:
     return questions
 
 
-def run_eval(questions_path: Path) -> list[dict]:
+def _select_questions(questions: list[dict], ids: list[str] | None, include_skipped: bool) -> list[dict]:
+    """Applies --ids / skip-flag filtering, kept separate from
+    run_eval()'s live agent loop so it's testable without network/Ollama
+    calls. Explicit `ids` always wins over a question's own `skip` flag
+    -- asking for a question by ID directly is a stronger signal than
+    the file's default, and is how you'd re-run a skip-flagged question
+    on demand without editing eval_questions.jsonl. Result follows the
+    file's own order, not the order `ids` were given in."""
+    if ids is not None:
+        wanted = set(ids)
+        selected = [q for q in questions if q["id"] in wanted]
+        missing = wanted - {q["id"] for q in selected}
+        if missing:
+            raise ValueError(f"Unknown question id(s): {sorted(missing)}")
+        return selected
+    if include_skipped:
+        return questions
+    return [q for q in questions if not q.get("skip")]
+
+
+def run_eval(questions_path: Path, ids: list[str] | None = None, include_skipped: bool = False) -> list[dict]:
     questions = load_questions(questions_path)
+    questions = _select_questions(questions, ids, include_skipped)
     results = []
 
     for q in questions:
@@ -261,9 +282,21 @@ def save_report(results: list[dict]) -> Path:
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--questions", type=Path, default=QUESTIONS_PATH)
+    parser.add_argument(
+        "--ids",
+        type=str,
+        default=None,
+        help="comma-separated question IDs to run (default: all, minus any skip: true questions)",
+    )
+    parser.add_argument(
+        "--include-skipped",
+        action="store_true",
+        help="also run questions marked skip: true (ignored if --ids is given)",
+    )
     args = parser.parse_args()
 
-    results = run_eval(args.questions)
+    ids = [i.strip() for i in args.ids.split(",")] if args.ids else None
+    results = run_eval(args.questions, ids=ids, include_skipped=args.include_skipped)
     print_summary(results)
     out_path = save_report(results)
     print(f"\nFull report saved to {out_path}")

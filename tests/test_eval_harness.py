@@ -14,6 +14,7 @@ agent.py's verify_citations()) — see tests/test_numeric_utils.py.
 import json
 
 from eval_harness import (
+    _select_questions,
     grade_comparison,
     grade_judged,
     grade_numeric,
@@ -147,6 +148,60 @@ def test_load_questions_parses_jsonl_and_skips_blank_lines(tmp_path):
     )
     questions = load_questions(path)
     assert [q["id"] for q in questions] == ["q1", "q2"]
+
+
+# ---------------------------------------------------------------------------
+# _select_questions -- --ids / skip-flag filtering, kept separate from
+# run_eval()'s live agent loop so it's testable without network/Ollama calls
+# ---------------------------------------------------------------------------
+def _q(id_, skip=None):
+    q = {"id": id_, "question": f"{id_}?"}
+    if skip is not None:
+        q["skip"] = skip
+    return q
+
+
+def test_select_questions_with_no_ids_and_no_skip_flags_returns_everything():
+    questions = [_q("a"), _q("b"), _q("c")]
+    assert _select_questions(questions, ids=None, include_skipped=False) == questions
+
+
+def test_select_questions_excludes_skip_flagged_by_default():
+    questions = [_q("a"), _q("b", skip=True), _q("c")]
+    result = _select_questions(questions, ids=None, include_skipped=False)
+    assert [q["id"] for q in result] == ["a", "c"]
+
+
+def test_select_questions_include_skipped_forces_skip_flagged_back_in():
+    questions = [_q("a"), _q("b", skip=True), _q("c")]
+    result = _select_questions(questions, ids=None, include_skipped=True)
+    assert [q["id"] for q in result] == ["a", "b", "c"]
+
+
+def test_select_questions_with_ids_returns_only_those_in_file_order():
+    questions = [_q("a"), _q("b"), _q("c")]
+    # Requested out of order -- result should still follow file order,
+    # not the order given in --ids.
+    result = _select_questions(questions, ids=["c", "a"], include_skipped=False)
+    assert [q["id"] for q in result] == ["a", "c"]
+
+
+def test_select_questions_with_ids_ignores_skip_flag():
+    # Explicit --ids always wins over a question's own skip flag --
+    # asking for a question by ID is a stronger signal than the file's
+    # default.
+    questions = [_q("a", skip=True)]
+    result = _select_questions(questions, ids=["a"], include_skipped=False)
+    assert [q["id"] for q in result] == ["a"]
+
+
+def test_select_questions_with_unknown_id_raises():
+    questions = [_q("a")]
+    try:
+        _select_questions(questions, ids=["a", "does-not-exist"], include_skipped=False)
+        assert False, "expected ValueError"
+    except ValueError as e:
+        assert "does-not-exist" in str(e)
 
 
 # ---------------------------------------------------------------------------

@@ -1887,16 +1887,40 @@ local-model flakiness); nothing regressed.
   from a different period/table entirely rather than misreading close
   numbers.
 
-**Not yet decided: whether/how to address these.** Options, not yet
-discussed with the user: (a) leave as documented, known-hard questions
-(same status `nvda-rd-expense-q4fy26-refusal` had before its fix) and
-keep growing the eval set elsewhere; (b) extend `DEFAULT_METRIC_TAGS`
-with more raw XBRL tags (`total_assets`, etc.) the way `operating_income`
-was added, sidestepping retrieval for these specific metrics; (c) a
-retrieval-side fix for statement-table precision generally, which would
-need real investigation before committing to — no root cause established
-yet for *why* segment-table retrieval fails, unlike the Q4 case where
-the root cause was found before any fix was attempted.
+**Decided: keep growing the eval set through the remaining
+FinanceBench-informed priorities first, then fix the accumulated
+findings one by one** (rather than stopping to fix each new failure as
+it's found) — same reasoning as the very first XBRL-tool round: let
+enough real findings accumulate before deciding what's worth building,
+instead of reacting to one failure at a time.
+
+### `eval_harness.py` — `--ids` / `skip` question filtering (Week 5p)
+
+With eval questions now growing past what's comfortable to re-run in
+full at local Ollama speed (each full 25-question run takes 25-30
+minutes), added a way to run a specific subset instead of all-or-one:
+
+- **`--ids id1,id2,...`** on `eval_harness.py`'s CLI — runs only the
+  named questions, any count from one to many, in the file's own order
+  (not the order given on the command line). Verified live: `--ids
+  aapl-net-income-fy2025,nvda-revenue-fy26` ran exactly those 2 of 25,
+  printed in file order.
+- **Optional `"skip": true` field** on individual questions in
+  `eval_questions.jsonl` — excluded from the default full run without
+  deleting the question. `--include-skipped` forces them back in. Not
+  applied to any of the Week 5o failures yet — that was a deliberate
+  choice, not an oversight, since those are being tracked as findings
+  to fix, not permanently parked.
+- **Precedence, by design**: explicit `--ids` always wins over a
+  question's own `skip` flag — asking for a question by ID is a
+  stronger, more specific signal than the file's default, and is how
+  you'd re-run a skipped question on demand without editing the file.
+  An unknown ID raises immediately (`ValueError`, live-verified via the
+  CLI) rather than silently running fewer questions than asked for.
+- New pure helper `_select_questions(questions, ids, include_skipped)`
+  in `eval_harness.py`, kept separate from `run_eval()`'s live-agent
+  loop specifically so the filtering logic is unit-testable without any
+  network/Ollama calls — 6 new tests, 179/179 full suite.
 
 **Then — continue writing more new questions**, following the
 remaining priority order (3: multi-year averages, 5: inapplicable-
