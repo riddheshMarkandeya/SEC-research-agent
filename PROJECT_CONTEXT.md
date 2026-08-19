@@ -1860,6 +1860,38 @@ by the new `start_fiscal_year`/`end_fiscal_year` schema fields — a
 clean re-run called the tool correctly with no extra keys). 202/202
 unit tests.
 
+### `discover_tags.py` — dev-time XBRL tag discovery (Week 5s)
+
+Every entry in `xbrl_facts.py`'s `DEFAULT_METRIC_TAGS` so far (`total_assets`,
+`cash_and_equivalents`, `inventory`, ...) got added the same way: an eval
+question fails, then a manual guess-and-check against SEC's `companyconcept`
+API confirms which tag to use. That loop only surfaces a missing metric
+*after* something breaks. SEC's other XBRL endpoint, `companyfacts`,
+returns every tag a company has EVER reported across all taxonomies in one
+response (503 us-gaap tags for AAPL alone, ~3.8MB) — fetchable once and
+browsable, turning "discover by failure" into "browse up front."
+
+`discover_tags.py` wraps that endpoint: `fetch_company_facts(ticker)`
+caches the full payload to `xbrl_cache/` (same directory, same
+fetch-once-cache-forever rationale as `fetch_concept()`, since a past
+period's SEC data never changes once filed), and `list_tags(ticker,
+keyword=..., recent_only=..., taxonomy=...)` filters it down — by
+substring, and/or to tags with at least one entry in the last ~400 days
+(the same staleness trap `DEFAULT_METRIC_TAGS`'s own comment already
+documents for `Revenues`: a tag existing doesn't mean a company still
+reports it). Also runnable as a CLI: `python discover_tags.py PLTR
+--keyword inventory`.
+
+Deliberately NOT wired into `agent.py` or any runtime path — it's a
+research tool you run by hand before writing or debugging an eval
+question, not something the agent calls. Live-verified against real data:
+`discover_tags.py PLTR --keyword inventory` returns 0 tags (confirming,
+independently of `is_metric_tagged()`, that Palantir really has no
+inventory-related concept at all), `discover_tags.py AAPL --keyword
+inventory --recent-only` returns 3 (`InventoryNet` plus finished-goods/
+raw-materials breakdowns not previously known about). 7 new tests
+(`tests/test_discover_tags.py`), 209/209 full suite.
+
 ## Next steps
 
 > This section used to be a running "X: FIXED, see above" log that
