@@ -1839,13 +1839,71 @@ borrowed. Patterns worth adopting, in priority order:
   for this — revisit once the core product is done and there's appetite
   to grow filing-type coverage generally, not as a side effect of eval growth.
 
-**Then — write the actual new questions**, following the priority order
-above, plus the general growth principles already established:
+### Eval growth round 3 — 21 → 25 questions, priorities 1 and 2 from the FinanceBench analysis (Week 5o)
+
+Added 4 questions targeting the top two priorities from Week 5l's
+FinanceBench analysis: 2 statement-scoped (a metric outside
+`DEFAULT_METRIC_TAGS`, forcing unstructured retrieval), 2 same-company
+segment comparisons (also covering priority 4, Yes/No-style judged
+questions, since segment comparisons naturally fit that shape).
+Ground truth verified directly against real retrieved chunks and/or
+`fetch_concept()` before writing any question — same discipline as
+every prior eval-growth round, not guessed:
+- `nvda-total-assets-q1fy27`: $259,474M as of 2026-04-26, verified via
+  `fetch_concept('NVDA', 'Assets')`.
+- `aapl-cash-equivalents-q3fy2026`: $39,544M as of 2026-06-27, verified
+  via `fetch_concept('AAPL', 'CashAndCashEquivalentsAtCarryingValue')`.
+- `nvda-segment-revenue-comparison-q1fy27`: Compute & Networking
+  $74,550M vs. Graphics $7,065M, quarter ended 2026-04-26 — verified
+  against the exact "Revenue by Reportable Segments" table chunk.
+- `msft-segment-revenue-comparison-q3fy2026`: Productivity and Business
+  Processes $35,013M narrowly ahead of Intelligent Cloud $34,681M
+  (More Personal Computing $13,192M), three months ended 2026-03-31 —
+  deliberately close numbers, verified against one single table chunk
+  containing all three segments together.
+
+**Result: all 4 new questions FAIL, each for a different, real reason**
+— not noise, and not something to "fix" by picking easier questions.
+Original 21 held steady at 18/21 (same pre-existing, already-documented
+local-model flakiness); nothing regressed.
+- `nvda-total-assets-q1fy27`: complete miss. `total_assets` isn't in
+  `DEFAULT_METRIC_TAGS`, and unstructured search genuinely can't find
+  the balance sheet table for this query — confirmed directly with a
+  standalone `hybrid_search()` call before writing the question, which
+  returned inventory/goodwill/fair-value chunks instead, never the
+  balance sheet. The live run fabricated numbers (6.0, 25797.0, 35665.0)
+  from that irrelevant context, none matching the real $259,474M.
+- `aapl-cash-equivalents-q3fy2026`: subtler. The model landed on the
+  textually correct value (39,544) — retrieval CAN find the right
+  chunk, confirmed directly beforehand — but the citation-verification
+  gate caught that it wasn't actually grounded in the cited source. Real
+  signal that retrievability alone doesn't guarantee correct attribution.
+- `nvda-segment-revenue-comparison-q1fy27`: the model concluded both
+  segments had *equal* revenue — a real misread of the segment table,
+  not a defensible near-miss.
+- `msft-segment-revenue-comparison-q3fy2026`: picked the wrong segment,
+  and its cited figures ($45.7B, $38.9B, $18.2B) don't match any number
+  in the real three-month table at all — suggests it may have pulled
+  from a different period/table entirely rather than misreading close
+  numbers.
+
+**Not yet decided: whether/how to address these.** Options, not yet
+discussed with the user: (a) leave as documented, known-hard questions
+(same status `nvda-rd-expense-q4fy26-refusal` had before its fix) and
+keep growing the eval set elsewhere; (b) extend `DEFAULT_METRIC_TAGS`
+with more raw XBRL tags (`total_assets`, etc.) the way `operating_income`
+was added, sidestepping retrieval for these specific metrics; (c) a
+retrieval-side fix for statement-table precision generally, which would
+need real investigation before committing to — no root cause established
+yet for *why* segment-table retrieval fails, unlike the Q4 case where
+the root cause was found before any fix was attempted.
+
+**Then — continue writing more new questions**, following the
+remaining priority order (3: multi-year averages, 5: inapplicable-
+metric recognition) plus the general growth principles already
+established:
 - Go back into the actual filings to find and verify ground-truth figures
   — real research, not guessing plausible-looking numbers
-- More comparison-style questions that require correct *attribution*
-  (which entity/segment a number belongs to), since `grade_comparison()`
-  doesn't check that yet
 - A few genuinely ambiguous/no-company-context questions, to verify
   `agent.py`'s disambiguation holds up beyond the cases spot-checked so far
 - Decide whether `answer.py` (Week 3) stays as a simpler fallback/
