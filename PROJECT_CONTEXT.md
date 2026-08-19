@@ -1963,6 +1963,16 @@ to a descriptive chunk instead) -- a second, smaller open thread. Neither
 investigated further yet; explicitly left open, reported to the user
 rather than assumed-fixed.
 
+**Full 27-question suite after the retrieval fix**: 22/27 passed (up
+from 21/27) -- no regressions among previously-passing questions. The 5
+fails are the same pre-existing baseline flakiness
+(`aapl-employees-fy25`, `msft-tax-rate-q2fy26`,
+`aapl-msft-employee-comparison`, `aapl-operating-margin-q3fy2026`) plus
+`msft-segment-revenue-comparison-q3fy2026` itself, now failing on the
+comparison-reasoning bug above instead of "no data found."
+`pltr-inventory-turnover-fy2025-refusal` passed this run, consistent
+with its documented ~1-in-3 flakiness (Week 5r), not caused by this fix.
+
 ## Next steps
 
 > This section used to be a running "X: FIXED, see above" log that
