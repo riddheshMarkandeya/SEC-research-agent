@@ -100,12 +100,21 @@ no code changes needed elsewhere.
 2. **Week 2a — table→markdown + chunking** ✅ DONE
 3. **Week 2b — embeddings + Chroma indexing** ✅ DONE
 4. **Week 3 — hybrid retrieval (vector + BM25) + reranking + citation-grounded answers** ✅ DONE (v0 prototype — see below)
-5. **Week 4 — eval harness** 🟡 GROWING, 16 questions so far (see below) —
-   started at 6, deferred growth twice in favor of Week 5, then grown to
-   16 in a first incremental pass after Week 5's bugs were fixed. Still
-   short of the full 30-50 FinanceBench-style target.
-6. **Week 5 — agent layer + tool calling** ✅ DONE (v0 — see below)
-7. Week 6 — expose tools as an MCP server
+5. **Week 4 — eval harness** ✅ DONE (for this phase), 27 questions —
+   started at 6, grew to 8 → 16 → 21 through bug-driven rounds, then two
+   more FinanceBench-informed rounds (25 → 27) covering all 5 patterns
+   from that analysis. **Deliberately stopped short of the original
+   30-50 target**: 27 questions already surfaced 6 real, distinct,
+   unfixed bugs (see "Next steps" below) — more volume without fixing
+   what's already found has diminishing returns right now. Revisit
+   growing further once those are fixed.
+6. **Week 5 — agent layer + tool calling** ✅ DONE (v0, then extensively
+   hardened through 17 lettered sub-rounds, 5a-5q — see below for all of
+   them: structured XBRL facts tool, citation verification, formula
+   registry, Q4-refusal fix, eval-question filtering, etc.)
+7. Week 6 — expose tools as an MCP server (all 3: `search_filings`,
+   `get_financial_fact`, `compare_financial_metric` — not just
+   `search_filings` as originally scoped before the other two existed)
 8. Week 7 — guardrails (no numeric claim without citation), retry/backoff,
    rate limits, Langfuse tracing
 9. Week 8 — polish + write-up
@@ -455,10 +464,13 @@ Both bugs are still open as of this writing.
   suite to confirm restoration to 14/16 with no new regressions —
   confirmed. `period_labels.py`, `tests/test_period_labels.py`, and
   `verify_period_labels.py` were kept: the period-math logic is sound
-  and independently verified, and remains available for a future, more
-  targeted application — e.g. as a reranking-stage signal rather than
-  raw embedding/BM25 input concatenation, which wasn't attempted this
-  round. The two original bugs remain open; see "Immediate next steps."
+  and independently verified, still powers `verify_period_labels.py`'s
+  fiscal-year-end safeguard, and a reranking-stage-signal application
+  was considered as a future alternative to raw embedding/BM25 input
+  concatenation. **Decided against reviving that idea**: both original
+  motivating bugs (`nvda-gross-margin-fy26`, `msft-rd-expense-q3fy26`)
+  were fixed a different way, via the structured XBRL tool below — no
+  open bug currently needs it.
 - **`verify_period_labels.py`**: a re-runnable safeguard against the
   `fiscal_year_end_month` assumption described in the `companies.py`
   section above. Cross-checks the computed fiscal year/quarter for every
@@ -1487,19 +1499,23 @@ questions in the eval set rather than swapping them for easier ones,
 since a known, well-diagnosed gap is more useful long-term than a
 higher pass count that hides it.
 
-**Explicitly deferred:** growing this to the full 30-50 question,
-FinanceBench-style set — that requires going back into the actual
-filings to find and verify ground truth, which is real research work,
-not scaffolding.
+**Eval set later grown to 27 questions across two FinanceBench-informed
+rounds (Week 5o/5q) — see those sections further below.** Deliberately
+stopped short of the original 30-50 target once 27 questions had
+already surfaced 6 real, distinct, unfixed bugs; growing further was
+judged lower-value than fixing what's already found. See "Next steps"
+at the end of this doc.
 
-**Considered and deferred:** RAGAS/DeepEval (open-source RAG eval
-libraries with built-in *faithfulness* metrics — do the answer's claims
-actually trace back to the retrieved chunks). Notably, this project's own
-`grade_comparison()` just caught exactly the kind of error a faithfulness
-metric is designed for (a citation pointing at content that doesn't
-support the claim) — reinforces that this is worth adding as a *third*
-grading path once the question set grows, rather than a purely
-theoretical nice-to-have.
+**Considered and deferred, then dropped:** RAGAS/DeepEval (open-source
+RAG eval libraries with built-in *faithfulness* metrics — do the
+answer's claims actually trace back to the retrieved chunks). At the
+time, this project's own `grade_comparison()` had just caught exactly
+the kind of error a faithfulness metric is designed for, which read as
+a reason to add one as a third grading path. **Decided against it once
+`value_is_citation_verified()` existed** (Week 5h, below) — it already
+does faithfulness-style checking (does a cited claim's number actually
+appear in its cited source) directly in this project's own grading
+pipeline; a second external library would likely be redundant.
 
 ### `agent.py` (Week 5) — v0 tool-calling agent
 
@@ -1617,7 +1633,84 @@ Ingestion + chunking have been run across all 5 companies (25 filings,
   whether it's a phrasing issue or the Human Capital sections are poorly
   chunked/embedded.
 
-## Immediate next steps
+## Next steps
+
+> This section used to be a running "X: FIXED, see above" log that
+> duplicated every `###` write-up in "Code written so far" above it,
+> growing every session until the actual open items were buried under
+> ~380 lines of history. Cleaned up (2026-08-19): every already-done
+> item now lives in exactly one place (its own `###` section above),
+> and this section holds only what's genuinely still open, in priority
+> order. Git history and the `###` sections are the changelog; this is
+> the todo list.
+
+**1. Fix the 6 accumulated eval findings from rounds 3 and 4** (Week
+5o/5q above), before doing anything else eval-related — this is the
+explicit reason eval growth paused at 27 questions instead of
+continuing to 30-50:
+- `nvda-total-assets-q1fy27` — pure retrieval miss; `total_assets` isn't
+  in `DEFAULT_METRIC_TAGS`, and `search_filings` can't find the balance
+  sheet table for this query at all.
+- `aapl-cash-equivalents-q3fy2026` — right value, wrong/missing citation
+  grounding (retrieval CAN find the chunk; attribution still fails).
+- `nvda-segment-revenue-comparison-q1fy27` — misread the segment table,
+  concluded both segments had equal revenue.
+- `msft-segment-revenue-comparison-q3fy2026` — picked the wrong segment;
+  cited figures don't match the real table at all.
+- `aapl-3yr-avg-operating-margin-fy2023-fy2025` — misparsed "3-year
+  average" as a Q4-specific request, echoed the Q4-not-disclosed hint
+  verbatim instead of attempting the actual question.
+- `pltr-inventory-turnover-fy2025-refusal` — got close (admitted it
+  couldn't compute the ratio) but never named the real reason (no
+  inventory line item at all) and cited an unrelated figure.
+
+**2. Then: build the Gemini swappable-backend design** (deferred from
+Week 5l's spike). Two things this unblocks at once: (a) re-testing
+"local vs. cloud" properly once the above 6 fixes land, to see whether
+they generalize or whether Gemini still outperforms on the same
+questions; (b) revisiting the citation-verification retry loop (Week
+5j, built, reverted, explicitly marked "revisit once working with a
+more capable model") — Gemini is exactly that more-capable model to
+test it against, now reachable via the same swappable backend instead
+of the throwaway `spike_gemini_eval.py` script.
+
+**3. Then: resume eval growth**, informed by both the FinanceBench
+analysis (Week 5l) and whatever round 1-2 above surfaces:
+- **Multi-statement questions** — FinanceBench had questions requiring
+  two *different* statements together (e.g., operating cash flow ratio
+  = CFO / current liabilities). Round 3's statement-scoped questions
+  only covered one statement at a time — untested variant.
+- **Pure unstructured multi-chunk synthesis** — combining two *prose*
+  facts from `search_filings` within one filing, no structured XBRL
+  involved. Distinct from the segment-comparison questions (which read
+  both numbers from a single table) and from the margin formulas (which
+  combine two *structured* XBRL calls).
+- A few genuinely ambiguous/no-company-context questions, to verify
+  `agent.py`'s disambiguation holds up beyond the cases spot-checked so
+  far (carried over from before the FinanceBench work started).
+- Toward the original 30-50 FinanceBench-style target, if still useful
+  once the above is covered — not a fixed requirement, revisit whether
+  it's still worth it once there's more signal.
+- Ground truth for all of the above: real research against actual
+  filings, same discipline as every round so far, not guessed numbers.
+
+**4. Independent, no dependency on the above — do whenever convenient:**
+decide whether `answer.py` (Week 3) stays as a simpler fallback/
+baseline or gets retired. `agent.py` is a strict superset of what it
+does; this is a cleanup decision, not a bug fix.
+
+**5. Week 6 — expose tools as an MCP server.** All 3 agent tools
+(`search_filings`, `get_financial_fact`, `compare_financial_metric`) —
+not just `search_filings` as the plan originally said before the other
+two existed.
+
+**6. Week 7 — guardrails**: no numeric claim without citation as a hard
+gate (not just a warning), retry/backoff, rate limits, Langfuse tracing.
+
+**7. Week 8 — polish + write-up.**
+
+<details>
+<summary>Historical log (superseded by the section above — kept for the full narrative/evidence trail, not because anything here is still actionable)</summary>
 
 **Reranker bug: FIXED** (see `retrieval.py` and `eval_harness.py`
 sections above) — `_combine_fused_and_rerank()` now takes the MAX of the
@@ -1812,22 +1905,27 @@ new questions ourselves — **zero usable company/period overlap**
 (only 2 MSFT questions total, both old fiscal years; AAPL/NVDA/PLTR/CRM
 absent entirely), confirming questions can't be imported, only patterns
 borrowed. Patterns worth adopting, in priority order:
-1. **Statement-scoped questions** ("...using the income statement") —
-   targets the exact retrieval-precision-collision failure mode already
-   found twice (`nvda-gross-margin-fy26`, `msft-rd-expense-q3fy26`).
-2. **Same-company cross-segment comparisons** ("which segment had the
-   lowest revenue") — a genuinely untested retrieval shape (correct
-   attribution within one filing, not across companies); may pull in
-   1-2 additional companies' filings if needed to get good segment-level
-   coverage.
-3. Multi-year-average ratios (3-year average capex-as-%-revenue, etc.)
-   — extends the formula registry (Week 5n) beyond single-period ratios.
-4. Yes/No + one-line-justification judged questions — a category we
-   have zero of today (all 4 current `judged` questions are open-ended
-   risk-description essays).
-5. "Metric doesn't apply to this business" recognition — lowest
-   priority, our company set doesn't have a natural forcing case the
-   way FinanceBench's bank/JPM questions do.
+1. **DONE (round 3, Week 5o)** — Statement-scoped questions ("...using
+   the income statement") — targets the exact retrieval-precision-
+   collision failure mode already found twice (`nvda-gross-margin-fy26`,
+   `msft-rd-expense-q3fy26`). Covered: single-statement questions only
+   (total assets / balance sheet, cash & equivalents / balance sheet) —
+   see the "still open" list below for the multi-statement variant this
+   didn't cover.
+2. **DONE (round 3, Week 5o)** — Same-company cross-segment comparisons
+   ("which segment had the lowest revenue") — a genuinely untested
+   retrieval shape (correct attribution within one filing, not across
+   companies); ended up pulling in NVDA and MSFT's segment tables.
+3. **DONE (round 4, Week 5q)** — Multi-year-average ratios (3-year
+   average operating margin) — extends the formula registry (Week 5n)
+   beyond single-period ratios.
+4. **DONE (round 3, Week 5o)** — Yes/No + one-line-justification judged
+   questions — covered via the two segment-comparison questions, which
+   are Yes/No-shaped ("did X have more revenue than Y").
+5. **DONE (round 4, Week 5q)** — "Metric doesn't apply to this
+   business" recognition — found a real forcing case after all:
+   Palantir doesn't tag inventory at all (confirmed via `fetch_concept`
+   returning 404), unlike the other four companies.
 - **What we already do that FinanceBench doesn't**: zero of its 150
   answers are refusal-style ("not disclosed", "not available") — it
   doesn't test "recognize data genuinely isn't there, don't fabricate"
@@ -1961,20 +2059,11 @@ predicted**:
   fabrication, but an incomplete/imprecise refusal.
 
 Neither yet addressed — added to the same accumulating-findings queue
-as round 3 (Week 5o), per the "grow first, fix in a batch" decision
-above.
+as round 3 (Week 5o). All 5 FinanceBench-analysis priorities are done
+as of this round. See "Next steps" at the top of this section for what
+comes next (fixing these 6, then the still-open question-type gaps).
 
-**Then — continue writing more new questions**, following the general
-growth principles already established:
-- Go back into the actual filings to find and verify ground-truth figures
-  — real research, not guessing plausible-looking numbers
-- A few genuinely ambiguous/no-company-context questions, to verify
-  `agent.py`'s disambiguation holds up beyond the cases spot-checked so far
-- Decide whether `answer.py` (Week 3) stays as a simpler fallback/
-  baseline or gets retired — `agent.py` is a strict superset of what it does
-
-**Then Week 6 — expose tools as an MCP server**, wrapping the same
-`search_filings` tool `agent.py` already defines.
+</details>
 
 ## Design principles to carry forward
 
