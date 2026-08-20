@@ -2097,6 +2097,24 @@ analysis (Week 5l) and whatever round 1-2 above surfaces:
   it's still worth it once there's more signal.
 - Ground truth for all of the above: real research against actual
   filings, same discipline as every round so far, not guessed numbers.
+- **Watch for relationship/multi-hop-shaped questions** ("which filings
+  reference the same litigation," "companies sharing a named supplier,"
+  "how a segment's name changed across a reorg") — if these show up,
+  they're the trigger to revisit a graph DB (Neo4j) as a retrieval
+  layer. Discussed and deliberately parked (2026-08-20): at the current
+  corpus size (~3,207 chunks / 25 filings / 5 companies), every
+  retrieval bug actually root-caused so far (cross-encoder demoting
+  good chunks, the MSFT glossary-table collision, the segment-comparison
+  reasoning bug) happened at the rerank or reasoning stage, not from
+  missing relationship structure — so there's no concrete demand for a
+  graph layer yet. Same discipline as the formula-registry deferral:
+  let a real eval question justify it before building the infra.
+  **HNSW index tuning was also discussed and ruled out**, not just
+  deferred — at this corpus size Chroma's default HNSW parameters are
+  already near-exact recall; approximate-search tuning only pays off at
+  100k+ vectors, and no observed failure here has been an ANN-recall
+  problem, so this isn't worth revisiting even if the corpus grows
+  moderately.
 
 **4. Independent, no dependency on the above — do whenever convenient:**
 decide whether `answer.py` (Week 3) stays as a simpler fallback/
