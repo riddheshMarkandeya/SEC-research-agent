@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(grep -i -o \".\\\\{150\\\\}approximately.\\\\{0,50\\\\}employ.\\\\{100\\\\}\" data/MSFT/0000950170-25-100235_text.txt data/MSFT/0001193125-26-323660_text.txt)",
+      "Bash(grep -i -o \".\\\\{100\\\\}[0-9,]\\\\+ people.\\\\{100\\\\}\" data/MSFT/0001193125-26-323660_text.txt)",
+      "Bash(curl -s http://localhost:11434/api/ps)",
+      "Bash(tasklist)",
+      "Bash(python -c ' *)",
+      "Bash(grep -n \"### \\\\`agent.py\\\\`\" -A 50 \"c:/riddhesh/projects/SEC research agent/PROJECT_CONTEXT.md\")"
+    ]
+  }
+}

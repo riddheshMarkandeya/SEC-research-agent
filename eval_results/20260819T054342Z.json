@@ -1,0 +1,26 @@
+[
+  {
+    "id": "nvda-total-assets-q1fy27",
+    "ticker": "NVDA",
+    "question": "What was NVIDIA's total assets as of April 26, 2026, according to its balance sheet?",
+    "type": "numeric",
+    "passed": true,
+    "detail": "found matching value: 259474000000.0 (raw)",
+    "has_citation": true,
+    "citation_warnings": [],
+    "answer": "NVIDIA's total assets as of April 26, 2026, according to its balance sheet, were $259,474,000,000 [1].",
+    "n_chunks_retrieved": 1
+  },
+  {
+    "id": "aapl-cash-equivalents-q3fy2026",
+    "ticker": "AAPL",
+    "question": "What was Apple's cash and cash equivalents as of June 27, 2026, according to its balance sheet?",
+    "type": "numeric",
+    "passed": true,
+    "detail": "found matching value: 39544000000.0 (raw)",
+    "has_citation": true,
+    "citation_warnings": [],
+    "answer": "Apple's cash and cash equivalents as of June 27, 2026, according to its balance sheet, were $39,544,000,000 [1].",
+    "n_chunks_retrieved": 1
+  }
+]

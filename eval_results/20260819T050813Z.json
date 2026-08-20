@@ -1,0 +1,26 @@
+[
+  {
+    "id": "aapl-3yr-avg-operating-margin-fy2023-fy2025",
+    "ticker": "AAPL",
+    "question": "What was Apple's 3-year average operating margin from fiscal year 2023 through fiscal year 2025?",
+    "type": "numeric",
+    "passed": false,
+    "detail": "no value matching 31.1 percent found in answer",
+    "has_citation": true,
+    "citation_warnings": [],
+    "answer": "The operating margin for Apple Inc. is not reported as a standalone figure for each quarter; it only exists implicitly as the fiscal year total minus the sum of the first three quarters' operating margins. Quarterly figures are not broken out in this manner [1].\n\n[1] no structured data found for metric='operating_margin' ticker='AAPL' 'Q4' FY2023, FY2024, and FY2025 \u2014 try search_filings instead",
+    "n_chunks_retrieved": 0
+  },
+  {
+    "id": "pltr-inventory-turnover-fy2025-refusal",
+    "ticker": "PLTR",
+    "question": "What was Palantir's inventory turnover ratio for fiscal year 2025?",
+    "type": "judged",
+    "passed": false,
+    "detail": "The answer fabricates a specific cost of revenue figure and suggests calculating an inventory turnover ratio, which does not align with Palantir's business model as a software company.",
+    "has_citation": true,
+    "citation_warnings": [],
+    "answer": "The inventory turnover ratio for Palantir Technologies Inc. is not directly provided by the cost of revenue metric alone. However, we can infer that the cost of revenue for fiscal year 2025 was $192,934,000 [1]. To calculate the inventory turnover ratio, additional information such as average inventory value would be needed.\n\nSince the exact inventory value is not provided in the available data, I cannot compute the inventory turnover ratio. Therefore, based on the given metric, we can only state that Palantir's cost of revenue for fiscal year 2025 was $192,934,000 [1].",
+    "n_chunks_retrieved": 1
+  }
+]

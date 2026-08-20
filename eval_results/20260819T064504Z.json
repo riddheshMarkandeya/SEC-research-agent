@@ -1,0 +1,80 @@
+[
+  {
+    "id": "nvda-total-assets-q1fy27",
+    "ticker": "NVDA",
+    "question": "What was NVIDIA's total assets as of April 26, 2026, according to its balance sheet?",
+    "type": "numeric",
+    "passed": true,
+    "detail": "found matching value: 259474000000.0 (raw)",
+    "has_citation": true,
+    "citation_warnings": [],
+    "answer": "NVIDIA's total assets as of April 26, 2026, according to its balance sheet, were $259,474,000,000 [1].",
+    "n_chunks_retrieved": 1
+  },
+  {
+    "id": "aapl-cash-equivalents-q3fy2026",
+    "ticker": "AAPL",
+    "question": "What was Apple's cash and cash equivalents as of June 27, 2026, according to its balance sheet?",
+    "type": "numeric",
+    "passed": true,
+    "detail": "found matching value: 39544000000.0 (raw)",
+    "has_citation": true,
+    "citation_warnings": [],
+    "answer": "Apple's cash and cash equivalents as of June 27, 2026, according to its balance sheet, were $39,544,000,000 [1].",
+    "n_chunks_retrieved": 1
+  },
+  {
+    "id": "nvda-segment-revenue-comparison-q1fy27",
+    "ticker": "NVDA",
+    "question": "For the quarter ended April 26, 2026, did NVIDIA's Compute & Networking segment generate more revenue than its Graphics segment?",
+    "type": "judged",
+    "passed": true,
+    "detail": "The AI assistant's answer correctly states that the Compute & Networking segment generated more revenue than the Graphics segment for the specified quarter, and it provides accurate figures close to those given in the criteria.",
+    "has_citation": true,
+    "citation_warnings": [
+      "[3] claims 74550.0 (million) but that value doesn't appear in the cited source",
+      "[3] claims 7065.0 (million) but that value doesn't appear in the cited source",
+      "[1] claims 7065.0 (million) but that value doesn't appear in the cited source"
+    ],
+    "answer": "Based on the information provided in NVIDIA's filings:\n\n- For the quarter ended April 26, 2026, the revenue for the Compute & Networking segment was $74,550 million [3].\n- For the same period, the revenue for the Graphics segment was $7,065 million [3].\n\nSince $74,550 million is greater than $7,065 million, NVIDIA's Compute & Networking segment did generate more revenue than its Graphics segment for the quarter ended April 26, 2026.\n\n[1] NVDA 10-Q (reportDate=2026-04-26)\n[2] NVDA 10-Q (reportDate=2025-07-27)",
+    "n_chunks_retrieved": 5
+  },
+  {
+    "id": "msft-segment-revenue-comparison-q3fy2026",
+    "ticker": "MSFT",
+    "question": "Which of Microsoft's three reportable segments \u2014 Productivity and Business Processes, Intelligent Cloud, or More Personal Computing \u2014 had the highest revenue for the three months ended March 31, 2026?",
+    "type": "judged",
+    "passed": false,
+    "detail": "The AI assistant's answer does not address Microsoft's segments and their revenues for the specified period, instead providing financial data for Apple Inc., which is irrelevant to the question.",
+    "has_citation": false,
+    "citation_warnings": [],
+    "answer": "Based on the provided 10-Q filings for Apple Inc. (AAPL), here are some key financial metrics and insights:\n\n### Net Sales:\n- **Three Months Ended June 27, 2026:**\n  - Total net sales: $109,417 million\n  - iPhone: $54,252 million\n  - Mac: $10,352 million\n  - iPad: $6,191 million\n  - Wearables, Home and Accessories: $7,883 million\n  - Services: $30,739 million\n\n- **Nine Months Ended June 27, 2026:**\n  - Total net sales: $364,357 million\n  - iPhone: $196,515 million\n  - Mac: $27,137 million\n  - iPad: $21,700 million\n  - Wearables, Home and Accessories: $27,277 million\n  - Services: $91,728 million\n\n### Operating Income:\n- **Three Months Ended June 27, 2026:**\n  - Total operating income: $35,695 million\n\n- **Nine Months Ended June 27, 2026:**\n  - Total operating income: $122,432 million\n\n### Deferred Revenue:\n- As of June 27, 2026 and September 27, 2025, the Company had total deferred revenue of $14.9 billion and $13.7 billion, respectively.\n\n### Earnings Per Share (EPS):\n- **Three Months Ended June 27, 2026:**\n  - Basic EPS: $2.03\n  - Diluted EPS: $2.02\n\n- **Nine Months Ended June 27, 2026:**\n  - Basic EPS: $6.91\n  - Diluted EPS: $6.88\n\n### Segment Information:\n- The company's segments include Americas, Europe, Greater China, Japan, and Rest of Asia Pacific.\n- **Americas** had the highest net sales in both periods, followed by Europe and Greater China.\n\n### Summary Insights:\n- Apple\u2019s services segment continues to be a significant contributor to its revenue, with substantial growth over the nine-month period.\n- The company's operating income has also shown consistent growth, reflecting strong operational efficiency.\n- Deferred revenue remains high, indicating strong customer commitments and future sales potential.\n\nThese insights provide a comprehensive view of Apple Inc.'s financial performance for the specified periods. For more detailed analysis or specific metrics, please refer to the full 10-Q filings.",
+    "n_chunks_retrieved": 16
+  },
+  {
+    "id": "aapl-3yr-avg-operating-margin-fy2023-fy2025",
+    "ticker": "AAPL",
+    "question": "What was Apple's 3-year average operating margin from fiscal year 2023 through fiscal year 2025?",
+    "type": "numeric",
+    "passed": true,
+    "detail": "found matching value: 31.1 (percent)",
+    "has_citation": true,
+    "citation_warnings": [
+      "[1] claims 3.0 (raw) but that value doesn't appear in the cited source"
+    ],
+    "answer": "Apple's 3-year average operating margin from fiscal year 2023 through fiscal year 2025 was 31.1% [1].",
+    "n_chunks_retrieved": 1
+  },
+  {
+    "id": "pltr-inventory-turnover-fy2025-refusal",
+    "ticker": "PLTR",
+    "question": "What was Palantir's inventory turnover ratio for fiscal year 2025?",
+    "type": "judged",
+    "passed": false,
+    "detail": "The answer provides a fabricated inventory turnover ratio and includes specific numeric values that do not align with Palantir's business model as a software company, thus failing to meet the criteria.",
+    "has_citation": true,
+    "citation_warnings": [],
+    "answer": "Palantir's inventory turnover ratio for fiscal year 2025 can be calculated as the revenue divided by the cost of revenue. For Palantir in fiscal year 2025, the revenue was $4,475,446,000 USD [2] and the cost of revenue was $789,177,000 USD [1]. The inventory turnover ratio is therefore approximately 5.73 (4,475,446,000 / 789,177,000). However, please note that this calculation assumes the cost of revenue approximates the average inventory value, which may not be accurate for Palantir given its business model and how it reports costs. [1][2]",
+    "n_chunks_retrieved": 2
+  }
+]
