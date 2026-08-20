@@ -1973,6 +1973,68 @@ comparison-reasoning bug above instead of "no data found."
 `pltr-inventory-turnover-fy2025-refusal` passed this run, consistent
 with its documented ~1-in-3 flakiness (Week 5r), not caused by this fix.
 
+### Root-causing the comparison-reasoning bug: local-model capability limit, confirmed (Week 5u)
+
+Investigated the "correct numbers, wrong conclusion" bug above (not
+blind re-runs -- three controlled, single-variable tests, per
+systematic-debugging):
+
+1. **One clean chunk (chunk 36, no % columns), nothing else in
+   context.** 2/2 correct. Rules out a raw number-comparison failure
+   and rules out the table's PercentageChange columns as the cause (my
+   first hypothesis, disproven by evidence rather than assumed).
+2. **The real 5-chunk search result, no other history.** 1/3 wrong --
+   worse than one clean chunk, not as bad as the real failure rate.
+3. **The full real conversation, including the model's own 3 earlier
+   (rejected) `get_financial_fact` calls** -- one per segment, each
+   naming a specific segment via the invented `segment` argument.
+   3/3 wrong, one run hallucinating an unrelated sentence about NVIDIA.
+
+Root cause: **self-consistency anchoring**, not arithmetic or
+formatting. The model asks about "Intelligent Cloud" by name in its
+own second tool call; by the time it writes the final answer, it
+reconfirms that segment as significant regardless of the retrieved
+numbers -- even while correctly transcribing the number that disproves
+it. `_format_no_fact_message` never echoes `segment` back, so the bias
+comes purely from the model rereading its own prior turns, not
+anything the tool said.
+
+Two candidate fixes considered, neither implemented:
+- **System-prompt strengthening** (tried first, cheap): made the
+  `get_financial_fact` bullet in `SYSTEM_PROMPT` explicitly say the
+  tool cannot do per-segment/per-product lookups, naming the exact
+  segments as an example. Live-tested 3x: **zero effect** -- the model
+  still invented all 3 per-segment calls every run, and final-answer
+  accuracy barely moved (1/3 correct vs. 0/4 before, not a real
+  improvement at this sample size). Left in place (harmless, and a
+  plausible aid for a more instruction-following model) but confirmed
+  insufficient alone.
+- **Sanitizing rejected calls before they enter message history**
+  (proposed, not built): strip the invented `segment` key from what
+  `run_agent` stores for a rejected call, so the model's own history
+  doesn't repeat 3 distinct per-segment framings. Correctly pushed
+  back on: this would rewrite what the model actually attempted,
+  destroying the one source of ground truth (`--verbose` output) a
+  future debugging session would need, and creating a gap between
+  what a human reading the transcript sees and what the model
+  reasoned over. Right call to not build this speculatively.
+
+**Decisive test instead: same question, same agent scaffolding
+(tool schemas, dispatch logic, retrieval), swapped to Gemini
+(`spike_gemini_eval.py`, `gemini-flash-lite-latest`) instead of local
+Ollama.** 3/3 correct. Gemini never attempted a per-segment
+`get_financial_fact` call at all -- went straight to `search_filings`,
+retrieved and cited the same table chunk (`[5]`, chunk 49) my Week 5t
+retrieval fix surfaces, and named Productivity and Business Processes
+correctly every time. This is conclusive, not just suggestive: the
+retrieval fix is confirmed model-agnostic (Gemini benefits from the
+exact same corrected chunk), and the remaining failure is a genuine
+capability ceiling of `qwen2.5:7b-instruct` -- it invents a parameter
+no model needed to invent, then can't be talked out of anchoring on
+it. Not worth more prompt or history engineering on the local-model
+path for this specific question; the real lever is the swappable-
+backend work already on the roadmap (next steps item 2).
+
 ## Next steps
 
 > This section used to be a running "X: FIXED, see above" log that
@@ -1991,17 +2053,20 @@ with its documented ~1-in-3 flakiness (Week 5r), not caused by this fix.
 (`pltr-inventory-turnover-fy2025-refusal` — a real, tested fix that the
 model doesn't reliably reach due to a separate metric-naming issue).
 **`msft-segment-revenue-comparison-q3fy2026`: retrieval half FIXED (Week
-5t), a NEW comparison-reasoning bug found underneath it, still open.**
-The retrieval-ranking root cause (a reranker demoting the real
-segment-revenue table below near-duplicate boilerplate) is solved and
-live-verified 4/4 — see the Week 5t section above. But the question
-still fails: the model now sees the correct, correctly-cited numbers
-($35,013M vs. $34,681M) and picks the smaller one as "highest," 4/4
-runs. Not yet investigated at the same depth as the retrieval bug —
-next session should treat this the same way (dedicated `--verbose`
-session, form a real hypothesis, don't just re-run and hope). Citation
-misattribution on this question was also inconsistent run-to-run;
-worth a look in the same session since it may share a cause.
+5t). The remaining failure is a confirmed local-model capability limit
+(Week 5u), not something to keep patching on the Ollama path.** The
+retrieval-ranking root cause is solved and live-verified 4/4 — see
+Week 5t. The comparison-reasoning failure underneath it was root-caused
+via 3 controlled tests (self-consistency anchoring on the model's own
+invented `segment` tool calls, not arithmetic or table formatting —
+see Week 5u), and decisively confirmed model-specific by swapping to
+Gemini: 3/3 correct, no invented calls at all. Not carrying this
+forward as its own item — it folds into item 2 below (the swappable-
+backend work already validates the fix path; there's nothing left to
+root-cause here on the local-model side alone). Citation misattribution
+on this question was also inconsistent run-to-run under Ollama; worth
+re-checking once a swappable backend exists, since it may share the
+same cause.
 
 **2. Then: build the Gemini swappable-backend design** (deferred from
 Week 5l's spike). Two things this unblocks at once: (a) re-testing
