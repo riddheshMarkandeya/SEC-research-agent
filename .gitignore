@@ -25,3 +25,8 @@ xbrl_cache/
 
 # Personal notes while talking to Claude
 notes.md
+
+# Subagent-driven-development scratch workspace (ledger, task briefs,
+# implementer reports, review-package diffs) -- process artifacts, not
+# project content.
+.superpowers/
