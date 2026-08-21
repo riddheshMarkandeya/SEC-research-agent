@@ -738,17 +738,21 @@ def run_agent(question: str, backend: str = "ollama", verbose: bool = False) -> 
     state, turn = start(question, SYSTEM_PROMPT, tool_schemas)
     all_results: list[dict] = []
     searched_tickers: set[str | None] = set()
+    calls_made = 1
 
-    for _ in range(MAX_TOOL_ITERATIONS):
+    while True:
         if not turn.tool_calls:
             answer = turn.text or ""
             return answer, all_results, verify_citations(answer, all_results)
+        if calls_made >= MAX_TOOL_ITERATIONS:
+            break
 
         results = [
             {"name": c["name"], "content": _dispatch_tool_call(c, question, all_results, searched_tickers, verbose)}
             for c in turn.tool_calls
         ]
         turn = send_tool_results(state, results)
+        calls_made += 1
 
     return (
         "I wasn't able to finish answering within the allotted number of searches. "
