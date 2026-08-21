@@ -157,7 +157,7 @@ def grade_judged(question: str, answer_text: str, criteria: str) -> tuple[bool, 
                 {"role": "user", "content": user_prompt},
             ],
             "stream": False,
-            # See agent.py's _call_ollama for why num_ctx is set explicitly
+            # See llm_backends.py's _ollama_call for why num_ctx is set explicitly
             # rather than left at Ollama's 4096-token default. The judge's
             # own input (question + criteria + one answer) is smaller than
             # what generation sees, but the answer being graded can itself

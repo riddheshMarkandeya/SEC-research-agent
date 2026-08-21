@@ -69,7 +69,7 @@ def generate_answer(query: str, ticker: str | None = None, top_k: int = 5) -> tu
                 {"role": "user", "content": user_prompt},
             ],
             "stream": False,
-            # See agent.py's _call_ollama for why this is set explicitly —
+            # See llm_backends.py's _ollama_call for why this is set explicitly —
             # Ollama's default 4096-token context window is too small once
             # several ~3000-char chunks plus the system prompt are in play,
             # risking silent truncation rather than an obvious error.
