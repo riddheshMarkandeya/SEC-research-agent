@@ -10,6 +10,10 @@ lxml==6.1.1
 sentence-transformers==5.7.0
 chromadb==1.5.9
 
+# Gemini backend (llm_backends.py, --backend gemini) -- optional cloud
+# alternative to local Ollama.
+google-genai==2.18.1
+
 # Hybrid retrieval (retrieval.py) — lexical half of BM25 + vector search.
 # Reranking reuses sentence-transformers' CrossEncoder, no new dependency.
 rank_bm25==0.2.2

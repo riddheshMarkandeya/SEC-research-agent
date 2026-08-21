@@ -17,11 +17,16 @@ circular. agent.py remains the only place tool *meaning* is defined;
 this module only ever sees opaque strings/dicts.
 """
 
+import time
 from typing import Callable, NamedTuple
 
 import requests
 
-from config import OLLAMA_MODEL_NAME, OLLAMA_URL
+from google import genai
+from google.genai import errors as genai_errors
+from google.genai import types
+
+from config import GEMINI_API_KEY, GEMINI_MODEL_NAME, OLLAMA_MODEL_NAME, OLLAMA_URL
 
 
 # Normalized shape both backends produce. tool_calls entries are
@@ -81,6 +86,63 @@ def _ollama_send(state: dict, results: list[dict]) -> ModelTurn:
     return _ollama_message_to_turn(message)
 
 
+RETRY_DELAY_SECONDS = 15  # free-tier rate limits are generous but not infinite
+
+
+def _to_gemini_tool(schema: dict) -> types.FunctionDeclaration:
+    """agent.py's tool schemas are plain, lowercase JSON-schema dicts
+    (OpenAI/Ollama wire-format style) -- Gemini's SDK accepts that
+    shape directly for `parameters` (verified live in the original
+    spike), so this just unwraps the {"function": {...}} envelope
+    rather than re-describing each tool a second time."""
+    fn = schema["function"]
+    return types.FunctionDeclaration(name=fn["name"], description=fn["description"], parameters=fn["parameters"])
+
+
+def _send_with_retry(chat, message):
+    """Retries on transient errors -- free-tier rate limits (429) and
+    plain server overload (503, "experiencing high demand"), both found
+    live during the original spike -- with a short linear backoff."""
+    for attempt in range(4):
+        try:
+            return chat.send_message(message)
+        except (genai_errors.ClientError, genai_errors.ServerError) as e:
+            code = getattr(e, "code", None)
+            if code not in (429, 503) or attempt == 3:
+                raise
+            time.sleep(RETRY_DELAY_SECONDS * (attempt + 1))
+
+
+def _gemini_response_to_turn(resp) -> ModelTurn:
+    parts = resp.candidates[0].content.parts or []
+    function_calls = [p.function_call for p in parts if p.function_call]
+    tool_calls = [{"name": fc.name, "args": dict(fc.args or {})} for fc in function_calls]
+    return ModelTurn(tool_calls=tool_calls, text=resp.text if not tool_calls else None)
+
+
+def _gemini_start(question: str, system_prompt: str, tool_schemas: list[dict]) -> tuple[object, ModelTurn]:
+    if not GEMINI_API_KEY:
+        raise RuntimeError(
+            "GEMINI_API_KEY is not set (see .env.example) -- required for --backend gemini. "
+            "Get a free-tier key at aistudio.google.com, no credit card needed."
+        )
+    client = genai.Client(api_key=GEMINI_API_KEY)
+    tools = types.Tool(function_declarations=[_to_gemini_tool(s) for s in tool_schemas])
+    chat = client.chats.create(
+        model=GEMINI_MODEL_NAME,
+        config=types.GenerateContentConfig(tools=[tools], system_instruction=system_prompt, temperature=0.1),
+    )
+    resp = _send_with_retry(chat, question)
+    return chat, _gemini_response_to_turn(resp)
+
+
+def _gemini_send(state: object, results: list[dict]) -> ModelTurn:
+    parts = [types.Part.from_function_response(name=r["name"], response={"result": r["content"]}) for r in results]
+    resp = _send_with_retry(state, parts)
+    return _gemini_response_to_turn(resp)
+
+
 BACKENDS: dict[str, tuple[Callable, Callable]] = {
     "ollama": (_ollama_start, _ollama_send),
+    "gemini": (_gemini_start, _gemini_send),
 }

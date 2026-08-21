@@ -42,6 +42,10 @@ OLLAMA_MODEL_NAME = os.getenv("OLLAMA_MODEL_NAME", "qwen2.5:7b-instruct")
 # passed explicitly (llm_backends.py's BACKENDS dict has the full list).
 DEFAULT_BACKEND = os.getenv("DEFAULT_BACKEND", "ollama")
 
+# Gemini (free tier, api key from aistudio.google.com) -- llm_backends.py.
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
+GEMINI_MODEL_NAME = os.getenv("GEMINI_MODEL_NAME", "gemini-flash-lite-latest")
+
 # Persistent Chroma vector store path (index_chunks.py, retrieval.py,
 # query_chunks.py) — must be the SAME path in all three, or querying
 # silently hits an empty or unrelated store instead of erroring.
