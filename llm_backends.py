@@ -1,20 +1,17 @@
 """
 Swappable LLM backend layer (Week 5v / Next Steps item 2).
 ------------------------------------------------------------
-agent.py's run_agent() and the old spike_gemini_eval.py each drove a
-full tool-calling loop against a different SDK (Ollama's HTTP API vs.
-google-genai's chat session), with the actual tool-dispatch logic
-(get_financial_fact / compare_financial_metric / search_filings)
-duplicated verbatim between them -- see
+This module was created to eliminate duplication: both Ollama (HTTP API)
+and Gemini (google-genai SDK) have different wire formats for tool calling.
+Normalizing both into one shape (ModelTurn) lets agent.py drive a single
+shared loop regardless of which backend answers -- see
 docs/superpowers/specs/2026-08-20-swappable-llm-backend-design.md.
 
-This module normalizes both wire formats into one shape (ModelTurn),
-so agent.py's run_agent() can drive a single shared loop regardless of
-which backend answers. Deliberately takes system_prompt/tool_schemas as
-parameters rather than importing them from agent.py -- agent.py needs
-`from llm_backends import BACKENDS`, so the reverse import would be
-circular. agent.py remains the only place tool *meaning* is defined;
-this module only ever sees opaque strings/dicts.
+Deliberately takes system_prompt/tool_schemas as parameters rather than
+importing them from agent.py -- agent.py needs `from llm_backends import
+BACKENDS`, so the reverse import would be circular. agent.py remains the
+only place tool *meaning* is defined; this module only ever sees opaque
+strings/dicts.
 """
 
 import time
