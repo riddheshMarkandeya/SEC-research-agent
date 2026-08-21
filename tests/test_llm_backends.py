@@ -5,6 +5,8 @@ fake data -- no live Ollama/Gemini calls, same principle as
 test_eval_harness.py's mocked grade_judged() test.
 """
 
+from types import SimpleNamespace
+
 from llm_backends import _ollama_message_to_turn, _gemini_response_to_turn
 
 
@@ -40,31 +42,13 @@ def test_ollama_message_to_turn_multiple_tool_calls_preserve_order():
     assert [c["args"]["ticker"] for c in turn.tool_calls] == ["AAPL", "MSFT"]
 
 
-class _FakeFunctionCall:
-    def __init__(self, name, args):
-        self.name = name
-        self.args = args
-
-
-class _FakePart:
-    def __init__(self, function_call=None):
-        self.function_call = function_call
-
-
-class _FakeCandidate:
-    def __init__(self, parts):
-        self.content = type("_C", (), {"parts": parts})()
-
-
-class _FakeGeminiResponse:
-    def __init__(self, parts, text=None):
-        self.candidates = [_FakeCandidate(parts)]
-        self.text = text
-
-
 def test_gemini_response_to_turn_with_tool_calls():
-    fc = _FakeFunctionCall("search_filings", {"query": "revenue", "ticker": "AAPL"})
-    resp = _FakeGeminiResponse(parts=[_FakePart(function_call=fc)])
+    fc = SimpleNamespace(name="search_filings", args={"query": "revenue", "ticker": "AAPL"})
+    part = SimpleNamespace(function_call=fc)
+    resp = SimpleNamespace(
+        candidates=[SimpleNamespace(content=SimpleNamespace(parts=[part]))],
+        text=None
+    )
 
     turn = _gemini_response_to_turn(resp)
 
@@ -72,7 +56,10 @@ def test_gemini_response_to_turn_with_tool_calls():
 
 
 def test_gemini_response_to_turn_final_answer_no_tool_calls():
-    resp = _FakeGeminiResponse(parts=[], text="The answer is 42 [1].")
+    resp = SimpleNamespace(
+        candidates=[SimpleNamespace(content=SimpleNamespace(parts=[]))],
+        text="The answer is 42 [1]."
+    )
 
     turn = _gemini_response_to_turn(resp)
 
@@ -81,11 +68,13 @@ def test_gemini_response_to_turn_final_answer_no_tool_calls():
 
 
 def test_gemini_response_to_turn_multiple_tool_calls_preserve_order():
-    resp = _FakeGeminiResponse(
-        parts=[
-            _FakePart(function_call=_FakeFunctionCall("search_filings", {"ticker": "AAPL"})),
-            _FakePart(function_call=_FakeFunctionCall("search_filings", {"ticker": "MSFT"})),
-        ]
+    fc1 = SimpleNamespace(name="search_filings", args={"ticker": "AAPL"})
+    fc2 = SimpleNamespace(name="search_filings", args={"ticker": "MSFT"})
+    part1 = SimpleNamespace(function_call=fc1)
+    part2 = SimpleNamespace(function_call=fc2)
+    resp = SimpleNamespace(
+        candidates=[SimpleNamespace(content=SimpleNamespace(parts=[part1, part2]))],
+        text=None
     )
 
     turn = _gemini_response_to_turn(resp)
