@@ -13,12 +13,14 @@ agent.py's verify_citations()) — see tests/test_numeric_utils.py.
 
 import json
 
+import eval_harness
 from eval_harness import (
     _select_questions,
     grade_comparison,
     grade_judged,
     grade_numeric,
     load_questions,
+    save_report,
 )
 
 
@@ -245,3 +247,17 @@ def test_grade_judged_lowercase_pass_still_counts(monkeypatch):
     )
     passed, _ = grade_judged("Q?", "some answer", "some criteria")
     assert passed is True
+
+
+# ---------------------------------------------------------------------------
+# save_report — writes {"backend", "results"}, not a bare list
+# ---------------------------------------------------------------------------
+def test_save_report_writes_backend_and_results(monkeypatch, tmp_path):
+    monkeypatch.setattr(eval_harness, "RESULTS_DIR", tmp_path)
+    results = [{"id": "q1", "passed": True}]
+
+    out_path = save_report(results, backend="gemini")
+
+    with out_path.open(encoding="utf-8") as f:
+        saved = json.load(f)
+    assert saved == {"backend": "gemini", "results": results}
