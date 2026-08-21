@@ -38,6 +38,10 @@ SEC_USER_AGENT = f"{SEC_USER_AGENT_NAME} {SEC_USER_AGENT_EMAIL}"
 OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434/api/chat")
 OLLAMA_MODEL_NAME = os.getenv("OLLAMA_MODEL_NAME", "qwen2.5:7b-instruct")
 
+# Which LLM backend agent.py/eval_harness.py use when --backend isn't
+# passed explicitly (llm_backends.py's BACKENDS dict has the full list).
+DEFAULT_BACKEND = os.getenv("DEFAULT_BACKEND", "ollama")
+
 # Persistent Chroma vector store path (index_chunks.py, retrieval.py,
 # query_chunks.py) — must be the SAME path in all three, or querying
 # silently hits an empty or unrelated store instead of erroring.
