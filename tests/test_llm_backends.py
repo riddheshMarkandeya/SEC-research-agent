@@ -7,7 +7,7 @@ test_eval_harness.py's mocked grade_judged() test.
 
 from types import SimpleNamespace
 
-from llm_backends import _ollama_message_to_turn, _gemini_response_to_turn
+from llm_backends import _ollama_message_to_turn, _gemini_response_to_turn, _get_gemini_client
 
 
 def test_ollama_message_to_turn_with_tool_calls():
@@ -80,3 +80,24 @@ def test_gemini_response_to_turn_multiple_tool_calls_preserve_order():
     turn = _gemini_response_to_turn(resp)
 
     assert [c["args"]["ticker"] for c in turn.tool_calls] == ["AAPL", "MSFT"]
+
+
+def test_get_gemini_client_returns_same_instance_across_calls(monkeypatch):
+    monkeypatch.setattr("llm_backends._gemini_client", None)
+    monkeypatch.setattr("llm_backends.GEMINI_API_KEY", "fake-key-for-testing")
+
+    client1 = _get_gemini_client()
+    client2 = _get_gemini_client()
+
+    assert client1 is client2
+
+
+def test_get_gemini_client_raises_runtime_error_when_key_missing(monkeypatch):
+    monkeypatch.setattr("llm_backends._gemini_client", None)
+    monkeypatch.setattr("llm_backends.GEMINI_API_KEY", "")
+
+    try:
+        _get_gemini_client()
+        assert False, "expected RuntimeError"
+    except RuntimeError as e:
+        assert "GEMINI_API_KEY is not set" in str(e)
