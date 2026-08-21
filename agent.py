@@ -690,6 +690,53 @@ def _call_ollama(messages: list[dict]) -> dict:
     return response.json()["message"]
 
 
+def _dispatch_tool_call(
+    call: dict, question: str, all_results: list[dict], searched_tickers: set[str | None], verbose: bool
+) -> str:
+    """Runs one normalized tool call ({"name", "args"} -- the
+    ModelTurn.tool_calls shape from llm_backends.py) against the right
+    tool, mutating all_results/searched_tickers in place, and returns
+    the content string to send back to the model. Backend-agnostic by
+    construction: it only ever sees the normalized shape, never
+    Ollama's or Gemini's raw wire format, so the boundary validation
+    inside _call_get_financial_fact/_call_compare_financial_metric
+    (e.g. rejecting an invented `segment` argument) now protects both
+    backends automatically instead of needing a second copy."""
+    name = call["name"]
+    args = call["args"]
+
+    if name == "get_financial_fact":
+        if verbose:
+            print(f"  [tool call] get_financial_fact({args!r})")
+        fact = _call_get_financial_fact(args)
+        if fact is None:
+            return _format_no_fact_message(args)
+        start_index = len(all_results) + 1
+        result = _fact_as_result(fact, args)
+        all_results.append(result)
+        return _format_results_block([result], start_index)
+
+    if name == "compare_financial_metric":
+        if verbose:
+            print(f"  [tool call] compare_financial_metric({args!r})")
+        data = _call_compare_financial_metric(args)
+        if not data:
+            return _format_no_comparison_message(args)
+        start_index = len(all_results) + 1
+        results = _comparison_as_results(data, args.get("metric", ""))
+        all_results.extend(results)
+        return _format_results_block(results, start_index)
+
+    query, ticker = _resolve_search_args(args, fallback_query=question, searched_tickers=searched_tickers)
+    searched_tickers.add(ticker)
+    if verbose:
+        print(f"  [tool call] search_filings(query={query!r}, ticker={ticker!r})")
+    results = hybrid_search(query, ticker=ticker, top_k=CHUNKS_PER_SEARCH)
+    start_index = len(all_results) + 1
+    all_results.extend(results)
+    return _format_results_block(results, start_index)
+
+
 def run_agent(question: str, verbose: bool = False) -> tuple[str, list[dict], list[str]]:
     """Run the tool-calling loop until the model produces a final answer
     (no more tool calls) or MAX_TOOL_ITERATIONS is hit. Returns the
@@ -729,49 +776,14 @@ def run_agent(question: str, verbose: bool = False) -> tuple[str, list[dict], li
         messages.append(message)
 
         for call in tool_calls:
-            name = call["function"]["name"]
-            args = call["function"]["arguments"]
-
-            if name == "get_financial_fact":
-                if verbose:
-                    print(f"  [tool call] get_financial_fact({args!r})")
-                fact = _call_get_financial_fact(args)
-                if fact is None:
-                    content = _format_no_fact_message(args)
-                else:
-                    start_index = len(all_results) + 1
-                    result = _fact_as_result(fact, args)
-                    all_results.append(result)
-                    content = _format_results_block([result], start_index)
-                messages.append({"role": "tool", "content": content})
-                continue
-
-            if name == "compare_financial_metric":
-                if verbose:
-                    print(f"  [tool call] compare_financial_metric({args!r})")
-                data = _call_compare_financial_metric(args)
-                if not data:
-                    content = _format_no_comparison_message(args)
-                else:
-                    start_index = len(all_results) + 1
-                    results = _comparison_as_results(data, args.get("metric", ""))
-                    all_results.extend(results)
-                    content = _format_results_block(results, start_index)
-                messages.append({"role": "tool", "content": content})
-                continue
-
-            query, ticker = _resolve_search_args(
-                args, fallback_query=question, searched_tickers=searched_tickers
+            content = _dispatch_tool_call(
+                {"name": call["function"]["name"], "args": call["function"]["arguments"]},
+                question,
+                all_results,
+                searched_tickers,
+                verbose,
             )
-            searched_tickers.add(ticker)
-            if verbose:
-                print(f"  [tool call] search_filings(query={query!r}, ticker={ticker!r})")
-
-            results = hybrid_search(query, ticker=ticker, top_k=CHUNKS_PER_SEARCH)
-            start_index = len(all_results) + 1
-            all_results.extend(results)
-
-            messages.append({"role": "tool", "content": _format_results_block(results, start_index)})
+            messages.append({"role": "tool", "content": content})
 
     return (
         "I wasn't able to finish answering within the allotted number of searches. "

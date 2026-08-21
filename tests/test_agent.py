@@ -12,6 +12,8 @@ from agent import (
     _call_compare_financial_metric,
     _call_get_financial_fact,
     _comparison_as_results,
+    _dispatch_tool_call,
+    _fact_as_result,
     _format_citation_key,
     _format_no_comparison_message,
     _format_no_fact_message,
@@ -534,3 +536,107 @@ def test_call_compare_financial_metric_dispatches_net_margin(monkeypatch):
     )
     result = _call_compare_financial_metric({"anchor_ticker": "NVDA", "metric": "net_margin"})
     assert result == {"NVDA": {"value": 45.0}}
+
+
+# ---------------------------------------------------------------------------
+# _dispatch_tool_call
+# ---------------------------------------------------------------------------
+def test_dispatch_tool_call_get_financial_fact_appends_result(monkeypatch):
+    fact = {
+        "value": 71.1,
+        "unit": "percent",
+        "form": "10-K",
+        "filed": "2026-06-20",
+        "period_end": "2026-03-31",
+        "accession": "0001234567-26-000123",
+    }
+    monkeypatch.setattr("agent._call_get_financial_fact", lambda args: fact)
+    all_results = []
+    call = {"name": "get_financial_fact", "args": {"ticker": "NVDA", "metric": "gross_margin"}}
+
+    content = _dispatch_tool_call(call, "q", all_results, set(), verbose=False)
+
+    assert len(all_results) == 1
+    assert all_results[0]["metadata"]["ticker"] == "NVDA"
+    assert "[1]" in content
+
+
+def test_dispatch_tool_call_get_financial_fact_none_uses_no_fact_message(monkeypatch):
+    monkeypatch.setattr("agent._call_get_financial_fact", lambda args: None)
+    monkeypatch.setattr("agent._format_no_fact_message", lambda args: "NO FACT MESSAGE")
+    all_results = []
+    call = {"name": "get_financial_fact", "args": {"ticker": "NVDA", "metric": "gross_margin"}}
+
+    content = _dispatch_tool_call(call, "q", all_results, set(), verbose=False)
+
+    assert all_results == []
+    assert content == "NO FACT MESSAGE"
+
+
+def test_dispatch_tool_call_compare_financial_metric_appends_results(monkeypatch):
+    data = {
+        "AAPL": {
+            "value": 40.0,
+            "unit": "percent",
+            "form": "10-K",
+            "filed": "2026-06-20",
+            "period_end": "2026-03-31",
+            "accession": "acc-1",
+        }
+    }
+    monkeypatch.setattr("agent._call_compare_financial_metric", lambda args: data)
+    all_results = []
+    call = {"name": "compare_financial_metric", "args": {"metric": "gross_margin"}}
+
+    content = _dispatch_tool_call(call, "q", all_results, set(), verbose=False)
+
+    assert len(all_results) == 1
+    assert "[1]" in content
+
+
+def test_dispatch_tool_call_compare_financial_metric_empty_uses_no_comparison_message(monkeypatch):
+    monkeypatch.setattr("agent._call_compare_financial_metric", lambda args: {})
+    monkeypatch.setattr("agent._format_no_comparison_message", lambda args: "NO COMPARISON MESSAGE")
+    all_results = []
+    call = {"name": "compare_financial_metric", "args": {"metric": "gross_margin"}}
+
+    content = _dispatch_tool_call(call, "q", all_results, set(), verbose=False)
+
+    assert content == "NO COMPARISON MESSAGE"
+
+
+def test_dispatch_tool_call_search_filings_uses_resolved_query_and_tracks_ticker(monkeypatch):
+    fake_results = [
+        {
+            "text": "chunk text",
+            "metadata": {
+                "ticker": "AAPL",
+                "form": "10-K",
+                "filingDate": "2026-01-01",
+                "reportDate": "2025-12-31",
+                "accessionNumber": "acc-1",
+                "chunk_index": 0,
+            },
+        }
+    ]
+    captured = {}
+
+    def fake_hybrid_search(query, ticker, top_k):
+        captured["query"] = query
+        captured["ticker"] = ticker
+        return fake_results
+
+    monkeypatch.setattr("agent.hybrid_search", fake_hybrid_search)
+    all_results = []
+    searched_tickers = set()
+    # ticker not yet in searched_tickers -> _resolve_search_args ignores
+    # the model's own query and uses the fallback question instead
+    call = {"name": "search_filings", "args": {"query": "employees", "ticker": "AAPL"}}
+
+    content = _dispatch_tool_call(call, "how many employees", all_results, searched_tickers, verbose=False)
+
+    assert captured["query"] == "how many employees"
+    assert captured["ticker"] == "AAPL"
+    assert all_results == fake_results
+    assert "AAPL" in searched_tickers
+    assert "[1]" in content
