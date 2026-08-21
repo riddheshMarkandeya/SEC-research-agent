@@ -85,6 +85,26 @@ def _ollama_send(state: dict, results: list[dict]) -> ModelTurn:
 
 RETRY_DELAY_SECONDS = 15  # free-tier rate limits are generous but not infinite
 
+# Module-level Gemini client cache (lazy-initialized on first use).
+# Kept alive across calls to prevent garbage collection of the underlying
+# httpx transport (google-genai's ApiClient.__del__ closes it when collected).
+_gemini_client: genai.Client | None = None
+
+
+def _get_gemini_client() -> genai.Client:
+    """Lazily creates and caches the Gemini API client on first call.
+    Subsequent calls return the same instance. Only checks GEMINI_API_KEY
+    when actually used (--backend gemini selected), not at import time."""
+    global _gemini_client
+    if _gemini_client is None:
+        if not GEMINI_API_KEY:
+            raise RuntimeError(
+                "GEMINI_API_KEY is not set (see .env.example) -- required for --backend gemini. "
+                "Get a free-tier key at aistudio.google.com, no credit card needed."
+            )
+        _gemini_client = genai.Client(api_key=GEMINI_API_KEY)
+    return _gemini_client
+
 
 def _to_gemini_tool(schema: dict) -> types.FunctionDeclaration:
     """agent.py's tool schemas are plain, lowercase JSON-schema dicts
@@ -118,12 +138,7 @@ def _gemini_response_to_turn(resp) -> ModelTurn:
 
 
 def _gemini_start(question: str, system_prompt: str, tool_schemas: list[dict]) -> tuple[object, ModelTurn]:
-    if not GEMINI_API_KEY:
-        raise RuntimeError(
-            "GEMINI_API_KEY is not set (see .env.example) -- required for --backend gemini. "
-            "Get a free-tier key at aistudio.google.com, no credit card needed."
-        )
-    client = genai.Client(api_key=GEMINI_API_KEY)
+    client = _get_gemini_client()
     tools = types.Tool(function_declarations=[_to_gemini_tool(s) for s in tool_schemas])
     chat = client.chats.create(
         model=GEMINI_MODEL_NAME,
