@@ -24,15 +24,12 @@ import requests
 from config import OLLAMA_MODEL_NAME, OLLAMA_URL
 
 
-class ModelTurn(NamedTuple):
-    """Normalized shape both backends produce. tool_calls entries are
-    {"name": str, "args": dict} -- no call_id field, since neither
-    backend's tool-result-feedback API needs one (Ollama: `{"role":
-    "tool", "content": ...}` with no id; Gemini:
-    `Part.from_function_response(name=..., response=...)`, also no id)."""
-
-    tool_calls: list[dict]
-    text: str | None
+# Normalized shape both backends produce. tool_calls entries are
+# {"name": str, "args": dict} -- no call_id field, since neither
+# backend's tool-result-feedback API needs one (Ollama: `{"role":
+# "tool", "content": ...}` with no id; Gemini:
+# `Part.from_function_response(name=..., response=...)`, also no id).
+ModelTurn = NamedTuple("ModelTurn", [("tool_calls", list[dict]), ("text", str | None)])
 
 
 def _ollama_message_to_turn(message: dict) -> ModelTurn:
