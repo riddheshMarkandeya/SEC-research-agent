@@ -2,9 +2,10 @@
 Unit tests for agent.py. Covers the pure helpers, plus the
 _call_get_financial_fact/_call_compare_financial_metric dispatch/
 boundary-validation logic (via monkeypatched xbrl_facts functions, no
-network). run_agent()/_call_ollama() drive a live tool-calling loop
-against Ollama, so they're exercised by manual runs (python agent.py
-"...") documented in PROJECT_CONTEXT.md, not here.
+network). run_agent() drives a live tool-calling loop against whichever
+backend is selected (see llm_backends.py), so it's exercised by manual
+runs (python agent.py "..." [--backend ollama|gemini]) documented in
+PROJECT_CONTEXT.md, not here.
 """
 
 from agent import (
@@ -13,7 +14,6 @@ from agent import (
     _call_get_financial_fact,
     _comparison_as_results,
     _dispatch_tool_call,
-    _fact_as_result,
     _format_citation_key,
     _format_no_comparison_message,
     _format_no_fact_message,
