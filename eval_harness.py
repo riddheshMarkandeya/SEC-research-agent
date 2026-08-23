@@ -57,7 +57,8 @@ from pathlib import Path
 import requests
 
 from agent import run_agent, value_is_citation_verified
-from config import OLLAMA_MODEL_NAME, OLLAMA_URL  # used directly by grade_judged()
+from config import DEFAULT_BACKEND, OLLAMA_MODEL_NAME, OLLAMA_URL  # used directly by grade_judged()
+from llm_backends import BACKENDS
 from numeric_utils import extract_numbers, normalize
 
 QUESTIONS_PATH = Path("./eval_questions.jsonl")
@@ -157,7 +158,7 @@ def grade_judged(question: str, answer_text: str, criteria: str) -> tuple[bool, 
                 {"role": "user", "content": user_prompt},
             ],
             "stream": False,
-            # See agent.py's _call_ollama for why num_ctx is set explicitly
+            # See llm_backends.py's _ollama_call for why num_ctx is set explicitly
             # rather than left at Ollama's 4096-token default. The judge's
             # own input (question + criteria + one answer) is smaller than
             # what generation sees, but the answer being graded can itself
@@ -208,14 +209,16 @@ def _select_questions(questions: list[dict], ids: list[str] | None, include_skip
     return [q for q in questions if not q.get("skip")]
 
 
-def run_eval(questions_path: Path, ids: list[str] | None = None, include_skipped: bool = False) -> list[dict]:
+def run_eval(
+    questions_path: Path, ids: list[str] | None = None, include_skipped: bool = False, backend: str = "ollama"
+) -> list[dict]:
     questions = load_questions(questions_path)
     questions = _select_questions(questions, ids, include_skipped)
     results = []
 
     for q in questions:
         print(f"[{q['id']}] {q['question']}")
-        answer_text, retrieved, citation_warnings = run_agent(q["question"])
+        answer_text, retrieved, citation_warnings = run_agent(q["question"], backend=backend)
         has_citation = bool(CITATION_PATTERN.search(answer_text))
 
         if q["type"] == "numeric":
@@ -270,12 +273,12 @@ def print_summary(results: list[dict]) -> None:
         print(f"  [{mark}] {r['id']} ({r['type']}){cite}{unverified_flag}")
 
 
-def save_report(results: list[dict]) -> Path:
+def save_report(results: list[dict], backend: str) -> Path:
     RESULTS_DIR.mkdir(exist_ok=True)
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     out_path = RESULTS_DIR / f"{timestamp}.json"
     with out_path.open("w", encoding="utf-8") as f:
-        json.dump(results, f, indent=2)
+        json.dump({"backend": backend, "results": results}, f, indent=2)
     return out_path
 
 
@@ -293,12 +296,15 @@ def main():
         action="store_true",
         help="also run questions marked skip: true (ignored if --ids is given)",
     )
+    parser.add_argument(
+        "--backend", choices=list(BACKENDS), default=DEFAULT_BACKEND, help="which LLM backend to use"
+    )
     args = parser.parse_args()
 
     ids = [i.strip() for i in args.ids.split(",")] if args.ids else None
-    results = run_eval(args.questions, ids=ids, include_skipped=args.include_skipped)
+    results = run_eval(args.questions, ids=ids, include_skipped=args.include_skipped, backend=args.backend)
     print_summary(results)
-    out_path = save_report(results)
+    out_path = save_report(results, backend=args.backend)
     print(f"\nFull report saved to {out_path}")
 
 

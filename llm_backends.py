@@ -1,0 +1,160 @@
+"""
+Swappable LLM backend layer (Week 5v / Next Steps item 2).
+------------------------------------------------------------
+This module was created to eliminate duplication: both Ollama (HTTP API)
+and Gemini (google-genai SDK) have different wire formats for tool calling.
+Normalizing both into one shape (ModelTurn) lets agent.py drive a single
+shared loop regardless of which backend answers -- see
+docs/superpowers/specs/2026-08-20-swappable-llm-backend-design.md.
+
+Deliberately takes system_prompt/tool_schemas as parameters rather than
+importing them from agent.py -- agent.py needs `from llm_backends import
+BACKENDS`, so the reverse import would be circular. agent.py remains the
+only place tool *meaning* is defined; this module only ever sees opaque
+strings/dicts.
+"""
+
+import time
+from typing import Callable, NamedTuple
+
+import requests
+
+from google import genai
+from google.genai import errors as genai_errors
+from google.genai import types
+
+from config import GEMINI_API_KEY, GEMINI_MODEL_NAME, OLLAMA_MODEL_NAME, OLLAMA_URL
+
+
+# Normalized shape both backends produce. tool_calls entries are
+# {"name": str, "args": dict} -- no call_id field, since neither
+# backend's tool-result-feedback API needs one (Ollama: `{"role":
+# "tool", "content": ...}` with no id; Gemini:
+# `Part.from_function_response(name=..., response=...)`, also no id).
+ModelTurn = NamedTuple("ModelTurn", [("tool_calls", list[dict]), ("text", str | None)])
+
+
+def _ollama_message_to_turn(message: dict) -> ModelTurn:
+    tool_calls = message.get("tool_calls") or []
+    normalized = [{"name": c["function"]["name"], "args": c["function"]["arguments"]} for c in tool_calls]
+    return ModelTurn(tool_calls=normalized, text=message.get("content"))
+
+
+def _ollama_call(state: dict) -> dict:
+    response = requests.post(
+        OLLAMA_URL,
+        json={
+            "model": OLLAMA_MODEL_NAME,
+            "messages": state["messages"],
+            "tools": state["tool_schemas"],
+            "stream": False,
+            # Ollama defaults to a 4096-token context window regardless
+            # of what the model actually supports -- dangerously small
+            # here, since a single search returns up to 5 chunks
+            # (~3000 chars each). See PROJECT_CONTEXT.md's agent.py
+            # section for how this was found (a comparison question
+            # silently truncating context, caught via `ollama ps`).
+            "options": {"temperature": 0.1, "num_ctx": 8192},
+        },
+        timeout=240,
+    )
+    response.raise_for_status()
+    return response.json()["message"]
+
+
+def _ollama_start(question: str, system_prompt: str, tool_schemas: list[dict]) -> tuple[dict, ModelTurn]:
+    state = {
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": question},
+        ],
+        "tool_schemas": tool_schemas,
+    }
+    message = _ollama_call(state)
+    state["messages"].append(message)
+    return state, _ollama_message_to_turn(message)
+
+
+def _ollama_send(state: dict, results: list[dict]) -> ModelTurn:
+    for r in results:
+        state["messages"].append({"role": "tool", "content": r["content"]})
+    message = _ollama_call(state)
+    state["messages"].append(message)
+    return _ollama_message_to_turn(message)
+
+
+RETRY_DELAY_SECONDS = 15  # free-tier rate limits are generous but not infinite
+
+# Module-level Gemini client cache (lazy-initialized on first use).
+# Kept alive across calls to prevent garbage collection of the underlying
+# httpx transport (google-genai's ApiClient.__del__ closes it when collected).
+_gemini_client: genai.Client | None = None
+
+
+def _get_gemini_client() -> genai.Client:
+    """Lazily creates and caches the Gemini API client on first call.
+    Subsequent calls return the same instance. Only checks GEMINI_API_KEY
+    when actually used (--backend gemini selected), not at import time."""
+    global _gemini_client
+    if _gemini_client is None:
+        if not GEMINI_API_KEY:
+            raise RuntimeError(
+                "GEMINI_API_KEY is not set (see .env.example) -- required for --backend gemini. "
+                "Get a free-tier key at aistudio.google.com, no credit card needed."
+            )
+        _gemini_client = genai.Client(api_key=GEMINI_API_KEY)
+    return _gemini_client
+
+
+def _to_gemini_tool(schema: dict) -> types.FunctionDeclaration:
+    """agent.py's tool schemas are plain, lowercase JSON-schema dicts
+    (OpenAI/Ollama wire-format style) -- Gemini's SDK accepts that
+    shape directly for `parameters` (verified live in the original
+    spike), so this just unwraps the {"function": {...}} envelope
+    rather than re-describing each tool a second time."""
+    fn = schema["function"]
+    return types.FunctionDeclaration(name=fn["name"], description=fn["description"], parameters=fn["parameters"])
+
+
+def _send_with_retry(chat, message):
+    """Retries on transient errors -- free-tier rate limits (429) and
+    plain server overload (503, "experiencing high demand"), both found
+    live during the original spike -- with a short linear backoff."""
+    for attempt in range(4):
+        try:
+            return chat.send_message(message)
+        except (genai_errors.ClientError, genai_errors.ServerError) as e:
+            code = getattr(e, "code", None)
+            if code not in (429, 503) or attempt == 3:
+                raise
+            time.sleep(RETRY_DELAY_SECONDS * (attempt + 1))
+
+
+def _gemini_response_to_turn(resp) -> ModelTurn:
+    parts = resp.candidates[0].content.parts or []
+    function_calls = [p.function_call for p in parts if p.function_call]
+    tool_calls = [{"name": fc.name, "args": dict(fc.args or {})} for fc in function_calls]
+    return ModelTurn(tool_calls=tool_calls, text=resp.text if not tool_calls else None)
+
+
+def _gemini_start(question: str, system_prompt: str, tool_schemas: list[dict]) -> tuple[object, ModelTurn]:
+    client = _get_gemini_client()
+    tools = types.Tool(function_declarations=[_to_gemini_tool(s) for s in tool_schemas])
+    chat = client.chats.create(
+        model=GEMINI_MODEL_NAME,
+        config=types.GenerateContentConfig(tools=[tools], system_instruction=system_prompt, temperature=0.1),
+    )
+    resp = _send_with_retry(chat, question)
+    return chat, _gemini_response_to_turn(resp)
+
+
+def _gemini_send(state: object, results: list[dict]) -> ModelTurn:
+    parts = [types.Part.from_function_response(name=r["name"], response={"result": r["content"]}) for r in results]
+    resp = _send_with_retry(state, parts)
+    return _gemini_response_to_turn(resp)
+
+
+BACKENDS: dict[str, tuple[Callable, Callable]] = {
+    "ollama": (_ollama_start, _ollama_send),
+    "gemini": (_gemini_start, _gemini_send),
+}

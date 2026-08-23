@@ -29,10 +29,8 @@ Usage:
 import argparse
 import re
 
-import requests
-
 from companies import load_companies
-from config import OLLAMA_MODEL_NAME, OLLAMA_URL
+from config import DEFAULT_BACKEND
 from formulas import (
     get_gross_margin,
     get_gross_margin_all_companies,
@@ -43,6 +41,7 @@ from formulas import (
     get_operating_margin_all_companies,
     get_yoy_growth,
 )
+from llm_backends import BACKENDS
 from numeric_utils import UNIT_MULTIPLIERS, extract_numbers, normalize
 from retrieval import hybrid_search
 from xbrl_facts import DEFAULT_METRIC_TAGS, get_metric, get_metric_all_companies, is_metric_tagged
@@ -664,39 +663,63 @@ def _format_citation_key(all_results: list[dict]) -> str:
     return "\n".join(lines)
 
 
-def _call_ollama(messages: list[dict]) -> dict:
-    response = requests.post(
-        OLLAMA_URL,
-        json={
-            "model": OLLAMA_MODEL_NAME,
-            "messages": messages,
-            "tools": [FACT_TOOL_SCHEMA, COMPARE_TOOL_SCHEMA, SEARCH_TOOL_SCHEMA],
-            "stream": False,
-            # Ollama defaults to a 4096-token context window regardless of
-            # what the model actually supports, which is dangerously small
-            # here: a single search returns up to 5 chunks (~3000 chars
-            # each), so a comparison question's SECOND tool call already
-            # risks silently truncating the first company's results out of
-            # context before the model ever writes its final answer. Found
-            # this by inspecting `ollama ps` output (context_length: 4096)
-            # after a real comparison-question run behaved suspiciously —
-            # worth checking before assuming a synthesis failure is a pure
-            # model-capability limit rather than a truncation bug.
-            "options": {"temperature": 0.1, "num_ctx": 8192},
-        },
-        timeout=240,
-    )
-    response.raise_for_status()
-    return response.json()["message"]
+def _dispatch_tool_call(
+    call: dict, question: str, all_results: list[dict], searched_tickers: set[str | None], verbose: bool
+) -> str:
+    """Runs one normalized tool call ({"name", "args"} -- the
+    ModelTurn.tool_calls shape from llm_backends.py) against the right
+    tool, mutating all_results/searched_tickers in place, and returns
+    the content string to send back to the model. Backend-agnostic by
+    construction: it only ever sees the normalized shape, never
+    Ollama's or Gemini's raw wire format, so the boundary validation
+    inside _call_get_financial_fact/_call_compare_financial_metric
+    (e.g. rejecting an invented `segment` argument) now protects both
+    backends automatically instead of needing a second copy."""
+    name = call["name"]
+    args = call["args"]
+
+    if name == "get_financial_fact":
+        if verbose:
+            print(f"  [tool call] get_financial_fact({args!r})")
+        fact = _call_get_financial_fact(args)
+        if fact is None:
+            return _format_no_fact_message(args)
+        start_index = len(all_results) + 1
+        result = _fact_as_result(fact, args)
+        all_results.append(result)
+        return _format_results_block([result], start_index)
+
+    if name == "compare_financial_metric":
+        if verbose:
+            print(f"  [tool call] compare_financial_metric({args!r})")
+        data = _call_compare_financial_metric(args)
+        if not data:
+            return _format_no_comparison_message(args)
+        start_index = len(all_results) + 1
+        results = _comparison_as_results(data, args.get("metric", ""))
+        all_results.extend(results)
+        return _format_results_block(results, start_index)
+
+    query, ticker = _resolve_search_args(args, fallback_query=question, searched_tickers=searched_tickers)
+    searched_tickers.add(ticker)
+    if verbose:
+        print(f"  [tool call] search_filings(query={query!r}, ticker={ticker!r})")
+    results = hybrid_search(query, ticker=ticker, top_k=CHUNKS_PER_SEARCH)
+    start_index = len(all_results) + 1
+    all_results.extend(results)
+    return _format_results_block(results, start_index)
 
 
-def run_agent(question: str, verbose: bool = False) -> tuple[str, list[dict], list[str]]:
+def run_agent(question: str, backend: str = "ollama", verbose: bool = False) -> tuple[str, list[dict], list[str]]:
     """Run the tool-calling loop until the model produces a final answer
-    (no more tool calls) or MAX_TOOL_ITERATIONS is hit. Returns the
-    answer text, every chunk retrieved across all tool calls (in the
-    same global [n] order the model was shown them in — this is what
-    lets the printed citation key line up with the model's citations),
-    and any citation-verification warnings from verify_citations().
+    (no more tool calls) or MAX_TOOL_ITERATIONS is hit. `backend`
+    selects which LLM answers (see llm_backends.BACKENDS) -- the loop
+    itself, and every tool-dispatch branch inside _dispatch_tool_call,
+    is identical regardless of which one is chosen. Returns the answer
+    text, every chunk retrieved across all tool calls (in the same
+    global [n] order the model was shown them in — this is what lets
+    the printed citation key line up with the model's citations), and
+    any citation-verification warnings from verify_citations().
 
     Known simplification: no deduplication if two tool calls happen to
     surface the same chunk (e.g. two related queries against the same
@@ -706,72 +729,30 @@ def run_agent(question: str, verbose: bool = False) -> tuple[str, list[dict], li
     No self-correction retry on an unverified citation — tried and
     reverted, see PROJECT_CONTEXT.md's "citation-verification retry
     loop" section for why (qwen2.5:7b-instruct couldn't reliably use the
-    corrective feedback: it sometimes just gave up on a previously-
-    correct refusal, and once even fabricated an estimate despite an
-    explicit instruction not to). citation_warnings is still returned
-    below and still worth surfacing/tracing — the model just isn't
-    trusted to act on it itself yet."""
-    messages = [
-        {"role": "system", "content": SYSTEM_PROMPT},
-        {"role": "user", "content": question},
-    ]
+    corrective feedback). citation_warnings is still returned below and
+    still worth surfacing/tracing — the model just isn't trusted to act
+    on it itself yet. Revisiting this against Gemini is a separate
+    follow-up, not part of this function."""
+    start, send_tool_results = BACKENDS[backend]
+    tool_schemas = [FACT_TOOL_SCHEMA, COMPARE_TOOL_SCHEMA, SEARCH_TOOL_SCHEMA]
+    state, turn = start(question, SYSTEM_PROMPT, tool_schemas)
     all_results: list[dict] = []
     searched_tickers: set[str | None] = set()
+    calls_made = 1
 
-    for _ in range(MAX_TOOL_ITERATIONS):
-        message = _call_ollama(messages)
-        tool_calls = message.get("tool_calls") or []
-
-        if not tool_calls:
-            answer = message.get("content", "")
+    while True:
+        if not turn.tool_calls:
+            answer = turn.text or ""
             return answer, all_results, verify_citations(answer, all_results)
+        if calls_made >= MAX_TOOL_ITERATIONS:
+            break
 
-        messages.append(message)
-
-        for call in tool_calls:
-            name = call["function"]["name"]
-            args = call["function"]["arguments"]
-
-            if name == "get_financial_fact":
-                if verbose:
-                    print(f"  [tool call] get_financial_fact({args!r})")
-                fact = _call_get_financial_fact(args)
-                if fact is None:
-                    content = _format_no_fact_message(args)
-                else:
-                    start_index = len(all_results) + 1
-                    result = _fact_as_result(fact, args)
-                    all_results.append(result)
-                    content = _format_results_block([result], start_index)
-                messages.append({"role": "tool", "content": content})
-                continue
-
-            if name == "compare_financial_metric":
-                if verbose:
-                    print(f"  [tool call] compare_financial_metric({args!r})")
-                data = _call_compare_financial_metric(args)
-                if not data:
-                    content = _format_no_comparison_message(args)
-                else:
-                    start_index = len(all_results) + 1
-                    results = _comparison_as_results(data, args.get("metric", ""))
-                    all_results.extend(results)
-                    content = _format_results_block(results, start_index)
-                messages.append({"role": "tool", "content": content})
-                continue
-
-            query, ticker = _resolve_search_args(
-                args, fallback_query=question, searched_tickers=searched_tickers
-            )
-            searched_tickers.add(ticker)
-            if verbose:
-                print(f"  [tool call] search_filings(query={query!r}, ticker={ticker!r})")
-
-            results = hybrid_search(query, ticker=ticker, top_k=CHUNKS_PER_SEARCH)
-            start_index = len(all_results) + 1
-            all_results.extend(results)
-
-            messages.append({"role": "tool", "content": _format_results_block(results, start_index)})
+        results = [
+            {"name": c["name"], "content": _dispatch_tool_call(c, question, all_results, searched_tickers, verbose)}
+            for c in turn.tool_calls
+        ]
+        turn = send_tool_results(state, results)
+        calls_made += 1
 
     return (
         "I wasn't able to finish answering within the allotted number of searches. "
@@ -784,10 +765,13 @@ def run_agent(question: str, verbose: bool = False) -> tuple[str, list[dict], li
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("question", help="question to answer")
+    parser.add_argument(
+        "--backend", choices=list(BACKENDS), default=DEFAULT_BACKEND, help="which LLM backend to use"
+    )
     parser.add_argument("--verbose", action="store_true", help="print each tool call as it happens")
     args = parser.parse_args()
 
-    answer, results, citation_warnings = run_agent(args.question, verbose=args.verbose)
+    answer, results, citation_warnings = run_agent(args.question, backend=args.backend, verbose=args.verbose)
 
     print(f"\nQ: {args.question}\n")
     print(answer)

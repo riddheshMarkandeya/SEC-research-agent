@@ -2060,23 +2060,116 @@ Week 5t. The comparison-reasoning failure underneath it was root-caused
 via 3 controlled tests (self-consistency anchoring on the model's own
 invented `segment` tool calls, not arithmetic or table formatting —
 see Week 5u), and decisively confirmed model-specific by swapping to
-Gemini: 3/3 correct, no invented calls at all. Not carrying this
-forward as its own item — it folds into item 2 below (the swappable-
-backend work already validates the fix path; there's nothing left to
-root-cause here on the local-model side alone). Citation misattribution
-on this question was also inconsistent run-to-run under Ollama; worth
-re-checking once a swappable backend exists, since it may share the
-same cause.
+Gemini: 3/3 correct, no invented calls at all (throwaway
+`spike_gemini_eval.py`, not the real `--backend gemini` — see item 2
+below for the real swappable-backend integration's own live
+verification of this same result). Not carrying this forward as its
+own item — it folds into item 2 below (the swappable-backend work
+already validates the fix path; there's nothing
+left to root-cause here on the local-model side alone). Citation
+misattribution on this question was also inconsistent run-to-run under
+Ollama; worth re-checking once a swappable backend exists, since it may
+share the same cause. **Update (Task 7 manual live verification,
+2026-08-20):** re-running the full suite live on Ollama today
+(`eval_results/20260821T023051Z.json`, 20/27 passed) shows
+`nvda-segment-revenue-comparison-q1fy27` — one of the "4 solidly
+fixed" above — FAILED this time (`unverified citation` warning), with
+no code change since the last committed baseline
+(`eval_results/20260819T211354Z.json`, 22/27 passed, where this
+question passed). "Solidly fixed" needs an asterisk: the retrieval fix
+itself is stable (Week 5t's 4/4), but the reasoning layer on top of it
+is still flaky run-to-run on this exact question at `temperature: 0.1`
+— see item 2's diff for the full before/after comparison, which shows
+this same flakiness pattern (not a one-off) across every
+comparison/segment-shaped question in the suite.
 
-**2. Then: build the Gemini swappable-backend design** (deferred from
-Week 5l's spike). Two things this unblocks at once: (a) re-testing
-"local vs. cloud" properly once the above 6 fixes land, to see whether
-they generalize or whether Gemini still outperforms on the same
-questions; (b) revisiting the citation-verification retry loop (Week
-5j, built, reverted, explicitly marked "revisit once working with a
-more capable model") — Gemini is exactly that more-capable model to
-test it against, now reachable via the same swappable backend instead
-of the throwaway `spike_gemini_eval.py` script.
+**2. DONE: the swappable-backend infrastructure is built (Tasks 1-6 —
+`llm_backends.py`, `agent.py --backend`, `eval_harness.py --backend`)
+and now actually verified live, and Gemini's advantage generalizes
+across the whole suite, not just the one motivating bug.**
+
+- **A real bug was caught and fixed along the way.** Task 7's first
+  live-verification pass found `--backend gemini` crashing on every
+  question that needed a tool call — `_gemini_start()` created
+  `client = genai.Client(...)` as a function-local variable and
+  returned only `chat`, so `client` became eligible for garbage
+  collection once the function returned; `google-genai`'s
+  `ApiClient.__del__` closes its underlying `httpx` transport as a
+  side effect of that collection, so the next `chat.send_message()`
+  (in `_gemini_send()`, after `hybrid_search()`'s embedding/reranker
+  model loading ran in between — exactly the kind of allocation burst
+  that triggers a GC pass) raised `RuntimeError: Cannot send a
+  request, as the client has been closed.` No prior task's tests
+  caught it because Task 4's tests only fed fake objects into
+  `_gemini_response_to_turn()` in isolation — nothing before this task
+  ever ran the real live multi-turn path. Fixed in `356a9b5` (new
+  `_get_gemini_client()`, lazily creates and caches the client at
+  module level — same pattern `spike_gemini_eval.py` used, which is
+  why the spike never hit this) with regression tests added in
+  `7d05ca8`.
+- **Re-verified live after the fix, same 3 sanity-check questions from
+  the brief — all 3 now pass cleanly, no crash.** Employees ($166,000
+  FTE, cited), the Apple/Microsoft tax-rate comparison (2 tool calls,
+  answered with citations), and the exact motivating case
+  (`msft-segment-revenue-comparison-q3fy2026`) — Gemini now correctly
+  answers **Productivity and Business Processes, $35,013M** vs.
+  Intelligent Cloud's $34,681M, with no invented `segment` tool
+  argument, matching the original spike's 3/3 result.
+- **Full suite, both backends, same retrieval index (same
+  `chunks`/`chroma_db`/`xbrl_cache`), same code, only the LLM
+  differs:**
+  - Gemini: `eval_results/20260821T025213Z.json` — **26/27 passed**,
+    26/27 cited, 2/27 with an unverified numeric citation.
+  - Ollama: `eval_results/20260821T023051Z.json` — **20/27 passed**
+    (reused from the pre-fix verification pass, not re-run — see that
+    file's own entry above for its noise characteristics against the
+    last committed baseline).
+  - **The diff is unambiguous: every one of Ollama's 7 failures
+    flips to PASS under Gemini** — `aapl-employees-fy25`,
+    `msft-tax-rate-q2fy26`, `aapl-msft-tax-rate-comparison`,
+    `aapl-msft-employee-comparison`, `nvda-crm-revenue-comparison`,
+    `nvda-segment-revenue-comparison-q1fy27`, and the motivating
+    `msft-segment-revenue-comparison-q3fy2026`. 19 questions pass on
+    both backends. **Zero questions fail on both.** Exactly one
+    question flips the other way: `pltr-dividend-2019-refusal`
+    (Ollama PASS → Gemini FAIL) — but this is a repeat of the *exact*
+    grading-criteria technicality the original Week 5l spike already
+    found on this same question (the answer correctly states Palantir
+    "has never paid and has no plans to pay dividends" but also
+    writes "$0", which the strict criteria disallows even though the
+    underlying claim is correct) — not a new Gemini weakness, and not
+    a retrieval or reasoning failure.
+  - **Conclusion for (a): Gemini's advantage is not confined to the
+    segment-comparison bug — it generalizes across every category of
+    remaining local-model failure** (numeric misattribution, tax-rate
+    reading, both comparison types, both segment-comparison
+    questions). This is strong, direct evidence for Week 5u's
+    diagnosis: these were `qwen2.5:7b-instruct` capability-ceiling
+    failures, not retrieval or system-design gaps, since retrieval was
+    held constant and only the model changed.
+  - **Caveat, stated plainly rather than glossed over:** this is one
+    Gemini run against one (noisy, per above) Ollama run — the
+    same-day Ollama-vs-Ollama diff earlier in this section shows 3
+    questions flipping run-to-run on the exact comparison-shaped
+    category being compared here, so some of Gemini's margin could in
+    principle be Ollama-side noise rather than pure Gemini advantage.
+    Weighing against that: Gemini went 7-for-7 on *every* question
+    Ollama has ever failed in either of today's two runs, plus the
+    3 sanity-check re-runs and the original Week 5l spike's 19/21 all
+    point the same direction — a 7/7 sweep is a much stronger signal
+    than the 1-3 question flips seen in Ollama's own run-to-run noise.
+    Not run multiple times here (would cost more free-tier API calls
+    without being requested); worth a second full Gemini pass before
+    treating 26/27 as a precise number rather than "clearly much
+    better, roughly this good."
+  - **Conclusion for (b): revisiting the Week 5j citation-verification
+    retry loop against Gemini is now worth prioritizing**, not
+    premature. Gemini's citation quality is already better than
+    Ollama's even without the retry loop (2/27 unverified citations
+    vs. Ollama's 4/27), and Week 5j's loop was explicitly shelved with
+    "revisit once working with a more capable model" — Gemini is now
+    a live, working, demonstrably more-capable backend to test it
+    against via the same swappable interface, not a throwaway script.
 
 **3. Then: resume eval growth**, informed by both the FinanceBench
 analysis (Week 5l) and whatever round 1-2 above surfaces:
