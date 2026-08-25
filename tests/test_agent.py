@@ -13,13 +13,15 @@ monkeypatched BACKENDS entries instead.
 """
 
 from agent import (
-    MARGIN_METRIC_FUNCTIONS,
+    RATIO_METRIC_FUNCTIONS,
+    SINGLE_COMPANY_RATIO_FUNCTIONS,
     _call_compare_financial_metric,
     _call_get_financial_fact,
     _comparison_as_results,
     _dispatch_tool_call,
     _format_citation_key,
     _format_citation_retry_message,
+    _format_fact_value,
     _format_no_comparison_message,
     _format_no_fact_message,
     _format_results_block,
@@ -376,6 +378,20 @@ def test_value_is_citation_verified_respects_grade_numeric_tolerance():
 
 
 # ---------------------------------------------------------------------------
+# _format_fact_value (found in code review, 2026-08-25: "raw" is an
+# internal numeric_utils.normalize() category label, not a
+# natural-language unit -- get_asset_turnover's citation text shouldn't
+# read "1.04 raw")
+# ---------------------------------------------------------------------------
+def test_format_fact_value_omits_unit_word_for_raw():
+    assert _format_fact_value({"value": 1.04, "unit": "raw"}) == "1.04"
+
+
+def test_format_fact_value_includes_unit_word_for_percent():
+    assert _format_fact_value({"value": 31.2, "unit": "percent"}) == "31.2 percent"
+
+
+# ---------------------------------------------------------------------------
 # _comparison_as_results (compare_financial_metric)
 # ---------------------------------------------------------------------------
 def test_comparison_as_results_one_entry_per_company_sorted_by_ticker():
@@ -399,12 +415,12 @@ def test_comparison_as_results_empty_dict_returns_empty_list():
 # (margin dispatch + yoy_growth boundary validation)
 # ---------------------------------------------------------------------------
 def test_call_get_financial_fact_dispatches_operating_margin(monkeypatch):
-    # MARGIN_METRIC_FUNCTIONS binds function objects once at import time,
+    # RATIO_METRIC_FUNCTIONS binds function objects once at import time,
     # so patching agent.get_operating_margin afterward wouldn't reach
     # the dispatch code (which reads from the dict, not the module
     # attribute) -- patch the dict entry itself instead.
     monkeypatch.setitem(
-        MARGIN_METRIC_FUNCTIONS,
+        RATIO_METRIC_FUNCTIONS,
         "operating_margin",
         (lambda ticker, fiscal_year, fiscal_period, period_end_date: {"value": 60.0, "unit": "percent"}, None),
     )
@@ -416,7 +432,7 @@ def test_call_get_financial_fact_dispatches_operating_margin(monkeypatch):
 
 def test_call_get_financial_fact_dispatches_net_margin(monkeypatch):
     monkeypatch.setitem(
-        MARGIN_METRIC_FUNCTIONS,
+        RATIO_METRIC_FUNCTIONS,
         "net_margin",
         (lambda ticker, fiscal_year, fiscal_period, period_end_date: {"value": 45.0, "unit": "percent"}, None),
     )
@@ -424,6 +440,56 @@ def test_call_get_financial_fact_dispatches_net_margin(monkeypatch):
         {"ticker": "NVDA", "metric": "net_margin", "fiscal_year": 2026, "fiscal_period": "FY"}
     )
     assert result == {"value": 45.0, "unit": "percent"}
+
+
+def test_call_get_financial_fact_dispatches_return_on_assets(monkeypatch):
+    # SINGLE_COMPANY_RATIO_FUNCTIONS entries are plain functions, not
+    # (single, all_companies) tuples like RATIO_METRIC_FUNCTIONS -- these
+    # 3 new ratios (Week 5w) have no cross-company counterpart, see
+    # formulas.get_return_on_assets's own docstring for why.
+    monkeypatch.setitem(
+        SINGLE_COMPANY_RATIO_FUNCTIONS,
+        "return_on_assets",
+        lambda ticker, fiscal_year, fiscal_period, period_end_date: {"value": 31.2, "unit": "percent"},
+    )
+    result = _call_get_financial_fact(
+        {"ticker": "AAPL", "metric": "return_on_assets", "fiscal_year": 2025, "fiscal_period": "FY"}
+    )
+    assert result == {"value": 31.2, "unit": "percent"}
+
+
+def test_call_get_financial_fact_dispatches_asset_turnover(monkeypatch):
+    monkeypatch.setitem(
+        SINGLE_COMPANY_RATIO_FUNCTIONS,
+        "asset_turnover",
+        lambda ticker, fiscal_year, fiscal_period, period_end_date: {"value": 1.04, "unit": "raw"},
+    )
+    result = _call_get_financial_fact(
+        {"ticker": "NVDA", "metric": "asset_turnover", "fiscal_year": 2026, "fiscal_period": "FY"}
+    )
+    assert result == {"value": 1.04, "unit": "raw"}
+
+
+def test_call_get_financial_fact_dispatches_cash_to_assets(monkeypatch):
+    monkeypatch.setitem(
+        SINGLE_COMPANY_RATIO_FUNCTIONS,
+        "cash_to_assets",
+        lambda ticker, fiscal_year, fiscal_period, period_end_date: {"value": 4.9, "unit": "percent"},
+    )
+    result = _call_get_financial_fact(
+        {"ticker": "MSFT", "metric": "cash_to_assets", "fiscal_year": 2025, "fiscal_period": "FY"}
+    )
+    assert result == {"value": 4.9, "unit": "percent"}
+
+
+def test_call_get_financial_fact_rejects_yoy_growth_combined_with_single_company_ratio():
+    # Same reasoning as the margin+yoy_growth rejection below -- "growth
+    # of a ratio" has no current evidence/use case for these three
+    # either, so it's rejected the same way rather than silently
+    # computed or passed through to get_yoy_growth (which doesn't
+    # support ratio metrics at all).
+    result = _call_get_financial_fact({"ticker": "NVDA", "metric": "asset_turnover", "yoy_growth": True})
+    assert result is None
 
 
 def test_call_get_financial_fact_dispatches_yoy_growth_for_raw_metric(monkeypatch):
@@ -526,9 +592,23 @@ def test_call_compare_financial_metric_rejects_unrecognized_extra_argument(monke
     assert calls == []
 
 
+def test_call_compare_financial_metric_gracefully_rejects_single_company_only_ratio():
+    # return_on_assets/asset_turnover/cash_to_assets (Week 5w) are in
+    # SINGLE_COMPANY_RATIO_FUNCTIONS, not RATIO_METRIC_FUNCTIONS --
+    # compare_financial_metric's own boundary check only ever looks at
+    # DEFAULT_METRIC_TAGS/RATIO_METRIC_FUNCTIONS, so a metric name that's
+    # only in the single-company dict falls through to the same
+    # graceful {} any other unsupported metric gets, rather than a
+    # crash. This is deliberate scoping (see formulas.get_return_on_assets's
+    # docstring for why there's no cross-company version yet), not an
+    # oversight -- this test locks in that it stays graceful.
+    result = _call_compare_financial_metric({"anchor_ticker": "AAPL", "metric": "asset_turnover"})
+    assert result == {}
+
+
 def test_call_compare_financial_metric_dispatches_operating_margin(monkeypatch):
     monkeypatch.setitem(
-        MARGIN_METRIC_FUNCTIONS,
+        RATIO_METRIC_FUNCTIONS,
         "operating_margin",
         (None, lambda ticker, fiscal_year, fiscal_period, period_end_date: {"NVDA": {"value": 60.0}}),
     )
@@ -538,7 +618,7 @@ def test_call_compare_financial_metric_dispatches_operating_margin(monkeypatch):
 
 def test_call_compare_financial_metric_dispatches_net_margin(monkeypatch):
     monkeypatch.setitem(
-        MARGIN_METRIC_FUNCTIONS,
+        RATIO_METRIC_FUNCTIONS,
         "net_margin",
         (None, lambda ticker, fiscal_year, fiscal_period, period_end_date: {"NVDA": {"value": 45.0}}),
     )

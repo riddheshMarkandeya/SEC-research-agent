@@ -33,30 +33,45 @@ def _compute_ratio_metric(
     fiscal_year: int | None,
     fiscal_period: str,
     period_end_date: str | None,
+    as_percent: bool = True,
 ) -> dict | None:
-    """Shared body for every tool-computed percentage metric (gross/
-    operating/net margin). Extracted once operating_margin/net_margin
-    were added alongside gross_margin, since all three are otherwise
-    identical bodies differing only in which metric is the numerator --
-    copy-pasting a third time would reproduce exactly the kind of
-    duplication this project already fixed once (see config.py's own
-    history).
+    """Shared body for every tool-computed ratio metric (gross/operating/
+    net margin, and now return-on-assets/asset-turnover/cash-to-assets).
+    Extracted once operating_margin/net_margin were added alongside
+    gross_margin, since all three are otherwise identical bodies
+    differing only in which metric is the numerator -- copy-pasting a
+    third time would reproduce exactly the kind of duplication this
+    project already fixed once (see config.py's own history).
 
     Both legs are just handed the same fiscal_year/fiscal_period/
     period_end_date arguments and each resolves its own entry via
     get_metric() independently -- the period_end check below is what
     actually guarantees both legs agree, regardless of how each one got
-    there."""
+    there. This also means either leg can be an XBRL "instant" (point-
+    in-time balance, e.g. total_assets) or "duration" (income-statement)
+    concept, or one of each -- get_metric() already normalizes both
+    shapes to the same {"value", "period_end", ...} dict, so nothing
+    here needs to know or care which kind either metric is.
+
+    `as_percent=False` (asset_turnover's case) skips the *100 and
+    reports `unit: "raw"` instead of `"percent"`, rounded to 2 decimals
+    instead of 1 -- asset turnover is conventionally expressed as a
+    decimal ratio ("1.04x"), not a percentage; found live (2026-08-25)
+    that `numeric_utils.normalize()` treats "percent" and "raw" as
+    different, never-cross-matching categories regardless of numeric
+    equivalence, so getting this wrong isn't just a display
+    preference, it silently breaks eval grading."""
     numerator = get_metric(ticker, numerator_metric, fiscal_year, fiscal_period, period_end_date)
     denominator = get_metric(ticker, denominator_metric, fiscal_year, fiscal_period, period_end_date)
     if numerator is None or denominator is None:
         return None
     if numerator["period_end"] != denominator["period_end"]:
         return None
-    ratio_pct = numerator["value"] / denominator["value"] * 100
+    ratio = numerator["value"] / denominator["value"]
+    value = round(ratio * 100, 1) if as_percent else round(ratio, 2)
     return {
-        "value": round(ratio_pct, 1),
-        "unit": "percent",
+        "value": value,
+        "unit": "percent" if as_percent else "raw",
         "period_end": numerator["period_end"],
         "form": numerator["form"],
         "accession": numerator["accession"],
@@ -97,6 +112,65 @@ def get_net_margin(
     """Net income / revenue, as a percent. See _compute_ratio_metric()
     for why this is computed here rather than returned raw."""
     return _compute_ratio_metric(ticker, "net_income", "revenue", fiscal_year, fiscal_period, period_end_date)
+
+
+def get_return_on_assets(
+    ticker: str,
+    fiscal_year: int | None = None,
+    fiscal_period: str = "FY",
+    period_end_date: str | None = None,
+) -> dict | None:
+    """Net income / total assets, as a percent -- the first ratio in this
+    module combining a duration (income-statement) metric with an
+    instant (balance-sheet) one. Built to answer aapl-return-on-assets-
+    fy2025, one of the multi-statement eval questions deliberately added
+    with no tool support (Week 5v/eval-growth round), to generate real
+    evidence of what the agent does without a deterministic path --
+    same discipline that originally justified the margin registry
+    itself. See _compute_ratio_metric() for why this is computed here
+    rather than returned raw.
+
+    No cross-company `_all_companies` counterpart, unlike the three
+    margins above -- confirmed via a live check, not assumed:
+    total_assets' own SEC-assigned `frame` is None for annual instant
+    facts (no bucket to anchor a frames query on), and even borrowing a
+    substitute frame label from the duration numerator wouldn't work --
+    SEC's frames API uses a different label format for instant concepts
+    entirely. No current eval question needs a cross-company comparison
+    of this ratio anyway, so this isn't worth chasing down further."""
+    return _compute_ratio_metric(ticker, "net_income", "total_assets", fiscal_year, fiscal_period, period_end_date)
+
+
+def get_asset_turnover(
+    ticker: str,
+    fiscal_year: int | None = None,
+    fiscal_period: str = "FY",
+    period_end_date: str | None = None,
+) -> dict | None:
+    """Revenue / total assets, as a plain decimal ratio (NOT a percent --
+    see _compute_ratio_metric()'s `as_percent` docstring for why this
+    one specifically isn't). Built to answer
+    nvda-asset-turnover-fy2026. Same "no cross-company counterpart"
+    reasoning as get_return_on_assets() above applies here too."""
+    return _compute_ratio_metric(
+        ticker, "revenue", "total_assets", fiscal_year, fiscal_period, period_end_date, as_percent=False
+    )
+
+
+def get_cash_to_assets(
+    ticker: str,
+    fiscal_year: int | None = None,
+    fiscal_period: str = "FY",
+    period_end_date: str | None = None,
+) -> dict | None:
+    """Cash and cash equivalents / total assets, as a percent -- both
+    legs are instant (balance-sheet) concepts here, unlike
+    get_return_on_assets()/get_asset_turnover() above. Built to answer
+    msft-cash-to-assets-fy2025. Same "no cross-company counterpart"
+    reasoning as get_return_on_assets() above applies here too."""
+    return _compute_ratio_metric(
+        ticker, "cash_and_equivalents", "total_assets", fiscal_year, fiscal_period, period_end_date
+    )
 
 
 def _compute_ratio_metric_all_companies(
@@ -234,7 +308,7 @@ def _get_annual_value(ticker: str, metric: str, fiscal_year: int) -> dict | None
     own bare name, not a {metric: function} dict built once at module
     load -- a dict would bind the ORIGINAL function objects at import
     time, the exact gotcha already hit twice in this project (agent.py's
-    MARGIN_METRIC_FUNCTIONS, and this module's own split from
+    RATIO_METRIC_FUNCTIONS, and this module's own split from
     xbrl_facts.py): a test monkeypatching formulas.get_operating_margin
     would silently miss a dict-based dispatch, since the dict's own
     entry would still point at the pre-patch function. Calling the bare
@@ -246,6 +320,12 @@ def _get_annual_value(ticker: str, metric: str, fiscal_year: int) -> dict | None
         return get_operating_margin(ticker, fiscal_year=fiscal_year, fiscal_period="FY")
     if metric == "net_margin":
         return get_net_margin(ticker, fiscal_year=fiscal_year, fiscal_period="FY")
+    if metric == "return_on_assets":
+        return get_return_on_assets(ticker, fiscal_year=fiscal_year, fiscal_period="FY")
+    if metric == "asset_turnover":
+        return get_asset_turnover(ticker, fiscal_year=fiscal_year, fiscal_period="FY")
+    if metric == "cash_to_assets":
+        return get_cash_to_assets(ticker, fiscal_year=fiscal_year, fiscal_period="FY")
     return get_metric(ticker, metric, fiscal_year=fiscal_year, fiscal_period="FY")
 
 

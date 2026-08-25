@@ -2280,6 +2280,118 @@ chunk text) before writing, same discipline as every prior round.
   retrieval and tools were held constant and only the answering model
   changed.
 
+### Formula registry extended: return_on_assets, asset_turnover, cash_to_assets (2026-08-25)
+
+Closes out the citation-verification-gap decision from the eval-growth
+round above by removing its root cause for these three ratios: no
+deterministic tool existed, so the model reached for self-computation.
+Same discipline that originally justified the margin registry (Week
+5k) -- these three multi-statement questions had already generated real
+evidence of what the agent does without a path (a wrong-company answer,
+a self-computed-and-uncited ratio), so building the tool was justified
+by demand already observed, not speculative.
+
+- **`formulas.py`**: `_compute_ratio_metric()` gained an `as_percent`
+  flag (default `True`) -- `asset_turnover` is the first ratio in this
+  module that isn't a percent (conventionally "1.04x", not "104%");
+  getting this wrong isn't just cosmetic, `numeric_utils.normalize()`
+  treats `"percent"`/`"raw"` as different, never-cross-matching
+  categories, which is exactly the bug already caught and fixed in the
+  eval question itself before this tool existed (see the eval-growth
+  section above). `get_return_on_assets` (net income ÷ total assets),
+  `get_asset_turnover` (revenue ÷ total assets, `as_percent=False`),
+  `get_cash_to_assets` (cash ÷ total assets) are the first ratios in
+  this module combining a DURATION income-statement metric with an
+  INSTANT balance-sheet one (or two instant metrics) -- `get_metric()`
+  already normalizes both shapes to the same `{"value", "period_end",
+  ...}` dict, so no new code was needed for this combination. Confirmed
+  for one real example (AAPL FY2025: both `net_income` and
+  `total_assets` report `period_end="2025-09-27"`) -- not proven to
+  hold for every company/year, and doesn't need to be: this is exactly
+  what `_compute_ratio_metric`'s existing `numerator["period_end"] !=
+  denominator["period_end"]` check already guards, returning `None`
+  gracefully on the (unobserved so far) case where a duration and
+  instant fact's period ends don't line up, rather than assuming they
+  always will.
+- **Deliberately no cross-company `_all_companies` counterpart for any
+  of the three** -- confirmed via a live check, not assumed: an annual
+  instant fact's SEC-assigned `frame` is `None` (verified: AAPL FY2025
+  `total_assets`'s own `frame` is `None`), so there's no frames-API
+  bucket to anchor a cross-company query on, and even borrowing a
+  substitute frame label from a duration numerator wouldn't resolve
+  correctly -- SEC's frames API uses a different label format for
+  instant concepts entirely. No current eval question needs this
+  anyway. `agent.py`'s `SINGLE_COMPANY_RATIO_FUNCTIONS` (plain
+  functions, not tuples) keeps these three separate from
+  `RATIO_METRIC_FUNCTIONS` (renamed from `MARGIN_METRIC_FUNCTIONS`,
+  which stayed margins-only) for exactly this reason --
+  `compare_financial_metric`'s own boundary check only ever looks at
+  `RATIO_METRIC_FUNCTIONS`, so a `SINGLE_COMPANY_RATIO_FUNCTIONS`-only
+  metric name falls through to the same graceful "not supported" `{}`
+  any other unrecognized metric gets, rather than a crash.
+- **A real crash risk found and closed before it could ever fire**:
+  adding these three names to a metric-functions dict makes them pass
+  `_call_get_financial_fact`'s boundary check, which means a
+  multi-year-average request combined with one of them would now reach
+  `get_multi_year_average()` -- which would otherwise crash inside
+  `get_metric()`'s tag lookup (`_tag_for()` raises `ValueError` for any
+  name that isn't a raw GAAP tag), the exact "unhandled crash on
+  unsupported metric" bug class already fixed twice before in this
+  project. Closed by extending `formulas._get_annual_value()`'s
+  dispatch with a branch for each of the three, mirroring its existing
+  margin branches -- covered by regression tests before this was ever
+  exercised live.
+- **Live-verified, not just unit-tested.** Ran all three motivating
+  questions directly against Gemini: `aapl-return-on-assets-fy2025` and
+  `nvda-asset-turnover-fy2026` both resolved via a single clean
+  `get_financial_fact` call with an exact, properly-cited value every
+  time tried. `msft-cash-to-assets-fy2025` was more mixed across 4
+  manual runs -- 2 called the new `cash_to_assets` tool and got a
+  properly-cited answer, 2 still self-computed from two separately-
+  retrieved raw values with no citation on the derived percentage
+  (reproducing the exact gap this tool was built to close) -- **building
+  the tool helps when the model actually reaches for it, but doesn't
+  guarantee it will every time**, the same caveat this project has
+  already found for other tool additions (e.g.
+  `pltr-inventory-turnover-fy2025-refusal`).
+- **Full-suite results, both backends, same day:**
+  - Gemini (`eval_results/20260825T190858Z.json`): **34/35 passed** (up
+    from 33/35), all three new ratio questions passed cleanly with
+    zero citation warnings. The only fail
+    (`aapl-3yr-avg-operating-margin-fy2023-fy2025`) is the same
+    pre-existing temperature-0.1 flake already confirmed against
+    history in the eval-growth section above. The 2 unverified
+    citations this run (`crm-rpo-fy26`, `crm-ai-risk`) are the same
+    already-documented bracket-formatting checker-noise class
+    (Gemini's `"[4, 10]"`-style citations leaking a stray digit into a
+    claim window), not new problems.
+  - Ollama (`eval_results/20260825T195207Z.json`): **26/35 passed** (up
+    from 23/35). Diffed question-by-question against the immediately
+    prior Ollama run: `aapl-return-on-assets-fy2025` and
+    `nvda-asset-turnover-fy2026` both flipped FAIL→PASS -- direct,
+    attributable fixes, not noise (the ROA question no longer answers
+    about Microsoft when asked about Apple; the asset-turnover question
+    no longer self-computes with an unverifiable citation). Two other
+    questions also flipped FAIL→PASS
+    (`aapl-msft-tax-rate-comparison`, `nvda-crm-revenue-comparison`) and
+    one flipped PASS→FAIL (`pltr-inventory-turnover-fy2025-refusal`) --
+    all three are the same already-documented comparison/refusal-shaped
+    run-to-run noise this project has characterized repeatedly, unrelated
+    to this change. `msft-cash-to-assets-fy2025` stayed FAIL: the saved
+    answer text contains no XBRL-tool-sourced figures and reads as a
+    `search_filings`-only response (a wrong/unverifiable cash number,
+    the model explicitly saying it can't find total assets to compute
+    the ratio) -- inferred from the answer's own content, since
+    eval_results JSON doesn't record a tool-call trace to confirm this
+    directly. Reads as the same broader capability-ceiling pattern
+    already established for this backend, whatever the exact mechanism.
+- **Net result**: 2 of 3 target questions cleanly and repeatably fixed
+  on both backends; the third (`cash_to_assets`) is a real, partial
+  improvement -- the tool works correctly whenever either backend
+  reaches for it, but tool-selection reliability (not the tool itself)
+  remains the open variable, same class of gap already documented for
+  Ollama's other tool-adoption misses.
+
 ## Next steps
 
 > This section used to be a running "X: FIXED, see above" log that
@@ -2445,21 +2557,14 @@ disambiguation. Result: 33/35 on Gemini (8/8 new questions clean),
 23/35 on Ollama (2/8 new questions) — no regressions on the original 27
 on either backend, confirmed against history rather than assumed.
 
-- **One new open item this round surfaced, not yet decided or fixed:**
-  a real gap in `verify_citations()`'s heuristic — a self-computed
-  numeric claim with **no citation marker attached to it at all**
-  currently passes verification by default (nothing to contradict a
-  plain match), even though it should be flagged the same way a
-  wrongly-cited claim is. Found on `nvda-asset-turnover-fy2026`: Gemini
-  self-computed the ratio and stated it with no citation, so it slipped
-  through ungated, while the exact same self-computation on Ollama (which
-  *did* attach a wrong citation) was correctly caught. Worth a decision
-  (tighten the heuristic to flag suspiciously uncited numeric claims
-  near a computed-looking context, or build formula-registry-style
-  tools for these two new ratios so self-computation isn't reached for
-  in the first place) — flagged here rather than fixed speculatively,
-  same "let evidence decide" discipline as every other tool-scope call
-  in this project.
+- **Addressed, 2026-08-25 (not fully closed) — see "Formula registry
+  extended" above for the complete account.** Built the three ratio
+  tools rather than patching the detection heuristic. 2 of 3 motivating
+  questions cleanly fixed on both backends; `cash_to_assets` only
+  partially, since the underlying `verify_citations()` gap (an uncited
+  numeric claim isn't checked at all) is untouched and still live for
+  any other ratio a future question might need — left as-is absent a
+  concrete case, per "let evidence decide."
 - Toward the original 30-50 FinanceBench-style target, if still useful
   once there's more signal — not a fixed requirement.
 - Ground truth for all of the above: real research against actual

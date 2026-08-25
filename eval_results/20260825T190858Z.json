@@ -1,0 +1,444 @@
+{
+  "backend": "gemini",
+  "answer_model": "gemini-flash-lite-latest",
+  "judge_model": "qwen2.5:7b-instruct",
+  "results": [
+    {
+      "id": "crm-rpo-fy26",
+      "ticker": "CRM",
+      "question": "What is Salesforce's total remaining performance obligation as of January 31, 2026?",
+      "type": "numeric",
+      "passed": true,
+      "detail": "found matching value: 72.4 (billion)",
+      "has_citation": true,
+      "citation_warnings": [
+        "[1] claims 2.4 (billion) but that value doesn't appear in the cited source"
+      ],
+      "answer": "As of January 31, 2026, Salesforce's total remaining performance obligation was **$72.4 billion** (comprising $35.1 billion in current remaining performance obligation and $37.3 billion in noncurrent remaining performance obligation) [1].",
+      "n_chunks_retrieved": 5
+    },
+    {
+      "id": "aapl-employees-fy25",
+      "ticker": "AAPL",
+      "question": "How many full-time equivalent employees did Apple have as of September 27, 2025?",
+      "type": "numeric",
+      "passed": true,
+      "detail": "found matching value: 166000.0 (raw)",
+      "has_citation": true,
+      "citation_warnings": [],
+      "answer": "As of September 27, 2025, Apple Inc. had approximately 166,000 full-time equivalent employees [2].",
+      "n_chunks_retrieved": 5
+    },
+    {
+      "id": "msft-tax-rate-q2fy26",
+      "ticker": "MSFT",
+      "question": "What was Microsoft's effective tax rate for the three months ended December 31, 2025?",
+      "type": "numeric",
+      "passed": true,
+      "detail": "found matching value: 20.0 (percent)",
+      "has_citation": true,
+      "citation_warnings": [],
+      "answer": "Microsoft's effective tax rate was **20%** for the three months ended December 31, 2025 [1].",
+      "n_chunks_retrieved": 5
+    },
+    {
+      "id": "aapl-ai-risk",
+      "ticker": "AAPL",
+      "question": "What risks does Apple describe related to artificial intelligence?",
+      "type": "judged",
+      "passed": true,
+      "detail": "The assistant's response clearly identifies various risks related to AI that Apple has described, including legal, regulatory, operational, reputational, competitive, cybersecurity, and supply constraints. Each risk category aligns with the specified criteria, and the answer includes multiple citation markers as required.",
+      "has_citation": true,
+      "citation_warnings": [],
+      "answer": "Apple describes several risks related to artificial intelligence (AI) and machine learning technologies across its SEC filings. These risks can be grouped into several key areas:\n\n* **General Business, Legal, and Operational Risks:** As AI technologies become increasingly integrated into Apple's products, services, and business operations, they present emerging legal, regulatory, ethical, and operational challenges [1]. These efforts may give rise to risks concerning strategy and competition, recouping costs and investment returns, product liability, intellectual property infringement, data privacy, cybersecurity, export controls and sanctions, bias and discrimination, online safety, protection of minors, and exposing users to harmful, inaccurate, or negative content [1]. \n* **Responsibility and Deployment Failures:** Apple notes that despite its commitment to developing and deploying AI responsibly, it may be unsuccessful in identifying or resolving all potential issues or failures before they arise, which could lead to reputational and competitive harm, regulatory actions, and legal liabilities [1].\n* **Cybersecurity and Sophisticated Attacks:** The rapid advancement and dissemination of AI significantly increase cybersecurity risks [2]. AI technologies are being utilized by malicious actors to produce highly targeted phishing campaigns, automate the discovery or exploitation of vulnerabilities, generate deepfake content to bypass authentication protocols, and identify/exploit system weaknesses at accelerated paces [2]. Additionally, AI models and the development/deployment of AI by Apple or its suppliers can themselves be susceptible to security threats and new vulnerabilities [2].\n* **Compute Infrastructure and Supply Constraints:** Apple\u2019s business and its AI/machine learning offerings depend heavily on access to sufficient computing resources [5]. High industry-wide demand for cloud computing and AI infrastructure has led to constrained supply, extended lead times, and rising costs [5]. Apple relies on both its own data centers and third-party cloud service providers, and if it cannot secure adequate compute capacity on commercially reasonable terms, the functionality, availability, and rollout of its AI offerings could be limited, delayed, or subject to significantly higher costs [5].\n* **New and Changing Regulations:** The expansion of AI and machine learning features requires Apple to navigate evolving, varied, and potentially conflicting federal, state, and international laws, regulations, executive orders, and enforcement priorities, creating potential compliance costs, liabilities, and restrictions [4].",
+      "n_chunks_retrieved": 5
+    },
+    {
+      "id": "nvda-supply-chain-risk",
+      "ticker": "NVDA",
+      "question": "What supply chain risks does NVIDIA describe?",
+      "type": "judged",
+      "passed": true,
+      "detail": "The AI assistant's answer mentions dependency on third-party suppliers/manufacturers, manufacturing lead times, and mismatches between supply and customer demand, and includes citation markers as required.",
+      "has_citation": true,
+      "citation_warnings": [],
+      "answer": "In its SEC filings, NVIDIA describes several key supply chain risks and challenges that could impact its business, financial condition, and results of operations:\n\n* **Long Manufacturing Lead Times and Uncertain Supply/Capacity Availability:** NVIDIA has long manufacturing lead times, builds finished products, and maintains inventory in advance of anticipated demand [1]. During periods of industry shortages or limited supply/capacity, lead times can extend beyond 12 months [1]. \n* **Mismatches Between Supply and Demand:** Inaccuracies in estimating customer demand or sudden changes in customer orders can lead to significant mismatches, resulting in product shortages or excess inventory [1]. If NVIDIA underestimates demand and its foundry partners and contract manufacturers cannot scale production, it may fail to meet customer needs [1].\n* **Increased Costs and Commitments:** To secure future supply and manufacturing capacity, NVIDIA has paid premiums, provided deposits, and entered into long-term supply agreements and capacity commitments, which increase product costs [1]. The company may still be unable to secure sufficient capacity commitments for its business needs [1].\n* **Global Trade Policies, Tariffs, and Export Controls:** Rapid evolution of global trade policies, export controls, and tariffs add complexity and increase costs across the supply chain [3]. Ongoing uncertainty regarding these measures can disrupt supply chain operations, make forecasting difficult, and impact the timing and volume of customer purchases [3].\n* **Manufacturing Complexities and New Architecture Transitions:** Bringing up sophisticated product architectures and complex system configurations can cause production delays, lower product yields, higher material costs, increased inventory provisions, and challenges in managing supply and demand [4].\n* **Expansion of Domestic Manufacturing:** NVIDIA's plans to increase U.S.-based manufacturing depend on the domestic ecosystem's capacity to ramp production supply to the required volume and on a timely basis [3].\n* **Macroeconomic Factors and Vendor Management:** Global economic and geopolitical developments, inflation, capital market volatility, and global supply chain constraints directly and indirectly impact supply chain and manufacturing costs, equipment costs, and product availability [3, 5].",
+      "n_chunks_retrieved": 5
+    },
+    {
+      "id": "pltr-dividend-2019-refusal",
+      "ticker": "PLTR",
+      "question": "What was Palantir's dividend per share in 2019?",
+      "type": "judged",
+      "passed": true,
+      "detail": "The answer explicitly states that Palantir's dividend per share in 2019 was $0 due to the company never paying dividends, which aligns with the provided criteria.",
+      "has_citation": true,
+      "citation_warnings": [],
+      "answer": "Palantir Technologies Inc. has never paid dividends on its common stock [2]. Therefore, Palantir's dividend per share in 2019 was $0.",
+      "n_chunks_retrieved": 5
+    },
+    {
+      "id": "aapl-msft-tax-rate-comparison",
+      "ticker": [
+        "AAPL",
+        "MSFT"
+      ],
+      "question": "Compare Apple's effective tax rate for the three months ended June 27, 2026 to Microsoft's effective tax rate for the three months ended December 31, 2025.",
+      "type": "comparison",
+      "passed": true,
+      "detail": "found matching values for all 2 entities",
+      "has_citation": true,
+      "citation_warnings": [],
+      "answer": "For the respective periods:\n\n* **Apple Inc. (AAPL):** For the three months ended June 27, 2026, Apple's effective tax rate was **17.9%** (with a provision for income taxes of $6,478 million) [2].\n* **Microsoft Corporation (MSFT):** For the three months ended December 31, 2025, Microsoft's effective tax rate was **20%** [6].\n\nComparing the two, Microsoft's effective tax rate for its quarter ended December 31, 2025 (20%) [6] was higher than Apple's effective tax rate for its quarter ended June 27, 2026 (17.9%) [2] by 2.1 percentage points.",
+      "n_chunks_retrieved": 10
+    },
+    {
+      "id": "aapl-msft-employee-comparison",
+      "ticker": [
+        "AAPL",
+        "MSFT"
+      ],
+      "question": "Compare the number of full-time employees at Apple (as of September 27, 2025) and Microsoft (as of June 30, 2026).",
+      "type": "comparison",
+      "passed": true,
+      "detail": "found matching values for all 2 entities",
+      "has_citation": true,
+      "citation_warnings": [],
+      "answer": "As of their respective reporting dates:\n\n* **Apple Inc.** had approximately **166,000** full-time equivalent employees as of September 27, 2025 [1].\n* **Microsoft Corporation** employed approximately **223,000** people on a full-time basis as of June 30, 2026 [9].",
+      "n_chunks_retrieved": 10
+    },
+    {
+      "id": "nvda-revenue-fy26",
+      "ticker": "NVDA",
+      "question": "What was NVIDIA's total revenue for fiscal year 2026?",
+      "type": "numeric",
+      "passed": true,
+      "detail": "found matching value: 215938000000.0 (raw)",
+      "has_citation": true,
+      "citation_warnings": [],
+      "answer": "NVIDIA's total revenue for fiscal year 2026 was $215,938,000,000 (or approximately $215.94 billion) [1].",
+      "n_chunks_retrieved": 1
+    },
+    {
+      "id": "nvda-gross-margin-fy26",
+      "ticker": "NVDA",
+      "question": "What was NVIDIA's gross margin for fiscal year 2026?",
+      "type": "numeric",
+      "passed": true,
+      "detail": "found matching value: 71.1 (percent)",
+      "has_citation": true,
+      "citation_warnings": [],
+      "answer": "For fiscal year 2026, NVIDIA's gross margin was **71.1%** [1].",
+      "n_chunks_retrieved": 1
+    },
+    {
+      "id": "pltr-revenue-2025",
+      "ticker": "PLTR",
+      "question": "What was Palantir's total revenue for 2025?",
+      "type": "numeric",
+      "passed": true,
+      "detail": "found matching value: 4475446000.0 (raw)",
+      "has_citation": true,
+      "citation_warnings": [],
+      "answer": "Palantir's total revenue for fiscal year 2025 was $4,475,446,000 (or approximately $4.48 billion) [1].",
+      "n_chunks_retrieved": 1
+    },
+    {
+      "id": "crm-revenue-q1fy27",
+      "ticker": "CRM",
+      "question": "What was Salesforce's total revenue for the three months ended April 30, 2026?",
+      "type": "numeric",
+      "passed": true,
+      "detail": "found matching value: 11133000000.0 (raw)",
+      "has_citation": true,
+      "citation_warnings": [],
+      "answer": "Salesforce's total revenue for the three months ended April 30, 2026, was $11,133,000,000 (or approximately $11.13 billion) [1].",
+      "n_chunks_retrieved": 1
+    },
+    {
+      "id": "nvda-crm-revenue-comparison",
+      "ticker": [
+        "NVDA",
+        "CRM"
+      ],
+      "question": "Compare NVIDIA's total revenue for the quarter ended April 26, 2026 to Salesforce's total revenue for the quarter ended April 30, 2026.",
+      "type": "comparison",
+      "passed": true,
+      "detail": "found matching values for all 2 entities",
+      "has_citation": true,
+      "citation_warnings": [],
+      "answer": "For the quarter ended April 26, 2026, NVIDIA's total revenue was $81,615,000,000 (or approximately $81.62 billion) [1]. \n\nFor the quarter ended April 30, 2026, Salesforce's total revenue was $11,133,000,000 (or approximately $11.13 billion) [2].",
+      "n_chunks_retrieved": 2
+    },
+    {
+      "id": "crm-ai-risk",
+      "ticker": "CRM",
+      "question": "What risks does Salesforce describe related to artificial intelligence?",
+      "type": "judged",
+      "passed": true,
+      "detail": "The answer comprehensively covers various risks related to AI for Salesforce, including legal, regulatory, reputational, competitive, and cybersecurity aspects, and includes citation markers as required.",
+      "has_citation": true,
+      "citation_warnings": [
+        "[4] claims 10.0 (raw) but that value doesn't appear in the cited source"
+      ],
+      "answer": "Salesforce describes several key risks and challenges related to its artificial intelligence (AI) offerings, including generative and agentic AI (such as Agentforce) [4, 10]:\n\n* **Ethical Issues and Social Impact:** The development of AI offerings and platforms handling customer data presents emerging ethical issues [4]. Solutions that draw controversy regarding their perceived or actual impact on human rights, privacy, employment, or other social contexts can lead to enhanced regulatory scrutiny, legal liability, competitive harm, and brand or reputational damage [4].\n* **Inadequate Development, Governance, and Performance:** Inadequate or ineffective AI development, deployment, content labeling, or governance can impair solution acceptance, cause unintended service performance, and undermine confidence in AI outputs (decisions, predictions, and analysis) [4]. \n* **Accuracy, Bias, and Content Risks:** Known risks of generative AI include issues related to accuracy, bias, toxicity, privacy, security, and data provenance [4]. AI technologies may produce content that appears correct but is factually inaccurate, flawed, misleading, biased, offensive, or unsafe [4, 10]. If customers rely on such content to their detriment, Salesforce may face legal liability, litigation, regulatory investigations, enforcement actions, indemnification obligations, and reputational harm [7, 10].\n* **Intellectual Property and Copyright Concerns:** AI tools may generate or incorporate copyrighted or other protected materials [7, 10]. If rights holders enforce their intellectual property rights or claim violations, Salesforce may be exposed to legal liability, brand harm, and competitive damage [7, 10].\n* **Compliance and Regulatory Burdens:** The rapid evolution of AI and related regulatory requirements demand significant resources to develop, test, monitor, and maintain products to comply with laws and address concerns like transparency and explainability [10]. Uncertainty around new AI applications requires complex and costly investments in compliance programs, governance frameworks, licensing arrangements, auditing, and risk mitigation processes, which could impact profit margins [4, 10].\n* **Increased Costs and Computing Expenses:** Developing, testing, deploying, and maintaining AI systems\u2014including licensing or developing proprietary datasets and machine learning models to test for accuracy and bias\u2014involve high computing and operational costs [4, 7, 10]. These expenses can increase the cost profile of Salesforce's offerings and negatively impact financial results and profit margins if expenses are excessive or risks cannot be effectively mitigated [7, 10].",
+      "n_chunks_retrieved": 10
+    },
+    {
+      "id": "pltr-government-contract-risk",
+      "ticker": "PLTR",
+      "question": "What risks does Palantir describe related to its dependence on government contracts?",
+      "type": "judged",
+      "passed": true,
+      "detail": "The AI assistant's answer clearly states that Palantir's business depends significantly on government contracts and describes several specific related risks, including fiscal, policy, and funding changes as well as geopolitical conflicts. Each point is supported by a citation marker.",
+      "has_citation": true,
+      "citation_warnings": [],
+      "answer": "Palantir describes several risks related to its dependence on government contracts and its relationships with the public sector in its filings, including:\n\n* **Dependence on Government Revenue and Procurement Success:** A significant portion of Palantir's business and revenue depends on contracts with federal, state, local, and foreign governments and government agencies (particularly agencies of the U.S. federal government, either directly or through other government contractors) [2]. The success and growth of its business depend on its ability to continue successfully procuring government contracts [2].\n* **Perceived Relationship with the U.S. Government:** Palantir's perceived relationship with the U.S. government could adversely affect its business prospects in certain non-U.S. geographies or with certain non-U.S. governments [2].\n* **Competitive, Expensive, and Time-Consuming Sales Process:** Selling to government agencies can be highly competitive, expensive, and time-consuming, frequently requiring significant upfront time and resources without any guarantee of generating a sale [2].\n* **Complex Laws and Regulations:** Palantir must comply with specialized laws and regulations relating to the formation, administration, and performance of government contracts, which grant public sector customers unique rights not typically found in commercial contracts [2].\n* **Fiscal, Policy, and Funding Changes:** The company's business, results of operations, and financial condition can be adversely affected by changes in fiscal or contracting policies, decreases in available government funding (including from federal efforts to analyze and enhance operational efficiency or enforce executive orders and administration priorities), changes in government programs or requirements, and changes in the political environment or leadership [2, 4].\n* **Security Clearances and Authorizations:** Government work depends on Palantir's ability to maintain required facility clearances for classified contracts, obtain personnel security clearances for its employees, and achieve or maintain government security certifications and authorizations (such as FedRAMP, IL2, IL4, IL5, and IL6) [5].\n* **Geopolitical Conflicts and Instability:** Ongoing conflicts (such as the Russia-Ukraine conflict, conflicts in the Middle East) and regional instability can create uncertainty and result in changes in policy, priorities, or government funding [5].",
+      "n_chunks_retrieved": 5
+    },
+    {
+      "id": "msft-rd-expense-q3fy26",
+      "ticker": "MSFT",
+      "question": "What were Microsoft's research and development expenses for the third quarter of fiscal year 2026?",
+      "type": "numeric",
+      "passed": true,
+      "detail": "found matching value: 8915000000.0 (raw)",
+      "has_citation": true,
+      "citation_warnings": [],
+      "answer": "Microsoft's research and development expenses for the third quarter of fiscal year 2026 were $8,915,000,000 ($8.915 billion) [1].",
+      "n_chunks_retrieved": 1
+    },
+    {
+      "id": "aapl-net-income-fy2025",
+      "ticker": "AAPL",
+      "question": "What was Apple's net income for fiscal year 2025?",
+      "type": "numeric",
+      "passed": true,
+      "detail": "found matching value: 112010000000.0 (raw)",
+      "has_citation": true,
+      "citation_warnings": [],
+      "answer": "Apple Inc.'s net income for fiscal year 2025 was $112,010,000,000 (or $112.01 billion) [1].",
+      "n_chunks_retrieved": 1
+    },
+    {
+      "id": "nvda-cost-of-revenue-fy2026",
+      "ticker": "NVDA",
+      "question": "What was NVIDIA's cost of revenue for fiscal year 2026?",
+      "type": "numeric",
+      "passed": true,
+      "detail": "found matching value: 62475000000.0 (raw)",
+      "has_citation": true,
+      "citation_warnings": [],
+      "answer": "NVIDIA's cost of revenue for fiscal year 2026 was $62,475,000,000 (or $62.475 billion) [1].",
+      "n_chunks_retrieved": 1
+    },
+    {
+      "id": "aapl-operating-margin-q3fy2026",
+      "ticker": "AAPL",
+      "question": "What was Apple's operating margin for the three months ended June 27, 2026?",
+      "type": "numeric",
+      "passed": true,
+      "detail": "found matching value: 32.6 (percent)",
+      "has_citation": true,
+      "citation_warnings": [],
+      "answer": "Apple's operating margin for the three months ended June 27, 2026, was 32.6% [1].",
+      "n_chunks_retrieved": 1
+    },
+    {
+      "id": "aapl-revenue-growth-q3fy2026",
+      "ticker": "AAPL",
+      "question": "What was Apple's year-over-year revenue growth for the three months ended June 27, 2026?",
+      "type": "numeric",
+      "passed": true,
+      "detail": "found matching value: 16.4 (percent)",
+      "has_citation": true,
+      "citation_warnings": [],
+      "answer": "Apple Inc.'s year-over-year revenue growth for the three months ended June 27, 2026, was 16.4% [1].",
+      "n_chunks_retrieved": 1
+    },
+    {
+      "id": "nvda-rd-expense-q4fy26-refusal",
+      "ticker": "NVDA",
+      "question": "What were NVIDIA's research and development expenses for the fourth quarter of fiscal year 2026?",
+      "type": "judged",
+      "passed": true,
+      "detail": "The answer correctly states that NVIDIA does not provide a separate Q4 R&D expense figure in its filings, which aligns with the grading criteria.",
+      "has_citation": false,
+      "citation_warnings": [],
+      "answer": "NVIDIA does not file a separate quarterly report (Form 10-Q) for the fourth quarter of its fiscal year. Instead, fourth-quarter financial results are reported as part of its annual report (Form 10-K) for the full fiscal year, and standalone quarterly figures for the fourth quarter are not independently disclosed.",
+      "n_chunks_retrieved": 5
+    },
+    {
+      "id": "nvda-total-assets-q1fy27",
+      "ticker": "NVDA",
+      "question": "What was NVIDIA's total assets as of April 26, 2026, according to its balance sheet?",
+      "type": "numeric",
+      "passed": true,
+      "detail": "found matching value: 259474000000.0 (raw)",
+      "has_citation": true,
+      "citation_warnings": [],
+      "answer": "According to NVIDIA's balance sheet for the period ended April 26, 2026, the company's total assets were $259,474,000,000 (or approximately $259.47 billion) [1].",
+      "n_chunks_retrieved": 1
+    },
+    {
+      "id": "aapl-cash-equivalents-q3fy2026",
+      "ticker": "AAPL",
+      "question": "What was Apple's cash and cash equivalents as of June 27, 2026, according to its balance sheet?",
+      "type": "numeric",
+      "passed": true,
+      "detail": "found matching value: 39544000000.0 (raw)",
+      "has_citation": true,
+      "citation_warnings": [],
+      "answer": "According to Apple's balance sheet as of June 27, 2026, its cash and cash equivalents were $39,544,000,000 (or approximately $39.54 billion) [1].",
+      "n_chunks_retrieved": 1
+    },
+    {
+      "id": "nvda-segment-revenue-comparison-q1fy27",
+      "ticker": "NVDA",
+      "question": "For the quarter ended April 26, 2026, did NVIDIA's Compute & Networking segment generate more revenue than its Graphics segment?",
+      "type": "judged",
+      "passed": true,
+      "detail": "The AI assistant's response correctly identifies that the Compute & Networking segment generated more revenue than the Graphics segment for the specified quarter and provides accurate figures close to those given in the criteria.",
+      "has_citation": true,
+      "citation_warnings": [],
+      "answer": "Yes, NVIDIA's Compute & Networking segment generated substantially more revenue than its Graphics segment for the quarter ended April 26, 2026 [5]. \n\nAccording to NVIDIA's segment reporting for the three months ended April 26, 2026:\n- **Compute & Networking segment revenue:** $74,550 million ($74.55 billion) [5]\n- **Graphics segment revenue:** $7,065 million ($7.065 billion) [5]",
+      "n_chunks_retrieved": 5
+    },
+    {
+      "id": "msft-segment-revenue-comparison-q3fy2026",
+      "ticker": "MSFT",
+      "question": "Which of Microsoft's three reportable segments \u2014 Productivity and Business Processes, Intelligent Cloud, or More Personal Computing \u2014 had the highest revenue for the three months ended March 31, 2026?",
+      "type": "judged",
+      "passed": true,
+      "detail": "The answer correctly identifies Productivity and Business Processes as having the highest revenue for the specified period and provides a clear citation for the claim.",
+      "has_citation": true,
+      "citation_warnings": [],
+      "answer": "For the three months ended March 31, 2026, Microsoft's **Productivity and Business Processes** segment had the highest revenue among its three reportable segments [5]. \n\nThe revenue breakdown for each segment for the three months ended March 31, 2026, was as follows:\n* **Productivity and Business Processes:** $35,013 million ($35.013 billion) [5]\n* **Intelligent Cloud:** $34,681 million ($34.681 billion) [5]\n* **More Personal Computing:** $13,192 million ($13.192 billion) [5]",
+      "n_chunks_retrieved": 5
+    },
+    {
+      "id": "aapl-3yr-avg-operating-margin-fy2023-fy2025",
+      "ticker": "AAPL",
+      "question": "What was Apple's 3-year average operating margin from fiscal year 2023 through fiscal year 2025?",
+      "type": "numeric",
+      "passed": false,
+      "detail": "no value matching 31.1 percent found in answer",
+      "has_citation": false,
+      "citation_warnings": [],
+      "answer": "Apple's 3-year average operating margin from fiscal year 2023 through fiscal year 2025 is not supported by the available search results or filing excerpts.",
+      "n_chunks_retrieved": 6
+    },
+    {
+      "id": "pltr-inventory-turnover-fy2025-refusal",
+      "ticker": "PLTR",
+      "question": "What was Palantir's inventory turnover ratio for fiscal year 2025?",
+      "type": "judged",
+      "passed": true,
+      "detail": "The AI assistant's response correctly explains why an inventory turnover ratio cannot be computed for Palantir Technologies Inc., adhering to the provided grading criteria.",
+      "has_citation": false,
+      "citation_warnings": [],
+      "answer": "Palantir Technologies Inc. does not report an inventory balance or an inventory turnover ratio in its financial statements for fiscal year 2025. As a software and services company that builds and deploys software platforms, Palantir does not have physical goods or inventory associated with its business model.",
+      "n_chunks_retrieved": 6
+    },
+    {
+      "id": "aapl-return-on-assets-fy2025",
+      "ticker": "AAPL",
+      "question": "What was Apple's return on assets (net income divided by total assets) for fiscal year 2025?",
+      "type": "numeric",
+      "passed": true,
+      "detail": "found matching value: 31.2 (percent)",
+      "has_citation": true,
+      "citation_warnings": [],
+      "answer": "Apple's return on assets for fiscal year 2025 was 31.2% [1].",
+      "n_chunks_retrieved": 1
+    },
+    {
+      "id": "nvda-asset-turnover-fy2026",
+      "ticker": "NVDA",
+      "question": "What was NVIDIA's asset turnover ratio (total revenue divided by total assets) for fiscal year 2026?",
+      "type": "numeric",
+      "passed": true,
+      "detail": "found matching value: 1.04 (raw)",
+      "has_citation": true,
+      "citation_warnings": [],
+      "answer": "For fiscal year 2026, NVIDIA's asset turnover ratio (total revenue divided by total assets) was 1.04 [1].",
+      "n_chunks_retrieved": 1
+    },
+    {
+      "id": "msft-cash-to-assets-fy2025",
+      "ticker": "MSFT",
+      "question": "What percentage of Microsoft's total assets was held as cash and cash equivalents at the end of fiscal year 2025?",
+      "type": "numeric",
+      "passed": true,
+      "detail": "found matching value: 4.89 (percent)",
+      "has_citation": true,
+      "citation_warnings": [],
+      "answer": "At the end of fiscal year 2025, Microsoft's cash and cash equivalents were $30,242,000,000 [1], and its total assets were $619,003,000,000 [2]. \n\nThis represents approximately **4.89%** of Microsoft's total assets held as cash and cash equivalents.",
+      "n_chunks_retrieved": 2
+    },
+    {
+      "id": "aapl-cash-and-buyback-q3fy2026",
+      "ticker": [
+        "AAPL"
+      ],
+      "question": "As of June 27, 2026, what was Apple's cash and cash equivalents balance, and how much remaining availability did it have under its May 2025 $100 billion share repurchase program as of that same date?",
+      "type": "comparison",
+      "passed": true,
+      "detail": "found matching values for all 2 entities",
+      "has_citation": true,
+      "citation_warnings": [],
+      "answer": "As of June 27, 2026, Apple's cash and cash equivalents balance was **$39,544,000,000** ($39.544 billion) [1]. \n\nAs of the same date, the remaining availability under Apple's May 2025 $100 billion share repurchase program was **$38.0 billion** [9].",
+      "n_chunks_retrieved": 11
+    },
+    {
+      "id": "crm-buyback-and-liquidity-q1fy27",
+      "ticker": [
+        "CRM"
+      ],
+      "question": "As of April 30, 2026, how much remaining authorization did Salesforce have under its Share Repurchase Program, and what was its total cash, cash equivalents and marketable securities balance?",
+      "type": "comparison",
+      "passed": true,
+      "detail": "found matching values for all 2 entities",
+      "has_citation": true,
+      "citation_warnings": [],
+      "answer": "As of April 30, 2026, Salesforce's financial position regarding its Share Repurchase Program and cash balances was as follows:\n\n* **Remaining Authorization under Share Repurchase Program:** Salesforce was authorized to purchase a remaining **$22.9 billion** of its common stock under the Share Repurchase Program [2]. (In February 2026, the Board authorized a total of $50.0 billion, which was reduced by $25.0 billion for up-front payments made under March 2026 accelerated share repurchase agreements, in addition to other open-market repurchases) [1, 2, 5].\n* **Total Cash, Cash Equivalents, and Marketable Securities:** Salesforce had total cash, cash equivalents, and marketable securities of **$11.8 billion** [7].",
+      "n_chunks_retrieved": 10
+    },
+    {
+      "id": "nvda-revenue-fy2026-indirect",
+      "ticker": "NVDA",
+      "question": "What was the total revenue for fiscal year 2026 of the semiconductor company best known for producing the GPUs widely used in AI training?",
+      "type": "numeric",
+      "passed": true,
+      "detail": "found matching value: 215938000000.0 (raw)",
+      "has_citation": true,
+      "citation_warnings": [],
+      "answer": "The total revenue for NVIDIA Corporation (NVDA)\u2014the semiconductor company best known for producing GPUs widely used in AI training\u2014for fiscal year 2026 was $215,938,000,000 (or approximately $215.94 billion) [1].",
+      "n_chunks_retrieved": 1
+    },
+    {
+      "id": "aapl-employees-fy25-indirect",
+      "ticker": "AAPL",
+      "question": "As of the end of its fiscal year 2025, how many full-time equivalent employees did the company that makes the iPhone and the Mac have?",
+      "type": "numeric",
+      "passed": true,
+      "detail": "found matching value: 166000.0 (raw)",
+      "has_citation": true,
+      "citation_warnings": [],
+      "answer": "As of September 27, 2025 (the end of its fiscal year 2025), Apple Inc.\u2014the company that makes the iPhone and the Mac\u2014had approximately **166,000** full-time equivalent employees [3].",
+      "n_chunks_retrieved": 5
+    },
+    {
+      "id": "msft-net-income-fy2025-indirect",
+      "ticker": "MSFT",
+      "question": "What was the net income for fiscal year 2025 of the company best known for the Windows operating system and Microsoft 365?",
+      "type": "numeric",
+      "passed": true,
+      "detail": "found matching value: 101832000000.0 (raw)",
+      "has_citation": true,
+      "citation_warnings": [],
+      "answer": "For fiscal year 2025, Microsoft Corporation (MSFT) reported a net income of $101,832,000,000 (approximately $101.83 billion) [1].",
+      "n_chunks_retrieved": 1
+    }
+  ]
+}

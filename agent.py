@@ -32,6 +32,8 @@ import re
 from companies import load_companies
 from config import DEFAULT_BACKEND
 from formulas import (
+    get_asset_turnover,
+    get_cash_to_assets,
     get_gross_margin,
     get_gross_margin_all_companies,
     get_multi_year_average,
@@ -39,6 +41,7 @@ from formulas import (
     get_net_margin_all_companies,
     get_operating_margin,
     get_operating_margin_all_companies,
+    get_return_on_assets,
     get_yoy_growth,
 )
 from llm_backends import BACKENDS
@@ -50,16 +53,37 @@ MAX_TOOL_ITERATIONS = 6
 CHUNKS_PER_SEARCH = 5
 
 # Tool-computed ratio metrics -- none of these are a single GAAP tag
-# (see xbrl_facts.py's _compute_ratio_metric()), so each is computed
+# (see formulas.py's _compute_ratio_metric()), so each is computed
 # from two raw metrics instead of returned raw for the model to divide.
 # Each value is (single-company function, all-companies function),
 # letting both dispatch functions and both tool schemas below derive
 # from this one dict instead of maintaining three separately-typed
-# copies of the same three metric names.
-MARGIN_METRIC_FUNCTIONS = {
+# copies of the same three metric names. Renamed from MARGIN_METRIC_FUNCTIONS
+# (Week 5w) once it stopped being margins-only -- see
+# SINGLE_COMPANY_RATIO_FUNCTIONS below for the three that joined it.
+RATIO_METRIC_FUNCTIONS = {
     "gross_margin": (get_gross_margin, get_gross_margin_all_companies),
     "operating_margin": (get_operating_margin, get_operating_margin_all_companies),
     "net_margin": (get_net_margin, get_net_margin_all_companies),
+}
+
+# Tool-computed ratios with NO cross-company counterpart (Week 5w) --
+# unlike RATIO_METRIC_FUNCTIONS above, these are plain functions, not
+# (single, all_companies) tuples. get_financial_fact supports all three;
+# compare_financial_metric does not (its own boundary check below only
+# ever looks at RATIO_METRIC_FUNCTIONS, so a metric name that's only in
+# here falls through to the same graceful "not supported" result any
+# other unrecognized metric gets). See formulas.get_return_on_assets's
+# own docstring for why there's no cross-company version: total_assets'
+# SEC-assigned `frame` is None for annual instant facts (confirmed live,
+# not assumed), and even a substitute frame borrowed from a duration
+# numerator wouldn't resolve correctly -- SEC's frames API uses a
+# different label format for instant concepts. No current eval question
+# needs a cross-company comparison of these three anyway.
+SINGLE_COMPANY_RATIO_FUNCTIONS = {
+    "return_on_assets": get_return_on_assets,
+    "asset_turnover": get_asset_turnover,
+    "cash_to_assets": get_cash_to_assets,
 }
 
 # The companies this agent is scoped to, read from companies.json (see
@@ -77,8 +101,8 @@ SYSTEM_PROMPT = f"""You are a financial research assistant answering questions a
 {chr(10).join(f"- {ticker}: {name}" for ticker, name in COMPANIES.items())}
 
 You have three tools:
-- `get_financial_fact` searches structured XBRL data for a small set of standard financial metrics: {", ".join(sorted(DEFAULT_METRIC_TAGS)) + ", " + ", ".join(sorted(MARGIN_METRIC_FUNCTIONS))}. Prefer this tool FIRST whenever the question asks for one of these specific metrics for a specific fiscal year or fiscal quarter, for ONE company — it returns an exact, unambiguous reported value instead of relying on you to find the right sentence in a filing excerpt. This tool ONLY returns a company's consolidated, company-wide total — it has NO way to get one segment's or one product line's figure (e.g. Microsoft's "Intelligent Cloud" segment, NVIDIA's "Compute & Networking" segment). If a question asks about a specific segment or product line, do NOT call this tool at all, not even to try — go straight to `search_filings` instead. It only works for the metrics listed above and returns "not available" if the company doesn't tag it or the period wasn't recognized — fall back to `search_filings` when that happens, or for anything else this tool doesn't cover (risk factors, narrative discussion, any metric not in the list above). Only pass the arguments this tool actually defines — never invent an extra filter argument (e.g. there is no `segment` parameter); an unrecognized argument is rejected outright, so search_filings instead if you need something this tool doesn't support. To ask for year-over-year growth of one of the raw metrics (not the margins) instead of its plain value, add `yoy_growth: true` — never compute a growth percentage yourself from two separate calls to this tool, always use this flag. To ask for a multi-year average (e.g. "3-year average operating margin"), pass `start_fiscal_year` and `end_fiscal_year` instead of `fiscal_year`/`fiscal_period`/`period_end_date` — never average multiple years yourself from separate calls, always use these.
-- `compare_financial_metric` gets the SAME metric for ALL FIVE companies at once, for one period. Use this instead of calling `get_financial_fact` five times when a question asks you to compare or rank companies against each other (e.g. "which company had the highest gross margin", "compare revenue across all five companies") — one call instead of five. A company can be missing from the result if it doesn't tag that metric for that period; that's not an error, just note it's unavailable for that company.
+- `get_financial_fact` searches structured XBRL data for a small set of standard financial metrics: {", ".join(sorted(DEFAULT_METRIC_TAGS)) + ", " + ", ".join(sorted(RATIO_METRIC_FUNCTIONS)) + ", " + ", ".join(sorted(SINGLE_COMPANY_RATIO_FUNCTIONS))}. Prefer this tool FIRST whenever the question asks for one of these specific metrics for a specific fiscal year or fiscal quarter, for ONE company — it returns an exact, unambiguous reported value instead of relying on you to find the right sentence in a filing excerpt. This tool ONLY returns a company's consolidated, company-wide total — it has NO way to get one segment's or one product line's figure (e.g. Microsoft's "Intelligent Cloud" segment, NVIDIA's "Compute & Networking" segment). If a question asks about a specific segment or product line, do NOT call this tool at all, not even to try — go straight to `search_filings` instead. It only works for the metrics listed above and returns "not available" if the company doesn't tag it or the period wasn't recognized — fall back to `search_filings` when that happens, or for anything else this tool doesn't cover (risk factors, narrative discussion, any metric not in the list above). Only pass the arguments this tool actually defines — never invent an extra filter argument (e.g. there is no `segment` parameter); an unrecognized argument is rejected outright, so search_filings instead if you need something this tool doesn't support. To ask for year-over-year growth of one of the raw metrics (not the margins) instead of its plain value, add `yoy_growth: true` — never compute a growth percentage yourself from two separate calls to this tool, always use this flag. To ask for a multi-year average (e.g. "3-year average operating margin"), pass `start_fiscal_year` and `end_fiscal_year` instead of `fiscal_year`/`fiscal_period`/`period_end_date` — never average multiple years yourself from separate calls, always use these.
+- `compare_financial_metric` gets the SAME metric for ALL FIVE companies at once, for one period. Use this instead of calling `get_financial_fact` five times when a question asks you to compare or rank companies against each other (e.g. "which company had the highest gross margin", "compare revenue across all five companies") — one call instead of five. A company can be missing from the result if it doesn't tag that metric for that period; that's not an error, just note it's unavailable for that company. Note: return_on_assets/asset_turnover/cash_to_assets are NOT available on this tool (no cross-company version exists) — use `get_financial_fact` once per company for those instead.
 - `search_filings` searches these companies' 10-K/10-Q filings for anything else. Call it once per company if a question spans more than one, and call it again with a different query if your first search doesn't turn up what you need.
 
 Do not answer from prior knowledge about these companies; every answer must come from what a tool returns.
@@ -139,8 +163,8 @@ FACT_TOOL_SCHEMA = {
                 "ticker": {"type": "string", "enum": list(COMPANIES.keys())},
                 "metric": {
                     "type": "string",
-                    "enum": sorted(DEFAULT_METRIC_TAGS) + sorted(MARGIN_METRIC_FUNCTIONS),
-                    "description": "Which metric to fetch. gross_margin/operating_margin/net_margin are each computed as a ratio and returned as a percent; the rest are returned in USD.",
+                    "enum": sorted(DEFAULT_METRIC_TAGS) + sorted(RATIO_METRIC_FUNCTIONS) + sorted(SINGLE_COMPANY_RATIO_FUNCTIONS),
+                    "description": "Which metric to fetch. gross_margin/operating_margin/net_margin/return_on_assets/cash_to_assets are each computed as a ratio and returned as a percent; asset_turnover is also computed as a ratio but returned as a plain decimal (e.g. 1.04), NOT a percent -- do not multiply it by 100 or add a % sign; the rest are returned in USD.",
                 },
                 "period_end_date": {
                     "type": "string",
@@ -157,7 +181,7 @@ FACT_TOOL_SCHEMA = {
                 },
                 "yoy_growth": {
                     "type": "boolean",
-                    "description": "Set true to get year-over-year percent growth of `metric` instead of its plain value (e.g. 'revenue growth' questions). Only valid for the raw metrics, NOT for gross_margin/operating_margin/net_margin -- returns null for that combination. Compares the requested period to the SAME fiscal_period one year earlier automatically; never compute growth yourself from two separate calls.",
+                    "description": "Set true to get year-over-year percent growth of `metric` instead of its plain value (e.g. 'revenue growth' questions). Only valid for the raw metrics, NOT for gross_margin/operating_margin/net_margin/return_on_assets/asset_turnover/cash_to_assets -- returns null for that combination. Compares the requested period to the SAME fiscal_period one year earlier automatically; never compute growth yourself from two separate calls.",
                 },
                 "start_fiscal_year": {
                     "type": "integer",
@@ -198,8 +222,8 @@ COMPARE_TOOL_SCHEMA = {
                 },
                 "metric": {
                     "type": "string",
-                    "enum": sorted(DEFAULT_METRIC_TAGS) + sorted(MARGIN_METRIC_FUNCTIONS),
-                    "description": "Which metric to fetch for every company. gross_margin/operating_margin/net_margin are each computed as a ratio and returned as a percent; the rest are returned in USD.",
+                    "enum": sorted(DEFAULT_METRIC_TAGS) + sorted(RATIO_METRIC_FUNCTIONS),
+                    "description": "Which metric to fetch for every company. gross_margin/operating_margin/net_margin are each computed as a ratio and returned as a percent; the rest are returned in USD. (return_on_assets/asset_turnover/cash_to_assets are NOT available here -- no cross-company version exists yet; use get_financial_fact per company instead.)",
                 },
                 "period_end_date": {
                     "type": "string",
@@ -388,12 +412,19 @@ def _call_get_financial_fact(args: dict) -> dict | None:
     get_multi_year_average() instead of a single-period lookup -- built
     after the model reached for self-computation on its own for a
     3-year-average question with no deterministic path (see that
-    function's own docstring)."""
+    function's own docstring). Also supported for SINGLE_COMPANY_RATIO_FUNCTIONS
+    metrics (return_on_assets/asset_turnover/cash_to_assets) -- formulas.
+    _get_annual_value() has its own dispatch branch for each, same as
+    the three margins."""
     if set(args) - _FACT_ARG_KEYS:
         return None
     ticker = args.get("ticker")
     metric = args.get("metric")
-    if ticker not in COMPANIES or (metric not in DEFAULT_METRIC_TAGS and metric not in MARGIN_METRIC_FUNCTIONS):
+    if ticker not in COMPANIES or (
+        metric not in DEFAULT_METRIC_TAGS
+        and metric not in RATIO_METRIC_FUNCTIONS
+        and metric not in SINGLE_COMPANY_RATIO_FUNCTIONS
+    ):
         return None
     fiscal_year = args.get("fiscal_year")
     fiscal_period = args.get("fiscal_period", "FY")
@@ -405,13 +436,26 @@ def _call_get_financial_fact(args: dict) -> dict | None:
             return None
         return get_multi_year_average(ticker, metric, start_fiscal_year, end_fiscal_year)
     if args.get("yoy_growth"):
-        if metric in MARGIN_METRIC_FUNCTIONS:
+        if metric in RATIO_METRIC_FUNCTIONS or metric in SINGLE_COMPANY_RATIO_FUNCTIONS:
             return None
         return get_yoy_growth(ticker, metric, fiscal_year, fiscal_period, period_end_date)
-    if metric in MARGIN_METRIC_FUNCTIONS:
-        single_company_fn, _ = MARGIN_METRIC_FUNCTIONS[metric]
+    if metric in RATIO_METRIC_FUNCTIONS:
+        single_company_fn, _ = RATIO_METRIC_FUNCTIONS[metric]
         return single_company_fn(ticker, fiscal_year, fiscal_period, period_end_date)
+    if metric in SINGLE_COMPANY_RATIO_FUNCTIONS:
+        return SINGLE_COMPANY_RATIO_FUNCTIONS[metric](ticker, fiscal_year, fiscal_period, period_end_date)
     return get_metric(ticker, metric, fiscal_year, fiscal_period, period_end_date)
+
+
+def _format_fact_value(fact: dict) -> str:
+    """Renders a fact's value for citation text. "raw" (asset_turnover's
+    unit -- see formulas.get_asset_turnover) is an internal
+    normalize()-category label from numeric_utils.py, not a
+    natural-language unit -- omitted here so a plain ratio reads as
+    "1.04", not the internal-sounding "1.04 raw"."""
+    if fact["unit"] == "raw":
+        return str(fact["value"])
+    return f"{fact['value']} {fact['unit']}"
 
 
 def _fact_as_result(fact: dict, args: dict) -> dict:
@@ -420,7 +464,7 @@ def _fact_as_result(fact: dict, args: dict) -> dict:
     handling uniformly with search_filings results instead of needing a
     parallel code path."""
     return {
-        "text": f"{args['metric']} = {fact['value']} {fact['unit']} (structured XBRL data, not filing prose)",
+        "text": f"{args['metric']} = {_format_fact_value(fact)} (structured XBRL data, not filing prose)",
         "metadata": {
             "ticker": args["ticker"],
             "form": fact["form"],
@@ -441,19 +485,24 @@ def _call_compare_financial_metric(args: dict) -> dict[str, dict]:
     unrecognized extra key (e.g. an invented `segment` filter) rather
     than silently ignoring it. No yoy_growth here: there's no current
     evidence/use case for a cross-company YoY-growth comparison, so it
-    isn't exposed on this tool (see MARGIN_METRIC_FUNCTIONS' comment and
-    get_yoy_growth()'s docstring)."""
+    isn't exposed on this tool (see RATIO_METRIC_FUNCTIONS' comment and
+    get_yoy_growth()'s docstring). Deliberately only checks
+    RATIO_METRIC_FUNCTIONS, not SINGLE_COMPANY_RATIO_FUNCTIONS -- a
+    return_on_assets/asset_turnover/cash_to_assets request falls through
+    to the same graceful `{}` any other unsupported metric gets (see
+    SINGLE_COMPANY_RATIO_FUNCTIONS' own comment for why there's no
+    cross-company version of those three yet)."""
     if set(args) - _COMPARE_ARG_KEYS:
         return {}
     anchor_ticker = args.get("anchor_ticker")
     metric = args.get("metric")
-    if anchor_ticker not in COMPANIES or (metric not in DEFAULT_METRIC_TAGS and metric not in MARGIN_METRIC_FUNCTIONS):
+    if anchor_ticker not in COMPANIES or (metric not in DEFAULT_METRIC_TAGS and metric not in RATIO_METRIC_FUNCTIONS):
         return {}
     fiscal_year = args.get("fiscal_year")
     fiscal_period = args.get("fiscal_period", "FY")
     period_end_date = args.get("period_end_date")
-    if metric in MARGIN_METRIC_FUNCTIONS:
-        _, all_companies_fn = MARGIN_METRIC_FUNCTIONS[metric]
+    if metric in RATIO_METRIC_FUNCTIONS:
+        _, all_companies_fn = RATIO_METRIC_FUNCTIONS[metric]
         return all_companies_fn(anchor_ticker, fiscal_year, fiscal_period, period_end_date)
     return get_metric_all_companies(anchor_ticker, metric, fiscal_year, fiscal_period, period_end_date)
 
@@ -469,7 +518,7 @@ def _comparison_as_results(data: dict[str, dict], metric: str) -> list[dict]:
     for ticker, fact in sorted(data.items()):
         results.append(
             {
-                "text": f"{ticker} {metric} = {fact['value']} {fact['unit']} (structured XBRL data, not filing prose)",
+                "text": f"{ticker} {metric} = {_format_fact_value(fact)} (structured XBRL data, not filing prose)",
                 "metadata": {
                     "ticker": ticker,
                     "form": "XBRL frame data",
