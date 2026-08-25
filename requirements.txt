@@ -18,6 +18,6 @@ google-genai==2.18.1
 # Reranking reuses sentence-transformers' CrossEncoder, no new dependency.
 rank_bm25==0.2.2
 
-# answer.py calls a local Ollama server over HTTP (uses `requests` above).
+# agent.py calls a local Ollama server over HTTP (uses `requests` above).
 # Not pip-installed — see PROJECT_CONTEXT.md for the Ollama setup this
 # code expects (qwen2.5:7b-instruct pulled, `ollama serve` running).

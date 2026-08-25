@@ -34,7 +34,7 @@ SEC_USER_AGENT_NAME = os.getenv("SEC_USER_AGENT_NAME", "Rid")
 SEC_USER_AGENT_EMAIL = os.getenv("SEC_USER_AGENT_EMAIL", "riddhesh2307@gmail.com")
 SEC_USER_AGENT = f"{SEC_USER_AGENT_NAME} {SEC_USER_AGENT_EMAIL}"
 
-# Local Ollama server (answer.py, agent.py, eval_harness.py).
+# Local Ollama server (agent.py, eval_harness.py).
 OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434/api/chat")
 OLLAMA_MODEL_NAME = os.getenv("OLLAMA_MODEL_NAME", "qwen2.5:7b-instruct")
 

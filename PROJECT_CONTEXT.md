@@ -1241,6 +1241,19 @@ ticker(s) a question is actually about before calling `hybrid_search()`.
 That's squarely a Week 5 agent-layer responsibility (tool-calling/query
 routing), not something to bolt onto the retrieval module.
 
+**Retired, 2026-08-25 (see "Next steps" item 4).** `agent.py` is a
+strict superset of what this did — no functional code imported
+`answer.py` (only comments/docs referenced it; `eval_harness.py` had
+already switched to `agent.run_agent()` back in Week 5), so this was a
+pure deletion, not a migration. Removed `answer.py` itself and its
+dedicated `tests/test_answer.py`; updated the stale `answer.py`
+mentions in `config.py`, `requirements.txt`, and `.env.example` (all
+comments, no behavior change). Verified via full suite: 253 passed
+(down from 258, the 5 `format_context`/`format_citation_key` tests that
+existed only to cover this file), no other regressions. This section
+and the CLI usage above stay as the historical record of what it was;
+the code no longer exists.
+
 ### `eval_harness.py` + `eval_questions.jsonl` (Week 4/5) — scaffolding done, 8 questions, real findings surfaced
 
 Runs every question in `eval_questions.jsonl` through **`agent.run_agent()`**
@@ -2588,10 +2601,12 @@ on either backend, confirmed against history rather than assumed.
   problem, so this isn't worth revisiting even if the corpus grows
   moderately.
 
-**4. Independent, no dependency on the above — do whenever convenient:**
-decide whether `answer.py` (Week 3) stays as a simpler fallback/
-baseline or gets retired. `agent.py` is a strict superset of what it
-does; this is a cleanup decision, not a bug fix.
+**4. DONE, 2026-08-25 — see "Retired" addendum under `answer.py` (Week
+3) above.** Decided to retire rather than keep as a fallback:
+`agent.py` was a strict superset, nothing functional depended on it,
+and eval_harness.py had already moved off it in Week 5. Removed the
+file and its dedicated test; full suite passed (253/253) with no
+regressions.
 
 **5. Week 6 — expose tools as an MCP server.** All 3 agent tools
 (`search_filings`, `get_financial_fact`, `compare_financial_metric`) —
