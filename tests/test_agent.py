@@ -2,10 +2,14 @@
 Unit tests for agent.py. Covers the pure helpers, plus the
 _call_get_financial_fact/_call_compare_financial_metric dispatch/
 boundary-validation logic (via monkeypatched xbrl_facts functions, no
-network). run_agent() drives a live tool-calling loop against whichever
-backend is selected (see llm_backends.py), so it's exercised by manual
-runs (python agent.py "..." [--backend ollama|gemini]) documented in
-PROJECT_CONTEXT.md, not here.
+network). run_agent()'s actual model-facing behavior drives a live
+tool-calling loop against whichever backend is selected (see
+llm_backends.py), so THAT is exercised by manual runs (python agent.py
+"..." [--backend ollama|gemini]) documented in PROJECT_CONTEXT.md, not
+here -- but run_agent()'s own loop CONTROL FLOW (how it reacts to a
+scripted sequence of ModelTurns) is deterministic and doesn't need a
+live model, so a few targeted regression tests below drive it through
+monkeypatched BACKENDS entries instead.
 """
 
 from agent import (
@@ -15,13 +19,17 @@ from agent import (
     _comparison_as_results,
     _dispatch_tool_call,
     _format_citation_key,
+    _format_citation_retry_message,
     _format_no_comparison_message,
     _format_no_fact_message,
     _format_results_block,
     _resolve_search_args,
+    _should_retry_for_citations,
+    run_agent,
     value_is_citation_verified,
     verify_citations,
 )
+from llm_backends import ModelTurn
 
 
 # ---------------------------------------------------------------------------
@@ -640,3 +648,144 @@ def test_dispatch_tool_call_search_filings_uses_resolved_query_and_tracks_ticker
     assert all_results == fake_results
     assert "AAPL" in searched_tickers
     assert "[1]" in content
+
+
+# ---------------------------------------------------------------------------
+# _should_retry_for_citations / _format_citation_retry_message
+# (citation-verification retry loop, revisited Week 5j -> 2026-08-24 --
+# see PROJECT_CONTEXT.md and docs/superpowers/specs/2026-08-24-citation-
+# retry-loop-design.md)
+# ---------------------------------------------------------------------------
+def test_should_retry_for_citations_true_with_warnings_and_not_yet_retried():
+    assert (
+        _should_retry_for_citations(["[1] claims 6478.0 (million) ..."], already_retried=False, backend="gemini")
+        is True
+    )
+
+
+def test_should_retry_for_citations_false_once_already_retried():
+    assert (
+        _should_retry_for_citations(["[1] claims 6478.0 (million) ..."], already_retried=True, backend="gemini")
+        is False
+    )
+
+
+def test_should_retry_for_citations_false_with_no_warnings_regardless_of_retried_flag():
+    assert _should_retry_for_citations([], already_retried=False, backend="gemini") is False
+    assert _should_retry_for_citations([], already_retried=True, backend="gemini") is False
+
+
+def test_should_retry_for_citations_false_for_ollama_even_with_warnings_and_not_yet_retried():
+    # Gated 2026-08-25 per live evidence in PROJECT_CONTEXT.md /
+    # docs/superpowers/specs/2026-08-24-citation-retry-loop-design.md:
+    # this exact mechanism was tried and reverted once already (Week 5j)
+    # because qwen2.5:7b-instruct couldn't reliably act on the corrective
+    # feedback -- gated out for Ollama specifically rather than relying
+    # on a single live re-run to prove it's safe now.
+    assert (
+        _should_retry_for_citations(["[1] claims 6478.0 (million) ..."], already_retried=False, backend="ollama")
+        is False
+    )
+
+
+# ---------------------------------------------------------------------------
+# run_agent() -- loop control flow only, via a fake/scripted backend (see
+# module docstring for why this is fair game for a unit test despite
+# run_agent() otherwise being live-only)
+# ---------------------------------------------------------------------------
+def test_run_agent_citation_retry_exhausting_budget_returns_pre_retry_answer_not_timeout(monkeypatch):
+    # Regression test for a real bug found in code review (2026-08-25):
+    # if the citation retry fires on the second-to-last iteration and
+    # the model's follow-up turn makes a NEW tool call instead of just
+    # re-answering, the loop used to hit the iteration cap on that tool
+    # call and fall through to the generic "wasn't able to finish"
+    # message -- discarding an already-produced, merely-warned answer
+    # that was perfectly fine to return as-is.
+    monkeypatch.setattr("agent.MAX_TOOL_ITERATIONS", 2)
+
+    final_answer_turn = ModelTurn(tool_calls=[], text="Apple's revenue was $100 billion [1].")
+    followup_makes_new_tool_call = ModelTurn(tool_calls=[{"name": "search_filings", "args": {}}], text=None)
+
+    def fake_start(question, system_prompt, tool_schemas):
+        return {}, final_answer_turn
+
+    def fake_send_followup(state, text):
+        return followup_makes_new_tool_call
+
+    monkeypatch.setattr("agent.BACKENDS", {"gemini": (fake_start, None, fake_send_followup)})
+    monkeypatch.setattr("agent.verify_citations", lambda answer, all_results: ["[1] claims 100.0 ... doesn't appear"])
+
+    answer, all_results, warnings = run_agent("What was Apple's revenue?", backend="gemini")
+
+    assert answer == "Apple's revenue was $100 billion [1]."
+    assert warnings == ["[1] claims 100.0 ... doesn't appear"]
+
+
+def test_run_agent_citation_retry_not_attempted_for_ollama_backend(monkeypatch):
+    # Companion sanity check: the same scripted scenario, but for the
+    # gated-out backend, must never call send_followup at all -- if it
+    # did, MAX_TOOL_ITERATIONS being hit would trip the same bug this
+    # test's sibling guards against, just for the wrong reason (a retry
+    # that should never have started).
+    monkeypatch.setattr("agent.MAX_TOOL_ITERATIONS", 2)
+
+    final_answer_turn = ModelTurn(tool_calls=[], text="Apple's revenue was $100 billion [1].")
+
+    def fake_start(question, system_prompt, tool_schemas):
+        return {}, final_answer_turn
+
+    def fake_send_followup(state, text):
+        raise AssertionError("send_followup should never be called for the ollama backend")
+
+    monkeypatch.setattr("agent.BACKENDS", {"ollama": (fake_start, None, fake_send_followup)})
+    monkeypatch.setattr("agent.verify_citations", lambda answer, all_results: ["[1] claims 100.0 ... doesn't appear"])
+
+    answer, all_results, warnings = run_agent("What was Apple's revenue?", backend="ollama")
+
+    assert answer == "Apple's revenue was $100 billion [1]."
+    assert warnings == ["[1] claims 100.0 ... doesn't appear"]
+
+
+def test_format_citation_retry_message_includes_each_warning():
+    warnings = [
+        "[1] claims 6478.0 (million) but that value doesn't appear in the cited source",
+        "[2] claims 42.0 (raw) but that value doesn't appear in the cited source",
+    ]
+    message = _format_citation_retry_message("Apple's tax rate was 17.9% [1].", warnings)
+    for w in warnings:
+        assert w in message
+
+
+def test_format_citation_retry_message_includes_the_previous_answer():
+    answer = "Apple's tax rate was 17.9% [1]."
+    message = _format_citation_retry_message(answer, ["[1] claims ... doesn't appear"])
+    assert answer in message
+
+
+def test_format_citation_retry_message_tells_model_to_recheck_shown_sources_first():
+    # Targets the aapl-employees-fy25 failure mode from Week 5j: the
+    # retry gave up entirely instead of checking the 4 OTHER
+    # already-retrieved chunks for a valid citation.
+    message = _format_citation_retry_message("answer", ["[1] claims ... doesn't appear"])
+    assert "already" in message.lower()
+
+
+def test_format_citation_retry_message_permits_an_honest_refusal():
+    message = _format_citation_retry_message("answer", ["[1] claims ... doesn't appear"])
+    assert "refus" in message.lower() or "acceptable" in message.lower()
+
+
+def test_format_citation_retry_message_forbids_inventing_or_estimating():
+    message = _format_citation_retry_message("answer", ["[1] claims ... doesn't appear"])
+    assert "invent" in message.lower() or "estimat" in message.lower()
+
+
+def test_format_citation_retry_message_never_uses_final_attempt_deadline_pressure():
+    # Regression guard for the exact Week 5j-diagnosed cause of a
+    # fabrication regression: wording like "this is your final attempt"
+    # pushed the model to fabricate an estimate on a previously-reliable
+    # refusal question. Must never reappear in this message.
+    message = _format_citation_retry_message("answer", ["[1] claims ... doesn't appear"])
+    lowered = message.lower()
+    assert "final attempt" not in lowered
+    assert "last chance" not in lowered

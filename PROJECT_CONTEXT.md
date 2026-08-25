@@ -34,6 +34,13 @@ companies, grounded in their SEC filings, with:
 
 ## Development workflow
 
+**See `CLAUDE.md` for the full binding workflow** (design-before-building,
+TDD, SE principles, debugging discipline, documentation, independent
+review — each scoped by change size so trivial fixes aren't bogged down
+by process meant for substantial features). Agreed with the user
+2026-08-24. This section keeps the narrative/historical detail behind
+the one rule that predates and motivated it:
+
 **Tests are written alongside new code, not after — and nothing gets
 committed with a failing test suite.** This started from Week 4 onward
 (retroactively covering Weeks 2-4's pure/deterministic logic); apply it
@@ -2035,6 +2042,96 @@ it. Not worth more prompt or history engineering on the local-model
 path for this specific question; the real lever is the swappable-
 backend work already on the roadmap (next steps item 2).
 
+### Citation-verification retry loop, revisited against Gemini and gated (2026-08-25)
+
+Week 5j built and reverted a one-time self-correction retry: when
+`run_agent()`'s final answer had an unverified citation (per
+`verify_citations()`), feed the model its own draft plus the specific
+warnings and let it retry once. It was reverted back then because
+`qwen2.5:7b-instruct` couldn't reliably act on the feedback -- see that
+section above for the two documented failure modes (giving up instead
+of checking already-retrieved chunks; fabricating an estimate under a
+"final attempt" framing). Revisited now that the swappable-backend work
+(merged `863bf03`) makes Gemini available, per that work's own explicit
+follow-up note. Full design: `docs/superpowers/specs/2026-08-24-
+citation-retry-loop-design.md`.
+
+- **Rebuilt against the new backend interface.** `llm_backends.py`
+  gained a third per-backend function, `send_followup(state, text) ->
+  ModelTurn` (`_ollama_send_followup`/`_gemini_send_followup`), since
+  the retry fires only after the model has already stopped calling
+  tools -- there's no tool call left to attach a result to, so
+  `send_tool_results` can't express it. `BACKENDS`' tuples are now
+  `(start, send_tool_results, send_followup)`.
+- **Two new pure, TDD-first helpers in `agent.py`**:
+  `_should_retry_for_citations(citation_warnings, already_retried,
+  backend)` (capped at one retry, and gated -- see below) and
+  `_format_citation_retry_message(answer, citation_warnings)`. The
+  retry message's wording directly targets Week 5j's two failure modes:
+  it explicitly tells the model to recheck search results ALREADY shown
+  earlier in the conversation before concluding a value isn't
+  supported, explicitly states an honest refusal is a fully acceptable
+  outcome, explicitly forbids inventing/estimating a replacement
+  number, and deliberately contains NO "final attempt"/deadline-pressure
+  language -- a unit test (`test_format_citation_retry_message_never_
+  uses_final_attempt_deadline_pressure`) asserts that phrasing's absence
+  as a standing regression guard.
+- **Live-verified, not assumed.** Repro'd the two current-at-the-time
+  Gemini eval warnings before writing any code: `aapl-msft-tax-rate-
+  comparison` (a genuine apparent misattribution -- the answer cited
+  the wrong AAPL chunk for a $6,478M figure) and `aapl-3yr-avg-
+  operating-margin-fy2023-fy2025` (confirmed, by reading the actual
+  chunk text, to be unrelated checker noise: the phrase "3-year
+  average" contributes a bare "3" the checker misreads as a claim --
+  explicitly out of scope, not something this change could or should
+  fix). Ran the motivating question live 7 times against Gemini: the
+  misattribution reproduced twice, the retry fired both times, and
+  fixed it once but not the other (the second attempt re-cited a
+  *different* wrong chunk) -- a real, partial improvement, not a full
+  fix, but critically **neither retry attempt gave up or fabricated a
+  number**, unlike every Ollama failure mode Week 5j found.
+- **Full-suite re-runs, both backends, same day:**
+  - Gemini (`eval_results/20260825T003901Z.json`): 26/27 passed, same
+    as the pre-change baseline. The motivating misattribution
+    (`aapl-msft-tax-rate-comparison`) is clean in this run. A different
+    question (`crm-rpo-fy26`) picked up a new warning, traced to the
+    same checker-noise class as above: Gemini wrote citations as
+    `[1, 2]` in one bracket (not `[1][2]` per rule 8's wording), and the
+    literal "2" inside that text got misread as a claim -- confirmed by
+    reading the actual chunk text (contains the real $72.4B/$35.1B/
+    $37.3B figures correctly) and the raw answer text, not assumed.
+  - Ollama (`eval_results/20260825T011459Z.json`): 21/27 passed, vs.
+    the pre-change baseline's 20/27 -- one question flipped FAIL->PASS
+    (`nvda-crm-revenue-comparison`), zero flipped PASS->FAIL. The two
+    Q4-hint-bleeding-into-Q2/Q3 answers were compared word-for-word
+    against the pre-change baseline and are an identical, pre-existing
+    bug, unrelated to this change.
+- **Decision: gated to Gemini only** despite this run showing no
+  Ollama regression (`_CITATION_RETRY_BACKENDS = {"gemini"}` in
+  `agent.py`, consumed by `_should_retry_for_citations`). User's call,
+  made explicitly after seeing the live Ollama results: Week 5j's
+  documented history against this exact mechanism, plus Ollama's own
+  known run-to-run noise on comparison-shaped questions, outweighs one
+  clean re-run. If Ollama is ever revisited for this, the gate is one
+  line to remove, and the design/tests already generalize to it.
+- **A real bug found in the mandated independent review pass (CLAUDE.md
+  step 6), not live testing:** if the citation retry fired on the
+  second-to-last iteration and the model's follow-up turn made a NEW
+  tool call instead of just re-answering, `run_agent()`'s loop hit the
+  iteration cap on that tool call and fell through to the generic
+  "wasn't able to finish" message -- discarding an already-produced,
+  merely-warned answer that was perfectly fine to return as-is. Fixed
+  by preserving the pre-retry `(answer, warnings)` pair and returning it
+  instead of the timeout message if the budget runs out after a retry
+  was attempted. Unlike the rest of `run_agent()`'s loop, this exact
+  control-flow shape is deterministic given a scripted turn sequence,
+  so it's covered by two real unit tests
+  (`test_run_agent_citation_retry_exhausting_budget_returns_pre_retry_
+  answer_not_timeout`, plus a sibling confirming `send_followup` is
+  never even called for the gated-out `ollama` backend) driving
+  `run_agent()` through monkeypatched `BACKENDS` entries, rather than
+  left to live verification alone.
+
 ## Next steps
 
 > This section used to be a running "X: FIXED, see above" log that
@@ -2115,8 +2212,21 @@ across the whole suite, not just the one motivating bug.**
   answers **Productivity and Business Processes, $35,013M** vs.
   Intelligent Cloud's $34,681M, with no invented `segment` tool
   argument, matching the original spike's 3/3 result.
+- **Worth being explicit about what "only the LLM differs" actually
+  covers: the ANSWERING model, not the grading judge.**
+  `eval_harness.py`'s `grade_judged()` (used for every `judged`-type
+  question, e.g. the refusal questions) calls `requests.post(OLLAMA_URL,
+  ...)` directly — it does not go through `llm_backends.BACKENDS` and
+  is not affected by `--backend` at all. So a `--backend gemini` run's
+  judged questions are still graded by local Ollama, same as an
+  `--backend ollama` run — a deliberate constant across the comparison
+  (a stable, unchanging grader), not an oversight, but easy to misread
+  the "only the LLM differs" framing below as covering grading too.
+  Noticed 2026-08-25 when asked directly which LLM does what; not
+  wired to `--backend` since there's no current need to vary the judge
+  independently of the answerer.
 - **Full suite, both backends, same retrieval index (same
-  `chunks`/`chroma_db`/`xbrl_cache`), same code, only the LLM
+  `chunks`/`chroma_db`/`xbrl_cache`), same code, only the answering LLM
   differs:**
   - Gemini: `eval_results/20260821T025213Z.json` — **26/27 passed**,
     26/27 cited, 2/27 with an unverified numeric citation.
@@ -2162,14 +2272,11 @@ across the whole suite, not just the one motivating bug.**
     without being requested); worth a second full Gemini pass before
     treating 26/27 as a precise number rather than "clearly much
     better, roughly this good."
-  - **Conclusion for (b): revisiting the Week 5j citation-verification
-    retry loop against Gemini is now worth prioritizing**, not
-    premature. Gemini's citation quality is already better than
-    Ollama's even without the retry loop (2/27 unverified citations
-    vs. Ollama's 4/27), and Week 5j's loop was explicitly shelved with
-    "revisit once working with a more capable model" — Gemini is now
-    a live, working, demonstrably more-capable backend to test it
-    against via the same swappable interface, not a throwaway script.
+  - **Conclusion for (b): DONE, 2026-08-25 — see "Citation-verification
+    retry loop, revisited against Gemini and gated" above.** Rebuilt
+    against the swappable-backend interface, live-verified against both
+    backends, and gated to Gemini only (`_CITATION_RETRY_BACKENDS`) per
+    an explicit user decision after seeing the Ollama results.
 
 **3. Then: resume eval growth**, informed by both the FinanceBench
 analysis (Week 5l) and whatever round 1-2 above surfaces:

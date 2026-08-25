@@ -651,6 +651,68 @@ def value_is_citation_verified(value: float, unit: str, answer_text: str, all_re
     return True if not matches else any(matches)
 
 
+# Backends allowed to get the citation-verification retry (see
+# _should_retry_for_citations below). Gated to Gemini only, decided
+# 2026-08-25 after live-verifying both backends: this exact mechanism
+# was already tried against Ollama once and reverted (Week 5j -- see
+# docs/superpowers/specs/2026-08-24-citation-retry-loop-design.md) after
+# qwen2.5:7b-instruct proved unable to reliably act on the corrective
+# feedback (giving up on an already-correct answer, or fabricating an
+# estimate under retry pressure). A fresh live re-run this time showed
+# no regression, but a single run can't outweigh that documented
+# history against Ollama's own known run-to-run noise -- so the retry
+# stays scoped to the backend it was actually re-verified for.
+_CITATION_RETRY_BACKENDS = {"gemini"}
+
+
+def _should_retry_for_citations(citation_warnings: list[str], already_retried: bool, backend: str) -> bool:
+    """Whether run_agent() should give the model one corrective retry
+    turn for its own unverified citation(s). True only when there's
+    something to correct, the single retry (see
+    _format_citation_retry_message below) hasn't already been spent this
+    conversation -- capped at one retry, same as the original Week 5j
+    design, sharing run_agent()'s existing MAX_TOOL_ITERATIONS budget
+    rather than a separate one -- and `backend` is one this retry is
+    actually enabled for (see _CITATION_RETRY_BACKENDS above)."""
+    return bool(citation_warnings) and not already_retried and backend in _CITATION_RETRY_BACKENDS
+
+
+def _format_citation_retry_message(answer: str, citation_warnings: list[str]) -> str:
+    """Builds the corrective follow-up message for a one-time citation
+    retry (see run_agent() and docs/superpowers/specs/2026-08-24-
+    citation-retry-loop-design.md). Revisits Week 5j's reverted attempt,
+    with wording that directly targets the two live failure modes that
+    caused that revert:
+
+    1. aapl-employees-fy25's retry gave up entirely instead of checking
+       the 4 OTHER already-retrieved chunks for a valid citation -- so
+       this message explicitly points the model back at the search
+       results ALREADY shown earlier in the conversation before it
+       concludes nothing supports the claim.
+    2. A "this is your final attempt" framing pushed the model to
+       fabricate an estimate on a previously-100%-reliable refusal
+       question (nvda-rd-expense-q4fy26-refusal) -- so this message
+       deliberately contains NO deadline/final-attempt language, states
+       an honest refusal is a fully acceptable outcome, and explicitly
+       forbids inventing or estimating a replacement number."""
+    warnings_block = "\n".join(f"- {w}" for w in citation_warnings)
+    return (
+        "Your previous answer had at least one citation that doesn't hold up:\n"
+        f"{warnings_block}\n\n"
+        "Your previous answer was:\n"
+        f"{answer}\n\n"
+        "Before answering again, check whether any of the search results ALREADY "
+        "shown earlier in this conversation actually support each flagged claim -- "
+        "the right source may already be there under a different citation number. "
+        "If you find proper support, restate the claim with the correct citation. "
+        "If, after checking, a value genuinely isn't supported by any result shown, "
+        "say so plainly and refuse that specific claim instead of guessing -- an "
+        "honest answer that the sources don't support it is a completely acceptable "
+        "outcome here. Do not invent, estimate, or approximate a number to replace "
+        "an unverified one."
+    )
+
+
 def _format_citation_key(all_results: list[dict]) -> str:
     lines = []
     for i, r in enumerate(all_results, start=1):
@@ -726,24 +788,44 @@ def run_agent(question: str, backend: str = "ollama", verbose: bool = False) -> 
     company). Fine for now — a duplicate citation is cosmetic, not a
     correctness problem — but worth revisiting if it gets noisy.
 
-    No self-correction retry on an unverified citation — tried and
-    reverted, see PROJECT_CONTEXT.md's "citation-verification retry
-    loop" section for why (qwen2.5:7b-instruct couldn't reliably use the
-    corrective feedback). citation_warnings is still returned below and
-    still worth surfacing/tracing — the model just isn't trusted to act
-    on it itself yet. Revisiting this against Gemini is a separate
-    follow-up, not part of this function."""
-    start, send_tool_results = BACKENDS[backend]
+    One self-correction retry on an unverified citation, revisited
+    2026-08-24 against the swappable-backend layer (originally tried
+    and reverted in Week 5j -- see PROJECT_CONTEXT.md and
+    docs/superpowers/specs/2026-08-24-citation-retry-loop-design.md).
+    Gated to Gemini only (see _CITATION_RETRY_BACKENDS) -- decided
+    2026-08-25 after live-verifying both backends showed no regression
+    on this particular run, but Ollama's documented history with this
+    exact mechanism (and its own run-to-run noise) wasn't outweighed by
+    one clean re-run."""
+    start, send_tool_results, send_followup = BACKENDS[backend]
     tool_schemas = [FACT_TOOL_SCHEMA, COMPARE_TOOL_SCHEMA, SEARCH_TOOL_SCHEMA]
     state, turn = start(question, SYSTEM_PROMPT, tool_schemas)
     all_results: list[dict] = []
     searched_tickers: set[str | None] = set()
     calls_made = 1
+    retried_for_citations = False
+    # Preserved so a citation retry that consumes the last iteration
+    # budget can't discard an already-produced, merely-warned answer in
+    # favor of the generic timeout message below -- found in code
+    # review (2026-08-25): if the retry's own follow-up turn made a NEW
+    # tool call instead of just re-answering, the loop used to hit the
+    # iteration cap on that tool call and fall through to the timeout
+    # return, throwing away a perfectly usable prior answer.
+    pre_retry_answer: tuple[str, list[str]] | None = None
 
     while True:
         if not turn.tool_calls:
             answer = turn.text or ""
-            return answer, all_results, verify_citations(answer, all_results)
+            warnings = verify_citations(answer, all_results)
+            if _should_retry_for_citations(warnings, retried_for_citations, backend) and calls_made < MAX_TOOL_ITERATIONS:
+                retried_for_citations = True
+                pre_retry_answer = (answer, warnings)
+                if verbose:
+                    print(f"  [citation retry] {warnings}")
+                turn = send_followup(state, _format_citation_retry_message(answer, warnings))
+                calls_made += 1
+                continue
+            return answer, all_results, warnings
         if calls_made >= MAX_TOOL_ITERATIONS:
             break
 
@@ -753,6 +835,10 @@ def run_agent(question: str, backend: str = "ollama", verbose: bool = False) -> 
         ]
         turn = send_tool_results(state, results)
         calls_made += 1
+
+    if pre_retry_answer is not None:
+        answer, warnings = pre_retry_answer
+        return answer, all_results, warnings
 
     return (
         "I wasn't able to finish answering within the allotted number of searches. "

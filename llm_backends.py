@@ -83,6 +83,19 @@ def _ollama_send(state: dict, results: list[dict]) -> ModelTurn:
     return _ollama_message_to_turn(message)
 
 
+def _ollama_send_followup(state: dict, text: str) -> ModelTurn:
+    """Sends a plain corrective/follow-up message, as opposed to a tool
+    result -- needed for the citation-verification retry (agent.py's
+    run_agent()), which fires only after the model has already stopped
+    calling tools and produced a final answer, so there's no tool call
+    to attach a result to. Symmetric with _ollama_send, just a "user"
+    role message instead of a "tool" one."""
+    state["messages"].append({"role": "user", "content": text})
+    message = _ollama_call(state)
+    state["messages"].append(message)
+    return _ollama_message_to_turn(message)
+
+
 RETRY_DELAY_SECONDS = 15  # free-tier rate limits are generous but not infinite
 
 # Module-level Gemini client cache (lazy-initialized on first use).
@@ -154,7 +167,17 @@ def _gemini_send(state: object, results: list[dict]) -> ModelTurn:
     return _gemini_response_to_turn(resp)
 
 
-BACKENDS: dict[str, tuple[Callable, Callable]] = {
-    "ollama": (_ollama_start, _ollama_send),
-    "gemini": (_gemini_start, _gemini_send),
+def _gemini_send_followup(state: object, text: str) -> ModelTurn:
+    """Gemini counterpart to _ollama_send_followup, above -- see that
+    function's docstring for why this is needed. chat.send_message
+    already accepts a plain string (the same call _gemini_start makes
+    for the original question), so this reuses _send_with_retry's
+    429/503 backoff directly rather than adding a second copy."""
+    resp = _send_with_retry(state, text)
+    return _gemini_response_to_turn(resp)
+
+
+BACKENDS: dict[str, tuple[Callable, Callable, Callable]] = {
+    "ollama": (_ollama_start, _ollama_send, _ollama_send_followup),
+    "gemini": (_gemini_start, _gemini_send, _gemini_send_followup),
 }
