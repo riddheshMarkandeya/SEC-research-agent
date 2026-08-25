@@ -2293,6 +2293,59 @@ chunk text) before writing, same discipline as every prior round.
   retrieval and tools were held constant and only the answering model
   changed.
 
+**Addendum, 2026-08-25 — eval set grown 35 → 38: cross-company ranking
+via `compare_financial_metric`.** Prompted by looking at the PIXIU/
+FinBen benchmark (`the-finai/pixiu` on GitHub) for question-shape ideas:
+its FinQA/TatQA/ConvFinQA tasks weren't directly portable (their ground
+truth is against different source documents, not this project's own
+5-company corpus — the same reason no other external benchmark's raw
+Q/A pairs get imported here), but comparing PIXIU's coverage against
+this project's own `compare_financial_metric` tool turned up a real
+gap: the tool has explicit system-prompt support for cross-company
+ranking ("which company had the highest gross margin" is its own
+worked example, agent.py:105) but zero eval questions exercised that
+code path before this. Added 3 `judged`-type questions, one per margin
+already in the formula registry — `five-company-gross-margin-ranking-
+fy2025` (highest → PLTR, 82.4%), `five-company-operating-margin-
+ranking-fy2025` (lowest → CRM, 20.1%), `five-company-net-margin-
+ranking-fy2025` (highest → NVDA, 55.6%) — deliberately spread across
+different correct answers and both "highest"/"lowest" phrasing so a
+model can't pattern-match its way to a pass.
+
+- **Ground truth**: `get_{gross,operating,net}_margin_all_companies("AAPL", fiscal_year=2025, fiscal_period="FY")`
+  — real computed values from ingested XBRL data, not guessed.
+- **A real ambiguity surfaced and fixed before finalizing, not just a
+  phrasing nitpick.** The first draft phrased the question as "using
+  Apple's fiscal year 2025 as the reference period" for all five
+  companies. Live-verified against Gemini: this failed outright once
+  (ran out of the 6-call tool-iteration budget) and on a second manual
+  run reached the right company (NVIDIA) via the wrong period — it
+  called `get_financial_fact` with NVDA's own fiscal_year=2025 (period
+  ended 2025-01-26, value 55.8%) instead of the calendar-matched period
+  that's actually contemporaneous with Apple's FY2025 (NVDA's own
+  fiscal_year=2026, ended 2026-01-25, value 55.6% — the same period
+  `compare_financial_metric`'s frame-based cross-company matching
+  returns, and the same period this eval file already calls "fy2026"
+  everywhere else, e.g. `nvda-revenue-fy2026-indirect`). This is the
+  same fiscal-year-label-vs-calendar-frame mismatch `companies.py` and
+  `period_labels.py` already exist to guard against, just hit from a
+  new angle (a shared ranking question across 5 non-calendar-aligned
+  fiscal years) rather than a single-company date lookup. Fixed by
+  spelling out each company's own correctly-labeled fiscal year and end
+  date directly in the question text instead of a single blanket label
+  — re-verified live, 3/3 passed on Gemini with values matching ground
+  truth exactly (`eval_results/20260825T233524Z.json`).
+- **Not run against Ollama** — the existing 27→35 round already
+  established the Gemini-vs-Ollama gap on comparison-shaped questions
+  generally; no code changed here, only new question data, so there's
+  no regression risk to the other 35 questions from this addition and a
+  full-suite re-run wasn't needed to confirm that.
+- One `verify_citations()` unverified-citation warning appeared on the
+  gross-margin question, referencing numbers not present in the actual
+  answer text — looks like the already-known `verify_citations()` gap
+  (Next steps item 3's addendum, above) rather than a new issue; not
+  chased further here since it didn't affect the judged pass/fail.
+
 ### Formula registry extended: return_on_assets, asset_turnover, cash_to_assets (2026-08-25)
 
 Closes out the citation-verification-gap decision from the eval-growth
@@ -2617,6 +2670,22 @@ two existed.
 gate (not just a warning), retry/backoff, rate limits, Langfuse tracing.
 
 **7. Week 8 — polish + write-up.**
+
+**Parked, 2026-08-25 — multi-turn conversational QA (ConvFinQA-style
+follow-ups, e.g. "...and what was it the year before?").** Surfaced
+while reviewing the PIXIU/FinBen benchmark for eval-question ideas (see
+the cross-company-ranking addendum above); `run_agent()` currently
+takes a single `question: str` with no conversation-history parameter
+at all, so this isn't there today. Not scheduled as a roadmap step —
+same YAGNI discipline as the graph-DB/HNSW-tuning deferrals: no real
+eval failure or user need has demanded it yet, only benchmark-inspired
+curiosity. If it does get picked up, do it after Week 7 (guardrails)
+rather than before — guardrails (citation hard-gate, retry/backoff)
+touches the same `run_agent()` tool loop and citation-verification code
+multi-turn would extend, so hardening that loop once while it's still
+single-turn beats layering two structural changes on it back-to-back.
+Watch for: a real multi-turn-shaped question, or a concrete user need,
+as the trigger to revisit.
 
 <details>
 <summary>Historical log (superseded by the section above — kept for the full narrative/evidence trail, not because anything here is still actionable)</summary>
