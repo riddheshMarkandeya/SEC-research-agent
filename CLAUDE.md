@@ -135,3 +135,20 @@ the user instead of continuing to churn.
 For Standard-tier changes, a self-check of the diff is enough unless
 something about the change feels risky enough to warrant a real
 `/code-review` pass — use judgment.
+
+## 7. Use git extensively as an inspection tool
+
+Check `git status`/`git diff`/`git log` liberally throughout a task, not
+just at the start and end — before editing, to see what's already
+uncommitted and avoid confusing your own changes with pre-existing ones;
+after editing, to confirm a diff is exactly what was intended and
+nothing stray got included; when debugging, to isolate a suspected
+change (`git stash` it in/out, same input, compare — see section 4);
+when picking up old work, to check a file's real history via `git show`/
+`git log -p` rather than guessing from context alone (this is what
+caught the true end of a file mid-edit once — see the citation-retry
+session's test-file mishap).
+
+This is about inspection, not authorization: it does **not** change the
+standing rule that commits only happen when the user explicitly asks for
+one. Checking state often; committing only on request.
