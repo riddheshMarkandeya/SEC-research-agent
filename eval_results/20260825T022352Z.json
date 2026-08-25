@@ -1,0 +1,17 @@
+{
+  "backend": "gemini",
+  "results": [
+    {
+      "id": "nvda-asset-turnover-fy2026",
+      "ticker": "NVDA",
+      "question": "What was NVIDIA's asset turnover ratio (total revenue divided by total assets) for fiscal year 2026?",
+      "type": "numeric",
+      "passed": true,
+      "detail": "found matching value: 1.04 (raw)",
+      "has_citation": true,
+      "citation_warnings": [],
+      "answer": "For fiscal year 2026 (ended January 25, 2026), NVIDIA's total revenue was $215,938 million [2] and its total assets as of January 25, 2026 were $206,803 million [8]. \n\nDividing total revenue ($215,938 million) [2] by total assets ($206,803 million) [8] yields an asset turnover ratio of approximately **1.04**. \n\n*(Note: The specific calculated ratios of 1.19 and 1.36, as well as the computed average total assets of $159,202 million, are derived figures and do not explicitly appear as pre-calculated text in the cited filing excerpts.)*",
+      "n_chunks_retrieved": 10
+    }
+  ]
+}

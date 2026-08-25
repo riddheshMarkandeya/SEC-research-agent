@@ -1,0 +1,105 @@
+{
+  "backend": "gemini",
+  "results": [
+    {
+      "id": "aapl-return-on-assets-fy2025",
+      "ticker": "AAPL",
+      "question": "What was Apple's return on assets (net income divided by total assets) for fiscal year 2025?",
+      "type": "numeric",
+      "passed": true,
+      "detail": "found matching value: 31.18 (percent)",
+      "has_citation": true,
+      "citation_warnings": [],
+      "answer": "For fiscal year 2025, Apple Inc. (AAPL) reported:\n\n* **Net Income:** $112,010,000,000 ($112.01 billion) [1]\n* **Total Assets:** $359,241,000,000 ($359.241 billion) [2]\n\nDividing net income by total assets gives a Return on Assets (ROA) of approximately **31.18%** for fiscal year 2025.",
+      "n_chunks_retrieved": 2
+    },
+    {
+      "id": "nvda-asset-turnover-fy2026",
+      "ticker": "NVDA",
+      "question": "What was NVIDIA's asset turnover ratio (total revenue divided by total assets) for fiscal year 2026?",
+      "type": "numeric",
+      "passed": false,
+      "detail": "no value matching 104.4 percent found in answer",
+      "has_citation": true,
+      "citation_warnings": [],
+      "answer": "For fiscal year 2026 (ended January 25, 2026), NVIDIA's financial figures were as follows:\n\n* **Total Revenue:** $215,938 million ($215.938 billion) [2]\n* **Total Assets:** $206,803 million ($206.803 billion) as of January 25, 2026 [7]\n\nUsing these figures, NVIDIA's asset turnover ratio (total revenue divided by total assets) for fiscal year 2026 is:\n\n$$\\frac{\\$215,938\\text{ million}}{\\$206,803\\text{ million}} \\approx 1.0441$$\n\nThus, NVIDIA's asset turnover ratio for fiscal year 2026 was approximately **1.04** (or **1.044**).",
+      "n_chunks_retrieved": 10
+    },
+    {
+      "id": "msft-cash-to-assets-fy2025",
+      "ticker": "MSFT",
+      "question": "What percentage of Microsoft's total assets was held as cash and cash equivalents at the end of fiscal year 2025?",
+      "type": "numeric",
+      "passed": true,
+      "detail": "found matching value: 4.89 (percent)",
+      "has_citation": true,
+      "citation_warnings": [],
+      "answer": "At the end of fiscal year 2025, Microsoft's cash and cash equivalents was $30,242,000,000 [1], and its total assets were $619,003,000,000 [2]. \n\nDividing the cash and cash equivalents by total assets, cash and cash equivalents represented approximately **4.89%** of Microsoft's total assets at the end of fiscal year 2025.",
+      "n_chunks_retrieved": 2
+    },
+    {
+      "id": "aapl-cash-and-buyback-q3fy2026",
+      "ticker": [
+        "AAPL"
+      ],
+      "question": "As of June 27, 2026, what was Apple's cash and cash equivalents balance, and how much remaining availability did it have under its May 2025 $100 billion share repurchase program as of that same date?",
+      "type": "comparison",
+      "passed": true,
+      "detail": "found matching values for all 2 entities",
+      "has_citation": true,
+      "citation_warnings": [],
+      "answer": "As of June 27, 2026:\n\n* **Cash and cash equivalents balance:** Apple's cash and cash equivalents balance was **$39,544,000,000** ($39.544 billion) [1].\n* **Remaining availability under the May 2025 share repurchase program:** The remaining availability under the May 2025 $100 billion share repurchase program was **$38.0 billion** [9].",
+      "n_chunks_retrieved": 11
+    },
+    {
+      "id": "crm-buyback-and-liquidity-q1fy27",
+      "ticker": [
+        "CRM"
+      ],
+      "question": "As of April 30, 2026, how much remaining authorization did Salesforce have under its Share Repurchase Program, and what was its total cash, cash equivalents and marketable securities balance?",
+      "type": "comparison",
+      "passed": true,
+      "detail": "found matching values for all 2 entities",
+      "has_citation": true,
+      "citation_warnings": [],
+      "answer": "As of April 30, 2026, Salesforce had the following financial positions under its Share Repurchase Program and balance sheet:\n\n* **Remaining Share Repurchase Authorization:** Salesforce was authorized to purchase a remaining **$22.9 billion** of its common stock under the Share Repurchase Program [2]. (In February 2026, the Board authorized $50.0 billion in repurchases, which replaced the previous authorization and was reduced by $25.0 billion in up-front payments made for March 2026 accelerated share repurchase agreements) [1, 5].\n* **Cash, Cash Equivalents, and Marketable Securities Balance:** Salesforce reported a total of **$11.8 billion** in cash, cash equivalents, and marketable securities [8]. This total is comprised of:\n  * **Cash and cash equivalents:** $8,935 million ($8.935 billion) [10]\n  * **Marketable securities:** $2,902 million ($2.902 billion) [10]",
+      "n_chunks_retrieved": 11
+    },
+    {
+      "id": "nvda-revenue-fy2026-indirect",
+      "ticker": "NVDA",
+      "question": "What was the total revenue for fiscal year 2026 of the semiconductor company best known for producing the GPUs widely used in AI training?",
+      "type": "numeric",
+      "passed": true,
+      "detail": "found matching value: 215938000000.0 (raw)",
+      "has_citation": true,
+      "citation_warnings": [],
+      "answer": "For fiscal year 2026, NVIDIA (the semiconductor company best known for producing the GPUs widely used in AI training) reported a total revenue of $215,938,000,000 (or approximately $215.94 billion) [1].",
+      "n_chunks_retrieved": 1
+    },
+    {
+      "id": "aapl-employees-fy25-indirect",
+      "ticker": "AAPL",
+      "question": "As of the end of its fiscal year 2025, how many full-time equivalent employees did the company that makes the iPhone and the Mac have?",
+      "type": "numeric",
+      "passed": true,
+      "detail": "found matching value: 166000.0 (raw)",
+      "has_citation": true,
+      "citation_warnings": [],
+      "answer": "As of September 27, 2025, the end of Apple Inc.'s fiscal year 2025, the company had approximately **166,000** full-time equivalent employees [3].",
+      "n_chunks_retrieved": 5
+    },
+    {
+      "id": "msft-net-income-fy2025-indirect",
+      "ticker": "MSFT",
+      "question": "What was the net income for fiscal year 2025 of the company best known for the Windows operating system and Microsoft 365?",
+      "type": "numeric",
+      "passed": true,
+      "detail": "found matching value: 101832000000.0 (raw)",
+      "has_citation": true,
+      "citation_warnings": [],
+      "answer": "For fiscal year 2025, Microsoft Corporation reported a net income of **$101,832,000,000** (or $101.832 billion) [7].",
+      "n_chunks_retrieved": 11
+    }
+  ]
+}

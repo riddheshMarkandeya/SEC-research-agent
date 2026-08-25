@@ -2132,6 +2132,154 @@ citation-retry-loop-design.md`.
   `run_agent()` through monkeypatched `BACKENDS` entries, rather than
   left to live verification alone.
 
+### Eval set grown 27 → 35 questions: multi-statement ratios, cross-section synthesis, indirect disambiguation (2026-08-25)
+
+Targeted the three gap categories "Next steps" item 3 had flagged from
+the FinanceBench analysis, each chosen to isolate one specific untested
+variable rather than just adding volume. All 8 ground-truthed against
+real data (`xbrl_facts.get_metric()` calls and direct reads of actual
+chunk text) before writing, same discipline as every prior round.
+
+- **Multi-statement ratios (3 questions), no formula-registry tool
+  support for any of them** — `aapl-return-on-assets-fy2025` (net
+  income ÷ total assets, income statement + balance sheet),
+  `nvda-asset-turnover-fy2026` (revenue ÷ total assets),
+  `msft-cash-to-assets-fy2025` (cash ÷ total assets). Deliberately left
+  unsupported by any tool, mirroring the exact discipline that
+  justified building the margin-formula registry (Week 5k): let the
+  agent's actual behavior with no deterministic path be the evidence,
+  don't pre-build.
+- **Pure unstructured multi-chunk synthesis (2 questions)** — two facts
+  from genuinely different sections of ONE filing, not a single table:
+  `aapl-cash-and-buyback-q3fy2026` combines the balance-sheet cash
+  figure with the Item 2 (equity securities) share-repurchase-remaining
+  figure; `crm-buyback-and-liquidity-q1fy27` combines Salesforce's own
+  buyback-remaining figure with an MD&A "Interest Rate Sensitivity"
+  cash-plus-marketable-securities figure. Both real, verified by reading
+  the actual chunk text directly (`chunks/AAPL/..._chunks.jsonl` chunk
+  40, `chunks/CRM/..._chunks.jsonl` chunks 41/77) — not assumed from
+  table structure. Graded via the existing `"comparison"` type/
+  `grade_comparison()` (an intentional reuse: nothing about that grader
+  actually requires the two `expected` entries to be different
+  companies, just that each value appears and is properly cited — the
+  `ticker` field in each `expected` entry is purely a human-readable
+  label, e.g. `"AAPL-buyback-remaining-availability"`, not a real
+  ticker) — no eval-harness code changes needed.
+- **Indirect/no-explicit-name company disambiguation (3 questions)** —
+  reuses already-ground-truthed facts from existing questions
+  (`nvda-revenue-fy2026-indirect`, `aapl-employees-fy25-indirect`) plus
+  one new one (`msft-net-income-fy2025-indirect`), each phrased via a
+  description ("the semiconductor company best known for the GPUs...",
+  "the company that makes the iPhone and the Mac...") instead of naming
+  the company — isolates disambiguation as the one changed variable
+  against facts whose retrieval is already proven to work, per this
+  project's own isolate-one-variable debugging discipline.
+- **A real bug found in my own question, not the agent, before the full
+  run even happened:** `nvda-asset-turnover-fy2026`'s first draft used
+  `expected_unit: "percent"` (104.4), but asset turnover is
+  conventionally expressed as a decimal ratio ("1.04x"), and
+  `numeric_utils.normalize()` treats `"percent"` and `"raw"` as
+  different, never-cross-matching categories regardless of numeric
+  equivalence (104.4 vs 1.044 are the same ratio, different
+  categories). Live-verified before fixing: Gemini's real answer stated
+  "approximately 1.04 (or 1.044)", confirming the natural phrasing
+  doesn't match a percent-typed question at all. Fixed by changing
+  `expected_unit` to `"raw"`, `expected_value` to `1.04` — same
+  "test the test" discipline as `grade_judged()`'s and
+  `verify_citations()`'s own past bug fixes.
+- **Full-suite results, both backends:**
+  - Gemini (`eval_results/20260825T022950Z.json`): **33/35 passed, 8/8
+    of the new questions passed cleanly with proper citations.** The 2
+    failures are both pre-existing, unrelated to this round — confirmed
+    by checking history, not assumed:
+    `aapl-3yr-avg-operating-margin-fy2023-fy2025` failed here (this
+    exact question already failed twice before, on 2026-08-19, well
+    before this session — a known temperature-0.1 instruction-following
+    flake on the multi-year-average tool arguments) and
+    `pltr-dividend-2019-refusal` is the long-documented "$0" grading
+    technicality (Week 5l).
+  - Ollama (`eval_results/20260825T044611Z.json`): **23/35 passed, only
+    2/8 of the new questions passed.** Among the original 27 questions,
+    21/27 passed — statistically identical to the immediately-prior
+    Ollama baseline (also 21/27), with exactly the same two
+    comparison/segment-shaped questions swapping which side of the line
+    they're on (`nvda-crm-revenue-comparison` and
+    `nvda-segment-revenue-comparison-q1fy27`) — the same
+    already-documented run-to-run noise pattern, not a regression from
+    this round's changes.
+- **Several genuinely new Ollama failure modes surfaced, each verified
+  against real data rather than guessed at:**
+  1. `aapl-return-on-assets-fy2025` **answered about the wrong company
+     entirely** — the answer opens "Based on the provided information
+     from Microsoft Corporation's filings" and computes a ratio from
+     MSFT's real total-assets figure ($619,003M, confirmed to be
+     MSFT's actual FY2025 value) despite the question asking only about
+     Apple, with no ambiguity. A new failure class, not previously
+     catalogued: this is the first observed case of `qwen2.5:7b-instruct`
+     answering a different company than the one asked about outright,
+     as opposed to the previously-known failure modes (self-consistency
+     anchoring on an invented parameter, misattributed citations,
+     Q4-hint bleeding into other quarters).
+  2. `msft-cash-to-assets-fy2025` **used numbers that don't correspond
+     to any real MSFT period** — checked total_assets across 7 nearby
+     quarters/years via `get_metric()`, none match the stated $371,902M
+     figure — appears to be a fabricated/hallucinated value the model
+     then confidently divided, rather than a simple wrong-period mixup.
+  3. `aapl-cash-and-buyback-q3fy2026` **retrieved a stale prior-year
+     figure and self-computed a wrong workaround** instead of reading
+     the current quarter's own directly-disclosed remaining-availability
+     figure: it cited the June 28, 2025 10-Q's $19.8B figure, then
+     computed `$100B - $25.8B = $74.2B` (the correct answer, $38.0B, is
+     directly stated in the current 10-Q and never needed any
+     arithmetic at all).
+  4. `crm-buyback-and-liquidity-q1fy27` **used the wrong tool for the
+     liquidity figure** — its stated $8.94B exactly matches CRM's real
+     `cash_and_equivalents` XBRL value (confirmed via `get_metric()`),
+     which excludes marketable securities, instead of the $11.8B
+     combined "cash, cash equivalents and marketable securities" figure
+     the question specifically asked for and that's only stated in
+     prose. A precise, real example of the agent reaching for a
+     structured tool that returns a *related but narrower* metric than
+     what was actually asked.
+  5. Both `nvda-asset-turnover-fy2026`'s and (via the direct question)
+     other self-computed ratios were correctly flagged by the
+     citation-verification gate on Ollama (it attached a citation to
+     its self-computed 1.04 that doesn't contain that number) — but the
+     *same* self-computation on Gemini slipped through ungated, because
+     Gemini's version stated the ratio with **no citation marker
+     attached to it at all**, and `verify_citations()`'s heuristic only
+     checks numbers sitting near a citation marker; an uncited number
+     has nothing to contradict, so it defaults to "nothing to verify."
+     **This is a real, newly-surfaced gap** in the citation-verification
+     heuristic, distinct from (worse than) the already-documented
+     multi-step-derivation limitation: it's not that intermediate
+     numbers leak into a legitimate citation's window, it's that a
+     specific numeric claim can dodge the check entirely by simply not
+     citing anything. Flagged here for a future decision, not fixed in
+     this round — consistent with letting real evidence decide before
+     building, same as the formula-registry deferrals.
+  6. `aapl-employees-fy25-indirect`'s failure is **not new** — it got
+     the right value (166,000) from the right-looking source, but
+     failed the exact same citation-verification check, in the exact
+     same run, as the original direct-phrased `aapl-employees-fy25`
+     question. This confirms the indirect-disambiguation questions
+     genuinely isolated the one variable they were meant to test:
+     company resolution itself worked correctly in every one of the 3
+     indirect questions on both backends; the one failure is
+     inherited, pre-existing citation flakiness, unrelated to indirect
+     phrasing.
+- **Conclusion**: this round's clearest finding is that Gemini's
+  already-established advantage generalizes to three genuinely new
+  question shapes this project had never tested before (8/8 clean vs.
+  2/8), and it does so not just by avoiding known failure patterns but
+  by avoiding entirely new ones this round surfaced for the first time
+  (wrong-company answers, fabricated numbers, stale-period retrieval,
+  tool-selection mismatches) — further evidence for the Week 5u/
+  swappable-backend diagnosis that these are `qwen2.5:7b-instruct`
+  capability-ceiling issues, not retrieval or system-design gaps, since
+  retrieval and tools were held constant and only the answering model
+  changed.
+
 ## Next steps
 
 > This section used to be a running "X: FIXED, see above" log that
@@ -2278,23 +2426,33 @@ across the whole suite, not just the one motivating bug.**
     backends, and gated to Gemini only (`_CITATION_RETRY_BACKENDS`) per
     an explicit user decision after seeing the Ollama results.
 
-**3. Then: resume eval growth**, informed by both the FinanceBench
-analysis (Week 5l) and whatever round 1-2 above surfaces:
-- **Multi-statement questions** — FinanceBench had questions requiring
-  two *different* statements together (e.g., operating cash flow ratio
-  = CFO / current liabilities). Round 3's statement-scoped questions
-  only covered one statement at a time — untested variant.
-- **Pure unstructured multi-chunk synthesis** — combining two *prose*
-  facts from `search_filings` within one filing, no structured XBRL
-  involved. Distinct from the segment-comparison questions (which read
-  both numbers from a single table) and from the margin formulas (which
-  combine two *structured* XBRL calls).
-- A few genuinely ambiguous/no-company-context questions, to verify
-  `agent.py`'s disambiguation holds up beyond the cases spot-checked so
-  far (carried over from before the FinanceBench work started).
+**3. DONE for this round (2026-08-25) — see "Eval set grown 27 → 35
+questions" above.** All three gap categories the FinanceBench analysis
+had flagged are now covered: multi-statement ratios (no formula-registry
+tool support, same deliberate-gap discipline as the margin registry),
+pure unstructured multi-chunk synthesis (two prose facts from different
+sections of one filing), and indirect/no-explicit-name company
+disambiguation. Result: 33/35 on Gemini (8/8 new questions clean),
+23/35 on Ollama (2/8 new questions) — no regressions on the original 27
+on either backend, confirmed against history rather than assumed.
+
+- **One new open item this round surfaced, not yet decided or fixed:**
+  a real gap in `verify_citations()`'s heuristic — a self-computed
+  numeric claim with **no citation marker attached to it at all**
+  currently passes verification by default (nothing to contradict a
+  plain match), even though it should be flagged the same way a
+  wrongly-cited claim is. Found on `nvda-asset-turnover-fy2026`: Gemini
+  self-computed the ratio and stated it with no citation, so it slipped
+  through ungated, while the exact same self-computation on Ollama (which
+  *did* attach a wrong citation) was correctly caught. Worth a decision
+  (tighten the heuristic to flag suspiciously uncited numeric claims
+  near a computed-looking context, or build formula-registry-style
+  tools for these two new ratios so self-computation isn't reached for
+  in the first place) — flagged here rather than fixed speculatively,
+  same "let evidence decide" discipline as every other tool-scope call
+  in this project.
 - Toward the original 30-50 FinanceBench-style target, if still useful
-  once the above is covered — not a fixed requirement, revisit whether
-  it's still worth it once there's more signal.
+  once there's more signal — not a fixed requirement.
 - Ground truth for all of the above: real research against actual
   filings, same discipline as every round so far, not guessed numbers.
 - **Watch for relationship/multi-hop-shaped questions** ("which filings
