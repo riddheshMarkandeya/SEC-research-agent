@@ -57,7 +57,11 @@ from pathlib import Path
 import requests
 
 from agent import run_agent, value_is_citation_verified
-from config import DEFAULT_BACKEND, OLLAMA_MODEL_NAME, OLLAMA_URL  # used directly by grade_judged()
+from config import DEFAULT_BACKEND, GEMINI_MODEL_NAME, OLLAMA_MODEL_NAME, OLLAMA_URL
+
+# OLLAMA_MODEL_NAME/OLLAMA_URL are used directly by grade_judged() (always
+# Ollama, regardless of --backend); OLLAMA_MODEL_NAME/GEMINI_MODEL_NAME are
+# both also used by save_report() to record which model actually answered.
 from llm_backends import BACKENDS
 from numeric_utils import extract_numbers, normalize
 
@@ -274,11 +278,24 @@ def print_summary(results: list[dict]) -> None:
 
 
 def save_report(results: list[dict], backend: str) -> Path:
+    """`backend` ("ollama"/"gemini") alone doesn't say which specific
+    model answered -- OLLAMA_MODEL_NAME/GEMINI_MODEL_NAME are both
+    configurable via .env and can change over time, which would make an
+    old report ambiguous about what actually produced it. `answer_model`
+    records whichever one actually ran; `judge_model` is always
+    OLLAMA_MODEL_NAME regardless of `backend`, since grade_judged() calls
+    Ollama directly rather than going through llm_backends.BACKENDS (see
+    that function's own docstring)."""
     RESULTS_DIR.mkdir(exist_ok=True)
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     out_path = RESULTS_DIR / f"{timestamp}.json"
+    answer_model = OLLAMA_MODEL_NAME if backend == "ollama" else GEMINI_MODEL_NAME
     with out_path.open("w", encoding="utf-8") as f:
-        json.dump({"backend": backend, "results": results}, f, indent=2)
+        json.dump(
+            {"backend": backend, "answer_model": answer_model, "judge_model": OLLAMA_MODEL_NAME, "results": results},
+            f,
+            indent=2,
+        )
     return out_path
 
 

@@ -250,7 +250,7 @@ def test_grade_judged_lowercase_pass_still_counts(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# save_report — writes {"backend", "results"}, not a bare list
+# save_report — writes {"backend", "answer_model", "judge_model", "results"}
 # ---------------------------------------------------------------------------
 def test_save_report_writes_backend_and_results(monkeypatch, tmp_path):
     monkeypatch.setattr(eval_harness, "RESULTS_DIR", tmp_path)
@@ -260,4 +260,37 @@ def test_save_report_writes_backend_and_results(monkeypatch, tmp_path):
 
     with out_path.open(encoding="utf-8") as f:
         saved = json.load(f)
-    assert saved == {"backend": "gemini", "results": results}
+    assert saved["backend"] == "gemini"
+    assert saved["results"] == results
+
+
+def test_save_report_records_the_actual_answering_model_per_backend(monkeypatch, tmp_path):
+    # Found live (2026-08-25): the report only ever recorded the generic
+    # "ollama"/"gemini" backend label, not which specific model actually
+    # answered -- OLLAMA_MODEL_NAME/GEMINI_MODEL_NAME are both
+    # configurable via .env and can change over time, so an old report
+    # would otherwise become ambiguous about what really produced it.
+    monkeypatch.setattr(eval_harness, "RESULTS_DIR", tmp_path)
+    monkeypatch.setattr(eval_harness, "OLLAMA_MODEL_NAME", "fake-ollama-model")
+    monkeypatch.setattr(eval_harness, "GEMINI_MODEL_NAME", "fake-gemini-model")
+
+    with save_report([], backend="ollama").open(encoding="utf-8") as f:
+        ollama_report = json.load(f)
+    with save_report([], backend="gemini").open(encoding="utf-8") as f:
+        gemini_report = json.load(f)
+
+    assert ollama_report["answer_model"] == "fake-ollama-model"
+    assert gemini_report["answer_model"] == "fake-gemini-model"
+
+
+def test_save_report_records_judge_model_as_ollama_regardless_of_backend(monkeypatch, tmp_path):
+    # grade_judged() always calls Ollama directly (see its own docstring/
+    # PROJECT_CONTEXT.md) regardless of --backend -- the report should
+    # say so explicitly rather than leaving it implicit and easy to miss.
+    monkeypatch.setattr(eval_harness, "RESULTS_DIR", tmp_path)
+    monkeypatch.setattr(eval_harness, "OLLAMA_MODEL_NAME", "fake-ollama-model")
+
+    with save_report([], backend="gemini").open(encoding="utf-8") as f:
+        gemini_report = json.load(f)
+
+    assert gemini_report["judge_model"] == "fake-ollama-model"

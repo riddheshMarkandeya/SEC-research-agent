@@ -2372,7 +2372,16 @@ across the whole suite, not just the one motivating bug.**
   the "only the LLM differs" framing below as covering grading too.
   Noticed 2026-08-25 when asked directly which LLM does what; not
   wired to `--backend` since there's no current need to vary the judge
-  independently of the answerer.
+  independently of the answerer. **Fixed the same day**: `save_report()`
+  used to write only the generic `"backend"` label
+  (`"ollama"`/`"gemini"`), not which specific model actually answered —
+  `OLLAMA_MODEL_NAME`/`GEMINI_MODEL_NAME` are both configurable via
+  `.env` and can change over time, which would make an old report file
+  ambiguous about what really produced it. Every report now also
+  records `"answer_model"` (whichever model actually ran) and
+  `"judge_model"` (always `OLLAMA_MODEL_NAME`, regardless of
+  `--backend`, matching `grade_judged()`'s own behavior above) — 2 new
+  tests in `tests/test_eval_harness.py`.
 - **Full suite, both backends, same retrieval index (same
   `chunks`/`chroma_db`/`xbrl_cache`), same code, only the answering LLM
   differs:**
