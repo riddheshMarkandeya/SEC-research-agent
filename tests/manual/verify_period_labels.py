@@ -39,14 +39,17 @@ against the prior year, not a random reference to some other quarter.
   - 10-K: search the same anchored region for "for the (quarterly
     period|fiscal year) ended DATE" and compare DATE to reportDate.
 
-Usage:
-    python verify_period_labels.py
+Usage (from the repo root):
+    python tests/manual/verify_period_labels.py
 """
 
 import json
 import re
+import sys
 from datetime import date, datetime
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 from period_labels import fiscal_quarter, fiscal_year_label
 from xbrl_facts import _ANNUAL_DURATION_DAYS, _duration_days, _tag_for, fetch_concept

@@ -65,8 +65,8 @@ from config import DEFAULT_BACKEND, GEMINI_MODEL_NAME, OLLAMA_MODEL_NAME, OLLAMA
 from llm_backends import BACKENDS
 from numeric_utils import extract_numbers, normalize
 
-QUESTIONS_PATH = Path("./eval_questions.jsonl")
-RESULTS_DIR = Path("./eval_results")
+QUESTIONS_PATH = Path("./eval/eval_questions.jsonl")
+RESULTS_DIR = Path("./eval/eval_results")
 
 CITATION_PATTERN = re.compile(r"\[\d+\]")
 

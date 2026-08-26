@@ -159,11 +159,11 @@ period label and bake it into the retrieval index — worse than no label
 at all, since it's wrong with full confidence rather than just absent.
 For the current 5 companies over the ~15-month window of filings
 actually ingested, this is a non-issue (all 5 have long-stable,
-well-known fiscal calendars) — see `verify_period_labels.py` for the
-tool that checks this assumption against real evidence rather than
-trusting it blindly. Re-run that script after adding a new company or
-pulling in older historical filings, since that's exactly when the risk
-of silently crossing an undetected fiscal-year change goes up.
+well-known fiscal calendars) — see `tests/manual/verify_period_labels.py`
+for the tool that checks this assumption against real evidence rather
+than trusting it blindly. Re-run that script after adding a new company
+or pulling in older historical filings, since that's exactly when the
+risk of silently crossing an undetected fiscal-year change goes up.
 
 ### `config.py` + `.env`/`.env.example` — shared environment configuration (Week 5g)
 
@@ -2536,8 +2536,8 @@ system prompt, not something a generic MCP client expects).
   are encoded. No special-case hyphen escaping needed; verified this
   reasoning against the real live text-fragment match below rather than
   trusting the argument alone.
-- **Live-verified end-to-end** via `verify_mcp_server.py` (new,
-  re-runnable, same convention as `verify_period_labels.py`): starts
+- **Live-verified end-to-end** via `tests/manual/verify_mcp_server.py`
+  (new, re-runnable, same convention as `verify_period_labels.py`): starts
   the real server as a subprocess, connects with the real `mcp` client
   over genuine HTTP (not mocked), and checks (1) `list_tools()` returns
   exactly the 3 tools, (2) `get_financial_fact`/`compare_financial_
@@ -2559,6 +2559,62 @@ system prompt, not something a generic MCP client expects).
   the HTTP server (Week 7's guardrails item); XBRL-fact-level deep
   linking beyond the plain filing URL (no concrete need yet).
 - Full suite: 275/275, no regressions.
+
+### Repo folder reorganization: verify_*.py → `tests/manual/`, eval data → `eval/` (2026-08-26)
+
+Pure structural cleanup for legibility, no behavior change. The repo
+root had accumulated two kinds of clutter: two standalone live-
+verification scripts (`verify_mcp_server.py`, `verify_period_labels.py`)
+sitting next to the pytest suite in spirit but not in location, and the
+eval harness's input/output data (`eval_questions.jsonl`, 45 tracked
+`eval_results/*.json` reports) mixed in with top-level code scripts.
+
+- **`verify_mcp_server.py`/`verify_period_labels.py` → `tests/manual/`**
+  (`git mv`, history preserved). Neither script is imported anywhere as
+  code (confirmed before moving) — both are standalone, run-by-hand
+  tools. Each needed a one-line `sys.path.insert(0, ...)` shim added
+  right after its docstring: empirically confirmed that `python
+  tests/manual/verify_x.py` sets `sys.path[0]` to the script's own
+  directory, not the CWD, which would otherwise break their `from
+  config import ...`/`from period_labels import ...`/`from xbrl_facts
+  import ...` lines. Their own internal relative paths (`Path("./data")`,
+  `subprocess.Popen([sys.executable, "mcp_server.py", ...])`) needed no
+  change — those are CWD-relative, not `__file__`-relative, and both
+  scripts are still meant to be run from the repo root, same as every
+  other script here. Re-ran both live after the move to confirm: both
+  produce the same correct output as before (`verify_period_labels.py`:
+  5/5 companies confirmed, no mismatches; `verify_mcp_server.py`: all
+  checks pass, including the live SEC EDGAR fetches).
+- **`eval_questions.jsonl` + `eval_results/` → `eval/`** (`git mv`,
+  history preserved for all 46 files). `eval_harness.py` itself stays at
+  the repo root — only its two path constants
+  (`QUESTIONS_PATH`/`RESULTS_DIR`) changed to point into `eval/`. Every
+  existing `python eval_harness.py ...` invocation keeps working
+  unchanged. Deliberately did NOT move `eval_harness.py` itself: a
+  direct `python eval/eval_harness.py` invocation would break its own
+  `from agent import ...`-style imports for the same sys.path reason
+  above, which would have meant switching to `python -m eval.eval_harness`
+  everywhere — a real workflow change for no real benefit, whereas
+  keeping the harness at the root and moving only its data matches this
+  repo's existing pattern of top-level data folders (`data/`, `chunks/`,
+  `chroma_db/`, `xbrl_cache/`) sitting alongside top-level code scripts.
+  Re-ran `eval_harness.py --ids <question>` live after the move to
+  confirm it still finds the questions file and writes into the new
+  `eval/eval_results/` location.
+- `tests/test_eval_harness.py` needed no change — it already
+  monkeypatches `RESULTS_DIR` to a `tmp_path` rather than depending on
+  the real path.
+- **Historical prose mentions of the old paths are deliberately left
+  unchanged** — the ~50 references in this doc's older Week 3-5
+  write-ups and the ~41 in `docs/superpowers/*.md` describe what was
+  true at the time, same "git history and the `###` sections are the
+  changelog, not rewritten after the fact" treatment already given to
+  the `answer.py` retirement's historical section. Only the two *live*
+  cross-references meant to be followed right now (the
+  `companies.py`/`fiscal_year_end_month` note above, and this section's
+  own sibling above it) were updated to the new paths.
+- Full suite: 275/275, no regressions (nothing in `tests/*.py`
+  references these moved paths directly).
 
 ## Next steps
 

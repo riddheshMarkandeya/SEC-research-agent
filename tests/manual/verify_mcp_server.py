@@ -10,7 +10,7 @@ with the real `mcp` client over genuine HTTP, and checks:
 1. list_tools() returns exactly the 3 expected tools.
 2. get_financial_fact/compare_financial_metric values match already
    ground-truthed data from this project's own eval questions (not
-   guessed) -- see eval_questions.jsonl's five-company-*-margin-ranking
+   guessed) -- see eval/eval_questions.jsonl's five-company-*-margin-ranking
    questions for where the compare_financial_metric numbers came from.
 3. Every returned `sec_url` is a REAL, live, fetchable SEC EDGAR URL
    (an actual HTTP GET, not just "looks structurally right").
@@ -22,8 +22,8 @@ with the real `mcp` client over genuine HTTP, and checks:
 Re-run this after any change to mcp_server.py's source-block/excerpt
 logic, or to the underlying tool schemas/dispatch it wraps.
 
-Usage:
-    python verify_mcp_server.py
+Usage (from the repo root):
+    python tests/manual/verify_mcp_server.py
 """
 
 import asyncio
@@ -31,7 +31,10 @@ import json
 import subprocess
 import sys
 import time
+from pathlib import Path
 from urllib.parse import unquote
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 import requests
 from bs4 import BeautifulSoup
