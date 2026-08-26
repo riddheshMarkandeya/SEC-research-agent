@@ -21,3 +21,8 @@ rank_bm25==0.2.2
 # agent.py calls a local Ollama server over HTTP (uses `requests` above).
 # Not pip-installed — see PROJECT_CONTEXT.md for the Ollama setup this
 # code expects (qwen2.5:7b-instruct pulled, `ollama serve` running).
+
+# MCP server (mcp_server.py, Week 6) — exposes search_filings/
+# get_financial_fact/compare_financial_metric over Streamable HTTP.
+# Pulls in starlette + uvicorn for the HTTP transport.
+mcp==2.1.1

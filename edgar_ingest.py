@@ -75,14 +75,35 @@ def get_filing_list(cik: str) -> list[dict]:
 # ---------------------------------------------------------------------------
 # Step 2: Fetch and parse a single filing document
 # ---------------------------------------------------------------------------
-def fetch_filing_html(cik: str, accession: str, primary_doc: str) -> str:
-    """Download the raw filing HTML."""
+def _filing_document_url(cik: str, accession: str, primary_doc: str) -> str:
+    """The real, fetchable SEC EDGAR URL for one filing's primary
+    document. Extracted out of fetch_filing_html() so get_filing_url()
+    below builds the exact same URL from the same three inputs, rather
+    than risking a second, independently-drifting copy of this formula."""
     accession_nodash = accession.replace("-", "")
     cik_nozero = str(int(cik))  # SEC archive paths use non-padded CIK
-    url = f"https://www.sec.gov/Archives/edgar/data/{cik_nozero}/{accession_nodash}/{primary_doc}"
-    resp = requests.get(url, headers=HEADERS)
+    return f"https://www.sec.gov/Archives/edgar/data/{cik_nozero}/{accession_nodash}/{primary_doc}"
+
+
+def fetch_filing_html(cik: str, accession: str, primary_doc: str) -> str:
+    """Download the raw filing HTML."""
+    resp = requests.get(_filing_document_url(cik, accession, primary_doc), headers=HEADERS)
     resp.raise_for_status()
     return resp.text
+
+
+def get_filing_url(ticker: str, accession: str) -> str | None:
+    """The real SEC EDGAR URL for an already-ingested filing, built for
+    mcp_server.py's citation `source` blocks (Week 6) -- no new network
+    call, since `cik` and `primaryDocument` are already sitting in this
+    filing's own _meta.json (written by process_ticker() below, using
+    the exact same `filing` dict get_filing_list() returned). Returns
+    None if this (ticker, accession) was never ingested."""
+    meta_path = OUTPUT_DIR / ticker / f"{accession}_meta.json"
+    if not meta_path.exists():
+        return None
+    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    return _filing_document_url(meta["cik"], accession, meta["primaryDocument"])
 
 
 def parse_filing(html: str) -> tuple[str, list[dict]]:

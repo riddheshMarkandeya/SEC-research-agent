@@ -2458,6 +2458,108 @@ by demand already observed, not speculative.
   remains the open variable, same class of gap already documented for
   Ollama's other tool-adoption misses.
 
+### `mcp_server.py` (Week 6) — MCP server exposing all 3 agent tools over Streamable HTTP (2026-08-25)
+
+Exposes `search_filings`/`get_financial_fact`/`compare_financial_metric`
+to any MCP client (Claude Desktop, Claude Code, another agent), not
+just this project's own `agent.py` tool-calling loop. Scoped and
+designed conversationally before building (Substantial-tier, per the
+workflow rules) — two real forks were resolved with the user before any
+code was written: HTTP transport (chosen over stdio, since a future web
+UI is planned on the same server) and plain structured JSON results
+with no `[n]` citation numbering (chosen over agent.py's own
+citation-marker framing, which is specific to that module's own
+system prompt, not something a generic MCP client expects).
+
+- **Reuses agent.py's existing tool logic and schemas rather than
+  duplicating them.** `_call_get_financial_fact`/
+  `_call_compare_financial_metric` renamed to public
+  `call_get_financial_fact`/`call_compare_financial_metric` (mechanical
+  rename — now genuinely used by two callers, so they stop being
+  private; already covered by `tests/test_agent.py`, no new tests
+  needed for the rename itself). `SEARCH_TOOL_SCHEMA`/`FACT_TOOL_SCHEMA`/
+  `COMPARE_TOOL_SCHEMA`'s `parameters` dicts are passed straight through
+  as each MCP `Tool`'s `input_schema` — this is why the low-level
+  `mcp.server.Server` API was used instead of `FastMCP`: FastMCP derives
+  a tool's schema from Python type hints/docstrings, which would mean
+  maintaining these already-hardened, failure-tuned descriptions (e.g.
+  "never invent an extra filter argument") a second time.
+- **Every tool result carries an always-present `source` block** —
+  ticker, form, period, accession, and a real `sec_url` — rather than
+  gating it behind an opt-in flag. Matches how every reference
+  information-retrieval MCP server behaves (checked `brave-search`'s
+  own reference implementation: every result unconditionally includes
+  `Title/Description/URL`, no toggle) — a fact an LLM can't trace back
+  to its source isn't very useful to something that needs to cite it.
+- **`sec_url` construction needed no new ingestion work.** Found that
+  `edgar_ingest.py` already stores `cik` and `primaryDocument` in every
+  filing's `_meta.json` (needed to fetch the HTML in the first place),
+  and already had the exact URL formula in `fetch_filing_html()`.
+  Extracted that formula into `_filing_document_url()` and added a
+  public `get_filing_url(ticker, accession) -> str | None` that reads
+  the already-on-disk `_meta.json` directly — no scan, no cache, no new
+  network call. Both single-company (`get_financial_fact`, chunk
+  metadata's `accessionNumber`) and cross-company
+  (`compare_financial_metric`'s per-ticker `accession` via
+  `xbrl_facts.get_frame()`) paths already carry what this needs.
+- **`search_filings` citations additionally get a browser-native
+  "Scroll To Text Fragment" (`#:~:text=`) anchor**, confirmed
+  well-supported as of this session (Chrome 80+, Edge 83+, Firefox
+  131+, Safari 16.1+) — so a human clicking through from a future web
+  UI lands on the cited sentence, not the top of a 100+ page filing. Not
+  attempted for `get_financial_fact`/`compare_financial_metric`: those
+  come from structured XBRL, not chunked prose, so there's no position
+  to anchor to (an XBRL-viewer-level deep link would need parsing each
+  filing's own inline-XBRL markup or `FilingSummary.xml` — real,
+  non-trivial ingestion work with no concrete need yet, deferred same
+  as the other "let evidence decide" items above).
+- **Two design mistakes caught and fixed before finalizing, not after:**
+  1. Originally gated the text-fragment on the whole chunk's
+     `contains_table` flag (true if `<TABLE>` appears *anywhere* in the
+     chunk). Caught in review: a mostly-prose chunk with one small
+     embedded table would wrongly lose its fragment entirely. Fixed to
+     check the EXCERPT itself for `<TABLE>`, not the whole chunk —
+     covered by `test_text_fragment_excerpt_kept_when_table_marker_is_
+     past_the_excerpt`.
+  2. Originally planned to extract "the first sentence" as the excerpt.
+     Caught in review: these are financial filings full of numbers like
+     "$72.4 billion" — a period-based sentence-splitter would frequently
+     cut mid-number. Replaced with a fixed-length (100 char),
+     word-boundary-truncated prefix instead, which needs no sentence
+     detection at all.
+- **Percent-encoding double-checked, not assumed.** The text-fragment
+  spec gives `-` and `,` syntactic meaning (prefix/range separators).
+  Confirmed live that Python's `urllib.parse.quote()` never encodes `-`
+  regardless of `safe=`, but does encode `,` by default — and the
+  spec's actual ambiguous pattern requires an *unencoded* comma
+  adjacent to a hyphen (`-,` or `,-`), which can't survive once commas
+  are encoded. No special-case hyphen escaping needed; verified this
+  reasoning against the real live text-fragment match below rather than
+  trusting the argument alone.
+- **Live-verified end-to-end** via `verify_mcp_server.py` (new,
+  re-runnable, same convention as `verify_period_labels.py`): starts
+  the real server as a subprocess, connects with the real `mcp` client
+  over genuine HTTP (not mocked), and checks (1) `list_tools()` returns
+  exactly the 3 tools, (2) `get_financial_fact`/`compare_financial_
+  metric` values match already-ground-truthed data (AAPL revenue
+  FY2025 = $416,161,000,000; the 5-company gross-margin ranking from
+  `eval_questions.jsonl`), (3) every returned `sec_url` is a real,
+  live, fetchable SEC EDGAR URL via an actual HTTP GET — not just
+  structurally plausible, (4) a `search_filings` result's text-fragment
+  excerpt literally appears verbatim in the live filing page's fetched
+  text, as a proxy for "a real browser will actually highlight this."
+  All checks passed on the first fully-corrected run
+  (`fix client's 2-tuple vs. expected 3-tuple unpacking, fix the
+  verification script's own wrong assumption that get_financial_fact
+  returns display-scaled "million" units instead of raw USD — both
+  script bugs, not `mcp_server.py` bugs, caught by the live run itself).
+- **New dependency**: `mcp==2.1.1` (pulls in `starlette`+`uvicorn` as
+  its own declared dependencies — nothing extra to pin).
+- **Explicitly out of scope for this round**: auth and rate-limiting on
+  the HTTP server (Week 7's guardrails item); XBRL-fact-level deep
+  linking beyond the plain filing URL (no concrete need yet).
+- Full suite: 275/275, no regressions.
+
 ## Next steps
 
 > This section used to be a running "X: FIXED, see above" log that
@@ -2661,10 +2763,11 @@ and eval_harness.py had already moved off it in Week 5. Removed the
 file and its dedicated test; full suite passed (253/253) with no
 regressions.
 
-**5. Week 6 — expose tools as an MCP server.** All 3 agent tools
-(`search_filings`, `get_financial_fact`, `compare_financial_metric`) —
-not just `search_filings` as the plan originally said before the other
-two existed.
+**5. DONE, 2026-08-25 — see `mcp_server.py` (Week 6) above.** All 3
+agent tools exposed over Streamable HTTP, always-present source blocks
+with real `sec_url`s (plus text-fragment deep links for search_filings
+citations), live-verified end-to-end. Auth/rate-limiting deliberately
+left for item 6 below.
 
 **6. Week 7 — guardrails**: no numeric claim without citation as a hard
 gate (not just a warning), retry/backoff, rate limits, Langfuse tracing.

@@ -1,6 +1,6 @@
 """
 Unit tests for agent.py. Covers the pure helpers, plus the
-_call_get_financial_fact/_call_compare_financial_metric dispatch/
+call_get_financial_fact/call_compare_financial_metric dispatch/
 boundary-validation logic (via monkeypatched xbrl_facts functions, no
 network). run_agent()'s actual model-facing behavior drives a live
 tool-calling loop against whichever backend is selected (see
@@ -15,8 +15,8 @@ monkeypatched BACKENDS entries instead.
 from agent import (
     RATIO_METRIC_FUNCTIONS,
     SINGLE_COMPANY_RATIO_FUNCTIONS,
-    _call_compare_financial_metric,
-    _call_get_financial_fact,
+    call_compare_financial_metric,
+    call_get_financial_fact,
     _comparison_as_results,
     _dispatch_tool_call,
     _format_citation_key,
@@ -411,7 +411,7 @@ def test_comparison_as_results_empty_dict_returns_empty_list():
 
 
 # ---------------------------------------------------------------------------
-# _call_get_financial_fact / _call_compare_financial_metric
+# call_get_financial_fact / call_compare_financial_metric
 # (margin dispatch + yoy_growth boundary validation)
 # ---------------------------------------------------------------------------
 def test_call_get_financial_fact_dispatches_operating_margin(monkeypatch):
@@ -424,7 +424,7 @@ def test_call_get_financial_fact_dispatches_operating_margin(monkeypatch):
         "operating_margin",
         (lambda ticker, fiscal_year, fiscal_period, period_end_date: {"value": 60.0, "unit": "percent"}, None),
     )
-    result = _call_get_financial_fact(
+    result = call_get_financial_fact(
         {"ticker": "NVDA", "metric": "operating_margin", "fiscal_year": 2026, "fiscal_period": "FY"}
     )
     assert result == {"value": 60.0, "unit": "percent"}
@@ -436,7 +436,7 @@ def test_call_get_financial_fact_dispatches_net_margin(monkeypatch):
         "net_margin",
         (lambda ticker, fiscal_year, fiscal_period, period_end_date: {"value": 45.0, "unit": "percent"}, None),
     )
-    result = _call_get_financial_fact(
+    result = call_get_financial_fact(
         {"ticker": "NVDA", "metric": "net_margin", "fiscal_year": 2026, "fiscal_period": "FY"}
     )
     assert result == {"value": 45.0, "unit": "percent"}
@@ -452,7 +452,7 @@ def test_call_get_financial_fact_dispatches_return_on_assets(monkeypatch):
         "return_on_assets",
         lambda ticker, fiscal_year, fiscal_period, period_end_date: {"value": 31.2, "unit": "percent"},
     )
-    result = _call_get_financial_fact(
+    result = call_get_financial_fact(
         {"ticker": "AAPL", "metric": "return_on_assets", "fiscal_year": 2025, "fiscal_period": "FY"}
     )
     assert result == {"value": 31.2, "unit": "percent"}
@@ -464,7 +464,7 @@ def test_call_get_financial_fact_dispatches_asset_turnover(monkeypatch):
         "asset_turnover",
         lambda ticker, fiscal_year, fiscal_period, period_end_date: {"value": 1.04, "unit": "raw"},
     )
-    result = _call_get_financial_fact(
+    result = call_get_financial_fact(
         {"ticker": "NVDA", "metric": "asset_turnover", "fiscal_year": 2026, "fiscal_period": "FY"}
     )
     assert result == {"value": 1.04, "unit": "raw"}
@@ -476,7 +476,7 @@ def test_call_get_financial_fact_dispatches_cash_to_assets(monkeypatch):
         "cash_to_assets",
         lambda ticker, fiscal_year, fiscal_period, period_end_date: {"value": 4.9, "unit": "percent"},
     )
-    result = _call_get_financial_fact(
+    result = call_get_financial_fact(
         {"ticker": "MSFT", "metric": "cash_to_assets", "fiscal_year": 2025, "fiscal_period": "FY"}
     )
     assert result == {"value": 4.9, "unit": "percent"}
@@ -488,7 +488,7 @@ def test_call_get_financial_fact_rejects_yoy_growth_combined_with_single_company
     # either, so it's rejected the same way rather than silently
     # computed or passed through to get_yoy_growth (which doesn't
     # support ratio metrics at all).
-    result = _call_get_financial_fact({"ticker": "NVDA", "metric": "asset_turnover", "yoy_growth": True})
+    result = call_get_financial_fact({"ticker": "NVDA", "metric": "asset_turnover", "yoy_growth": True})
     assert result is None
 
 
@@ -499,7 +499,7 @@ def test_call_get_financial_fact_dispatches_yoy_growth_for_raw_metric(monkeypatc
         lambda ticker, metric, fiscal_year, fiscal_period, period_end_date: calls.append((ticker, metric))
         or {"value": 10.0, "unit": "percent"},
     )
-    result = _call_get_financial_fact(
+    result = call_get_financial_fact(
         {"ticker": "AAPL", "metric": "revenue", "yoy_growth": True, "fiscal_year": 2026, "fiscal_period": "Q3"}
     )
     assert result == {"value": 10.0, "unit": "percent"}
@@ -511,7 +511,7 @@ def test_call_get_financial_fact_rejects_yoy_growth_combined_with_margin_metric(
     # docstring) -- caught here at the boundary, same reasoning as this
     # function's existing invalid-metric guard, rather than letting
     # xbrl_facts raise or silently compute something nonsensical.
-    result = _call_get_financial_fact({"ticker": "AAPL", "metric": "gross_margin", "yoy_growth": True})
+    result = call_get_financial_fact({"ticker": "AAPL", "metric": "gross_margin", "yoy_growth": True})
     assert result is None
 
 
@@ -528,7 +528,7 @@ def test_call_get_financial_fact_dispatches_multi_year_average(monkeypatch):
         )
         or {"value": 31.1, "unit": "percent"},
     )
-    result = _call_get_financial_fact(
+    result = call_get_financial_fact(
         {"ticker": "AAPL", "metric": "operating_margin", "start_fiscal_year": 2023, "end_fiscal_year": 2025}
     )
     assert result == {"value": 31.1, "unit": "percent"}
@@ -538,7 +538,7 @@ def test_call_get_financial_fact_dispatches_multi_year_average(monkeypatch):
 def test_call_get_financial_fact_rejects_multi_year_average_combined_with_yoy_growth():
     # Nonsensical combination -- caught explicitly rather than silently
     # picking one, same discipline as the yoy_growth+margin rejection.
-    result = _call_get_financial_fact(
+    result = call_get_financial_fact(
         {"ticker": "AAPL", "metric": "revenue", "start_fiscal_year": 2023, "end_fiscal_year": 2025, "yoy_growth": True}
     )
     assert result is None
@@ -550,7 +550,7 @@ def test_call_get_financial_fact_rejects_partial_multi_year_average_range(monkey
     # absent), so this must reject rather than silently falling through
     # to a plain get_metric() call with fiscal_year=None.
     monkeypatch.setattr("agent.get_metric", lambda *a, **k: {"value": 999})
-    result = _call_get_financial_fact({"ticker": "AAPL", "metric": "revenue", "start_fiscal_year": 2023})
+    result = call_get_financial_fact({"ticker": "AAPL", "metric": "revenue", "start_fiscal_year": 2023})
     assert result is None
 
 
@@ -566,7 +566,7 @@ def test_call_get_financial_fact_rejects_unrecognized_extra_argument(monkeypatch
     # silently succeeding with a misleading result.
     calls = []
     monkeypatch.setattr("agent.get_metric", lambda *a, **k: calls.append((a, k)) or {"value": 1})
-    result = _call_get_financial_fact(
+    result = call_get_financial_fact(
         {"ticker": "NVDA", "metric": "revenue", "period_end_date": "2026-04-26", "segment": "Graphics"}
     )
     assert result is None
@@ -578,7 +578,7 @@ def test_call_get_financial_fact_still_works_with_only_known_keys(monkeypatch):
     # must still reach the real lookup, so the new guard isn't
     # accidentally rejecting legitimate calls too.
     monkeypatch.setattr("agent.get_metric", lambda *a, **k: {"value": 42})
-    result = _call_get_financial_fact(
+    result = call_get_financial_fact(
         {"ticker": "AAPL", "metric": "revenue", "fiscal_year": 2026, "fiscal_period": "FY", "period_end_date": None}
     )
     assert result == {"value": 42}
@@ -587,7 +587,7 @@ def test_call_get_financial_fact_still_works_with_only_known_keys(monkeypatch):
 def test_call_compare_financial_metric_rejects_unrecognized_extra_argument(monkeypatch):
     calls = []
     monkeypatch.setattr("agent.get_metric_all_companies", lambda *a, **k: calls.append((a, k)) or {"NVDA": {}})
-    result = _call_compare_financial_metric({"anchor_ticker": "NVDA", "metric": "revenue", "segment": "Graphics"})
+    result = call_compare_financial_metric({"anchor_ticker": "NVDA", "metric": "revenue", "segment": "Graphics"})
     assert result == {}
     assert calls == []
 
@@ -602,7 +602,7 @@ def test_call_compare_financial_metric_gracefully_rejects_single_company_only_ra
     # crash. This is deliberate scoping (see formulas.get_return_on_assets's
     # docstring for why there's no cross-company version yet), not an
     # oversight -- this test locks in that it stays graceful.
-    result = _call_compare_financial_metric({"anchor_ticker": "AAPL", "metric": "asset_turnover"})
+    result = call_compare_financial_metric({"anchor_ticker": "AAPL", "metric": "asset_turnover"})
     assert result == {}
 
 
@@ -612,7 +612,7 @@ def test_call_compare_financial_metric_dispatches_operating_margin(monkeypatch):
         "operating_margin",
         (None, lambda ticker, fiscal_year, fiscal_period, period_end_date: {"NVDA": {"value": 60.0}}),
     )
-    result = _call_compare_financial_metric({"anchor_ticker": "NVDA", "metric": "operating_margin"})
+    result = call_compare_financial_metric({"anchor_ticker": "NVDA", "metric": "operating_margin"})
     assert result == {"NVDA": {"value": 60.0}}
 
 
@@ -622,7 +622,7 @@ def test_call_compare_financial_metric_dispatches_net_margin(monkeypatch):
         "net_margin",
         (None, lambda ticker, fiscal_year, fiscal_period, period_end_date: {"NVDA": {"value": 45.0}}),
     )
-    result = _call_compare_financial_metric({"anchor_ticker": "NVDA", "metric": "net_margin"})
+    result = call_compare_financial_metric({"anchor_ticker": "NVDA", "metric": "net_margin"})
     assert result == {"NVDA": {"value": 45.0}}
 
 
@@ -638,7 +638,7 @@ def test_dispatch_tool_call_get_financial_fact_appends_result(monkeypatch):
         "period_end": "2026-03-31",
         "accession": "0001234567-26-000123",
     }
-    monkeypatch.setattr("agent._call_get_financial_fact", lambda args: fact)
+    monkeypatch.setattr("agent.call_get_financial_fact", lambda args: fact)
     all_results = []
     call = {"name": "get_financial_fact", "args": {"ticker": "NVDA", "metric": "gross_margin"}}
 
@@ -650,7 +650,7 @@ def test_dispatch_tool_call_get_financial_fact_appends_result(monkeypatch):
 
 
 def test_dispatch_tool_call_get_financial_fact_none_uses_no_fact_message(monkeypatch):
-    monkeypatch.setattr("agent._call_get_financial_fact", lambda args: None)
+    monkeypatch.setattr("agent.call_get_financial_fact", lambda args: None)
     monkeypatch.setattr("agent._format_no_fact_message", lambda args: "NO FACT MESSAGE")
     all_results = []
     call = {"name": "get_financial_fact", "args": {"ticker": "NVDA", "metric": "gross_margin"}}
@@ -672,7 +672,7 @@ def test_dispatch_tool_call_compare_financial_metric_appends_results(monkeypatch
             "accession": "acc-1",
         }
     }
-    monkeypatch.setattr("agent._call_compare_financial_metric", lambda args: data)
+    monkeypatch.setattr("agent.call_compare_financial_metric", lambda args: data)
     all_results = []
     call = {"name": "compare_financial_metric", "args": {"metric": "gross_margin"}}
 
@@ -683,7 +683,7 @@ def test_dispatch_tool_call_compare_financial_metric_appends_results(monkeypatch
 
 
 def test_dispatch_tool_call_compare_financial_metric_empty_uses_no_comparison_message(monkeypatch):
-    monkeypatch.setattr("agent._call_compare_financial_metric", lambda args: {})
+    monkeypatch.setattr("agent.call_compare_financial_metric", lambda args: {})
     monkeypatch.setattr("agent._format_no_comparison_message", lambda args: "NO COMPARISON MESSAGE")
     all_results = []
     call = {"name": "compare_financial_metric", "args": {"metric": "gross_margin"}}

@@ -379,7 +379,7 @@ _FACT_ARG_KEYS = {
 }
 
 
-def _call_get_financial_fact(args: dict) -> dict | None:
+def call_get_financial_fact(args: dict) -> dict | None:
     """This is a real system boundary, not just an internal call — the
     model doesn't reliably respect the schema. Found live: asked for
     "effective tax rate" (not a supported metric, not in the schema's
@@ -479,8 +479,8 @@ def _fact_as_result(fact: dict, args: dict) -> dict:
 _COMPARE_ARG_KEYS = {"anchor_ticker", "metric", "fiscal_year", "fiscal_period", "period_end_date"}
 
 
-def _call_compare_financial_metric(args: dict) -> dict[str, dict]:
-    """Same boundary-validation reasoning as _call_get_financial_fact —
+def call_compare_financial_metric(args: dict) -> dict[str, dict]:
+    """Same boundary-validation reasoning as call_get_financial_fact —
     don't trust the schema was followed, including rejecting an
     unrecognized extra key (e.g. an invented `segment` filter) rather
     than silently ignoring it. No yoy_growth here: there's no current
@@ -783,7 +783,7 @@ def _dispatch_tool_call(
     the content string to send back to the model. Backend-agnostic by
     construction: it only ever sees the normalized shape, never
     Ollama's or Gemini's raw wire format, so the boundary validation
-    inside _call_get_financial_fact/_call_compare_financial_metric
+    inside call_get_financial_fact/call_compare_financial_metric
     (e.g. rejecting an invented `segment` argument) now protects both
     backends automatically instead of needing a second copy."""
     name = call["name"]
@@ -792,7 +792,7 @@ def _dispatch_tool_call(
     if name == "get_financial_fact":
         if verbose:
             print(f"  [tool call] get_financial_fact({args!r})")
-        fact = _call_get_financial_fact(args)
+        fact = call_get_financial_fact(args)
         if fact is None:
             return _format_no_fact_message(args)
         start_index = len(all_results) + 1
@@ -803,7 +803,7 @@ def _dispatch_tool_call(
     if name == "compare_financial_metric":
         if verbose:
             print(f"  [tool call] compare_financial_metric({args!r})")
-        data = _call_compare_financial_metric(args)
+        data = call_compare_financial_metric(args)
         if not data:
             return _format_no_comparison_message(args)
         start_index = len(all_results) + 1
