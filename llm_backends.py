@@ -40,26 +40,56 @@ def _ollama_message_to_turn(message: dict) -> ModelTurn:
     return ModelTurn(tool_calls=normalized, text=message.get("content"))
 
 
+OLLAMA_RETRY_DELAY_SECONDS = 3  # local server startup/model-load stalls, not rate limits
+OLLAMA_RETRY_ATTEMPTS = 3
+
+
 def _ollama_call(state: dict) -> dict:
-    response = requests.post(
-        OLLAMA_URL,
-        json={
-            "model": OLLAMA_MODEL_NAME,
-            "messages": state["messages"],
-            "tools": state["tool_schemas"],
-            "stream": False,
-            # Ollama defaults to a 4096-token context window regardless
-            # of what the model actually supports -- dangerously small
-            # here, since a single search returns up to 5 chunks
-            # (~3000 chars each). See PROJECT_CONTEXT.md's agent.py
-            # section for how this was found (a comparison question
-            # silently truncating context, caught via `ollama ps`).
-            "options": {"temperature": 0.1, "num_ctx": 8192},
-        },
-        timeout=240,
-    )
-    response.raise_for_status()
-    return response.json()["message"]
+    """Retries only on ConnectionError (including ConnectTimeout, a
+    ConnectionError subclass for a stalled connect phase) -- a local
+    `ollama serve` still starting up, or a large model still loading
+    into memory on first use, both plausible for a local HTTP server
+    (as opposed to Gemini's 429/503 retry in _send_with_retry below,
+    tuned for free-tier rate limits, not local startup stalls) -- with
+    a short linear backoff.
+
+    Deliberately does NOT retry a plain ReadTimeout: that means the
+    connection was accepted and Ollama was already generating, just
+    slower than the 240s budget -- this project's own CPU-only setup is
+    documented to already take 60-70s+ per question (see memory/
+    PROJECT_CONTEXT.md), so a ReadTimeout is plausibly a genuinely slow
+    answer, not a stalled server. Retrying that would silently turn one
+    240s timeout into up to three (~12 minutes), indistinguishable from
+    a hang -- worse than just failing once. Found in code review
+    (2026-08-26) before this ever shipped."""
+    for attempt in range(OLLAMA_RETRY_ATTEMPTS):
+        try:
+            response = requests.post(
+                OLLAMA_URL,
+                json={
+                    "model": OLLAMA_MODEL_NAME,
+                    "messages": state["messages"],
+                    "tools": state["tool_schemas"],
+                    "stream": False,
+                    # Ollama defaults to a 4096-token context window regardless
+                    # of what the model actually supports -- dangerously small
+                    # here, since a single search returns up to 5 chunks
+                    # (~3000 chars each). See PROJECT_CONTEXT.md's agent.py
+                    # section for how this was found (a comparison question
+                    # silently truncating context, caught via `ollama ps`).
+                    "options": {"temperature": 0.1, "num_ctx": 8192},
+                },
+                # (connect timeout, read timeout) -- split so a stalled
+                # connect phase fails fast into the retry loop instead of
+                # sharing the full 240s generation budget.
+                timeout=(10, 240),
+            )
+            response.raise_for_status()
+            return response.json()["message"]
+        except requests.exceptions.ConnectionError:
+            if attempt == OLLAMA_RETRY_ATTEMPTS - 1:
+                raise
+            time.sleep(OLLAMA_RETRY_DELAY_SECONDS * (attempt + 1))
 
 
 def _ollama_start(question: str, system_prompt: str, tool_schemas: list[dict]) -> tuple[dict, ModelTurn]:

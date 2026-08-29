@@ -15,6 +15,7 @@ import json
 
 import eval_harness
 from eval_harness import (
+    _grade,
     _select_questions,
     grade_comparison,
     grade_judged,
@@ -204,6 +205,68 @@ def test_select_questions_with_unknown_id_raises():
         assert False, "expected ValueError"
     except ValueError as e:
         assert "does-not-exist" in str(e)
+
+
+# ---------------------------------------------------------------------------
+# _grade — dispatch + Week 7 hard-gate short-circuit (found in code review,
+# 2026-08-26: a refusal's own warning text repeats the claimed number, which
+# grade_numeric's plain text scan could otherwise match as a false PASS)
+# ---------------------------------------------------------------------------
+def test_grade_fails_numeric_question_when_agent_refused_even_if_value_is_in_refusal_text():
+    # Reproduces the exact false-positive shape found in review: the
+    # refusal text contains the expected value as part of explaining
+    # why the claim was rejected, which a naive grade_numeric() call
+    # would still match.
+    q = {"type": "numeric", "expected_value": 166000.0, "expected_unit": "raw"}
+    refusal_text = (
+        "I can't confirm this answer against the sources I retrieved -- "
+        "the following claim(s) don't hold up under citation verification:\n"
+        "- [1] claims 166000.0 (raw) but that value doesn't appear in the cited source"
+    )
+    warnings = ["[1] claims 166000.0 (raw) but that value doesn't appear in the cited source"]
+
+    passed, detail = _grade(q, refusal_text, warnings, [])
+
+    assert passed is False
+    assert "refused" in detail.lower()
+
+
+def test_grade_fails_comparison_question_when_agent_refused():
+    q = {"type": "comparison", "expected": [{"ticker": "AAPL", "expected_value": 1.0, "expected_unit": "raw"}]}
+    passed, detail = _grade(q, "some refusal text", ["[1] claims ... doesn't appear"], [])
+    assert passed is False
+    assert "refused" in detail.lower()
+
+
+def test_grade_still_calls_grade_numeric_when_no_citation_warnings():
+    q = {"type": "numeric", "expected_value": 72.4, "expected_unit": "billion"}
+    passed, _ = _grade(q, "Total RPO was approximately $72.4 billion.", [], [])
+    assert passed is True
+
+
+def test_grade_does_not_short_circuit_judged_questions_with_citation_warnings(monkeypatch):
+    # Judged refusal-style questions (e.g. nvda-rd-expense-q4fy26-refusal)
+    # expect a refusal as the CORRECT answer -- grade_judged must still
+    # run and decide based on its own criteria, not be pre-empted.
+    monkeypatch.setattr(
+        "eval_harness.requests.post",
+        lambda *a, **k: _FakeResponse("PASS\nCorrectly refused, no such data exists."),
+    )
+    q = {
+        "type": "judged",
+        "question": "What was the R&D expense?",
+        "criteria": "the answer should refuse, since no such figure exists",
+    }
+    passed, _ = _grade(q, "I can't confirm this...", ["[1] claims ... doesn't appear"], [])
+    assert passed is True
+
+
+def test_grade_raises_on_unknown_type():
+    try:
+        _grade({"type": "mystery", "id": "q1"}, "answer", [], [])
+        assert False, "expected ValueError"
+    except ValueError as e:
+        assert "mystery" in str(e)
 
 
 # ---------------------------------------------------------------------------

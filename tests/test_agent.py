@@ -13,17 +13,18 @@ monkeypatched BACKENDS entries instead.
 """
 
 from agent import (
-    RATIO_METRIC_FUNCTIONS,
-    SINGLE_COMPANY_RATIO_FUNCTIONS,
+    RATIO_DEFINITIONS,
     call_compare_financial_metric,
     call_get_financial_fact,
     _comparison_as_results,
     _dispatch_tool_call,
+    _finalize_answer,
     _format_citation_key,
     _format_citation_retry_message,
     _format_fact_value,
     _format_no_comparison_message,
     _format_no_fact_message,
+    _format_refusal_message,
     _format_results_block,
     _resolve_search_args,
     _should_retry_for_citations,
@@ -415,71 +416,119 @@ def test_comparison_as_results_empty_dict_returns_empty_list():
 # (margin dispatch + yoy_growth boundary validation)
 # ---------------------------------------------------------------------------
 def test_call_get_financial_fact_dispatches_operating_margin(monkeypatch):
-    # RATIO_METRIC_FUNCTIONS binds function objects once at import time,
-    # so patching agent.get_operating_margin afterward wouldn't reach
-    # the dispatch code (which reads from the dict, not the module
-    # attribute) -- patch the dict entry itself instead.
-    monkeypatch.setitem(
-        RATIO_METRIC_FUNCTIONS,
-        "operating_margin",
-        (lambda ticker, fiscal_year, fiscal_period, period_end_date: {"value": 60.0, "unit": "percent"}, None),
+    # get_ratio() is the single generic dispatch point for every
+    # RATIO_DEFINITIONS entry now -- unlike the old RATIO_METRIC_FUNCTIONS/
+    # SINGLE_COMPANY_RATIO_FUNCTIONS dicts (which bound function objects
+    # at import time, so a monkeypatch had to target the dict entry
+    # itself), get_ratio is looked up fresh by bare name each call, so
+    # patching agent.get_ratio directly is the correct seam -- same
+    # pattern already used for get_yoy_growth/get_multi_year_average
+    # below. Asserting the exact call args, not just the return value,
+    # keeps this test meaningfully distinguishing "operating_margin" from
+    # any other ratio, since the mock itself no longer does.
+    calls = []
+    monkeypatch.setattr(
+        "agent.get_ratio",
+        lambda ticker, ratio_name, fiscal_year, fiscal_period, period_end_date: calls.append(
+            (ticker, ratio_name, fiscal_year, fiscal_period, period_end_date)
+        )
+        or {"value": 60.0, "unit": "percent"},
     )
     result = call_get_financial_fact(
         {"ticker": "NVDA", "metric": "operating_margin", "fiscal_year": 2026, "fiscal_period": "FY"}
     )
     assert result == {"value": 60.0, "unit": "percent"}
+    assert calls == [("NVDA", "operating_margin", 2026, "FY", None)]
 
 
 def test_call_get_financial_fact_dispatches_net_margin(monkeypatch):
-    monkeypatch.setitem(
-        RATIO_METRIC_FUNCTIONS,
-        "net_margin",
-        (lambda ticker, fiscal_year, fiscal_period, period_end_date: {"value": 45.0, "unit": "percent"}, None),
+    calls = []
+    monkeypatch.setattr(
+        "agent.get_ratio",
+        lambda ticker, ratio_name, fiscal_year, fiscal_period, period_end_date: calls.append(ratio_name)
+        or {"value": 45.0, "unit": "percent"},
     )
     result = call_get_financial_fact(
         {"ticker": "NVDA", "metric": "net_margin", "fiscal_year": 2026, "fiscal_period": "FY"}
     )
     assert result == {"value": 45.0, "unit": "percent"}
+    assert calls == ["net_margin"]
 
 
 def test_call_get_financial_fact_dispatches_return_on_assets(monkeypatch):
-    # SINGLE_COMPANY_RATIO_FUNCTIONS entries are plain functions, not
-    # (single, all_companies) tuples like RATIO_METRIC_FUNCTIONS -- these
-    # 3 new ratios (Week 5w) have no cross-company counterpart, see
-    # formulas.get_return_on_assets's own docstring for why.
-    monkeypatch.setitem(
-        SINGLE_COMPANY_RATIO_FUNCTIONS,
-        "return_on_assets",
-        lambda ticker, fiscal_year, fiscal_period, period_end_date: {"value": 31.2, "unit": "percent"},
+    # return_on_assets/asset_turnover/cash_to_assets/inventory_turnover/
+    # rd_intensity all have supports_cross_company=False in
+    # RATIO_DEFINITIONS, but get_financial_fact supports every ratio
+    # regardless of that flag -- same generic get_ratio() dispatch as
+    # any other ratio, see formulas.get_return_on_assets's own docstring
+    # for why there's no cross-company counterpart.
+    calls = []
+    monkeypatch.setattr(
+        "agent.get_ratio",
+        lambda ticker, ratio_name, fiscal_year, fiscal_period, period_end_date: calls.append(ratio_name)
+        or {"value": 31.2, "unit": "percent"},
     )
     result = call_get_financial_fact(
         {"ticker": "AAPL", "metric": "return_on_assets", "fiscal_year": 2025, "fiscal_period": "FY"}
     )
     assert result == {"value": 31.2, "unit": "percent"}
+    assert calls == ["return_on_assets"]
 
 
 def test_call_get_financial_fact_dispatches_asset_turnover(monkeypatch):
-    monkeypatch.setitem(
-        SINGLE_COMPANY_RATIO_FUNCTIONS,
-        "asset_turnover",
-        lambda ticker, fiscal_year, fiscal_period, period_end_date: {"value": 1.04, "unit": "raw"},
+    calls = []
+    monkeypatch.setattr(
+        "agent.get_ratio",
+        lambda ticker, ratio_name, fiscal_year, fiscal_period, period_end_date: calls.append(ratio_name)
+        or {"value": 1.04, "unit": "raw"},
     )
     result = call_get_financial_fact(
         {"ticker": "NVDA", "metric": "asset_turnover", "fiscal_year": 2026, "fiscal_period": "FY"}
     )
     assert result == {"value": 1.04, "unit": "raw"}
+    assert calls == ["asset_turnover"]
 
 
 def test_call_get_financial_fact_dispatches_cash_to_assets(monkeypatch):
-    monkeypatch.setitem(
-        SINGLE_COMPANY_RATIO_FUNCTIONS,
-        "cash_to_assets",
-        lambda ticker, fiscal_year, fiscal_period, period_end_date: {"value": 4.9, "unit": "percent"},
+    calls = []
+    monkeypatch.setattr(
+        "agent.get_ratio",
+        lambda ticker, ratio_name, fiscal_year, fiscal_period, period_end_date: calls.append(ratio_name)
+        or {"value": 4.9, "unit": "percent"},
     )
     result = call_get_financial_fact(
         {"ticker": "MSFT", "metric": "cash_to_assets", "fiscal_year": 2025, "fiscal_period": "FY"}
     )
     assert result == {"value": 4.9, "unit": "percent"}
+    assert calls == ["cash_to_assets"]
+
+
+def test_call_get_financial_fact_dispatches_inventory_turnover(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        "agent.get_ratio",
+        lambda ticker, ratio_name, fiscal_year, fiscal_period, period_end_date: calls.append(ratio_name)
+        or {"value": 5.2, "unit": "raw"},
+    )
+    result = call_get_financial_fact(
+        {"ticker": "NVDA", "metric": "inventory_turnover", "fiscal_year": 2026, "fiscal_period": "FY"}
+    )
+    assert result == {"value": 5.2, "unit": "raw"}
+    assert calls == ["inventory_turnover"]
+
+
+def test_call_get_financial_fact_dispatches_rd_intensity(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        "agent.get_ratio",
+        lambda ticker, ratio_name, fiscal_year, fiscal_period, period_end_date: calls.append(ratio_name)
+        or {"value": 18.3, "unit": "percent"},
+    )
+    result = call_get_financial_fact(
+        {"ticker": "NVDA", "metric": "rd_intensity", "fiscal_year": 2026, "fiscal_period": "FY"}
+    )
+    assert result == {"value": 18.3, "unit": "percent"}
+    assert calls == ["rd_intensity"]
 
 
 def test_call_get_financial_fact_rejects_yoy_growth_combined_with_single_company_ratio():
@@ -593,37 +642,48 @@ def test_call_compare_financial_metric_rejects_unrecognized_extra_argument(monke
 
 
 def test_call_compare_financial_metric_gracefully_rejects_single_company_only_ratio():
-    # return_on_assets/asset_turnover/cash_to_assets (Week 5w) are in
-    # SINGLE_COMPANY_RATIO_FUNCTIONS, not RATIO_METRIC_FUNCTIONS --
-    # compare_financial_metric's own boundary check only ever looks at
-    # DEFAULT_METRIC_TAGS/RATIO_METRIC_FUNCTIONS, so a metric name that's
-    # only in the single-company dict falls through to the same
-    # graceful {} any other unsupported metric gets, rather than a
-    # crash. This is deliberate scoping (see formulas.get_return_on_assets's
-    # docstring for why there's no cross-company version yet), not an
-    # oversight -- this test locks in that it stays graceful.
+    # return_on_assets/asset_turnover/cash_to_assets/inventory_turnover/
+    # rd_intensity all have supports_cross_company=False in
+    # RATIO_DEFINITIONS -- "asset_turnover" IS a recognized ratio name so
+    # it passes compare_financial_metric's own boundary check (unlike
+    # the old design, where it wasn't in RATIO_METRIC_FUNCTIONS at all
+    # and was rejected right there), but get_ratio_all_companies() checks
+    # the flag internally and returns the same graceful {} any other
+    # unsupported metric gets, rather than a crash. This is deliberate
+    # scoping (see formulas.get_return_on_assets's docstring for why
+    # there's no cross-company version yet), not an oversight -- this
+    # test locks in that it stays graceful regardless of which layer
+    # does the rejecting.
     result = call_compare_financial_metric({"anchor_ticker": "AAPL", "metric": "asset_turnover"})
     assert result == {}
 
 
 def test_call_compare_financial_metric_dispatches_operating_margin(monkeypatch):
-    monkeypatch.setitem(
-        RATIO_METRIC_FUNCTIONS,
-        "operating_margin",
-        (None, lambda ticker, fiscal_year, fiscal_period, period_end_date: {"NVDA": {"value": 60.0}}),
+    # get_ratio_all_companies() is the single generic dispatch point for
+    # every cross-company-capable RATIO_DEFINITIONS entry now -- see
+    # test_call_get_financial_fact_dispatches_operating_margin above for
+    # why agent.get_ratio_all_companies is the correct monkeypatch seam.
+    calls = []
+    monkeypatch.setattr(
+        "agent.get_ratio_all_companies",
+        lambda ticker, ratio_name, fiscal_year, fiscal_period, period_end_date: calls.append(ratio_name)
+        or {"NVDA": {"value": 60.0}},
     )
     result = call_compare_financial_metric({"anchor_ticker": "NVDA", "metric": "operating_margin"})
     assert result == {"NVDA": {"value": 60.0}}
+    assert calls == ["operating_margin"]
 
 
 def test_call_compare_financial_metric_dispatches_net_margin(monkeypatch):
-    monkeypatch.setitem(
-        RATIO_METRIC_FUNCTIONS,
-        "net_margin",
-        (None, lambda ticker, fiscal_year, fiscal_period, period_end_date: {"NVDA": {"value": 45.0}}),
+    calls = []
+    monkeypatch.setattr(
+        "agent.get_ratio_all_companies",
+        lambda ticker, ratio_name, fiscal_year, fiscal_period, period_end_date: calls.append(ratio_name)
+        or {"NVDA": {"value": 45.0}},
     )
     result = call_compare_financial_metric({"anchor_ticker": "NVDA", "metric": "net_margin"})
     assert result == {"NVDA": {"value": 45.0}}
+    assert calls == ["net_margin"]
 
 
 # ---------------------------------------------------------------------------
@@ -780,7 +840,11 @@ def test_run_agent_citation_retry_exhausting_budget_returns_pre_retry_answer_not
     # re-answering, the loop used to hit the iteration cap on that tool
     # call and fall through to the generic "wasn't able to finish"
     # message -- discarding an already-produced, merely-warned answer
-    # that was perfectly fine to return as-is.
+    # that was perfectly fine to return as-is. Post-hard-gate (Week 7),
+    # "return as-is" now means through _finalize_answer(), which refuses
+    # since warnings are still non-empty -- so the assertion checks the
+    # pre-retry answer's warning made it into the refusal, not that the
+    # raw pre-retry answer text comes back unchanged.
     monkeypatch.setattr("agent.MAX_TOOL_ITERATIONS", 2)
 
     final_answer_turn = ModelTurn(tool_calls=[], text="Apple's revenue was $100 billion [1].")
@@ -797,7 +861,11 @@ def test_run_agent_citation_retry_exhausting_budget_returns_pre_retry_answer_not
 
     answer, all_results, warnings = run_agent("What was Apple's revenue?", backend="gemini")
 
-    assert answer == "Apple's revenue was $100 billion [1]."
+    assert answer != (
+        "I wasn't able to finish answering within the allotted number of searches. "
+        "Try asking a more specific or narrower question."
+    )
+    assert "[1] claims 100.0 ... doesn't appear" in answer
     assert warnings == ["[1] claims 100.0 ... doesn't appear"]
 
 
@@ -806,7 +874,9 @@ def test_run_agent_citation_retry_not_attempted_for_ollama_backend(monkeypatch):
     # gated-out backend, must never call send_followup at all -- if it
     # did, MAX_TOOL_ITERATIONS being hit would trip the same bug this
     # test's sibling guards against, just for the wrong reason (a retry
-    # that should never have started).
+    # that should never have started). Post-hard-gate (Week 7), the
+    # returned answer is now a refusal (no retry chance for ollama at
+    # all), not the raw pass-through text.
     monkeypatch.setattr("agent.MAX_TOOL_ITERATIONS", 2)
 
     final_answer_turn = ModelTurn(tool_calls=[], text="Apple's revenue was $100 billion [1].")
@@ -822,8 +892,117 @@ def test_run_agent_citation_retry_not_attempted_for_ollama_backend(monkeypatch):
 
     answer, all_results, warnings = run_agent("What was Apple's revenue?", backend="ollama")
 
-    assert answer == "Apple's revenue was $100 billion [1]."
+    assert "Apple's revenue was $100 billion [1]." not in answer
+    assert "[1] claims 100.0 ... doesn't appear" in answer
     assert warnings == ["[1] claims 100.0 ... doesn't appear"]
+
+
+# ---------------------------------------------------------------------------
+# citation hard-gate (Week 7): run_agent() must refuse, not just warn, when
+# citation verification still fails after any applicable retry
+# ---------------------------------------------------------------------------
+def test_run_agent_refuses_when_ollama_answer_has_unverified_citation(monkeypatch):
+    final_answer_turn = ModelTurn(tool_calls=[], text="Apple's revenue was $100 billion [1].")
+
+    def fake_start(question, system_prompt, tool_schemas):
+        return {}, final_answer_turn
+
+    monkeypatch.setattr("agent.BACKENDS", {"ollama": (fake_start, None, None)})
+    monkeypatch.setattr("agent.verify_citations", lambda answer, all_results: ["[1] claims 100.0 ... doesn't appear"])
+
+    answer, all_results, warnings = run_agent("What was Apple's revenue?", backend="ollama")
+
+    assert answer == _format_refusal_message(["[1] claims 100.0 ... doesn't appear"])
+    assert warnings == ["[1] claims 100.0 ... doesn't appear"]
+
+
+def test_run_agent_returns_generic_timeout_message_unchanged_when_iterations_exhausted(monkeypatch):
+    # The iteration-budget-exhausted fallback (no pre_retry_answer to fall
+    # back to) always passes warnings=[] into _finalize_answer(), so this
+    # locks in that routing it through the same choke point as every
+    # other return site (code review, 2026-08-26) is a genuine no-op --
+    # the generic message must still come back completely unchanged.
+    monkeypatch.setattr("agent.MAX_TOOL_ITERATIONS", 1)
+
+    keeps_calling_tools = ModelTurn(tool_calls=[{"name": "search_filings", "args": {}}], text=None)
+
+    def fake_start(question, system_prompt, tool_schemas):
+        return {}, keeps_calling_tools
+
+    monkeypatch.setattr("agent.BACKENDS", {"ollama": (fake_start, None, None)})
+
+    answer, all_results, warnings = run_agent("What was Apple's revenue?", backend="ollama")
+
+    assert answer == (
+        "I wasn't able to finish answering within the allotted number of searches. "
+        "Try asking a more specific or narrower question."
+    )
+    assert warnings == []
+
+
+def test_run_agent_refuses_when_gemini_retry_still_leaves_unverified_citation(monkeypatch):
+    # The retry fires once (per _should_retry_for_citations), the model
+    # produces a second final answer, but it's still unverified -- since
+    # a retry was already spent, the loop must not retry again and must
+    # gate on the second answer's warnings instead of returning it.
+    first_answer_turn = ModelTurn(tool_calls=[], text="Apple's revenue was $100 billion [1].")
+    second_answer_turn = ModelTurn(tool_calls=[], text="Apple's revenue was $105 billion [1].")
+
+    def fake_start(question, system_prompt, tool_schemas):
+        return {}, first_answer_turn
+
+    def fake_send_followup(state, text):
+        return second_answer_turn
+
+    monkeypatch.setattr("agent.BACKENDS", {"gemini": (fake_start, None, fake_send_followup)})
+    monkeypatch.setattr("agent.verify_citations", lambda answer, all_results: [f"[1] claims from: {answer}"])
+
+    answer, all_results, warnings = run_agent("What was Apple's revenue?", backend="gemini")
+
+    assert answer == _format_refusal_message(["[1] claims from: Apple's revenue was $105 billion [1]."])
+    assert warnings == ["[1] claims from: Apple's revenue was $105 billion [1]."]
+
+
+def test_run_agent_returns_answer_unchanged_when_no_citation_warnings(monkeypatch):
+    final_answer_turn = ModelTurn(tool_calls=[], text="Apple's revenue was $100 billion [1].")
+
+    def fake_start(question, system_prompt, tool_schemas):
+        return {}, final_answer_turn
+
+    monkeypatch.setattr("agent.BACKENDS", {"ollama": (fake_start, None, None)})
+    monkeypatch.setattr("agent.verify_citations", lambda answer, all_results: [])
+
+    answer, all_results, warnings = run_agent("What was Apple's revenue?", backend="ollama")
+
+    assert answer == "Apple's revenue was $100 billion [1]."
+    assert warnings == []
+
+
+def test_finalize_answer_passes_through_when_no_warnings():
+    assert _finalize_answer("the answer", [], []) == ("the answer", [], [])
+
+
+def test_finalize_answer_refuses_when_warnings_present():
+    warnings = ["[1] claims 100.0 ... doesn't appear"]
+    answer, all_results, returned_warnings = _finalize_answer("the answer", warnings, ["result"])
+    assert answer == _format_refusal_message(warnings)
+    assert all_results == ["result"]
+    assert returned_warnings == warnings
+
+
+def test_format_refusal_message_includes_each_warning():
+    warnings = [
+        "[1] claims 6478.0 (million) but that value doesn't appear in the cited source",
+        "[2] claims 42.0 (raw) but that value doesn't appear in the cited source",
+    ]
+    message = _format_refusal_message(warnings)
+    for w in warnings:
+        assert w in message
+
+
+def test_format_refusal_message_reads_as_a_refusal():
+    message = _format_refusal_message(["[1] claims ... doesn't appear"]).lower()
+    assert "refus" in message or "can't confirm" in message or "can't verify" in message
 
 
 def test_format_citation_retry_message_includes_each_warning():

@@ -11,13 +11,18 @@ patches on it stay "xbrl_facts.fetch_concept" even when exercised
 through a formulas.py function -- get_metric() (also still in
 xbrl_facts.py) resolves that name in its OWN module's namespace
 regardless of caller. But get_frame/get_gross_margin/get_operating_margin/
-get_net_margin are called via formulas.py's own bare names (imported or
-defined there), so patches on those must target "formulas.X", not
-"xbrl_facts.X" -- the same import-time-binding gotcha already documented
-for agent.py's RATIO_METRIC_FUNCTIONS.
+get_net_margin/get_ratio are called via formulas.py's own bare names
+(imported or defined there), so patches on those must target
+"formulas.X", not "xbrl_facts.X" -- the same import-time-binding gotcha
+RATIO_DEFINITIONS (also in formulas.py) is deliberately immune to, since
+it holds only plain data, never function references (see its own
+comment).
 """
 
+import formulas
 from formulas import (
+    RATIO_DEFINITIONS,
+    RatioDefinition,
     get_asset_turnover,
     get_cash_to_assets,
     get_gross_margin,
@@ -27,6 +32,8 @@ from formulas import (
     get_net_margin_all_companies,
     get_operating_margin,
     get_operating_margin_all_companies,
+    get_ratio,
+    get_ratio_all_companies,
     get_return_on_assets,
     get_yoy_growth,
 )
@@ -271,14 +278,18 @@ def test_get_yoy_growth_returns_none_when_prior_value_is_zero(monkeypatch):
 def test_get_multi_year_average_averages_margin_across_years(monkeypatch):
     # Real AAPL operating margin values (verified via get_metric() before
     # this formula existed): 29.82%, 31.51%, 31.97% for FY2023-FY2025.
+    # Mocks formulas.get_ratio, not get_operating_margin directly --
+    # _get_annual_value() dispatches every RATIO_DEFINITIONS entry
+    # through the shared get_ratio() engine now (see that function's own
+    # docstring), so that's the correct isolation seam post-refactor.
     per_year = {
         2023: {"value": 29.8, "unit": "percent", "period_end": "2023-09-30", "form": "10-K", "accession": "a23", "filed": "2023-11-03", "frame": None},
         2024: {"value": 31.5, "unit": "percent", "period_end": "2024-09-28", "form": "10-K", "accession": "a24", "filed": "2024-11-01", "frame": None},
         2025: {"value": 32.0, "unit": "percent", "period_end": "2025-09-27", "form": "10-K", "accession": "a25", "filed": "2025-10-31", "frame": "CY2025"},
     }
     monkeypatch.setattr(
-        "formulas.get_operating_margin",
-        lambda ticker, fiscal_year, fiscal_period: per_year[fiscal_year],
+        "formulas.get_ratio",
+        lambda ticker, ratio_name, fiscal_year, fiscal_period: per_year[fiscal_year],
     )
     result = get_multi_year_average("AAPL", "operating_margin", 2023, 2025)
     assert result["value"] == round((29.8 + 31.5 + 32.0) / 3, 1)
@@ -292,22 +303,24 @@ def test_get_multi_year_average_averages_margin_across_years(monkeypatch):
 
 def test_get_multi_year_average_averages_return_on_assets_across_years(monkeypatch):
     # Regression guard: adding return_on_assets/asset_turnover/
-    # cash_to_assets to agent.py's RATIO_METRIC_FUNCTIONS makes them pass
-    # _call_get_financial_fact's boundary check, so a multi-year-average
+    # cash_to_assets to RATIO_DEFINITIONS makes them pass
+    # call_get_financial_fact's boundary check, so a multi-year-average
     # request combined with one of these names now reaches
     # get_multi_year_average() -- which would otherwise crash inside
     # get_metric()'s tag lookup (_tag_for() raises ValueError for any
     # name that isn't a raw GAAP tag) the same way an unsupported metric
-    # crashed once before (see xbrl_facts.py's own history). _get_annual_value()
-    # needs an explicit branch for each of these three, same as it
-    # already has for the three margins.
+    # crashed once before (see xbrl_facts.py's own history).
+    # _get_annual_value() now dispatches any RATIO_DEFINITIONS entry via
+    # get_ratio() generically, so this stays a regression guard for the
+    # crash even though the dispatch mechanism changed (see
+    # test_get_multi_year_average_averages_margin_across_years above).
     per_year = {
         2024: {"value": 25.0, "unit": "percent", "period_end": "2024-09-28", "form": "10-K", "accession": "a24", "filed": "2024-11-01", "frame": None},
         2025: {"value": 31.2, "unit": "percent", "period_end": "2025-09-27", "form": "10-K", "accession": "a25", "filed": "2025-10-31", "frame": "CY2025"},
     }
     monkeypatch.setattr(
-        "formulas.get_return_on_assets",
-        lambda ticker, fiscal_year, fiscal_period: per_year[fiscal_year],
+        "formulas.get_ratio",
+        lambda ticker, ratio_name, fiscal_year, fiscal_period: per_year[fiscal_year],
     )
     result = get_multi_year_average("AAPL", "return_on_assets", 2024, 2025)
     assert result["value"] == round((25.0 + 31.2) / 2, 1)
@@ -327,8 +340,8 @@ def test_get_multi_year_average_averages_asset_turnover_across_years(monkeypatch
         2026: {"value": 1.04, "unit": "raw", "period_end": "2026-01-25", "form": "10-K", "accession": "a26", "filed": "2026-02-25", "frame": None},
     }
     monkeypatch.setattr(
-        "formulas.get_asset_turnover",
-        lambda ticker, fiscal_year, fiscal_period: per_year[fiscal_year],
+        "formulas.get_ratio",
+        lambda ticker, ratio_name, fiscal_year, fiscal_period: per_year[fiscal_year],
     )
     result = get_multi_year_average("NVDA", "asset_turnover", 2025, 2026)
     assert result["value"] == (0.97 + 1.04) / 2
@@ -341,8 +354,8 @@ def test_get_multi_year_average_averages_cash_to_assets_across_years(monkeypatch
         2025: {"value": 4.9, "unit": "percent", "period_end": "2025-06-30", "form": "10-K", "accession": "a25", "filed": "2025-07-30", "frame": None},
     }
     monkeypatch.setattr(
-        "formulas.get_cash_to_assets",
-        lambda ticker, fiscal_year, fiscal_period: per_year[fiscal_year],
+        "formulas.get_ratio",
+        lambda ticker, ratio_name, fiscal_year, fiscal_period: per_year[fiscal_year],
     )
     result = get_multi_year_average("MSFT", "cash_to_assets", 2024, 2025)
     assert result["value"] == round((5.5 + 4.9) / 2, 1)
@@ -392,9 +405,17 @@ def test_get_multi_year_average_returns_none_when_start_after_end():
 # get_net_margin_all_companies
 # ---------------------------------------------------------------------------
 def test_get_gross_margin_all_companies_computes_ratio_per_company(monkeypatch):
+    # Mocks formulas.get_ratio, not get_gross_margin directly --
+    # get_gross_margin_all_companies() now delegates to the shared
+    # get_ratio_all_companies() engine (see that function's own
+    # docstring), which computes its anchor via get_ratio(), not the
+    # named per-ratio function -- found in code review (2026-08-28)
+    # that mocking get_gross_margin here no longer intercepted anything,
+    # silently letting these tests fall through to real network/cache
+    # calls instead of the intended fixture data.
     monkeypatch.setattr(
-        "formulas.get_gross_margin",
-        lambda ticker, fiscal_year, fiscal_period, period_end_date: {
+        "formulas.get_ratio",
+        lambda ticker, ratio_name, fiscal_year, fiscal_period, period_end_date: {
             "value": 74.9,
             "unit": "percent",
             "period_end": "2026-04-26",
@@ -419,8 +440,8 @@ def test_get_gross_margin_all_companies_computes_ratio_per_company(monkeypatch):
 
 def test_get_gross_margin_all_companies_excludes_company_with_mismatched_period_end(monkeypatch):
     monkeypatch.setattr(
-        "formulas.get_gross_margin",
-        lambda ticker, fiscal_year, fiscal_period, period_end_date: {
+        "formulas.get_ratio",
+        lambda ticker, ratio_name, fiscal_year, fiscal_period, period_end_date: {
             "value": 74.9,
             "unit": "percent",
             "period_end": "2026-04-26",
@@ -452,16 +473,16 @@ def test_get_gross_margin_all_companies_excludes_company_with_mismatched_period_
 
 def test_get_gross_margin_all_companies_returns_empty_when_anchor_unavailable(monkeypatch):
     monkeypatch.setattr(
-        "formulas.get_gross_margin",
-        lambda ticker, fiscal_year, fiscal_period, period_end_date: None,
+        "formulas.get_ratio",
+        lambda ticker, ratio_name, fiscal_year, fiscal_period, period_end_date: None,
     )
     assert get_gross_margin_all_companies("NVDA", period_end_date="2026-04-26") == {}
 
 
 def test_get_operating_margin_all_companies_computes_ratio_per_company(monkeypatch):
     monkeypatch.setattr(
-        "formulas.get_operating_margin",
-        lambda ticker, fiscal_year, fiscal_period, period_end_date: {
+        "formulas.get_ratio",
+        lambda ticker, ratio_name, fiscal_year, fiscal_period, period_end_date: {
             "value": 60.0,
             "unit": "percent",
             "period_end": "2026-04-26",
@@ -486,16 +507,16 @@ def test_get_operating_margin_all_companies_computes_ratio_per_company(monkeypat
 
 def test_get_operating_margin_all_companies_returns_empty_when_anchor_unavailable(monkeypatch):
     monkeypatch.setattr(
-        "formulas.get_operating_margin",
-        lambda ticker, fiscal_year, fiscal_period, period_end_date: None,
+        "formulas.get_ratio",
+        lambda ticker, ratio_name, fiscal_year, fiscal_period, period_end_date: None,
     )
     assert get_operating_margin_all_companies("NVDA", period_end_date="2026-04-26") == {}
 
 
 def test_get_net_margin_all_companies_computes_ratio_per_company(monkeypatch):
     monkeypatch.setattr(
-        "formulas.get_net_margin",
-        lambda ticker, fiscal_year, fiscal_period, period_end_date: {
+        "formulas.get_ratio",
+        lambda ticker, ratio_name, fiscal_year, fiscal_period, period_end_date: {
             "value": 45.0,
             "unit": "percent",
             "period_end": "2026-04-26",
@@ -520,7 +541,200 @@ def test_get_net_margin_all_companies_computes_ratio_per_company(monkeypatch):
 
 def test_get_net_margin_all_companies_returns_empty_when_anchor_unavailable(monkeypatch):
     monkeypatch.setattr(
-        "formulas.get_net_margin",
-        lambda ticker, fiscal_year, fiscal_period, period_end_date: None,
+        "formulas.get_ratio",
+        lambda ticker, ratio_name, fiscal_year, fiscal_period, period_end_date: None,
     )
     assert get_net_margin_all_companies("NVDA", period_end_date="2026-04-26") == {}
+
+
+# ---------------------------------------------------------------------------
+# RATIO_DEFINITIONS / get_ratio / get_ratio_all_companies -- declarative
+# ratio registration. get_ratio()/get_ratio_all_companies() are the
+# generic engines every named function above now delegates through; these
+# tests exercise the generic path directly, plus the "register a
+# brand-new ratio with zero new code" story that's the whole point of
+# this table.
+# ---------------------------------------------------------------------------
+def test_ratio_definitions_includes_inventory_turnover_as_non_percent_single_company():
+    d = RATIO_DEFINITIONS["inventory_turnover"]
+    assert d.numerator_metric == "cost_of_revenue"
+    assert d.denominator_metric == "inventory"
+    assert d.as_percent is False
+    assert d.supports_cross_company is False
+
+
+def test_ratio_definitions_includes_rd_intensity_as_percent_single_company():
+    d = RATIO_DEFINITIONS["rd_intensity"]
+    assert d.numerator_metric == "rd_expense"
+    assert d.denominator_metric == "revenue"
+    assert d.as_percent is True
+    assert d.supports_cross_company is False
+
+
+def test_get_ratio_computes_gross_margin_via_the_table(monkeypatch):
+    revenue_entries = [
+        {"start": "2025-01-27", "end": "2026-01-25", "val": 215938000000, "accn": "x", "fy": 2026, "fp": "FY", "form": "10-K"},
+    ]
+
+    def fake_fetch(ticker, tag):
+        return {"units": {"USD": NVDA_GROSS_PROFIT_ENTRIES if tag == "GrossProfit" else revenue_entries}}
+
+    monkeypatch.setattr("xbrl_facts.fetch_concept", fake_fetch)
+    result = get_ratio("NVDA", "gross_margin", fiscal_year=2026, fiscal_period="FY")
+    assert result["value"] == 71.1
+    assert result["unit"] == "percent"
+
+
+def test_get_ratio_computes_inventory_turnover_as_raw_ratio(monkeypatch):
+    cost_of_revenue_entries = [
+        {"start": "2025-01-27", "end": "2026-01-25", "val": 100000000, "accn": "x", "fy": 2026, "fp": "FY", "form": "10-K"},
+    ]
+    inventory_entries = [
+        {"end": "2026-01-25", "val": 20000000, "accn": "x", "fy": 2026, "fp": "FY", "form": "10-K"},
+    ]
+
+    def fake_fetch(ticker, tag):
+        return {"units": {"USD": cost_of_revenue_entries if tag == "CostOfRevenue" else inventory_entries}}
+
+    monkeypatch.setattr("xbrl_facts.fetch_concept", fake_fetch)
+    result = get_ratio("NVDA", "inventory_turnover", fiscal_year=2026, fiscal_period="FY")
+    assert result["value"] == 5.0
+    assert result["unit"] == "raw"
+
+
+def test_get_ratio_raises_key_error_for_unregistered_ratio_name():
+    try:
+        get_ratio("NVDA", "not_a_real_ratio", fiscal_year=2026, fiscal_period="FY")
+        assert False, "expected KeyError"
+    except KeyError:
+        pass
+
+
+def test_get_ratio_all_companies_computes_per_company_when_cross_company_supported(monkeypatch):
+    monkeypatch.setattr(
+        "formulas.get_ratio",
+        lambda ticker, ratio_name, fiscal_year, fiscal_period, period_end_date: {
+            "value": 74.9,
+            "unit": "percent",
+            "period_end": "2026-04-26",
+            "form": "10-Q",
+            "accession": "x",
+            "filed": None,
+            "frame": "CY2026Q1",
+        },
+    )
+
+    def fake_get_frame(metric, frame):
+        if metric == "gross_profit":
+            return {"NVDA": {"value": 61157000000, "unit": "USD", "period_end": "2026-04-26", "accession": "a"}}
+        return {"NVDA": {"value": 81615000000, "unit": "USD", "period_end": "2026-04-26", "accession": "b"}}
+
+    monkeypatch.setattr("formulas.get_frame", fake_get_frame)
+    result = get_ratio_all_companies("NVDA", "gross_margin", period_end_date="2026-04-26")
+    assert result == {
+        "NVDA": {"value": 74.9, "unit": "percent", "period_end": "2026-04-26", "accession": "a"}
+    }
+
+
+def test_get_ratio_all_companies_returns_empty_without_calling_get_frame_when_unsupported(monkeypatch):
+    # supports_cross_company=False must short-circuit before ever
+    # attempting a frame lookup -- return_on_assets/asset_turnover/
+    # cash_to_assets/inventory_turnover/rd_intensity all rely on this,
+    # since their frame-label behavior for instant concepts is a
+    # confirmed, not just assumed, problem (see formulas.get_return_on_assets's
+    # docstring).
+    monkeypatch.setattr(
+        "formulas.get_frame", lambda *a, **k: (_ for _ in ()).throw(AssertionError("get_frame should not be called"))
+    )
+    result = get_ratio_all_companies("AAPL", "return_on_assets", fiscal_year=2025, fiscal_period="FY")
+    assert result == {}
+
+
+def test_get_ratio_all_companies_respects_as_percent_false(monkeypatch):
+    # Regression guard (found in code review, 2026-08-28): the
+    # cross-company path must respect RATIO_DEFINITIONS' own as_percent
+    # flag, same as get_ratio()/_compute_ratio_metric() already do for
+    # the single-company path -- currently latent (today's 3
+    # cross-company-capable ratios are all as_percent=True), but flipping
+    # a decimal ratio like asset_turnover/inventory_turnover to
+    # supports_cross_company=True later (explicitly called "easy" in
+    # RATIO_DEFINITIONS' own comment) would otherwise silently multiply
+    # by 100 and mislabel the unit "percent" instead of "raw" --
+    # numeric_utils.normalize() treats those as non-cross-matching
+    # categories, so this would silently break eval grading exactly the
+    # way _compute_ratio_metric()'s own as_percent docstring warns about.
+    monkeypatch.setitem(
+        formulas.RATIO_DEFINITIONS,
+        "decimal_cross_company_ratio",
+        RatioDefinition("gross_profit", "revenue", False, True),
+    )
+    monkeypatch.setattr(
+        "formulas.get_ratio",
+        lambda ticker, ratio_name, fiscal_year, fiscal_period, period_end_date: {
+            "value": 0.75,
+            "unit": "raw",
+            "period_end": "2026-04-26",
+            "form": "10-Q",
+            "accession": "x",
+            "filed": None,
+            "frame": "CY2026Q1",
+        },
+    )
+
+    def fake_get_frame(metric, frame):
+        if metric == "gross_profit":
+            return {"NVDA": {"value": 61157000000, "unit": "USD", "period_end": "2026-04-26", "accession": "a"}}
+        return {"NVDA": {"value": 81615000000, "unit": "USD", "period_end": "2026-04-26", "accession": "b"}}
+
+    monkeypatch.setattr("formulas.get_frame", fake_get_frame)
+    result = get_ratio_all_companies("NVDA", "decimal_cross_company_ratio", period_end_date="2026-04-26")
+    assert result["NVDA"]["unit"] == "raw"
+    assert result["NVDA"]["value"] == round(61157000000 / 81615000000, 2)
+
+
+def test_ratio_registration_via_table_alone_needs_no_new_function(monkeypatch):
+    # The whole point of RATIO_DEFINITIONS: a brand-new ratio needs only
+    # a table entry, no new function and no dispatch code change.
+    cash_entries = [
+        {"end": "2026-01-25", "val": 40000000000, "accn": "x", "fy": 2026, "fp": "FY", "form": "10-K"},
+    ]
+    revenue_entries = [
+        {"start": "2025-01-27", "end": "2026-01-25", "val": 200000000000, "accn": "x", "fy": 2026, "fp": "FY", "form": "10-K"},
+    ]
+
+    def fake_fetch(ticker, tag):
+        return {"units": {"USD": cash_entries if tag == "CashAndCashEquivalentsAtCarryingValue" else revenue_entries}}
+
+    monkeypatch.setattr("xbrl_facts.fetch_concept", fake_fetch)
+    monkeypatch.setitem(
+        formulas.RATIO_DEFINITIONS,
+        "cash_to_revenue",
+        RatioDefinition("cash_and_equivalents", "revenue", True, False),
+    )
+    result = get_ratio("NVDA", "cash_to_revenue", fiscal_year=2026, fiscal_period="FY")
+    assert result["value"] == 20.0
+    assert result["unit"] == "percent"
+
+
+def test_get_multi_year_average_averages_a_ratio_added_only_via_the_table(monkeypatch):
+    # Locks in that _get_annual_value()'s table-driven dispatch (not a
+    # hardcoded if/elif) picks up a NEW ratio automatically -- the exact
+    # gap that crashed once before for return_on_assets/asset_turnover/
+    # cash_to_assets when they were only in agent.py's dict, not yet
+    # wired into _get_annual_value()'s branches.
+    monkeypatch.setitem(
+        formulas.RATIO_DEFINITIONS,
+        "cash_to_revenue",
+        RatioDefinition("cash_and_equivalents", "revenue", True, False),
+    )
+    per_year = {
+        2024: {"value": 15.0, "unit": "percent", "period_end": "2024-09-28", "form": "10-K", "accession": "a24", "filed": "2024-11-01", "frame": None},
+        2025: {"value": 20.0, "unit": "percent", "period_end": "2025-09-27", "form": "10-K", "accession": "a25", "filed": "2025-10-31", "frame": "CY2025"},
+    }
+    monkeypatch.setattr(
+        "formulas.get_ratio",
+        lambda ticker, ratio_name, fiscal_year, fiscal_period: per_year[fiscal_year],
+    )
+    result = get_multi_year_average("AAPL", "cash_to_revenue", 2024, 2025)
+    assert result["value"] == round((15.0 + 20.0) / 2, 1)
+    assert result["unit"] == "percent"

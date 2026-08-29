@@ -7,7 +7,9 @@ test_eval_harness.py's mocked grade_judged() test.
 
 from types import SimpleNamespace
 
-from llm_backends import _ollama_message_to_turn, _gemini_response_to_turn, _get_gemini_client
+import requests
+
+from llm_backends import _ollama_call, _ollama_message_to_turn, _gemini_response_to_turn, _get_gemini_client
 
 
 def test_ollama_message_to_turn_with_tool_calls():
@@ -101,3 +103,110 @@ def test_get_gemini_client_raises_runtime_error_when_key_missing(monkeypatch):
         assert False, "expected RuntimeError"
     except RuntimeError as e:
         assert "GEMINI_API_KEY is not set" in str(e)
+
+
+# ---------------------------------------------------------------------------
+# _ollama_call retry/backoff (Week 7 guardrails) -- pure control-flow, mocks
+# requests.post/time.sleep rather than a live Ollama server, same principle
+# as the fixture-shaped ModelTurn tests above.
+# ---------------------------------------------------------------------------
+class _FakeOllamaResponse:
+    def raise_for_status(self):
+        pass
+
+    def json(self):
+        return {"message": {"role": "assistant", "content": "ok"}}
+
+
+def test_ollama_call_retries_on_connection_error_then_succeeds(monkeypatch):
+    monkeypatch.setattr("llm_backends.time.sleep", lambda s: None)
+    attempts = []
+
+    def fake_post(*args, **kwargs):
+        attempts.append(1)
+        if len(attempts) < 2:
+            raise requests.exceptions.ConnectionError("connection refused")
+        return _FakeOllamaResponse()
+
+    monkeypatch.setattr("llm_backends.requests.post", fake_post)
+
+    message = _ollama_call({"messages": [], "tool_schemas": []})
+
+    assert message == {"role": "assistant", "content": "ok"}
+    assert len(attempts) == 2
+
+
+def test_ollama_call_retries_on_connect_timeout_then_succeeds(monkeypatch):
+    # ConnectTimeout (requests.exceptions.ConnectTimeout is a
+    # ConnectionError subclass) means the server never accepted the
+    # connection -- same "not up yet" signal as a plain ConnectionError,
+    # so it should retry just like one.
+    monkeypatch.setattr("llm_backends.time.sleep", lambda s: None)
+    attempts = []
+
+    def fake_post(*args, **kwargs):
+        attempts.append(1)
+        if len(attempts) < 2:
+            raise requests.exceptions.ConnectTimeout("still starting up")
+        return _FakeOllamaResponse()
+
+    monkeypatch.setattr("llm_backends.requests.post", fake_post)
+
+    message = _ollama_call({"messages": [], "tool_schemas": []})
+
+    assert message == {"role": "assistant", "content": "ok"}
+    assert len(attempts) == 2
+
+
+def test_ollama_call_does_not_retry_on_read_timeout(monkeypatch):
+    # Regression guard (found in code review, 2026-08-26): a
+    # ReadTimeout means the server accepted the connection and was
+    # generating, just slower than the 240s budget -- this project's
+    # own CPU-only setup is already documented to take 60-70s+ per
+    # question, so this is plausibly a genuinely slow answer, not a
+    # stalled server. Retrying it would silently turn one 240s timeout
+    # into up to 3, i.e. a ~12-minute hang indistinguishable from the
+    # process being stuck -- worse than just failing once, so this must
+    # propagate immediately, not retry.
+    monkeypatch.setattr("llm_backends.time.sleep", lambda s: None)
+    attempts = []
+
+    def fake_post(*args, **kwargs):
+        attempts.append(1)
+        raise requests.exceptions.ReadTimeout("generation took too long")
+
+    monkeypatch.setattr("llm_backends.requests.post", fake_post)
+
+    try:
+        _ollama_call({"messages": [], "tool_schemas": []})
+        assert False, "expected ReadTimeout"
+    except requests.exceptions.ReadTimeout:
+        pass
+
+    assert len(attempts) == 1
+
+
+def test_ollama_call_raises_after_exhausting_attempts(monkeypatch):
+    monkeypatch.setattr("llm_backends.time.sleep", lambda s: None)
+
+    def fake_post(*args, **kwargs):
+        raise requests.exceptions.ConnectionError("connection refused")
+
+    monkeypatch.setattr("llm_backends.requests.post", fake_post)
+
+    try:
+        _ollama_call({"messages": [], "tool_schemas": []})
+        assert False, "expected ConnectionError"
+    except requests.exceptions.ConnectionError:
+        pass
+
+
+def test_ollama_call_succeeds_first_try_without_sleeping(monkeypatch):
+    sleeps = []
+    monkeypatch.setattr("llm_backends.time.sleep", lambda s: sleeps.append(s))
+    monkeypatch.setattr("llm_backends.requests.post", lambda *a, **k: _FakeOllamaResponse())
+
+    message = _ollama_call({"messages": [], "tool_schemas": []})
+
+    assert message == {"role": "assistant", "content": "ok"}
+    assert sleeps == []

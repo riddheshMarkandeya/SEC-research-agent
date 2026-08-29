@@ -1,0 +1,31 @@
+{
+  "backend": "gemini",
+  "answer_model": "gemini-flash-lite-latest",
+  "judge_model": "qwen2.5:7b-instruct",
+  "results": [
+    {
+      "id": "nvda-inventory-turnover-fy2026",
+      "ticker": "NVDA",
+      "question": "What was NVIDIA's inventory turnover ratio (cost of revenue divided by inventory) for fiscal year 2026?",
+      "type": "numeric",
+      "passed": true,
+      "detail": "found matching value: 2.92 (raw)",
+      "has_citation": true,
+      "citation_warnings": [],
+      "answer": "For fiscal year 2026, NVIDIA's inventory turnover ratio was **2.92** [1].",
+      "n_chunks_retrieved": 1
+    },
+    {
+      "id": "msft-rd-intensity-fy2025",
+      "ticker": "MSFT",
+      "question": "What was Microsoft's R&D intensity (research and development expense divided by revenue) for fiscal year 2025?",
+      "type": "numeric",
+      "passed": true,
+      "detail": "found matching value: 11.5 (percent)",
+      "has_citation": true,
+      "citation_warnings": [],
+      "answer": "For fiscal year 2025, Microsoft's R&D intensity (research and development expense divided by revenue) was **11.5%** [1].",
+      "n_chunks_retrieved": 1
+    }
+  ]
+}

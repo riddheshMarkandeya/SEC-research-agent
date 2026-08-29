@@ -1,0 +1,67 @@
+{
+  "backend": "gemini",
+  "answer_model": "gemini-flash-lite-latest",
+  "judge_model": "qwen2.5:7b-instruct",
+  "results": [
+    {
+      "id": "nvda-gross-margin-fy26",
+      "ticker": "NVDA",
+      "question": "What was NVIDIA's gross margin for fiscal year 2026?",
+      "type": "numeric",
+      "passed": true,
+      "detail": "found matching value: 71.1 (percent)",
+      "has_citation": true,
+      "citation_warnings": [],
+      "answer": "NVIDIA's gross margin for fiscal year 2026 was 71.1% [1].",
+      "n_chunks_retrieved": 1
+    },
+    {
+      "id": "aapl-operating-margin-q3fy2026",
+      "ticker": "AAPL",
+      "question": "What was Apple's operating margin for the three months ended June 27, 2026?",
+      "type": "numeric",
+      "passed": true,
+      "detail": "found matching value: 32.6 (percent)",
+      "has_citation": true,
+      "citation_warnings": [],
+      "answer": "Apple's operating margin for the three months ended June 27, 2026, was 32.6% [1].",
+      "n_chunks_retrieved": 1
+    },
+    {
+      "id": "aapl-return-on-assets-fy2025",
+      "ticker": "AAPL",
+      "question": "What was Apple's return on assets (net income divided by total assets) for fiscal year 2025?",
+      "type": "numeric",
+      "passed": true,
+      "detail": "found matching value: 31.2 (percent)",
+      "has_citation": true,
+      "citation_warnings": [],
+      "answer": "For fiscal year 2025, Apple's return on assets (net income divided by total assets) was 31.2% [1].",
+      "n_chunks_retrieved": 1
+    },
+    {
+      "id": "nvda-asset-turnover-fy2026",
+      "ticker": "NVDA",
+      "question": "What was NVIDIA's asset turnover ratio (total revenue divided by total assets) for fiscal year 2026?",
+      "type": "numeric",
+      "passed": true,
+      "detail": "found matching value: 1.04 (raw)",
+      "has_citation": true,
+      "citation_warnings": [],
+      "answer": "For fiscal year 2026, NVIDIA's asset turnover ratio (total revenue divided by total assets) was **1.04** [1].",
+      "n_chunks_retrieved": 1
+    },
+    {
+      "id": "msft-cash-to-assets-fy2025",
+      "ticker": "MSFT",
+      "question": "What percentage of Microsoft's total assets was held as cash and cash equivalents at the end of fiscal year 2025?",
+      "type": "numeric",
+      "passed": true,
+      "detail": "found matching value: 4.89 (percent)",
+      "has_citation": false,
+      "citation_warnings": [],
+      "answer": "At the end of fiscal year 2025 (ended June 30, 2025), Microsoft's total assets were $619,003,000,000, and its cash and cash equivalents were $30,242,000,000 [1, 2]. \n\nThis represents **4.89%** of Microsoft's total assets held as cash and cash equivalents.",
+      "n_chunks_retrieved": 2
+    }
+  ]
+}

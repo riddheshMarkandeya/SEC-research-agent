@@ -1,0 +1,30 @@
+{
+  "backend": "gemini",
+  "answer_model": "gemini-flash-lite-latest",
+  "judge_model": "qwen2.5:7b-instruct",
+  "results": [
+    {
+      "id": "five-company-gross-margin-ranking-fy2025",
+      "ticker": [
+        "AAPL",
+        "MSFT",
+        "NVDA",
+        "CRM",
+        "PLTR"
+      ],
+      "question": "Comparing Apple's fiscal year 2025 (ended September 27, 2025), Microsoft's fiscal year 2025 (ended June 30, 2025), NVIDIA's fiscal year 2026 (ended January 25, 2026), Salesforce's fiscal year 2026 (ended January 31, 2026), and Palantir's fiscal year 2025 (ended December 31, 2025), which of these five companies had the highest gross margin, and what was that margin?",
+      "type": "judged",
+      "passed": false,
+      "detail": "The AI assistant's response does not provide the specific gross margin for Palantir as required by the criteria and instead states that it cannot verify the claim.",
+      "has_citation": false,
+      "citation_warnings": [
+        "[4] claims 31.0 (raw) but that value doesn't appear in the cited source",
+        "[3] claims 25.0 (raw) but that value doesn't appear in the cited source",
+        "[2] claims 30.0 (raw) but that value doesn't appear in the cited source",
+        "[1] claims 27.0 (raw) but that value doesn't appear in the cited source"
+      ],
+      "answer": "I can't confirm this answer against the sources I retrieved -- the following claim(s) don't hold up under citation verification:\n- [4] claims 31.0 (raw) but that value doesn't appear in the cited source\n- [3] claims 25.0 (raw) but that value doesn't appear in the cited source\n- [2] claims 30.0 (raw) but that value doesn't appear in the cited source\n- [1] claims 27.0 (raw) but that value doesn't appear in the cited source\n\nRather than give you a number I can't verify, I'm refusing this answer.",
+      "n_chunks_retrieved": 14
+    }
+  ]
+}

@@ -1,0 +1,25 @@
+{
+  "backend": "gemini",
+  "answer_model": "gemini-flash-lite-latest",
+  "judge_model": "qwen2.5:7b-instruct",
+  "results": [
+    {
+      "id": "five-company-net-margin-ranking-fy2025",
+      "ticker": [
+        "AAPL",
+        "MSFT",
+        "NVDA",
+        "CRM",
+        "PLTR"
+      ],
+      "question": "Comparing Apple's fiscal year 2025 (ended September 27, 2025), Microsoft's fiscal year 2025 (ended June 30, 2025), NVIDIA's fiscal year 2026 (ended January 25, 2026), Salesforce's fiscal year 2026 (ended January 31, 2026), and Palantir's fiscal year 2025 (ended December 31, 2025), which of these five companies had the highest net margin, and what was that margin?",
+      "type": "judged",
+      "passed": true,
+      "detail": "The AI assistant's answer correctly identifies NVIDIA as having the highest net margin among the specified companies for their respective fiscal years and provides a margin of 55.6%, which meets the exact criteria given.",
+      "has_citation": true,
+      "citation_warnings": [],
+      "answer": "Based on the financial reports for each company's specified fiscal year, the net margins for the five companies are as follows:\n\n* **NVIDIA (Fiscal Year 2026, ended January 25, 2026):** **55.6%** [3]\n* **Palantir (Fiscal Year 2025, ended December 31, 2025):** **36.3%** [4]\n* **Microsoft (Fiscal Year 2025, ended June 30, 2025):** **36.1%** [2]\n* **Salesforce (Fiscal Year 2026, ended January 31, 2026):** Salesforce reported net income of $7,457 million [13] and total revenues of $41,525 million [6], but a direct net margin percentage is not stated in the search results.\n* **Apple (Fiscal Year 2025, ended September 27, 2025):** **26.9%** [1]\n\n**NVIDIA** had the highest net margin among the five companies, at **55.6%** [3].",
+      "n_chunks_retrieved": 14
+    }
+  ]
+}

@@ -213,6 +213,36 @@ def _select_questions(questions: list[dict], ids: list[str] | None, include_skip
     return [q for q in questions if not q.get("skip")]
 
 
+def _grade(q: dict, answer_text: str, citation_warnings: list[str], retrieved: list[dict]) -> tuple[bool, str]:
+    """Dispatches to the right grading strategy for question type
+    q["type"], kept separate from run_eval()'s live agent loop so it's
+    testable without network/Ollama calls (same rationale as
+    _select_questions() above).
+
+    Numeric/comparison questions short-circuit to FAIL when the agent
+    hard-gate-refused (non-empty citation_warnings) instead of calling
+    grade_numeric()/grade_comparison() on the refusal text. Found in
+    code review (2026-08-26): agent.py's Week 7 refusal message
+    necessarily repeats the claimed value it's rejecting (e.g. "[1]
+    claims 166000.0 ... doesn't appear in the cited source"), which
+    grade_numeric()'s plain extract_numbers() scan can match as if it
+    were a real, verified answer -- silently scoring a refusal as a
+    PASS. Judged questions are deliberately NOT short-circuited here:
+    some are written to expect a refusal (e.g.
+    nvda-rd-expense-q4fy26-refusal), and grade_judged() already
+    evaluates the actual answer text against its own criteria, which is
+    the correct way to check whether refusing was the right call."""
+    if citation_warnings and q["type"] in ("numeric", "comparison"):
+        return False, "agent refused to answer (hard-gated on unverified citation(s)) -- no value to grade"
+    if q["type"] == "numeric":
+        return grade_numeric(answer_text, q["expected_value"], q["expected_unit"], retrieved)
+    if q["type"] == "comparison":
+        return grade_comparison(answer_text, q["expected"], retrieved)
+    if q["type"] == "judged":
+        return grade_judged(q["question"], answer_text, q["criteria"])
+    raise ValueError(f"Unknown question type: {q['type']!r} in question {q['id']!r}")
+
+
 def run_eval(
     questions_path: Path, ids: list[str] | None = None, include_skipped: bool = False, backend: str = "ollama"
 ) -> list[dict]:
@@ -223,16 +253,15 @@ def run_eval(
     for q in questions:
         print(f"[{q['id']}] {q['question']}")
         answer_text, retrieved, citation_warnings = run_agent(q["question"], backend=backend)
-        has_citation = bool(CITATION_PATTERN.search(answer_text))
+        # Excludes hard-gated refusals: agent.py's _format_refusal_message()
+        # echoes each warning's own "[n] claims ..." text verbatim, which
+        # still matches CITATION_PATTERN, so a refusal would otherwise get
+        # has_citation=True -- a real answer's citation and a refusal's
+        # description of a FAILED citation shouldn't count the same way in
+        # this stat. Found in code review (2026-08-26).
+        has_citation = not citation_warnings and bool(CITATION_PATTERN.search(answer_text))
 
-        if q["type"] == "numeric":
-            passed, detail = grade_numeric(answer_text, q["expected_value"], q["expected_unit"], retrieved)
-        elif q["type"] == "comparison":
-            passed, detail = grade_comparison(answer_text, q["expected"], retrieved)
-        elif q["type"] == "judged":
-            passed, detail = grade_judged(q["question"], answer_text, q["criteria"])
-        else:
-            raise ValueError(f"Unknown question type: {q['type']!r} in question {q['id']!r}")
+        passed, detail = _grade(q, answer_text, citation_warnings, retrieved)
 
         status = "PASS" if passed else "FAIL"
         print(f"  -> {status} ({detail})")

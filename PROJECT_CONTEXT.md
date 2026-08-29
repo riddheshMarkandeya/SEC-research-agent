@@ -2616,6 +2616,333 @@ eval harness's input/output data (`eval_questions.jsonl`, 45 tracked
 - Full suite: 275/275, no regressions (nothing in `tests/*.py`
   references these moved paths directly).
 
+### Week 7 guardrails, part 1: citation hard-gate + Ollama retry/backoff (2026-08-26)
+
+Two of the four Week 7 sub-items (citation hard-gate, retry/backoff;
+rate limits and Langfuse tracing deliberately deferred — see "Next
+steps" below). Scoped and design-approved with the user first per
+`CLAUDE.md`'s Substantial-tier process, since both are real behavior
+changes with more than one reasonable shape.
+
+- **Citation hard-gate, `agent.py`.** `verify_citations()` has existed
+  since Week 5c, but only ever produced warnings printed *alongside* the
+  (still-returned) answer — exactly the gap the project's own design
+  principle already called out ("or the agent refuses. This becomes a
+  hard guardrail in Week 7"). Added `_format_refusal_message()` and a
+  single choke-point helper, `_finalize_answer()`, that both of
+  `run_agent()`'s return sites now route through: if citation warnings
+  are still non-empty (after Gemini's existing one-shot retry is
+  exhausted, or immediately for Ollama, which gets no retry per
+  `_CITATION_RETRY_BACKENDS`), the answer text itself is withheld and
+  replaced with a refusal naming exactly which claim(s) failed
+  verification. `mcp_server.py` needed no change — it never calls
+  `run_agent()`, only the three raw tools, so there's no synthesized
+  answer there to gate.
+  - **This changes previously-asserted behavior**, not just adds to it:
+    two existing regression tests
+    (`test_run_agent_citation_retry_exhausting_budget_returns_pre_retry_answer_not_timeout`,
+    `test_run_agent_citation_retry_not_attempted_for_ollama_backend`)
+    asserted the raw, unverified answer text came back unchanged
+    alongside its warnings. Updated both to assert the refusal is
+    returned instead, while preserving what each test was actually
+    regression-guarding (that the pre-retry answer's warnings — not the
+    generic "wasn't able to finish" timeout message — are what the
+    refusal is built from).
+- **Retry/backoff, `llm_backends.py`.** Gemini already retries on
+  429/503 via `_send_with_retry()` (Week 5l spike); `_ollama_call()` had
+  none at all — a local `ollama serve` still starting, or a large model
+  still loading into memory on first use, would fail the whole
+  `run_agent()` call outright instead of a transient hiccup. Wrapped the
+  existing `requests.post` in a 3-attempt linear backoff
+  (`OLLAMA_RETRY_DELAY_SECONDS = 3`) on `requests.exceptions.
+  ConnectionError` (including its `ConnectTimeout` subclass) only — the
+  "server isn't accepting connections yet" case — deliberately not
+  unified with Gemini's retry helper since the two catch different
+  exception types and don't share code today.
+  - **Caught in `/code-review` before shipping**: the first draft also
+    retried on a plain `requests.exceptions.Timeout`, which includes
+    `ReadTimeout` — meaning the connection *was* accepted and Ollama
+    *was* generating, just slower than the 240s budget. This project's
+    own CPU-only setup is already documented (memory,
+    `PROJECT_CONTEXT.md`) to take 60-70s+ per question, so a
+    `ReadTimeout` is plausibly a genuinely slow-but-working answer, not
+    a stalled server — retrying it would have silently turned one 240s
+    timeout into up to three (~12 minutes), indistinguishable from a
+    hang. Fixed by splitting the request timeout into `(connect=10,
+    read=240)` and narrowing the retry to `ConnectionError` only, so a
+    slow generation still fails once at 240s (unchanged from before this
+    work) while a not-yet-started server still gets retried.
+- **A second `/code-review` pass on the hard gate caught a real
+  eval-harness false positive, `eval_harness.py`.** The refusal message
+  necessarily repeats the value it's rejecting (e.g. "[1] claims
+  166000.0 ... doesn't appear in the cited source"), and
+  `grade_numeric()`'s plain `extract_numbers()` scan doesn't care
+  *why* a number appears in the text — so a hard-gate refusal for a
+  "numeric"/"comparison" question was silently graded PASS with a
+  "verified" citation whenever `expected_value` happened to be the
+  same number the refusal was rejecting. Confirmed live before fixing:
+  `grade_numeric(refusal_text, 166000.0, "raw", [])` returned `(True,
+  "found matching value: 166000.0 (raw)")` for a message that is
+  actually a refusal. Fixed by extracting `_grade()` — same rationale
+  as the existing `_select_questions()` split, pure dispatch logic kept
+  separate from `run_eval()`'s live loop so it's unit-testable — which
+  short-circuits numeric/comparison questions to FAIL whenever
+  `run_agent()`'s own `citation_warnings` return value is non-empty,
+  instead of ever text-scanning a refusal. Judged questions are
+  deliberately NOT short-circuited: some (e.g.
+  `nvda-rd-expense-q4fy26-refusal`) are written to expect a refusal as
+  the *correct* answer, and `grade_judged()` already evaluates the
+  actual text against its own criteria, which is the right way to
+  check whether refusing was warranted.
+  - Also cleaned up `agent.py`'s `main()`, flagged in the same review
+    pass: it printed the citation warnings a second time under a
+    "Citation warnings:" heading even though the hard-gate refusal
+    (now always what `answer` contains whenever warnings are non-empty)
+    already lists them verbatim. Removed the redundant print block.
+- **Verified, not just tested:** full suite green (293/293, up from
+  275 — 18 new tests, red-then-green for every sub-item and every
+  code-review fix, including the third pass below. TDD carve-out
+  applied the same way this project already treats `run_agent()`'s own
+  loop control flow (see `tests/test_agent.py`'s module docstring): the
+  retry/backoff and grading-dispatch logic touched here is deterministic
+  control flow *around* a live call, not the live call's own behavior,
+  so unit-testing it with mocked `requests.post`/Ollama responses tests
+  our own code's reaction to known exception/response shapes, not a
+  fiction about what Ollama or Gemini actually do. Live-checked the
+  *success* paths are unaffected — `python
+  agent.py "What was Apple's total revenue for fiscal year 2024?"`
+  against both `--backend gemini` and `--backend ollama` returned the
+  same clean, correctly-cited $391,035,000,000 answer as before, no
+  refusal. Live-checked the retry loop itself engages against a real
+  (not mocked) `requests.post` call, by pointing `OLLAMA_URL` at an
+  unreachable port rather than interrupting the real local `ollama
+  serve` process — confirmed 3 real attempts and backoff sleeps before
+  the final `ConnectionError` propagated (~21s elapsed, more than the
+  ~9s of scripted backoff alone, consistent with real TCP
+  connection-refused overhead on top of the two sleeps). Live-checked
+  the `_grade()` fix end-to-end (not just mocked): `python
+  eval_harness.py --ids crm-rpo-fy26 --backend gemini` still `PASS`es a
+  normal, correctly-cited answer through the real agent loop, and
+  `grade_numeric(refusal_text, 166000.0, "raw", [])` called directly
+  reproduced the pre-fix false positive for the record.
+- **A third review pass (multi-angle) found two more real issues, both
+  fixed, plus several considered-and-declined suggestions:**
+  - **Fixed**: `eval_harness.py`'s `has_citation` stat (`run_eval()`)
+    matched `CITATION_PATTERN` against the raw answer text regardless of
+    whether it was a refusal — but `_format_refusal_message()` echoes
+    each warning's own `[n] claims ...` text verbatim, so a hard-gated
+    refusal still matched `\[\d+\]` and got counted as "has a citation"
+    in the printed summary and the saved report JSON, inflating the
+    citation-rate stat for exactly the answers that most needed to be
+    flagged as unverified. Fixed by gating `has_citation` on `not
+    citation_warnings` too. Confirmed directly: `CITATION_PATTERN`
+    matches a real refusal message (`True`), but `has_citation` with the
+    fix applied correctly comes back `False`.
+  - **Fixed**: `run_agent()`'s third return site (the generic
+    "iterations exhausted" timeout fallback) hardcoded its own
+    `(text, all_results, [])` tuple instead of routing through
+    `_finalize_answer()` like the other two — behaviorally identical
+    today (it always passes `warnings=[]`, so the gate is a no-op
+    either way), but it meant the docstring's claim that "every return
+    site routes through `_finalize_answer()`" wasn't literally true.
+    Routed it through the same choke point for real (zero behavior
+    change, confirmed by a new regression test locking in that the
+    generic message still comes back byte-for-byte unchanged) so the
+    single-choke-point invariant actually holds everywhere, not just in
+    the two cases that happened to need it so far.
+  - **Considered and declined** (documented here rather than silently
+    skipped, per this project's own "let evidence decide" discipline):
+    (a) unifying `_ollama_call`'s and `_send_with_retry`'s retry-loop
+    shape, or their two similarly-named delay constants, into a shared
+    helper — already a deliberate choice (see the "Retry/backoff" bullet
+    above), the two catch different exception types today and a shared
+    abstraction for two 5-line loops isn't paying for itself yet; (b)
+    factoring the one-line `"\n".join(f"- {w}" for w in warnings)`
+    duplicated between `_format_refusal_message` and
+    `_format_citation_retry_message` into a helper — one line, not worth
+    an abstraction; (c) replacing `run_agent()`'s `tuple[str, list[dict],
+    list[str]]` return with a `NamedTuple`/dataclass carrying an explicit
+    `refused: bool` field, so `eval_harness.py`'s `_grade()` wouldn't
+    have to infer "refused" from "warnings is non-empty" — a real
+    structural improvement in the abstract, but speculative today: the
+    inference is correct for every currently-possible code path (single
+    choke point now enforced everywhere, confirmed above), and there's
+    no concrete second caller or planned "warn but don't refuse" tier
+    that would actually break it yet. Revisit if one materializes,
+    same YAGNI treatment as the graph-DB/HNSW-tuning deferrals earlier
+    in this doc.
+- A fourth `/code-review medium` pass's synthesized report came back
+  empty (`[]`) — its individual finder agents only restated the
+  already-declined nits above, plus one genuinely free fix applied on
+  the spot: `has_citation`'s boolean expression evaluated the
+  `CITATION_PATTERN` regex before checking `citation_warnings`, so a
+  hard-gated refusal ran a wasted regex scan every time; reordered to
+  `not citation_warnings and bool(CITATION_PATTERN.search(...))` so it
+  short-circuits instead. Loop capped here per `CLAUDE.md`'s "two clean
+  passes, stop" rule — full suite still green (293/293, no test-count
+  change, pure reorder).
+
+### Ratio-formula registration made cheap: `RATIO_DEFINITIONS` table + two new ratios (2026-08-28)
+
+Prompted by the user asking whether the formula registry should become
+more "dynamic," and whether the model should be allowed to do its own
+arithmetic if its inputs are verified. Both were investigated against
+the actual code before designing anything:
+
+- **Letting the model compute + only verifying inputs was rejected.**
+  This is exactly the failure mode `verify_citations()` was built to
+  catch (see the `aapl-revenue-growth-q3fy2026` incident above): the
+  model correctly cited two raw inputs and still got the arithmetic
+  wrong (16.27% vs. the correct ~16.36%), undetected. Verifying inputs
+  independently also can't catch a period mismatch the way
+  `_compute_ratio_metric()`'s `period_end` equality check already does.
+  Code stays the sole source of arithmetic; rule 3 in `SYSTEM_PROMPT` is
+  unchanged.
+- **A fully dynamic "model picks numerator/denominator" calculator tool
+  was already considered and explicitly rejected** — `formulas.py`'s own
+  module docstring says so. Not reopened.
+- **What the code actually showed**: formulas have three shapes, and
+  two were *already* dynamic — `get_yoy_growth()`/`get_multi_year_average()`
+  both take `metric` as a free parameter and work for any raw tagged
+  metric with zero new code. Only the third shape (a same-period ratio
+  of two *different* metrics) was stuck at one hand-written function per
+  ratio, wired into two separate dicts of function objects in `agent.py`
+  (`RATIO_METRIC_FUNCTIONS`, `SINGLE_COMPANY_RATIO_FUNCTIONS`), even
+  though the underlying computation (`_compute_ratio_metric()`) was
+  already a fully generic two-metric engine.
+
+**Fix**: `formulas.py` gained a `RatioDefinition` NamedTuple, a
+`RATIO_DEFINITIONS: dict[str, RatioDefinition]` table (numerator metric,
+denominator metric, `as_percent`, `supports_cross_company`), and two
+generic functions, `get_ratio()`/`get_ratio_all_companies()`, that
+dispatch through it. `RATIO_DEFINITIONS` deliberately holds only plain
+data, never function references — sidesteps the exact
+monkeypatch-staleness gotcha this project had already hit twice
+(`_get_annual_value()`'s own docstring documents it), since there's no
+function object to go stale. The 6 pre-existing named functions
+(`get_gross_margin`, etc.) became one-line delegates to `get_ratio()`
+instead of duplicating numerator/denominator knowledge — verified safe
+by reading `tests/test_formulas.py` first: tests mocking
+`xbrl_facts.fetch_concept` are unaffected (computation path unchanged),
+and tests that `monkeypatch.setattr("formulas.get_gross_margin", ...)`
+as an anchor replace the whole function by name, so they don't care
+about its internal body either way. `_get_annual_value()`'s six-way
+`if/elif` collapsed to one `if metric in RATIO_DEFINITIONS` check —
+not just cleanup: a ratio added only to the table would otherwise
+silently reach `get_metric()` and crash, reproducing the exact bug
+class the three-branch addition for return_on_assets/asset_turnover/
+cash_to_assets was built to prevent. `agent.py` deleted both old dicts;
+`call_get_financial_fact()`/`call_compare_financial_metric()`, both tool
+schemas' `enum` lists, and the `SYSTEM_PROMPT` metric list all now
+derive from `RATIO_DEFINITIONS` (plus new `_CROSS_COMPANY_RATIOS`/
+`_SINGLE_COMPANY_ONLY_RATIOS`/`_PERCENT_RATIOS`/`_DECIMAL_RATIOS` derived
+lists) instead of two hand-combined literals kept in sync by hand.
+
+**Two new ratios added**, chosen with the user from a tiered list of
+candidates (both buildable from raw XBRL tags already ingested and
+live-verified, no new tag-discovery work needed):
+- `inventory_turnover` = `cost_of_revenue / inventory` (`as_percent=False`,
+  matching `asset_turnover`'s decimal convention). Pairs with the
+  existing `pltr-inventory-turnover-fy2025-refusal` question (Palantir
+  correctly still refuses, no inventory tagged) — this adds the
+  complementary case, a company that *does* carry inventory answered
+  correctly. New eval question `nvda-inventory-turnover-fy2026`
+  (expected 2.92, raw), live-fetched via `get_ratio()` itself, not
+  guessed.
+- `rd_intensity` = `rd_expense / revenue`. New eval question
+  `msft-rd-intensity-fy2025` (expected 11.5%), same live-fetch
+  discipline.
+- Both `supports_cross_company=False` — no current eval question needs
+  a cross-company version, easy to flip later if real demand shows up.
+- **Found live, not expected**: `cost_of_revenue` (needed for
+  `inventory_turnover`) resolves cleanly for NVDA but returns `None` for
+  AAPL and MSFT under the current `DEFAULT_METRIC_TAGS["cost_of_revenue"]`
+  tag (`CostOfRevenue`) at FY granularity — confirmed via `get_metric()`
+  directly, not assumed. Likely the same "different companies use
+  different tags for the same concept" pattern already documented for
+  `revenue` (NVDA's own override), just not yet investigated for this
+  tag. Not fixed here — no eval question currently needs AAPL/MSFT
+  inventory_turnover specifically, so per this project's own "let
+  evidence decide" discipline this is flagged, not chased. Revisit with
+  `discover_tags.py` if a real question needs it.
+- **Considered and not built**: `effective_tax_rate` (`tax_expense /
+  pretax_income`) — real evidence exists for it (`msft-tax-rate-q2fy26`,
+  `aapl-msft-tax-rate-comparison` already need it and currently only get
+  it via `search_filings` prose), but needs 1-2 new XBRL tags discovered
+  and live-verified per company first (via `discover_tags.py`, same
+  process already done ~9 times) — a bounded but separate task, left for
+  a follow-up.
+- **Langfuse tracing backlog item** (Week 7 guardrails, still open — see
+  "Next steps" below) now has an explicit requirement attached: when
+  built, it should capture unmet metric/ratio requests (ticker,
+  requested metric, question) — there is no logging/telemetry for this
+  anywhere today (confirmed via grep, not assumed), so "let evidence
+  decide" is currently 100% manual (a developer reviewing eval runs by
+  eye). Deliberately not building a bespoke logging mechanism for this
+  now, per the user's direction, to avoid building two separate
+  observability systems.
+
+**Two more issues caught by `/code-review` before shipping**, both fixed:
+- **Fixed**: the 3 pre-existing named `_all_companies` functions
+  (`get_gross_margin_all_companies`, etc.) were left hardcoding their
+  numerator/denominator metric name pairs and calling
+  `_compute_ratio_metric_all_companies()` directly, instead of being
+  converted to `get_ratio_all_companies()` delegates like every
+  single-company sibling was — a real duplication gap (an edit to
+  `RATIO_DEFINITIONS` later would silently diverge from these three).
+  Converting them was not purely mechanical: their existing tests
+  monkeypatched the NAMED function (`formulas.get_gross_margin`, etc.)
+  as the anchor source, which stopped being the real anchor path once
+  the delegation went through `get_ratio()` instead — 3 of the 7 tests
+  failed loudly (asserting `== {}` against what was now a real,
+  unmocked network/cache call), but the other 4 were worse: they kept
+  "passing" while silently no longer testing what they claimed to,
+  since `_compute_ratio_metric_all_companies()`'s actual computation
+  only reads `anchor["frame"]` (to key the `get_frame()` mock), never
+  `anchor["value"]` — so a real anchor with a real frame silently
+  produced the same mocked-fixture result regardless of the (unmocked,
+  live) anchor's own value. All 7 tests updated to monkeypatch
+  `formulas.get_ratio` instead, matching the pattern already used for
+  `_get_annual_value()`'s tests above.
+- **Fixed**: `get_ratio_all_companies()` didn't forward `as_percent` to
+  `_compute_ratio_metric_all_companies()`, which hardcoded `*100`/
+  `unit: "percent"` regardless of what `RATIO_DEFINITIONS` said for
+  that ratio. Latent today (all 3 current `supports_cross_company=True`
+  ratios are `as_percent=True`), but a real gap given this section's own
+  claim that flipping a decimal ratio like `asset_turnover` to
+  cross-company later is "easy" — doing so without this fix would have
+  silently produced e.g. `{"value": 104.0, "unit": "percent"}` instead
+  of `{"value": 1.04, "unit": "raw"}`, exactly the silent
+  eval-grading-breaking mismatch `_compute_ratio_metric()`'s own
+  `as_percent` docstring already warns about for the single-company
+  path. `_compute_ratio_metric_all_companies()` gained the same
+  `as_percent` parameter `_compute_ratio_metric()` already has.
+
+**Verified, not just tested**: full suite green (305/305, up from 293 —
+12 new tests across `test_formulas.py`/`test_agent.py`). Live-checked
+both new ratios end-to-end (`eval_harness.py --ids
+nvda-inventory-turnover-fy2026,msft-rd-intensity-fy2025 --backend
+gemini`: 2/2 PASS, correct cited values, matching the live-fetched
+ground truth exactly). Live-checked no regression on the 5 pre-existing
+single-company ratio questions (gross_margin, operating_margin,
+return_on_assets, asset_turnover, cash_to_assets, all `--backend
+gemini`): identical values to before this change. Live-checked all 3
+cross-company margin functions directly (not just via eval) after both
+duplication/as_percent fixes — correct `unit: "percent"` and exact
+expected values (e.g. PLTR gross margin 82.4%, CRM operating margin
+20.1%) for all 5 companies each. The `five-company-*-margin-ranking`
+judged eval questions FAILed on isolated single runs (twice, for two
+different margins) and PASSed cleanly on an immediate re-run with no
+code change in between each time — confirmed as live-model anchor-
+choice non-determinism (traced directly: `compare_financial_metric`
+anchored on AAPL returns full 5-company net-margin data, anchored on
+NVDA/MSFT/CRM/PLTR returns `{}` for that specific ratio, a pre-existing
+XBRL-frame characteristic unrelated to this diff — which anchor the
+live model happens to pick varies run to run), not a regression — the
+underlying dispatch data was independently confirmed correct via direct
+`call_compare_financial_metric()`/`get_ratio_all_companies()` calls
+before any of the flaky re-runs.
+
 ## Next steps
 
 > This section used to be a running "X: FIXED, see above" log that
@@ -2825,8 +3152,19 @@ with real `sec_url`s (plus text-fragment deep links for search_filings
 citations), live-verified end-to-end. Auth/rate-limiting deliberately
 left for item 6 below.
 
-**6. Week 7 — guardrails**: no numeric claim without citation as a hard
-gate (not just a warning), retry/backoff, rate limits, Langfuse tracing.
+**6. Week 7 — guardrails — PARTIALLY DONE, 2026-08-26 — see "Week 7
+guardrails, part 1" above.** Citation hard-gate and retry/backoff
+(Ollama side) shipped. **Still open**: rate limits (`mcp_server.py` has
+no auth/throttling at all today) and Langfuse tracing (new external
+dependency, needs an account/API key) — deliberately scoped out of part
+1 since neither touches `run_agent()`/`llm_backends.py` the way the
+first two did. **Added requirement (2026-08-28, see "Ratio-formula
+registration made cheap" above)**: when Langfuse tracing is built, it
+should also capture unmet metric/ratio requests (ticker, requested
+metric, question) — there is no logging/telemetry for this anywhere
+today, so "let evidence decide" for new formulas is currently 100%
+manual. Deliberately not building a separate bespoke logging mechanism
+for just this, to avoid two overlapping observability systems.
 
 **7. Week 8 — polish + write-up.**
 
