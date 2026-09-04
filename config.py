@@ -57,3 +57,11 @@ CHROMA_DIR = os.getenv("CHROMA_DIR", "./chroma_db")
 # two different models aren't comparable to each other.
 EMBED_MODEL_NAME = os.getenv("EMBED_MODEL_NAME", "BAAI/bge-small-en-v1.5")
 RERANK_MODEL_NAME = os.getenv("RERANK_MODEL_NAME", "cross-encoder/ms-marco-MiniLM-L-6-v2")
+
+# mcp_server.py auth/rate limiting (Week 7 guardrails). Empty token
+# means auth is disabled (matches every other .env-optional setting
+# here) -- set it before exposing the server beyond localhost. Set
+# MCP_RATE_LIMIT_REQUESTS=0 to disable rate limiting.
+MCP_AUTH_TOKEN = os.getenv("MCP_AUTH_TOKEN", "")
+MCP_RATE_LIMIT_REQUESTS = int(os.getenv("MCP_RATE_LIMIT_REQUESTS", "60"))
+MCP_RATE_LIMIT_WINDOW_SECONDS = float(os.getenv("MCP_RATE_LIMIT_WINDOW_SECONDS", "60"))

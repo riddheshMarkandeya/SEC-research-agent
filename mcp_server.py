@@ -34,12 +34,16 @@ Usage:
 """
 
 import json
+import math
+import secrets
+import time
 from urllib.parse import quote
 
 import click
 import mcp.types as types
 import uvicorn
 from mcp.server import Server
+from starlette.responses import JSONResponse
 
 from agent import (
     CHUNKS_PER_SEARCH,
@@ -49,6 +53,7 @@ from agent import (
     call_compare_financial_metric,
     call_get_financial_fact,
 )
+from config import MCP_AUTH_TOKEN, MCP_RATE_LIMIT_REQUESTS, MCP_RATE_LIMIT_WINDOW_SECONDS
 from edgar_ingest import get_filing_url
 from retrieval import hybrid_search
 
@@ -177,6 +182,101 @@ async def _handle_call_tool(ctx, params: types.CallToolRequestParams) -> types.C
     return types.CallToolResult(content=[types.TextContent(type="text", text=json.dumps(result))])
 
 
+def _is_authorized(auth_header: str | None, expected_token: str) -> bool:
+    """expected_token == "" means auth is disabled (opt-in, matches
+    every other .env-optional setting in this project -- see
+    config.py's MCP_AUTH_TOKEN). Uses a constant-time comparison since
+    this gates a network-reachable server -- a plain `==` short-circuits
+    on the first mismatched character, letting a remote attacker recover
+    the token byte-by-byte via response-timing measurements instead of
+    needing the whole secret at once. Found in code review."""
+    if not expected_token:
+        return True
+    if auth_header is None:
+        return False
+    return secrets.compare_digest(auth_header, f"Bearer {expected_token}")
+
+
+class _RateLimiter:
+    """Fixed-window request counter per key, in-memory -- fine since
+    mcp_server.py always runs as a single uvicorn process (no
+    `workers=`, see main() below), so there's no cross-process state to
+    coordinate. `now` is passed in explicitly rather than read from
+    time.time() internally so it stays pure/deterministic and testable
+    without real sleeps."""
+
+    def __init__(self, max_requests: int, window_seconds: float):
+        self._max_requests = max_requests
+        self._window_seconds = window_seconds
+        self._windows: dict[str, tuple[float, int]] = {}
+
+    def allow(self, key: str, now: float) -> bool:
+        if self._max_requests <= 0:
+            return True
+        # Prune every expired key, not just `key` -- with the no-auth
+        # default (rate-limit key = client IP), a long-running server
+        # would otherwise keep one entry per distinct caller forever,
+        # even after that caller's window expired and it never
+        # reconnects. Found in code review.
+        self._windows = {k: v for k, v in self._windows.items() if now - v[0] < self._window_seconds}
+        window_start, count = self._windows.get(key, (now, 0))
+        if count >= self._max_requests:
+            self._windows[key] = (window_start, count)
+            return False
+        self._windows[key] = (window_start, count + 1)
+        return True
+
+
+_rate_limiter = _RateLimiter(MCP_RATE_LIMIT_REQUESTS, MCP_RATE_LIMIT_WINDOW_SECONDS)
+
+
+class _AuthRateLimitMiddleware:
+    """Plain ASGI middleware (not Starlette's BaseHTTPMiddleware, which
+    is documented to interfere with streaming responses and
+    client-disconnect propagation -- a real risk on top of
+    streamable_http_app()'s SSE-based transport).
+
+    Rate limiting runs BEFORE auth, keyed by client IP rather than the
+    shared token. Originally built the other way around (auth first,
+    keyed by token when auth is enabled) -- code review caught two real
+    problems with that: (1) a rejected (401) request never touched the
+    rate limiter at all, so credential-guessing traffic against
+    MCP_AUTH_TOKEN was completely unthrottled; (2) keying by the one
+    shared token meant every legitimate caller using it drew from a
+    single global budget, so one noisy caller could lock out every
+    other one. Keying by IP and checking first fixes both: guessing
+    traffic from one IP gets throttled regardless of whether any guess
+    is ever correct, and separate legitimate callers (different IPs)
+    no longer share a budget."""
+
+    def __init__(self, app):
+        self._app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            return await self._app(scope, receive, send)
+
+        client = scope.get("client")
+        key = client[0] if client else "unknown"
+        if not _rate_limiter.allow(key, time.time()):
+            response = JSONResponse(
+                {"error": "rate limit exceeded"},
+                status_code=429,
+                headers={"Retry-After": str(math.ceil(MCP_RATE_LIMIT_WINDOW_SECONDS))},
+            )
+            return await response(scope, receive, send)
+
+        headers = dict(scope.get("headers") or [])
+        auth_header = headers.get(b"authorization")
+        auth_header = auth_header.decode("latin-1") if auth_header is not None else None
+
+        if not _is_authorized(auth_header, MCP_AUTH_TOKEN):
+            response = JSONResponse({"error": "unauthorized"}, status_code=401)
+            return await response(scope, receive, send)
+
+        return await self._app(scope, receive, send)
+
+
 def build_app(host: str = "127.0.0.1"):
     """Returns a standard ASGI (Starlette) app -- stateless_http=True
     since every tool call here is independent, with no need for
@@ -186,7 +286,9 @@ def build_app(host: str = "127.0.0.1"):
     (e.g. a /chat endpoint calling agent.run_agent()) can be mounted
     alongside this at that point instead of needing a redesign."""
     server = Server("sec-research-agent", on_list_tools=_handle_list_tools, on_call_tool=_handle_call_tool)
-    return server.streamable_http_app(stateless_http=True, host=host)
+    app = server.streamable_http_app(stateless_http=True, host=host)
+    app.add_middleware(_AuthRateLimitMiddleware)
+    return app
 
 
 @click.command()

@@ -1,5 +1,6 @@
 """
-One-time (re-runnable) live verification for mcp_server.py (Week 6).
+One-time (re-runnable) live verification for mcp_server.py (Week 6,
+extended Week 7 for auth/rate-limiting).
 
 Why this exists: the actual MCP protocol/HTTP wiring (mcp.server.Server,
 streamable_http_app, the real client round-trip) is live-only code per
@@ -18,9 +19,17 @@ with the real `mcp` client over genuine HTTP, and checks:
    the live filing page's fetched text -- a proxy for "a browser's
    Scroll-To-Text-Fragment will actually highlight this," since there's
    no way to script a real browser's highlight behavior here.
+5. (Week 7) With MCP_AUTH_TOKEN set, a request with no/wrong bearer
+   token is rejected (401) and one with the correct token succeeds
+   end-to-end. With a tiny MCP_RATE_LIMIT_REQUESTS, a request beyond
+   the limit is rejected (429, with Retry-After) and requests succeed
+   again once the window elapses. Checks 1-4 above run against a
+   server with default config (no MCP_AUTH_TOKEN) to also confirm this
+   stays backward compatible by default.
 
 Re-run this after any change to mcp_server.py's source-block/excerpt
-logic, or to the underlying tool schemas/dispatch it wraps.
+logic, its auth/rate-limit logic, or the underlying tool schemas/
+dispatch it wraps.
 
 Usage (from the repo root):
     python tests/manual/verify_mcp_server.py
@@ -28,6 +37,7 @@ Usage (from the repo root):
 
 import asyncio
 import json
+import os
 import subprocess
 import sys
 import time
@@ -36,6 +46,7 @@ from urllib.parse import unquote
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
+import httpx
 import requests
 from bs4 import BeautifulSoup
 from mcp import ClientSession
@@ -46,6 +57,13 @@ from config import SEC_USER_AGENT
 PORT = 8799
 BASE_URL = f"http://127.0.0.1:{PORT}"
 MCP_URL = f"{BASE_URL}/mcp"
+
+# A real MCP request needs this Accept header or the server itself
+# would reject it with 406 before our middleware even runs -- irrelevant
+# for the 401 checks below (auth middleware runs first regardless), but
+# needed so the rate-limit checks' "not rate-limited yet" requests don't
+# ambiguously fail for a different reason.
+MCP_ACCEPT_HEADERS = {"Accept": "application/json, text/event-stream", "Content-Type": "application/json"}
 
 # Ground truth already verified live in this project's own eval work
 # (see eval_questions.jsonl's five-company-gross-margin-ranking-fy2025
@@ -123,25 +141,115 @@ async def run_checks():
                 print("  [INFO] no result had a text-fragment sec_url to check (all table-only excerpts or no filing match)")
 
 
-def main():
-    proc = subprocess.Popen([sys.executable, "mcp_server.py", "--port", str(PORT)])
-    try:
+class _RunningServer:
+    """Starts mcp_server.py as a subprocess on `port`, with `env`
+    merged over the current environment (e.g. to set MCP_AUTH_TOKEN/
+    MCP_RATE_LIMIT_REQUESTS for one check without affecting the
+    others), and waits until it's actually accepting connections."""
+
+    def __init__(self, port: int, env: dict | None = None):
+        self.port = port
+        self.base_url = f"http://127.0.0.1:{port}"
+        self.mcp_url = f"{self.base_url}/mcp"
+        self._env = {**os.environ, **(env or {})}
+        self._proc = None
+
+    def __enter__(self):
+        self._proc = subprocess.Popen([sys.executable, "mcp_server.py", "--port", str(self.port)], env=self._env)
         for _ in range(30):
             try:
-                requests.get(BASE_URL, timeout=1)
+                requests.get(self.base_url, timeout=1)
                 break
             except requests.exceptions.ConnectionError:
                 time.sleep(0.5)
         else:
             raise RuntimeError("mcp_server.py did not start listening in time")
-        asyncio.run(run_checks())
-        print("\nAll checks passed.")
-    finally:
-        proc.terminate()
+        return self
+
+    def __exit__(self, *exc_info):
+        self._proc.terminate()
         try:
-            proc.wait(timeout=5)
+            self._proc.wait(timeout=5)
         except subprocess.TimeoutExpired:
-            proc.kill()
+            self._proc.kill()
+
+
+def check_auth():
+    print("\n=== Auth (MCP_AUTH_TOKEN) ===")
+    token = "verify-script-test-token"
+    with _RunningServer(8800, env={"MCP_AUTH_TOKEN": token}) as server:
+        resp = requests.post(server.mcp_url, json={}, headers=MCP_ACCEPT_HEADERS)
+        assert resp.status_code == 401, f"expected 401 with no token, got {resp.status_code}"
+        print("  [OK] request with no Authorization header rejected (401)")
+
+        headers = {**MCP_ACCEPT_HEADERS, "Authorization": "Bearer wrong-token"}
+        resp = requests.post(server.mcp_url, json={}, headers=headers)
+        assert resp.status_code == 401, f"expected 401 with wrong token, got {resp.status_code}"
+        print("  [OK] request with wrong token rejected (401)")
+
+        async def _authed_round_trip():
+            async with httpx.AsyncClient(headers={"Authorization": f"Bearer {token}"}) as http_client:
+                async with streamable_http_client(server.mcp_url, http_client=http_client) as (read, write):
+                    async with ClientSession(read, write) as session:
+                        await session.initialize()
+                        tools = await session.list_tools()
+                        assert len(tools.tools) == 3, tools.tools
+
+        asyncio.run(_authed_round_trip())
+        print("  [OK] request with correct token succeeds end-to-end (list_tools -> 3 tools)")
+
+
+def check_rate_limit():
+    print("\n=== Rate limiting (MCP_RATE_LIMIT_REQUESTS) ===")
+    env = {"MCP_RATE_LIMIT_REQUESTS": "2", "MCP_RATE_LIMIT_WINDOW_SECONDS": "3"}
+    with _RunningServer(8801, env=env) as server:
+        # _RunningServer's own startup probe (a GET /) already consumed
+        # one request against this IP's budget, since the rate limit
+        # applies to every route, not just /mcp -- wait past the window
+        # once so the checks below start from a clean slate instead of
+        # coupling this test to exactly how many requests startup used.
+        time.sleep(3.5)
+        for i in range(2):
+            resp = requests.post(server.mcp_url, json={}, headers=MCP_ACCEPT_HEADERS)
+            assert resp.status_code != 429, f"request {i + 1}/2 unexpectedly rate-limited ({resp.status_code})"
+        print("  [OK] first 2 requests within the limit were not rate-limited")
+
+        resp = requests.post(server.mcp_url, json={}, headers=MCP_ACCEPT_HEADERS)
+        assert resp.status_code == 429, f"expected 429 on the 3rd rapid request, got {resp.status_code}"
+        assert "Retry-After" in resp.headers, "expected a Retry-After header on 429"
+        print(f"  [OK] 3rd rapid request rate-limited (429), Retry-After={resp.headers['Retry-After']}")
+
+        time.sleep(3.5)
+        resp = requests.post(server.mcp_url, json={}, headers=MCP_ACCEPT_HEADERS)
+        assert resp.status_code != 429, "expected rate limit to reset once the window elapsed"
+        print("  [OK] request succeeds again after the window elapses")
+
+
+def check_unauthenticated_requests_are_rate_limited():
+    # Code review caught a real gap in the first version of this
+    # middleware: auth was checked before rate limiting, so a rejected
+    # (401) request never touched the limiter -- credential-guessing
+    # traffic against MCP_AUTH_TOKEN was completely unthrottled. Fixed
+    # by rate-limiting (keyed by client IP) before checking auth. This
+    # proves it: with no Authorization header at all, repeated requests
+    # eventually get 429, not an endless stream of 401s.
+    print("\n=== Rate limiting also throttles unauthenticated requests ===")
+    env = {"MCP_AUTH_TOKEN": "verify-script-test-token", "MCP_RATE_LIMIT_REQUESTS": "2", "MCP_RATE_LIMIT_WINDOW_SECONDS": "3"}
+    with _RunningServer(8802, env=env) as server:
+        time.sleep(3.5)  # clear the startup probe's own budget usage, same reasoning as check_rate_limit()
+        statuses = [requests.post(server.mcp_url, json={}, headers=MCP_ACCEPT_HEADERS).status_code for _ in range(3)]
+        assert all(s in (401, 429) for s in statuses), statuses
+        assert 429 in statuses, f"expected a 429 once the per-IP budget was exhausted, got {statuses}"
+        print(f"  [OK] unauthenticated requests get throttled too (statuses: {statuses})")
+
+
+def main():
+    with _RunningServer(PORT):
+        asyncio.run(run_checks())
+    check_auth()
+    check_rate_limit()
+    check_unauthenticated_requests_are_rate_limited()
+    print("\nAll checks passed.")
 
 
 if __name__ == "__main__":

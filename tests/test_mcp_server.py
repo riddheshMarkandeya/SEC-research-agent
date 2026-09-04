@@ -205,3 +205,83 @@ def test_compare_financial_metric_returns_error_dict_when_empty(monkeypatch):
     out = mcp_server._compare_financial_metric({"anchor_ticker": "AAPL", "metric": "gross_margin"})
 
     assert "error" in out
+
+
+# ---------------------------------------------------------------------------
+# _is_authorized (Week 7 guardrails: mcp_server.py auth)
+# ---------------------------------------------------------------------------
+def test_is_authorized_allows_everything_when_no_token_configured():
+    assert mcp_server._is_authorized(None, "") is True
+    assert mcp_server._is_authorized("Bearer whatever", "") is True
+
+
+def test_is_authorized_accepts_correct_bearer_header():
+    assert mcp_server._is_authorized("Bearer secret123", "secret123") is True
+
+
+def test_is_authorized_rejects_missing_header_when_token_configured():
+    assert mcp_server._is_authorized(None, "secret123") is False
+
+
+def test_is_authorized_rejects_wrong_token():
+    assert mcp_server._is_authorized("Bearer wrong", "secret123") is False
+
+
+def test_is_authorized_rejects_header_missing_bearer_prefix():
+    assert mcp_server._is_authorized("secret123", "secret123") is False
+
+
+# ---------------------------------------------------------------------------
+# _RateLimiter (Week 7 guardrails: mcp_server.py rate limiting)
+# ---------------------------------------------------------------------------
+def test_rate_limiter_allows_up_to_max_requests_within_window():
+    limiter = mcp_server._RateLimiter(max_requests=2, window_seconds=60)
+
+    assert limiter.allow("key", now=0.0) is True
+    assert limiter.allow("key", now=1.0) is True
+
+
+def test_rate_limiter_blocks_request_beyond_max_within_window():
+    limiter = mcp_server._RateLimiter(max_requests=2, window_seconds=60)
+    limiter.allow("key", now=0.0)
+    limiter.allow("key", now=1.0)
+
+    assert limiter.allow("key", now=2.0) is False
+
+
+def test_rate_limiter_allows_again_once_window_elapses():
+    limiter = mcp_server._RateLimiter(max_requests=1, window_seconds=60)
+    limiter.allow("key", now=0.0)
+    assert limiter.allow("key", now=30.0) is False
+
+    assert limiter.allow("key", now=60.0) is True
+
+
+def test_rate_limiter_tracks_keys_independently():
+    limiter = mcp_server._RateLimiter(max_requests=1, window_seconds=60)
+    limiter.allow("key-a", now=0.0)
+
+    assert limiter.allow("key-b", now=0.0) is True
+
+
+def test_rate_limiter_disabled_when_max_requests_is_zero():
+    limiter = mcp_server._RateLimiter(max_requests=0, window_seconds=60)
+
+    for i in range(10):
+        assert limiter.allow("key", now=float(i)) is True
+
+
+def test_rate_limiter_prunes_expired_windows_to_avoid_unbounded_growth():
+    # A long-running server keyed by client IP (the no-auth default)
+    # would otherwise keep one dict entry per distinct caller forever,
+    # even long after that caller's window expired and it never
+    # reconnects -- an unbounded memory leak. Found in code review.
+    limiter = mcp_server._RateLimiter(max_requests=5, window_seconds=60)
+    limiter.allow("key-a", now=0.0)
+    limiter.allow("key-b", now=0.0)
+    assert len(limiter._windows) == 2
+
+    limiter.allow("key-c", now=100.0)  # key-a/key-b's windows are long expired by now
+
+    assert len(limiter._windows) == 1
+    assert "key-c" in limiter._windows

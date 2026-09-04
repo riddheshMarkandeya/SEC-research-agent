@@ -2943,6 +2943,161 @@ underlying dispatch data was independently confirmed correct via direct
 `call_compare_financial_metric()`/`get_ratio_all_companies()` calls
 before any of the flaky re-runs.
 
+### Week 7 guardrails, part 2: `mcp_server.py` auth + rate limiting (2026-09-01)
+
+Completes the last open Week 7 sub-item — part 1 (citation hard-gate,
+Ollama retry/backoff, above) deliberately left this out since neither
+touches `run_agent()`/`llm_backends.py`. Before this, `mcp_server.py`
+had zero auth or throttling: anyone who could reach the port could call
+any tool an unlimited number of times.
+
+- **Auth: plain shared-secret bearer token, not the `mcp` SDK's native
+  OAuth support.** `Server.streamable_http_app()` does accept
+  `auth=AuthSettings(...)`/`token_verifier=...`, but `AuthSettings`
+  requires `issuer_url`/`resource_server_url` (confirmed live via
+  `inspect` on `mcp.server.auth.settings.AuthSettings`) — a full OAuth
+  2.1 Protected Resource Metadata flow, built for multi-tenant
+  OAuth-issuing deployments. This is a single-operator local/small-VM
+  tool with no OAuth issuer anywhere in the stack; standing one up to
+  gate one static token would be the same shape of overkill already
+  rejected elsewhere in this project (a fully dynamic formula
+  calculator, `effective_tax_rate` before its tags exist). Went with a
+  plain `MCP_AUTH_TOKEN` shared secret instead, checked against an
+  `Authorization: Bearer <token>` header.
+- **Rate limiting: hand-rolled in-memory fixed-window counter, not a
+  library.** No rate-limiting package (`slowapi`, `limits`, etc.) was
+  already a dependency; `starlette`/`uvicorn` are already transitive via
+  `mcp` (`requirements.txt:27-28`). `uvicorn.run()` runs with no
+  `workers=` argument, i.e. always a single process, so an in-memory
+  counter needs no cross-process coordination (no Redis, no shared
+  store) — a ~30-line class was simpler and added zero new dependencies
+  for a problem this small.
+- **Implementation, `mcp_server.py`.** `_is_authorized(auth_header,
+  expected_token)` (pure function — `expected_token == ""` disables auth
+  entirely, matching every other `.env`-optional setting in this
+  project) and `_RateLimiter` (fixed-window counter keyed by string,
+  `now` passed in explicitly rather than read from `time.time()`
+  internally, so it stays deterministic and testable without real
+  sleeps) are both plain logic with no ASGI/network dependency — full
+  red-green TDD, per this project's pure-logic carve-out. Both are
+  wired together in one `_AuthRateLimitMiddleware` — a **plain ASGI
+  middleware**, deliberately not Starlette's `BaseHTTPMiddleware` (which
+  is documented to interfere with streaming responses and
+  client-disconnect propagation — a real risk sitting on top of
+  `streamable_http_app()`'s SSE-based transport) — added via
+  `app.add_middleware(...)` in `build_app()` (confirmed live that
+  `streamable_http_app()` returns a real `starlette.applications.
+  Starlette` instance, so this is a supported hook, not a workaround).
+  Rate limiting runs **before** auth, keyed by **client IP**, not the
+  token — see the code-review fixes below for why.
+- **New config, `config.py`/`.env.example`**, following the existing
+  `os.getenv("NAME", "<fallback>")` convention exactly: `MCP_AUTH_TOKEN`
+  (default `""`, auth disabled), `MCP_RATE_LIMIT_REQUESTS` (default
+  `60`, `0` disables it), `MCP_RATE_LIMIT_WINDOW_SECONDS` (default
+  `60`). Deliberately env vars, not `click` CLI flags, for the token —
+  an env var doesn't show up in `ps`/process-list output the way a CLI
+  argument would, matching how `GEMINI_API_KEY` is already handled.
+- **Out of scope, deliberately**: per-tool rate limits (no evidence any
+  one tool is disproportionately expensive), token rotation/expiry or
+  multiple tokens (single shared secret is enough for "not wide open"
+  on a single-operator tool, not a multi-tenant service). Also, real but
+  deferred: IP-based rate limiting has an inherent gap behind a reverse
+  proxy (every real caller collapses onto the proxy's own IP, or the
+  literal `"unknown"` key on a transport that doesn't populate
+  `scope["client"]` at all — flagged in the third code-review pass)
+  since `uvicorn.run()` sees only the direct TCP peer. Fixing this
+  properly means trusting an `X-Forwarded-For`-style header, which is
+  its own security decision (which proxies to trust) — not worth making
+  speculatively before this tool is ever actually deployed behind one.
+
+**Issues caught by `/code-review` before shipping**, across two review
+passes (the first found and fixed the 3 below; see further down for
+what the second pass found):
+
+1. **Timing side-channel on the token comparison.** `auth_header ==
+   f"Bearer {expected_token}"` is a plain `==`, which short-circuits on
+   the first mismatched character in CPython — a remote attacker
+   measuring response latency could recover the token byte-by-byte
+   instead of needing the whole secret at once. Fixed with
+   `secrets.compare_digest()`.
+2. **`_RateLimiter._windows` never evicted expired keys.** With the
+   no-auth default (rate-limit key = client IP), a long-running server
+   would keep one dict entry per distinct caller IP forever, even after
+   that caller's window expired and it never reconnects — a slow,
+   unbounded memory leak. Fixed by pruning every expired key (not just
+   the one being checked) on each `allow()` call. (A follow-up
+   efficiency pass flagged that this makes every call an O(n) full-dict
+   rebuild rather than an O(1) per-key check — noted, not fixed: at this
+   project's actual scale, a single-operator tool with at most a
+   handful of distinct callers, the real cost is negligible, and an
+   amortized/periodic-sweep version would add real complexity — a
+   counter, a threshold, a test coupled to that threshold — for a
+   problem that doesn't exist yet. Revisit only if this server is ever
+   actually deployed at a scale where it matters.)
+3. **`BaseHTTPMiddleware`'s documented streaming/SSE caveat.** The first
+   version subclassed Starlette's `BaseHTTPMiddleware`, which is
+   documented to interfere with streaming responses and client-
+   disconnect propagation — a real risk given `streamable_http_app()`'s
+   transport is SSE-based, even though today's tool calls are small,
+   fast, single-shot JSON round-trips that wouldn't have surfaced it.
+   Rewritten as a plain ASGI middleware (`__call__(self, scope, receive,
+   send)`) instead, which doesn't have this caveat and is still a
+   supported target for `app.add_middleware(...)`.
+
+**A more significant issue surfaced on the second review pass**:
+**unauthenticated requests never touched the rate limiter at all.** The
+original design checked auth first, then rate-limited using the shared
+token as the key. That meant a rejected (401) request short-circuited
+before `_rate_limiter.allow()` ever ran — credential-guessing traffic
+against `MCP_AUTH_TOKEN` was completely unthrottled, and separately,
+keying by the one shared token meant every *legitimate* caller using it
+drew from a single global budget, so one noisy caller could lock out
+every other one. Both problems trace to the same design choice (keying
+by token) and both are fixed by the same change: **rate limiting now
+runs before auth, keyed by client IP.** Guessing traffic from one IP
+gets throttled regardless of whether any guess is ever correct, and
+separate legitimate callers no longer share a budget. Also fixed in the
+same pass: the `Retry-After` header used `int()` on the already-`float`
+`MCP_RATE_LIMIT_WINDOW_SECONDS`, which truncates down — a caller
+retrying exactly at the advertised time on a fractional-second window
+(e.g. `2.5`) could still get rate-limited again. Changed to
+`math.ceil()`, so the advertised wait is never shorter than the real
+one.
+
+**Verified, not just tested.** `tests/test_mcp_server.py` gained 11 new
+unit tests for `_is_authorized`/`_RateLimiter` (written red first, then
+green, including one added during the code-review fix for the pruning
+behavior); full suite **316/316**, up from 305. The actual HTTP
+enforcement (including the auth/rate-limit *ordering*, which is glue
+logic no unit test exercises) is live-only per this project's carve-out
+(same reasoning as the rest of `mcp_server.py`'s protocol wiring), so
+`tests/manual/verify_mcp_server.py` was extended with three new live
+checks against the real running server: `check_auth()` (no/wrong bearer
+token → 401, correct token → full `list_tools` round-trip succeeds),
+`check_rate_limit()` (requests within a tiny `MCP_RATE_LIMIT_REQUESTS`
+budget succeed, the next → 429 with a `Retry-After` header, and a
+request after the window elapses succeeds again), and
+`check_unauthenticated_requests_are_rate_limited()` (added for the
+auth-ordering fix — repeated unauthenticated requests against a tiny
+budget eventually get 429, not an endless stream of 401s, confirmed
+live: `[401, 401, 429]`). All 3 pre-existing functional checks
+(list_tools, get_financial_fact, compare_financial_metric, sec_url
+liveness, text-fragment excerpt) still ran unauthenticated against a
+default-config server and passed identically to before, confirming this
+is backward compatible by default.
+
+One real bug caught while writing `check_rate_limit()` (separate from
+the code-review findings above): the manual verify script's own
+server-startup readiness probe (a `GET /`) shares the same rate-limit
+budget as the check's own requests, since the middleware correctly
+applies to every route, not just `/mcp` — the first run failed with an
+off-by-one-looking 429 on what should've been the 2nd allowed request.
+Not a bug in `mcp_server.py` (a flood of requests to any route should
+count against the limit); fixed by having the check sleep past the
+rate-limit window once after the server becomes ready, so it starts
+from a clean slate instead of coupling the test to exactly how many
+requests startup happens to use.
+
 ## Next steps
 
 > This section used to be a running "X: FIXED, see above" log that
@@ -3152,19 +3307,20 @@ with real `sec_url`s (plus text-fragment deep links for search_filings
 citations), live-verified end-to-end. Auth/rate-limiting deliberately
 left for item 6 below.
 
-**6. Week 7 — guardrails — PARTIALLY DONE, 2026-08-26 — see "Week 7
-guardrails, part 1" above.** Citation hard-gate and retry/backoff
-(Ollama side) shipped. **Still open**: rate limits (`mcp_server.py` has
-no auth/throttling at all today) and Langfuse tracing (new external
-dependency, needs an account/API key) — deliberately scoped out of part
-1 since neither touches `run_agent()`/`llm_backends.py` the way the
-first two did. **Added requirement (2026-08-28, see "Ratio-formula
-registration made cheap" above)**: when Langfuse tracing is built, it
-should also capture unmet metric/ratio requests (ticker, requested
-metric, question) — there is no logging/telemetry for this anywhere
-today, so "let evidence decide" for new formulas is currently 100%
-manual. Deliberately not building a separate bespoke logging mechanism
-for just this, to avoid two overlapping observability systems.
+**6. Week 7 — guardrails — 3 of 4 sub-items DONE, 2026-09-01 — see "Week
+7 guardrails, part 1" (2026-08-26) and "part 2" (2026-09-01) above.**
+Citation hard-gate, Ollama retry/backoff, and `mcp_server.py` auth +
+rate limiting all shipped. **Still open**: Langfuse tracing (new
+external dependency, needs an account/API key) — deliberately scoped
+out of both parts since it doesn't touch `run_agent()`/`llm_backends.py`
+or `mcp_server.py` the way the other three did. **Added requirement
+(2026-08-28, see "Ratio-formula registration made cheap" above)**: when
+Langfuse tracing is built, it should also capture unmet metric/ratio
+requests (ticker, requested metric, question) — there is no
+logging/telemetry for this anywhere today, so "let evidence decide" for
+new formulas is currently 100% manual. Deliberately not building a
+separate bespoke logging mechanism for just this, to avoid two
+overlapping observability systems.
 
 **7. Week 8 — polish + write-up.**
 
