@@ -56,6 +56,7 @@ from agent import (
 from config import MCP_AUTH_TOKEN, MCP_RATE_LIMIT_REQUESTS, MCP_RATE_LIMIT_WINDOW_SECONDS
 from edgar_ingest import get_filing_url
 from retrieval import hybrid_search
+from tracing import traced_span
 
 TEXT_FRAGMENT_EXCERPT_MAX_LEN = 100
 
@@ -125,28 +126,45 @@ def _fact_source(ticker: str, fact: dict) -> dict:
 
 
 def _search_filings(args: dict) -> list[dict]:
-    query = args.get("query")
-    if not query:
-        return []
-    results = hybrid_search(query, ticker=args.get("ticker"), top_k=CHUNKS_PER_SEARCH)
-    return [{"text": r["text"], "source": _chunk_source(r["metadata"], r["text"])} for r in results]
+    with traced_span("tool", "search_filings", input=args) as span:
+        query = args.get("query")
+        if not query:
+            return []
+        results = hybrid_search(query, ticker=args.get("ticker"), top_k=CHUNKS_PER_SEARCH)
+        if span is not None:
+            span.update(output={"result_count": len(results)})
+        return [{"text": r["text"], "source": _chunk_source(r["metadata"], r["text"])} for r in results]
 
 
 def _get_financial_fact(args: dict) -> dict:
-    fact = call_get_financial_fact(args)
-    if fact is None:
-        return {"error": "not available for this company/metric/period"}
-    return {"value": fact["value"], "unit": fact["unit"], "source": _fact_source(args["ticker"], fact)}
+    # call_get_financial_fact() records its own unmet-metric-request
+    # event internally (no `question` here -- MCP tool calls carry no
+    # free-text question) -- this span is just the general tool-call
+    # trace, same as agent.py's _dispatch_tool_call.
+    with traced_span("tool", "get_financial_fact", input=args) as span:
+        fact = call_get_financial_fact(args)
+        if fact is None:
+            if span is not None:
+                span.update(output={"found": False})
+            return {"error": "not available for this company/metric/period"}
+        if span is not None:
+            span.update(output={"found": True, "value": fact.get("value")})
+        return {"value": fact["value"], "unit": fact["unit"], "source": _fact_source(args["ticker"], fact)}
 
 
 def _compare_financial_metric(args: dict) -> dict:
-    data = call_compare_financial_metric(args)
-    if not data:
-        return {"error": "not available for this metric/period"}
-    return {
-        ticker: {"value": fact["value"], "unit": fact["unit"], "source": _fact_source(ticker, fact)}
-        for ticker, fact in data.items()
-    }
+    with traced_span("tool", "compare_financial_metric", input=args) as span:
+        data = call_compare_financial_metric(args)
+        if not data:
+            if span is not None:
+                span.update(output={"found": False})
+            return {"error": "not available for this metric/period"}
+        if span is not None:
+            span.update(output={"found": True, "companies": sorted(data)})
+        return {
+            ticker: {"value": fact["value"], "unit": fact["unit"], "source": _fact_source(ticker, fact)}
+            for ticker, fact in data.items()
+        }
 
 
 _TOOL_HANDLERS = {

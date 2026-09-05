@@ -65,3 +65,10 @@ RERANK_MODEL_NAME = os.getenv("RERANK_MODEL_NAME", "cross-encoder/ms-marco-MiniL
 MCP_AUTH_TOKEN = os.getenv("MCP_AUTH_TOKEN", "")
 MCP_RATE_LIMIT_REQUESTS = int(os.getenv("MCP_RATE_LIMIT_REQUESTS", "60"))
 MCP_RATE_LIMIT_WINDOW_SECONDS = float(os.getenv("MCP_RATE_LIMIT_WINDOW_SECONDS", "60"))
+
+# Langfuse tracing (tracing.py, Week 7 guardrails). Empty keys mean
+# tracing is disabled entirely (matches every other .env-optional
+# setting here) -- sign up free at langfuse.com to get keys.
+LANGFUSE_PUBLIC_KEY = os.getenv("LANGFUSE_PUBLIC_KEY", "")
+LANGFUSE_SECRET_KEY = os.getenv("LANGFUSE_SECRET_KEY", "")
+LANGFUSE_BASE_URL = os.getenv("LANGFUSE_BASE_URL", "https://cloud.langfuse.com")

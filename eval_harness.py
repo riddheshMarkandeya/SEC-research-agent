@@ -63,6 +63,7 @@ from config import DEFAULT_BACKEND, GEMINI_MODEL_NAME, OLLAMA_MODEL_NAME, OLLAMA
 # Ollama, regardless of --backend); OLLAMA_MODEL_NAME/GEMINI_MODEL_NAME are
 # both also used by save_report() to record which model actually answered.
 from llm_backends import BACKENDS
+from tracing import flush
 from numeric_utils import extract_numbers, normalize
 
 QUESTIONS_PATH = Path("./eval/eval_questions.jsonl")
@@ -285,6 +286,7 @@ def run_eval(
             }
         )
 
+    flush()
     return results
 
 

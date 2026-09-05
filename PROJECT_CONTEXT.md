@@ -3098,6 +3098,142 @@ rate-limit window once after the server becomes ready, so it starts
 from a clean slate instead of coupling the test to exactly how many
 requests startup happens to use.
 
+### Week 7 guardrails, part 3: Langfuse tracing — all 4 sub-items done (2026-09-04)
+
+Closes the last open Week 7 guardrails item. Before this, there was
+zero observability into what the agent does at runtime (no record of
+questions, tool calls, answers, or refusals beyond terminal scrollback),
+and separately — the requirement added 2026-08-28 during the
+ratio-formula-registration work — "let evidence decide" for adding new
+financial-ratio formulas was 100% manual, since nothing logged "a
+metric/ratio was requested and unavailable." Both addressed in one
+pass rather than as two systems, per the user's explicit direction at
+the time.
+
+- **New module, `tracing.py`.** Single-responsibility, matching
+  `config.py`/`numeric_utils.py`'s style — `agent.py`/`mcp_server.py`/
+  `eval_harness.py` never import the `langfuse` SDK directly, only
+  `traced_span()`/`record_unmet_metric_request()`/`flush()`.
+  `TRACING_ENABLED = bool(LANGFUSE_PUBLIC_KEY and LANGFUSE_SECRET_KEY)`
+  gates every call explicitly (same pattern
+  `llm_backends._get_gemini_client()` already uses for
+  `GEMINI_API_KEY`) rather than trusting the SDK's own behavior when
+  unconfigured, which Langfuse's docs don't fully commit to either way
+  (confirmed live: an unconfigured `Langfuse()` prints a warning and
+  disables itself rather than raising — reassuring, but this project's
+  own explicit gate doesn't depend on that being true).
+- **Package: `langfuse==4.15.1`** (OTel-based v4 client, current at
+  implementation time — pinned to what `pip install langfuse` actually
+  resolved, not a guessed number). New config
+  (`LANGFUSE_PUBLIC_KEY`/`LANGFUSE_SECRET_KEY`/`LANGFUSE_BASE_URL`,
+  default `""`/`""`/`"https://cloud.langfuse.com"`) follows the
+  existing `os.getenv("NAME", "<fallback>")` convention exactly.
+- **Instrumentation.** `agent.py`'s `run_agent()` became a thin traced
+  wrapper (renamed the real implementation to `_run_agent_impl()`) — a
+  single choke point for the top-level span regardless of which of
+  `_run_agent_impl`'s several internal return paths fires, needing zero
+  changes to the tool-calling loop itself and no changes to any
+  existing test (tracing is disabled in the test env, so `traced_span`
+  yields `None` and does nothing observable). `_dispatch_tool_call()`
+  wraps each of its three branches in a `"tool"`-typed span, nesting
+  automatically under the `run_agent` span via the SDK's OTel-based
+  context propagation (confirmed live). `mcp_server.py`'s three tool
+  handlers get the same tool-span wrapping, so MCP clients get equal
+  observability to the CLI/eval path.
+- **The unmet-metric-request signal, inside
+  `call_get_financial_fact()`/`call_compare_financial_metric()`**
+  (`agent.py`) — the single shared implementation both `agent.py`'s
+  dispatch and `mcp_server.py`'s wrappers already go through, so
+  instrumenting here covers every entry point with no duplication.
+  Both functions gained an optional `question: str | None = None`
+  parameter (agent.py's dispatch has one to pass through;
+  `mcp_server.py`'s direct tool callers don't, so it's `None` there).
+  Two distinct `reason` values, not one, because `call_get_financial_fact()`
+  already returned `None` for genuinely different situations conflated
+  into one signal: `reason="unknown_metric"` fires when `metric` isn't
+  recognized at all (the actual "should we add a formula" signal the
+  original request was about), `reason="no_data_for_ticker"` fires when
+  a *recognized* metric/ratio's underlying lookup found no data for
+  this specific ticker/period (the same shape of gap already documented
+  for `inventory_turnover`/AAPL/MSFT). Deliberately **not** recorded for
+  boundary rejections (malformed/invented args, invalid yoy_growth/
+  multi-year-average combinations) — those are a schema-violation
+  problem, not a missing-formula problem, and would just be noise.
+- **Out of scope, deliberately, per the user's direction**: per-call
+  LLM "generation" tracing inside `llm_backends.py` (token counts,
+  prompt/completion, cost/latency per Ollama/Gemini call). The
+  trace-level view already answers "what did the agent do on this
+  run"; per-call detail is a real but separate enhancement with no
+  evidence yet that it's needed, and would mean touching all 6
+  backend-specific functions across both backends. Recorded as its own
+  "Next steps" item below rather than folded in here, to be scoped
+  later. Also out of scope: any UI/dashboard work (Langfuse's own
+  hosted dashboard is the consumer), a third `reason` value
+  distinguishing "deliberately single-company-only by design" from a
+  genuine cross-company data gap (a human reading the metric name in
+  the dashboard can already tell), and retry/error-handling around
+  Langfuse's own requests (the SDK already documents catching and
+  logging its own errors).
+
+**Verified, not just tested.** Before writing any wiring code, the
+actual `langfuse` SDK was installed and inspected live (`inspect.signature`
+on `Langfuse.__init__`/`start_as_current_observation`/`LangfuseSpan.update`)
+to confirm the real current API shape rather than trusting doc snippets
+alone — this caught that the docs' `create_event()`-style claim doesn't
+exist (a short `as_type="span"` observation is the real mechanism used
+here) and confirmed `as_type="tool"`/`"agent"` are real, valid types. A
+throwaway smoke-test script constructed a real client with this
+project's actual credentials, wrote nested spans, called `flush()`, and
+then read them back via Langfuse's own `observations` API — confirming
+the write path end-to-end before any production code was written, the
+same "verify live, don't just trust" discipline used everywhere else in
+this project. `tests/test_tracing.py` (11 new tests) and 11 new tests
+in `test_agent.py` cover the pure/deterministic gating and
+reason-tagging logic with mocks, red-then-green; full suite
+**334/334**, up from 316. `tests/manual/verify_tracing.py` (new) runs a
+real `run_agent()` question through `--backend gemini` and a real
+unmet-request case, then polls Langfuse's `observations` API to confirm
+both actually landed with the right shape — live-run result: the
+`run_agent` span appeared (`type=AGENT`) with 1 nested tool span
+underneath it, and the `unmet_metric_request` event appeared with
+`reason="unknown_metric"` for a deliberately-unsupported metric name.
+One bug caught while writing this script (not in the tracing code):
+Langfuse's v2 `observations` endpoint always returns `input`/`output`
+as raw JSON strings — the `parse_io_as_json` parameter documented for
+an older version no longer exists and the API 400s on it — fixed by
+parsing the strings with `json.loads()` in the verify script itself.
+
+**Two rounds of real gaps caught by `/code-review`, both in the same
+area** (the unmet-metric-request tracing, not the general span/trace
+plumbing, which came back clean both times):
+
+1. **First pass**: `call_get_financial_fact()`'s `yoy_growth` and
+   `start_fiscal_year`/`end_fiscal_year` branches returned
+   `get_yoy_growth()`/`get_multi_year_average()`'s result directly,
+   without the same `if result is None: record_unmet_metric_request(...)`
+   check the plain `get_metric()`/`get_ratio()` path already had — so a
+   genuine no-data case on either path (e.g. a 3-year average spanning
+   years with real gaps in tagged data) was silently invisible to the
+   new signal, while the exact same kind of gap on the plain-metric
+   path was captured. Fixed with the same `reason="no_data_for_ticker"`
+   pattern (4 new regression tests: 2 confirming both paths now record
+   it, 2 confirming the boundary-rejection combinations on those same
+   paths still correctly don't).
+2. **Second pass**: the opposite-direction bug in the *same* code —
+   `metric not in DEFAULT_METRIC_TAGS and metric not in RATIO_DEFINITIONS`
+   is `True` when `metric` is missing from `args` entirely (`None`),
+   not just when it names something unrecognized. A model omitting the
+   required `metric` key (a schema violation this function's own
+   docstring already calls out as expected, same class of issue as the
+   invented-`segment`-key case) was firing
+   `record_unmet_metric_request(ticker, None, reason="unknown_metric", ...)`
+   — polluting the "should we add a formula" signal with schema-noise
+   entries instead of real unsupported-metric names, in both
+   `call_get_financial_fact()` and `call_compare_financial_metric()`.
+   Fixed by only recording when `metric is not None` (2 new regression
+   tests). A third `/code-review` pass afterward found no further
+   issues, closing the loop per `CLAUDE.md`'s cap.
+
 ## Next steps
 
 > This section used to be a running "X: FIXED, see above" log that
@@ -3307,20 +3443,23 @@ with real `sec_url`s (plus text-fragment deep links for search_filings
 citations), live-verified end-to-end. Auth/rate-limiting deliberately
 left for item 6 below.
 
-**6. Week 7 — guardrails — 3 of 4 sub-items DONE, 2026-09-01 — see "Week
-7 guardrails, part 1" (2026-08-26) and "part 2" (2026-09-01) above.**
-Citation hard-gate, Ollama retry/backoff, and `mcp_server.py` auth +
-rate limiting all shipped. **Still open**: Langfuse tracing (new
-external dependency, needs an account/API key) — deliberately scoped
-out of both parts since it doesn't touch `run_agent()`/`llm_backends.py`
-or `mcp_server.py` the way the other three did. **Added requirement
-(2026-08-28, see "Ratio-formula registration made cheap" above)**: when
-Langfuse tracing is built, it should also capture unmet metric/ratio
-requests (ticker, requested metric, question) — there is no
-logging/telemetry for this anywhere today, so "let evidence decide" for
-new formulas is currently 100% manual. Deliberately not building a
-separate bespoke logging mechanism for just this, to avoid two
-overlapping observability systems.
+**6. DONE, 2026-09-04 — Week 7 guardrails, all 4 sub-items — see "Week
+7 guardrails" parts 1 (2026-08-26), 2 (2026-09-01), and 3 (2026-09-04)
+above.** Citation hard-gate, Ollama retry/backoff, `mcp_server.py` auth
++ rate limiting, and Langfuse tracing (including the unmet-metric/
+ratio-request signal added as a requirement 2026-08-28) all shipped and
+live-verified. Week 7 is fully closed out.
+
+**New, 2026-09-04 — per-call LLM "generation" tracing.** Explicitly
+scoped out of Langfuse tracing (part 3 above) per the user's direction
+to discuss separately rather than bundle in: token counts, prompt/
+completion text, and per-call cost/latency for each individual Ollama/
+Gemini call, as Langfuse "generation" objects nested under the existing
+`run_agent` span. Not yet scoped — would mean touching all 6
+backend-specific functions in `llm_backends.py` (3 each for Ollama/
+Gemini). No concrete evidence yet that trace-level detail (question,
+answer, which tools were called, citation warnings — already shipped)
+is insufficient; revisit when a real debugging need shows up.
 
 **7. Week 8 — polish + write-up.**
 

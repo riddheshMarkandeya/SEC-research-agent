@@ -26,3 +26,8 @@ rank_bm25==0.2.2
 # get_financial_fact/compare_financial_metric over Streamable HTTP.
 # Pulls in starlette + uvicorn for the HTTP transport.
 mcp==2.1.1
+
+# Observability (tracing.py, Week 7 guardrails) — traces agent runs and
+# tool calls to Langfuse when LANGFUSE_PUBLIC_KEY/LANGFUSE_SECRET_KEY
+# are set; a no-op otherwise. OTel-based v4 client.
+langfuse==4.15.1

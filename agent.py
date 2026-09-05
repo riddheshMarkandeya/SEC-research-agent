@@ -41,6 +41,7 @@ from formulas import (
 from llm_backends import BACKENDS
 from numeric_utils import UNIT_MULTIPLIERS, extract_numbers, normalize
 from retrieval import hybrid_search
+from tracing import flush, record_unmet_metric_request, traced_span
 from xbrl_facts import DEFAULT_METRIC_TAGS, get_metric, get_metric_all_companies, is_metric_tagged
 
 MAX_TOOL_ITERATIONS = 6
@@ -383,7 +384,7 @@ _FACT_ARG_KEYS = {
 }
 
 
-def call_get_financial_fact(args: dict) -> dict | None:
+def call_get_financial_fact(args: dict, question: str | None = None) -> dict | None:
     """This is a real system boundary, not just an internal call — the
     model doesn't reliably respect the schema. Found live: asked for
     "effective tax rate" (not a supported metric, not in the schema's
@@ -418,12 +419,40 @@ def call_get_financial_fact(args: dict) -> dict | None:
     3-year-average question with no deterministic path (see that
     function's own docstring). Supported for every RATIO_DEFINITIONS
     metric -- formulas._get_annual_value() dispatches any of them
-    generically (see its own docstring)."""
+    generically (see its own docstring).
+
+    `question` (optional -- only agent.py's tool-dispatch path has one;
+    mcp_server.py's direct callers don't) is passed through to
+    record_unmet_metric_request() purely for observability, see below.
+
+    Week 7 guardrails (Langfuse): records an unmet-metric-request event
+    when `metric` isn't recognized at all (reason="unknown_metric" --
+    the "should we add a formula for this" signal) or when it's a
+    recognized metric/ratio but the underlying lookup -- get_metric(),
+    get_ratio(), get_yoy_growth(), or get_multi_year_average(), all four
+    genuine-data-lookup paths below -- found no data for this
+    ticker/period (reason="no_data_for_ticker" -- the same shape of gap
+    already found for inventory_turnover/AAPL/MSFT). Deliberately NOT
+    recorded for boundary rejections above (malformed/invented args,
+    invalid yoy_growth/multi-year-average combinations) -- those are a
+    schema-violation problem, not a "this formula doesn't exist yet"
+    problem, and would just be noise on the signal. Found in code
+    review: the yoy_growth/multi-year-average paths were initially
+    missed, only the plain get_metric()/get_ratio() path recorded this
+    at first."""
     if set(args) - _FACT_ARG_KEYS:
         return None
     ticker = args.get("ticker")
     metric = args.get("metric")
-    if ticker not in COMPANIES or (metric not in DEFAULT_METRIC_TAGS and metric not in RATIO_DEFINITIONS):
+    if ticker not in COMPANIES:
+        return None
+    if metric not in DEFAULT_METRIC_TAGS and metric not in RATIO_DEFINITIONS:
+        # metric is None here means the model omitted a required key
+        # entirely (schema violation, like the invented-extra-key case
+        # above) rather than naming a real but unsupported metric --
+        # only the latter is worth recording. Found in code review.
+        if metric is not None:
+            record_unmet_metric_request(ticker, metric, reason="unknown_metric", question=question)
         return None
     fiscal_year = args.get("fiscal_year")
     fiscal_period = args.get("fiscal_period", "FY")
@@ -433,14 +462,24 @@ def call_get_financial_fact(args: dict) -> dict | None:
     if start_fiscal_year is not None or end_fiscal_year is not None:
         if args.get("yoy_growth") or start_fiscal_year is None or end_fiscal_year is None:
             return None
-        return get_multi_year_average(ticker, metric, start_fiscal_year, end_fiscal_year)
+        result = get_multi_year_average(ticker, metric, start_fiscal_year, end_fiscal_year)
+        if result is None:
+            record_unmet_metric_request(ticker, metric, reason="no_data_for_ticker", question=question)
+        return result
     if args.get("yoy_growth"):
         if metric in RATIO_DEFINITIONS:
             return None
-        return get_yoy_growth(ticker, metric, fiscal_year, fiscal_period, period_end_date)
+        result = get_yoy_growth(ticker, metric, fiscal_year, fiscal_period, period_end_date)
+        if result is None:
+            record_unmet_metric_request(ticker, metric, reason="no_data_for_ticker", question=question)
+        return result
     if metric in RATIO_DEFINITIONS:
-        return get_ratio(ticker, metric, fiscal_year, fiscal_period, period_end_date)
-    return get_metric(ticker, metric, fiscal_year, fiscal_period, period_end_date)
+        result = get_ratio(ticker, metric, fiscal_year, fiscal_period, period_end_date)
+    else:
+        result = get_metric(ticker, metric, fiscal_year, fiscal_period, period_end_date)
+    if result is None:
+        record_unmet_metric_request(ticker, metric, reason="no_data_for_ticker", question=question)
+    return result
 
 
 def _format_fact_value(fact: dict) -> str:
@@ -475,7 +514,7 @@ def _fact_as_result(fact: dict, args: dict) -> dict:
 _COMPARE_ARG_KEYS = {"anchor_ticker", "metric", "fiscal_year", "fiscal_period", "period_end_date"}
 
 
-def call_compare_financial_metric(args: dict) -> dict[str, dict]:
+def call_compare_financial_metric(args: dict, question: str | None = None) -> dict[str, dict]:
     """Same boundary-validation reasoning as call_get_financial_fact —
     don't trust the schema was followed, including rejecting an
     unrecognized extra key (e.g. an invented `segment` filter) rather
@@ -488,19 +527,36 @@ def call_compare_financial_metric(args: dict) -> dict[str, dict]:
     name), but get_ratio_all_companies() checks the flag internally and
     returns the same graceful `{}` any other unsupported metric gets --
     see RATIO_DEFINITIONS' own comment for why there's no cross-company
-    version of those five yet."""
+    version of those five yet.
+
+    Same Week 7 Langfuse unmet-metric-request tracing as
+    call_get_financial_fact -- see that function's docstring. The
+    `supports_cross_company=False` case above also lands in the generic
+    `reason="no_data_for_ticker"` bucket rather than a third reason
+    value: a human looking at the metric name in the Langfuse dashboard
+    can already tell that case apart, not worth the extra complexity."""
     if set(args) - _COMPARE_ARG_KEYS:
         return {}
     anchor_ticker = args.get("anchor_ticker")
     metric = args.get("metric")
-    if anchor_ticker not in COMPANIES or (metric not in DEFAULT_METRIC_TAGS and metric not in RATIO_DEFINITIONS):
+    if anchor_ticker not in COMPANIES:
+        return {}
+    if metric not in DEFAULT_METRIC_TAGS and metric not in RATIO_DEFINITIONS:
+        # See call_get_financial_fact's matching guard: metric=None is a
+        # schema violation, not a "this formula doesn't exist" signal.
+        if metric is not None:
+            record_unmet_metric_request(anchor_ticker, metric, reason="unknown_metric", question=question)
         return {}
     fiscal_year = args.get("fiscal_year")
     fiscal_period = args.get("fiscal_period", "FY")
     period_end_date = args.get("period_end_date")
     if metric in RATIO_DEFINITIONS:
-        return get_ratio_all_companies(anchor_ticker, metric, fiscal_year, fiscal_period, period_end_date)
-    return get_metric_all_companies(anchor_ticker, metric, fiscal_year, fiscal_period, period_end_date)
+        result = get_ratio_all_companies(anchor_ticker, metric, fiscal_year, fiscal_period, period_end_date)
+    else:
+        result = get_metric_all_companies(anchor_ticker, metric, fiscal_year, fiscal_period, period_end_date)
+    if not result:
+        record_unmet_metric_request(anchor_ticker, metric, reason="no_data_for_ticker", question=question)
+    return result
 
 
 def _comparison_as_results(data: dict[str, dict], metric: str) -> list[dict]:
@@ -821,36 +877,62 @@ def _dispatch_tool_call(
     if name == "get_financial_fact":
         if verbose:
             print(f"  [tool call] get_financial_fact({args!r})")
-        fact = call_get_financial_fact(args)
-        if fact is None:
-            return _format_no_fact_message(args)
-        start_index = len(all_results) + 1
-        result = _fact_as_result(fact, args)
-        all_results.append(result)
-        return _format_results_block([result], start_index)
+        with traced_span("tool", name, input=args) as span:
+            fact = call_get_financial_fact(args, question=question)
+            if fact is None:
+                if span is not None:
+                    span.update(output={"found": False})
+                return _format_no_fact_message(args)
+            start_index = len(all_results) + 1
+            result = _fact_as_result(fact, args)
+            all_results.append(result)
+            if span is not None:
+                span.update(output={"found": True, "value": fact.get("value")})
+            return _format_results_block([result], start_index)
 
     if name == "compare_financial_metric":
         if verbose:
             print(f"  [tool call] compare_financial_metric({args!r})")
-        data = call_compare_financial_metric(args)
-        if not data:
-            return _format_no_comparison_message(args)
-        start_index = len(all_results) + 1
-        results = _comparison_as_results(data, args.get("metric", ""))
-        all_results.extend(results)
-        return _format_results_block(results, start_index)
+        with traced_span("tool", name, input=args) as span:
+            data = call_compare_financial_metric(args, question=question)
+            if not data:
+                if span is not None:
+                    span.update(output={"found": False})
+                return _format_no_comparison_message(args)
+            start_index = len(all_results) + 1
+            results = _comparison_as_results(data, args.get("metric", ""))
+            all_results.extend(results)
+            if span is not None:
+                span.update(output={"found": True, "companies": sorted(data)})
+            return _format_results_block(results, start_index)
 
     query, ticker = _resolve_search_args(args, fallback_query=question, searched_tickers=searched_tickers)
     searched_tickers.add(ticker)
     if verbose:
         print(f"  [tool call] search_filings(query={query!r}, ticker={ticker!r})")
-    results = hybrid_search(query, ticker=ticker, top_k=CHUNKS_PER_SEARCH)
-    start_index = len(all_results) + 1
-    all_results.extend(results)
-    return _format_results_block(results, start_index)
+    with traced_span("tool", name, input={"query": query, "ticker": ticker}) as span:
+        results = hybrid_search(query, ticker=ticker, top_k=CHUNKS_PER_SEARCH)
+        start_index = len(all_results) + 1
+        all_results.extend(results)
+        if span is not None:
+            span.update(output={"result_count": len(results)})
+        return _format_results_block(results, start_index)
 
 
 def run_agent(question: str, backend: str = "ollama", verbose: bool = False) -> tuple[str, list[dict], list[str]]:
+    """Thin traced wrapper around _run_agent_impl() -- a single choke
+    point for the top-level Langfuse span regardless of which of
+    _run_agent_impl's several internal return paths fires (see its own
+    docstring). Yields None (no-op) when tracing is disabled, so this
+    adds no behavior change for any existing caller/test."""
+    with traced_span("agent", "run_agent", input={"question": question, "backend": backend}) as span:
+        answer, all_results, warnings = _run_agent_impl(question, backend, verbose)
+        if span is not None:
+            span.update(output={"answer": answer, "citation_warnings": warnings, "result_count": len(all_results)})
+        return answer, all_results, warnings
+
+
+def _run_agent_impl(question: str, backend: str = "ollama", verbose: bool = False) -> tuple[str, list[dict], list[str]]:
     """Run the tool-calling loop until the model produces a final answer
     (no more tool calls) or MAX_TOOL_ITERATIONS is hit. `backend`
     selects which LLM answers (see llm_backends.BACKENDS) -- the loop
@@ -952,6 +1034,7 @@ def main():
     # means `answer` IS the refusal message, which already lists every
     # warning verbatim -- printing them again here would just repeat
     # the same lines a second time.
+    flush()
 
 
 if __name__ == "__main__":

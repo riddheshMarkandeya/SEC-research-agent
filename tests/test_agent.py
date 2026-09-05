@@ -633,6 +633,174 @@ def test_call_get_financial_fact_still_works_with_only_known_keys(monkeypatch):
     assert result == {"value": 42}
 
 
+# ---------------------------------------------------------------------------
+# Unmet-metric-request tracing (Week 7 guardrails, Langfuse): the
+# specific "let evidence decide" requirement added 2026-08-28 -- record
+# when a metric/ratio request comes back empty for a reason worth
+# tracking, distinguishing "we don't know this metric at all" from "we
+# know it, but this ticker has no data for it."
+# ---------------------------------------------------------------------------
+def test_call_get_financial_fact_records_unmet_request_for_unknown_metric(monkeypatch):
+    calls = []
+    monkeypatch.setattr("agent.record_unmet_metric_request", lambda *a, **k: calls.append((a, k)))
+
+    result = call_get_financial_fact(
+        {"ticker": "AAPL", "metric": "effective_tax_rate"}, question="What is AAPL's effective tax rate?"
+    )
+
+    assert result is None
+    assert calls == [
+        (
+            ("AAPL", "effective_tax_rate"),
+            {"reason": "unknown_metric", "question": "What is AAPL's effective tax rate?"},
+        )
+    ]
+
+
+def test_call_get_financial_fact_records_unmet_request_with_no_data_for_ticker(monkeypatch):
+    calls = []
+    monkeypatch.setattr("agent.get_metric", lambda *a, **k: None)
+    monkeypatch.setattr("agent.record_unmet_metric_request", lambda *a, **k: calls.append((a, k)))
+
+    result = call_get_financial_fact({"ticker": "PLTR", "metric": "revenue"})
+
+    assert result is None
+    assert calls == [(("PLTR", "revenue"), {"reason": "no_data_for_ticker", "question": None})]
+
+
+def test_call_get_financial_fact_does_not_record_unmet_request_on_success(monkeypatch):
+    calls = []
+    monkeypatch.setattr("agent.get_metric", lambda *a, **k: {"value": 42})
+    monkeypatch.setattr("agent.record_unmet_metric_request", lambda *a, **k: calls.append((a, k)))
+
+    result = call_get_financial_fact({"ticker": "AAPL", "metric": "revenue"})
+
+    assert result == {"value": 42}
+    assert calls == []
+
+
+def test_call_get_financial_fact_does_not_record_unmet_request_on_boundary_rejection(monkeypatch):
+    # Malformed/invented args (an unrecognized extra key here) are a
+    # different problem than "this formula doesn't exist" -- they
+    # shouldn't pollute the unmet-metric-request signal with noise from
+    # the model not following the schema.
+    calls = []
+    monkeypatch.setattr("agent.record_unmet_metric_request", lambda *a, **k: calls.append((a, k)))
+
+    result = call_get_financial_fact({"ticker": "NVDA", "metric": "revenue", "segment": "Graphics"})
+
+    assert result is None
+    assert calls == []
+
+
+def test_call_get_financial_fact_records_unmet_request_when_yoy_growth_has_no_data(monkeypatch):
+    # Found in code review: get_yoy_growth() returning None for a
+    # genuine no-prior-period-data reason (not a schema violation, the
+    # metric/args are perfectly valid) was silently invisible to the
+    # unmet-metric-request signal -- unlike the plain-metric path just
+    # above, which already records this.
+    calls = []
+    monkeypatch.setattr("agent.get_yoy_growth", lambda *a, **k: None)
+    monkeypatch.setattr("agent.record_unmet_metric_request", lambda *a, **k: calls.append((a, k)))
+
+    result = call_get_financial_fact({"ticker": "AAPL", "metric": "revenue", "yoy_growth": True})
+
+    assert result is None
+    assert calls == [(("AAPL", "revenue"), {"reason": "no_data_for_ticker", "question": None})]
+
+
+def test_call_get_financial_fact_records_unmet_request_when_multi_year_average_has_no_data(monkeypatch):
+    calls = []
+    monkeypatch.setattr("agent.get_multi_year_average", lambda *a, **k: None)
+    monkeypatch.setattr("agent.record_unmet_metric_request", lambda *a, **k: calls.append((a, k)))
+
+    result = call_get_financial_fact(
+        {"ticker": "AAPL", "metric": "operating_margin", "start_fiscal_year": 2023, "end_fiscal_year": 2025}
+    )
+
+    assert result is None
+    assert calls == [(("AAPL", "operating_margin"), {"reason": "no_data_for_ticker", "question": None})]
+
+
+def test_call_get_financial_fact_does_not_record_unmet_request_for_yoy_growth_ratio_rejection(monkeypatch):
+    calls = []
+    monkeypatch.setattr("agent.record_unmet_metric_request", lambda *a, **k: calls.append((a, k)))
+
+    result = call_get_financial_fact({"ticker": "NVDA", "metric": "asset_turnover", "yoy_growth": True})
+
+    assert result is None
+    assert calls == []
+
+
+def test_call_get_financial_fact_does_not_record_unmet_request_for_multi_year_average_yoy_growth_rejection(monkeypatch):
+    calls = []
+    monkeypatch.setattr("agent.record_unmet_metric_request", lambda *a, **k: calls.append((a, k)))
+
+    result = call_get_financial_fact(
+        {"ticker": "AAPL", "metric": "revenue", "start_fiscal_year": 2023, "end_fiscal_year": 2025, "yoy_growth": True}
+    )
+
+    assert result is None
+    assert calls == []
+
+
+def test_call_get_financial_fact_does_not_record_unmet_request_when_metric_is_missing(monkeypatch):
+    # Found in code review: a missing `metric` key entirely (the model
+    # not following the schema, per this function's own docstring) is a
+    # boundary violation like the invented-extra-key case, not a "this
+    # formula doesn't exist" signal -- metric=None must not pollute the
+    # unmet-metric-request signal.
+    calls = []
+    monkeypatch.setattr("agent.record_unmet_metric_request", lambda *a, **k: calls.append((a, k)))
+
+    result = call_get_financial_fact({"ticker": "AAPL"})
+
+    assert result is None
+    assert calls == []
+
+
+def test_call_compare_financial_metric_does_not_record_unmet_request_when_metric_is_missing(monkeypatch):
+    calls = []
+    monkeypatch.setattr("agent.record_unmet_metric_request", lambda *a, **k: calls.append((a, k)))
+
+    result = call_compare_financial_metric({"anchor_ticker": "AAPL"})
+
+    assert result == {}
+    assert calls == []
+
+
+def test_call_compare_financial_metric_records_unmet_request_for_unknown_metric(monkeypatch):
+    calls = []
+    monkeypatch.setattr("agent.record_unmet_metric_request", lambda *a, **k: calls.append((a, k)))
+
+    result = call_compare_financial_metric({"anchor_ticker": "AAPL", "metric": "effective_tax_rate"})
+
+    assert result == {}
+    assert calls == [(("AAPL", "effective_tax_rate"), {"reason": "unknown_metric", "question": None})]
+
+
+def test_call_compare_financial_metric_records_unmet_request_with_no_data_for_ticker(monkeypatch):
+    calls = []
+    monkeypatch.setattr("agent.get_metric_all_companies", lambda *a, **k: {})
+    monkeypatch.setattr("agent.record_unmet_metric_request", lambda *a, **k: calls.append((a, k)))
+
+    result = call_compare_financial_metric({"anchor_ticker": "AAPL", "metric": "revenue"})
+
+    assert result == {}
+    assert calls == [(("AAPL", "revenue"), {"reason": "no_data_for_ticker", "question": None})]
+
+
+def test_call_compare_financial_metric_does_not_record_unmet_request_on_success(monkeypatch):
+    calls = []
+    monkeypatch.setattr("agent.get_metric_all_companies", lambda *a, **k: {"AAPL": {"value": 1}})
+    monkeypatch.setattr("agent.record_unmet_metric_request", lambda *a, **k: calls.append((a, k)))
+
+    result = call_compare_financial_metric({"anchor_ticker": "AAPL", "metric": "revenue"})
+
+    assert result == {"AAPL": {"value": 1}}
+    assert calls == []
+
+
 def test_call_compare_financial_metric_rejects_unrecognized_extra_argument(monkeypatch):
     calls = []
     monkeypatch.setattr("agent.get_metric_all_companies", lambda *a, **k: calls.append((a, k)) or {"NVDA": {}})
@@ -698,7 +866,7 @@ def test_dispatch_tool_call_get_financial_fact_appends_result(monkeypatch):
         "period_end": "2026-03-31",
         "accession": "0001234567-26-000123",
     }
-    monkeypatch.setattr("agent.call_get_financial_fact", lambda args: fact)
+    monkeypatch.setattr("agent.call_get_financial_fact", lambda args, question=None: fact)
     all_results = []
     call = {"name": "get_financial_fact", "args": {"ticker": "NVDA", "metric": "gross_margin"}}
 
@@ -710,7 +878,7 @@ def test_dispatch_tool_call_get_financial_fact_appends_result(monkeypatch):
 
 
 def test_dispatch_tool_call_get_financial_fact_none_uses_no_fact_message(monkeypatch):
-    monkeypatch.setattr("agent.call_get_financial_fact", lambda args: None)
+    monkeypatch.setattr("agent.call_get_financial_fact", lambda args, question=None: None)
     monkeypatch.setattr("agent._format_no_fact_message", lambda args: "NO FACT MESSAGE")
     all_results = []
     call = {"name": "get_financial_fact", "args": {"ticker": "NVDA", "metric": "gross_margin"}}
@@ -732,7 +900,7 @@ def test_dispatch_tool_call_compare_financial_metric_appends_results(monkeypatch
             "accession": "acc-1",
         }
     }
-    monkeypatch.setattr("agent.call_compare_financial_metric", lambda args: data)
+    monkeypatch.setattr("agent.call_compare_financial_metric", lambda args, question=None: data)
     all_results = []
     call = {"name": "compare_financial_metric", "args": {"metric": "gross_margin"}}
 
@@ -743,7 +911,7 @@ def test_dispatch_tool_call_compare_financial_metric_appends_results(monkeypatch
 
 
 def test_dispatch_tool_call_compare_financial_metric_empty_uses_no_comparison_message(monkeypatch):
-    monkeypatch.setattr("agent.call_compare_financial_metric", lambda args: {})
+    monkeypatch.setattr("agent.call_compare_financial_metric", lambda args, question=None: {})
     monkeypatch.setattr("agent._format_no_comparison_message", lambda args: "NO COMPARISON MESSAGE")
     all_results = []
     call = {"name": "compare_financial_metric", "args": {"metric": "gross_margin"}}
