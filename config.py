@@ -72,3 +72,11 @@ MCP_RATE_LIMIT_WINDOW_SECONDS = float(os.getenv("MCP_RATE_LIMIT_WINDOW_SECONDS",
 LANGFUSE_PUBLIC_KEY = os.getenv("LANGFUSE_PUBLIC_KEY", "")
 LANGFUSE_SECRET_KEY = os.getenv("LANGFUSE_SECRET_KEY", "")
 LANGFUSE_BASE_URL = os.getenv("LANGFUSE_BASE_URL", "https://cloud.langfuse.com")
+
+# Local JSONL trace log (tracing.py) -- always-on backup of the same
+# spans/events sent to Langfuse, independent of whether Langfuse is
+# configured (Langfuse's free tier caps at 50k observations/month with
+# only 30-day retention; this has neither limit). Empty string disables
+# it -- unlike the other tracing settings above, this one is ON by
+# default, since "always-on local backup" is the point.
+TRACE_LOG_PATH = os.getenv("TRACE_LOG_PATH", "./trace_logs/traces.jsonl")

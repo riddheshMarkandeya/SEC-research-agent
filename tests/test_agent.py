@@ -769,6 +769,140 @@ def test_call_compare_financial_metric_does_not_record_unmet_request_when_metric
     assert calls == []
 
 
+# ---------------------------------------------------------------------------
+# tool_call_rejected local-only debug logging: distinct from
+# record_unmet_metric_request above -- these are schema-violation
+# boundary rejections (the model not following the tool's schema), a
+# different debugging need than "this formula doesn't exist yet."
+# ---------------------------------------------------------------------------
+def test_call_get_financial_fact_logs_rejection_for_unrecognized_extra_argument(monkeypatch):
+    calls = []
+    monkeypatch.setattr("agent.log_event", lambda category, **fields: calls.append((category, fields)))
+
+    result = call_get_financial_fact({"ticker": "NVDA", "metric": "revenue", "segment": "Graphics"})
+
+    assert result is None
+    assert len(calls) == 1
+    category, fields = calls[0]
+    assert category == "tool_call_rejected"
+    assert fields["tool"] == "get_financial_fact"
+    assert fields["reason"] == "unrecognized_extra_argument"
+
+
+def test_call_get_financial_fact_logs_rejection_for_unknown_ticker(monkeypatch):
+    calls = []
+    monkeypatch.setattr("agent.log_event", lambda category, **fields: calls.append((category, fields)))
+
+    result = call_get_financial_fact({"ticker": "NOT-A-REAL-TICKER", "metric": "revenue"})
+
+    assert result is None
+    assert len(calls) == 1
+    category, fields = calls[0]
+    assert category == "tool_call_rejected"
+    assert fields["reason"] == "unknown_ticker"
+
+
+def test_call_get_financial_fact_logs_rejection_for_invalid_multi_year_average_combo(monkeypatch):
+    calls = []
+    monkeypatch.setattr("agent.log_event", lambda category, **fields: calls.append((category, fields)))
+
+    result = call_get_financial_fact({"ticker": "AAPL", "metric": "revenue", "start_fiscal_year": 2023})
+
+    assert result is None
+    assert len(calls) == 1
+    category, fields = calls[0]
+    assert category == "tool_call_rejected"
+    assert fields["reason"] == "invalid_multi_year_average_combo"
+
+
+def test_call_get_financial_fact_logs_rejection_for_yoy_growth_unsupported_for_ratio(monkeypatch):
+    calls = []
+    monkeypatch.setattr("agent.log_event", lambda category, **fields: calls.append((category, fields)))
+
+    result = call_get_financial_fact({"ticker": "NVDA", "metric": "asset_turnover", "yoy_growth": True})
+
+    assert result is None
+    assert len(calls) == 1
+    category, fields = calls[0]
+    assert category == "tool_call_rejected"
+    assert fields["reason"] == "yoy_growth_unsupported_for_ratio"
+
+
+def test_call_get_financial_fact_logs_rejection_for_missing_metric(monkeypatch):
+    calls = []
+    monkeypatch.setattr("agent.log_event", lambda category, **fields: calls.append((category, fields)))
+
+    result = call_get_financial_fact({"ticker": "AAPL"})
+
+    assert result is None
+    assert len(calls) == 1
+    category, fields = calls[0]
+    assert category == "tool_call_rejected"
+    assert fields["reason"] == "missing_metric"
+
+
+def test_call_compare_financial_metric_logs_rejection_for_missing_metric(monkeypatch):
+    calls = []
+    monkeypatch.setattr("agent.log_event", lambda category, **fields: calls.append((category, fields)))
+
+    result = call_compare_financial_metric({"anchor_ticker": "AAPL"})
+
+    assert result == {}
+    assert len(calls) == 1
+    category, fields = calls[0]
+    assert category == "tool_call_rejected"
+    assert fields["reason"] == "missing_metric"
+
+
+def test_call_get_financial_fact_does_not_log_rejection_on_success(monkeypatch):
+    calls = []
+    monkeypatch.setattr("agent.get_metric", lambda *a, **k: {"value": 42})
+    monkeypatch.setattr("agent.log_event", lambda category, **fields: calls.append((category, fields)))
+
+    result = call_get_financial_fact({"ticker": "AAPL", "metric": "revenue"})
+
+    assert result == {"value": 42}
+    assert calls == []
+
+
+def test_call_compare_financial_metric_logs_rejection_for_unrecognized_extra_argument(monkeypatch):
+    calls = []
+    monkeypatch.setattr("agent.log_event", lambda category, **fields: calls.append((category, fields)))
+
+    result = call_compare_financial_metric({"anchor_ticker": "NVDA", "metric": "revenue", "segment": "Graphics"})
+
+    assert result == {}
+    assert len(calls) == 1
+    category, fields = calls[0]
+    assert category == "tool_call_rejected"
+    assert fields["tool"] == "compare_financial_metric"
+    assert fields["reason"] == "unrecognized_extra_argument"
+
+
+def test_call_compare_financial_metric_logs_rejection_for_unknown_ticker(monkeypatch):
+    calls = []
+    monkeypatch.setattr("agent.log_event", lambda category, **fields: calls.append((category, fields)))
+
+    result = call_compare_financial_metric({"anchor_ticker": "NOT-A-REAL-TICKER", "metric": "revenue"})
+
+    assert result == {}
+    assert len(calls) == 1
+    category, fields = calls[0]
+    assert category == "tool_call_rejected"
+    assert fields["reason"] == "unknown_ticker"
+
+
+def test_call_compare_financial_metric_does_not_log_rejection_on_success(monkeypatch):
+    calls = []
+    monkeypatch.setattr("agent.get_metric_all_companies", lambda *a, **k: {"AAPL": {"value": 1}})
+    monkeypatch.setattr("agent.log_event", lambda category, **fields: calls.append((category, fields)))
+
+    result = call_compare_financial_metric({"anchor_ticker": "AAPL", "metric": "revenue"})
+
+    assert result == {"AAPL": {"value": 1}}
+    assert calls == []
+
+
 def test_call_compare_financial_metric_records_unmet_request_for_unknown_metric(monkeypatch):
     calls = []
     monkeypatch.setattr("agent.record_unmet_metric_request", lambda *a, **k: calls.append((a, k)))
@@ -1026,6 +1160,8 @@ def test_run_agent_citation_retry_exhausting_budget_returns_pre_retry_answer_not
 
     monkeypatch.setattr("agent.BACKENDS", {"gemini": (fake_start, None, fake_send_followup)})
     monkeypatch.setattr("agent.verify_citations", lambda answer, all_results: ["[1] claims 100.0 ... doesn't appear"])
+    log_calls = []
+    monkeypatch.setattr("agent.log_event", lambda category, **fields: log_calls.append((category, fields)))
 
     answer, all_results, warnings = run_agent("What was Apple's revenue?", backend="gemini")
 
@@ -1035,6 +1171,9 @@ def test_run_agent_citation_retry_exhausting_budget_returns_pre_retry_answer_not
     )
     assert "[1] claims 100.0 ... doesn't appear" in answer
     assert warnings == ["[1] claims 100.0 ... doesn't appear"]
+    # Local-only debug event (Week 7 follow-up): the self-correction
+    # retry decision is logged, not just printed under --verbose.
+    assert log_calls == [("citation_retry", {"backend": "gemini", "warnings": ["[1] claims 100.0 ... doesn't appear"]})]
 
 
 def test_run_agent_citation_retry_not_attempted_for_ollama_backend(monkeypatch):

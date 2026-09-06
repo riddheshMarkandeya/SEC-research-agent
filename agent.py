@@ -41,7 +41,7 @@ from formulas import (
 from llm_backends import BACKENDS
 from numeric_utils import UNIT_MULTIPLIERS, extract_numbers, normalize
 from retrieval import hybrid_search
-from tracing import flush, record_unmet_metric_request, traced_span
+from tracing import flush, log_event, record_unmet_metric_request, traced_span
 from xbrl_facts import DEFAULT_METRIC_TAGS, get_metric, get_metric_all_companies, is_metric_tagged
 
 MAX_TOOL_ITERATIONS = 6
@@ -441,18 +441,24 @@ def call_get_financial_fact(args: dict, question: str | None = None) -> dict | N
     missed, only the plain get_metric()/get_ratio() path recorded this
     at first."""
     if set(args) - _FACT_ARG_KEYS:
+        log_event("tool_call_rejected", tool="get_financial_fact", reason="unrecognized_extra_argument", args=args)
         return None
     ticker = args.get("ticker")
     metric = args.get("metric")
     if ticker not in COMPANIES:
+        log_event("tool_call_rejected", tool="get_financial_fact", reason="unknown_ticker", args=args)
         return None
     if metric not in DEFAULT_METRIC_TAGS and metric not in RATIO_DEFINITIONS:
         # metric is None here means the model omitted a required key
         # entirely (schema violation, like the invented-extra-key case
         # above) rather than naming a real but unsupported metric --
-        # only the latter is worth recording. Found in code review.
+        # only the latter belongs on the unmet-metric-request signal
+        # (found in code review); the former still gets a local-only
+        # tool_call_rejected event instead, so it isn't invisible either.
         if metric is not None:
             record_unmet_metric_request(ticker, metric, reason="unknown_metric", question=question)
+        else:
+            log_event("tool_call_rejected", tool="get_financial_fact", reason="missing_metric", args=args)
         return None
     fiscal_year = args.get("fiscal_year")
     fiscal_period = args.get("fiscal_period", "FY")
@@ -461,6 +467,9 @@ def call_get_financial_fact(args: dict, question: str | None = None) -> dict | N
     end_fiscal_year = args.get("end_fiscal_year")
     if start_fiscal_year is not None or end_fiscal_year is not None:
         if args.get("yoy_growth") or start_fiscal_year is None or end_fiscal_year is None:
+            log_event(
+                "tool_call_rejected", tool="get_financial_fact", reason="invalid_multi_year_average_combo", args=args
+            )
             return None
         result = get_multi_year_average(ticker, metric, start_fiscal_year, end_fiscal_year)
         if result is None:
@@ -468,6 +477,9 @@ def call_get_financial_fact(args: dict, question: str | None = None) -> dict | N
         return result
     if args.get("yoy_growth"):
         if metric in RATIO_DEFINITIONS:
+            log_event(
+                "tool_call_rejected", tool="get_financial_fact", reason="yoy_growth_unsupported_for_ratio", args=args
+            )
             return None
         result = get_yoy_growth(ticker, metric, fiscal_year, fiscal_period, period_end_date)
         if result is None:
@@ -536,16 +548,21 @@ def call_compare_financial_metric(args: dict, question: str | None = None) -> di
     value: a human looking at the metric name in the Langfuse dashboard
     can already tell that case apart, not worth the extra complexity."""
     if set(args) - _COMPARE_ARG_KEYS:
+        log_event("tool_call_rejected", tool="compare_financial_metric", reason="unrecognized_extra_argument", args=args)
         return {}
     anchor_ticker = args.get("anchor_ticker")
     metric = args.get("metric")
     if anchor_ticker not in COMPANIES:
+        log_event("tool_call_rejected", tool="compare_financial_metric", reason="unknown_ticker", args=args)
         return {}
     if metric not in DEFAULT_METRIC_TAGS and metric not in RATIO_DEFINITIONS:
         # See call_get_financial_fact's matching guard: metric=None is a
-        # schema violation, not a "this formula doesn't exist" signal.
+        # schema violation, not a "this formula doesn't exist" signal --
+        # still gets a local-only tool_call_rejected event instead.
         if metric is not None:
             record_unmet_metric_request(anchor_ticker, metric, reason="unknown_metric", question=question)
+        else:
+            log_event("tool_call_rejected", tool="compare_financial_metric", reason="missing_metric", args=args)
         return {}
     fiscal_year = args.get("fiscal_year")
     fiscal_period = args.get("fiscal_period", "FY")
@@ -880,14 +897,12 @@ def _dispatch_tool_call(
         with traced_span("tool", name, input=args) as span:
             fact = call_get_financial_fact(args, question=question)
             if fact is None:
-                if span is not None:
-                    span.update(output={"found": False})
+                span.update(output={"found": False})
                 return _format_no_fact_message(args)
             start_index = len(all_results) + 1
             result = _fact_as_result(fact, args)
             all_results.append(result)
-            if span is not None:
-                span.update(output={"found": True, "value": fact.get("value")})
+            span.update(output={"found": True, "value": fact.get("value")})
             return _format_results_block([result], start_index)
 
     if name == "compare_financial_metric":
@@ -896,14 +911,12 @@ def _dispatch_tool_call(
         with traced_span("tool", name, input=args) as span:
             data = call_compare_financial_metric(args, question=question)
             if not data:
-                if span is not None:
-                    span.update(output={"found": False})
+                span.update(output={"found": False})
                 return _format_no_comparison_message(args)
             start_index = len(all_results) + 1
             results = _comparison_as_results(data, args.get("metric", ""))
             all_results.extend(results)
-            if span is not None:
-                span.update(output={"found": True, "companies": sorted(data)})
+            span.update(output={"found": True, "companies": sorted(data)})
             return _format_results_block(results, start_index)
 
     query, ticker = _resolve_search_args(args, fallback_query=question, searched_tickers=searched_tickers)
@@ -914,21 +927,19 @@ def _dispatch_tool_call(
         results = hybrid_search(query, ticker=ticker, top_k=CHUNKS_PER_SEARCH)
         start_index = len(all_results) + 1
         all_results.extend(results)
-        if span is not None:
-            span.update(output={"result_count": len(results)})
+        span.update(output={"result_count": len(results)})
         return _format_results_block(results, start_index)
 
 
 def run_agent(question: str, backend: str = "ollama", verbose: bool = False) -> tuple[str, list[dict], list[str]]:
     """Thin traced wrapper around _run_agent_impl() -- a single choke
-    point for the top-level Langfuse span regardless of which of
-    _run_agent_impl's several internal return paths fires (see its own
-    docstring). Yields None (no-op) when tracing is disabled, so this
-    adds no behavior change for any existing caller/test."""
+    point for the top-level span (Langfuse when configured, always the
+    local JSONL log) regardless of which of _run_agent_impl's several
+    internal return paths fires (see its own docstring). Adds no
+    behavior change to the returned value for any existing caller/test."""
     with traced_span("agent", "run_agent", input={"question": question, "backend": backend}) as span:
         answer, all_results, warnings = _run_agent_impl(question, backend, verbose)
-        if span is not None:
-            span.update(output={"answer": answer, "citation_warnings": warnings, "result_count": len(all_results)})
+        span.update(output={"answer": answer, "citation_warnings": warnings, "result_count": len(all_results)})
         return answer, all_results, warnings
 
 
@@ -985,6 +996,7 @@ def _run_agent_impl(question: str, backend: str = "ollama", verbose: bool = Fals
             if _should_retry_for_citations(warnings, retried_for_citations, backend) and calls_made < MAX_TOOL_ITERATIONS:
                 retried_for_citations = True
                 pre_retry_answer = (answer, warnings)
+                log_event("citation_retry", backend=backend, warnings=warnings)
                 if verbose:
                     print(f"  [citation retry] {warnings}")
                 turn = send_followup(state, _format_citation_retry_message(answer, warnings))

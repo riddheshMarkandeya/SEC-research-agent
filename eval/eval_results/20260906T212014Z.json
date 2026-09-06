@@ -1,0 +1,86 @@
+{
+  "backend": "ollama",
+  "answer_model": "qwen2.5:7b-instruct",
+  "judge_model": "qwen2.5:7b-instruct",
+  "results": [
+    {
+      "id": "crm-rpo-fy26",
+      "ticker": "CRM",
+      "question": "What is Salesforce's total remaining performance obligation as of January 31, 2026?",
+      "type": "numeric",
+      "passed": true,
+      "detail": "found matching value: 72.4 (billion)",
+      "has_citation": true,
+      "citation_warnings": [],
+      "answer": "Based on the SEC filings, Salesforce's total remaining performance obligation as of January 31, 2026 was approximately $72.4 billion [1].\n\n[1] CRM 10-K (reportDate=2026-01-31)",
+      "n_chunks_retrieved": 5
+    },
+    {
+      "id": "aapl-employees-fy25",
+      "ticker": "AAPL",
+      "question": "How many full-time equivalent employees did Apple have as of September 27, 2025?",
+      "type": "numeric",
+      "passed": false,
+      "detail": "agent refused to answer (hard-gated on unverified citation(s)) -- no value to grade",
+      "has_citation": false,
+      "citation_warnings": [
+        "[3] claims 166000.0 (raw) but that value doesn't appear in the cited source"
+      ],
+      "answer": "I can't confirm this answer against the sources I retrieved -- the following claim(s) don't hold up under citation verification:\n- [3] claims 166000.0 (raw) but that value doesn't appear in the cited source\n\nRather than give you a number I can't verify, I'm refusing this answer.",
+      "n_chunks_retrieved": 5
+    },
+    {
+      "id": "pltr-dividend-2019-refusal",
+      "ticker": "PLTR",
+      "question": "What was Palantir's dividend per share in 2019?",
+      "type": "judged",
+      "passed": true,
+      "detail": "The answer explicitly states that there is no mention of dividend payments for 2019 in the SEC filings, adhering to the provided criteria.",
+      "has_citation": true,
+      "citation_warnings": [],
+      "answer": "After reviewing the SEC filings, I found that Palantir Technologies Inc. did not declare any dividends in 2019 [1] - [5]. The company's earnings per share and other financial metrics are provided, but there is no mention of dividend payments for that year.\n\n[1] PLTR 10-Q (reportDate=2026-03-31)\n[2] PLTR 10-Q (reportDate=2025-09-30)\n[3] PLTR 10-Q (reportDate=2025-06-30)",
+      "n_chunks_retrieved": 5
+    },
+    {
+      "id": "aapl-msft-tax-rate-comparison",
+      "ticker": [
+        "AAPL",
+        "MSFT"
+      ],
+      "question": "Compare Apple's effective tax rate for the three months ended June 27, 2026 to Microsoft's effective tax rate for the three months ended December 31, 2025.",
+      "type": "comparison",
+      "passed": false,
+      "detail": "agent refused to answer (hard-gated on unverified citation(s)) -- no value to grade",
+      "has_citation": false,
+      "citation_warnings": [
+        "[1] claims 31.0 (raw) but that value doesn't appear in the cited source"
+      ],
+      "answer": "I can't confirm this answer against the sources I retrieved -- the following claim(s) don't hold up under citation verification:\n- [1] claims 31.0 (raw) but that value doesn't appear in the cited source\n\nRather than give you a number I can't verify, I'm refusing this answer.",
+      "n_chunks_retrieved": 1
+    },
+    {
+      "id": "pltr-inventory-turnover-fy2025-refusal",
+      "ticker": "PLTR",
+      "question": "What was Palantir's inventory turnover ratio for fiscal year 2025?",
+      "type": "judged",
+      "passed": true,
+      "detail": "The AI assistant's response correctly explains that Palantir Technologies, as a software company, does not have an inventory turnover ratio and avoids providing any fabricated or estimated figures.",
+      "has_citation": true,
+      "citation_warnings": [],
+      "answer": "After reviewing Palantir Technologies Inc.'s 10-Q filings, I found no direct mention of the inventory turnover ratio for fiscal year 2025. The closest relevant information was in the balance sheet sections where cash and equivalents are listed, but this does not provide the necessary data to calculate the inventory turnover ratio.\n\nThe balance sheets show changes in cash and equivalents over time, but do not break down by inventory components required to compute the inventory turnover ratio. Therefore, I cannot determine Palantir's inventory turnover ratio for fiscal year 2025 based on the available information from these filings.\n\n[1] PLTR 10-Q (reportDate=2026-03-31)\n[2] PLTR 10-Q (reportDate=2025-06-30)\n[3] PLTR 10-Q (reportDate=2026-06-30)\n[4] PLTR 10-Q (reportDate=2025-06-30)\n[5] PLTR 10-Q (reportDate=2026-06-30)",
+      "n_chunks_retrieved": 5
+    },
+    {
+      "id": "aapl-return-on-assets-fy2025",
+      "ticker": "AAPL",
+      "question": "What was Apple's return on assets (net income divided by total assets) for fiscal year 2025?",
+      "type": "numeric",
+      "passed": true,
+      "detail": "found matching value: 31.2 (percent)",
+      "has_citation": true,
+      "citation_warnings": [],
+      "answer": "Apple's return on assets for fiscal year 2025 was 31.2% [1].",
+      "n_chunks_retrieved": 1
+    }
+  ]
+}

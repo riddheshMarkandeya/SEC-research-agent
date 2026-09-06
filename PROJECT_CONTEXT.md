@@ -3234,6 +3234,247 @@ plumbing, which came back clean both times):
    tests). A third `/code-review` pass afterward found no further
    issues, closing the loop per `CLAUDE.md`'s cap.
 
+### Local JSONL trace log — a Langfuse-independent backup (2026-09-05)
+
+While reviewing the just-shipped Langfuse tracing, the user asked
+whether logging full LLM-call detail could hit Langfuse Cloud's
+free-tier cap, and whether local logging should exist as a backup.
+Researched live: the free tier is **50,000 observations/month,
+hard-capped with no overage** (tracing silently stops recording, isn't
+billed) **and only 30-day data retention**. At this project's actual
+scale (40 eval questions, ~2-3 observations/question at current
+instrumentation) the cap isn't a near-term risk — but 30-day retention
+means data disappears regardless, and `TRACING_ENABLED=False` (no
+account configured, the default for anyone cloning this repo) meant
+**zero** observability rather than degraded observability. Decided to
+add local JSONL logging now, independent of the quota question, as a
+permanent backup — this project already treats "don't lose evidence"
+as a real principle (`eval/eval_results/*.json` is tracked in git for
+exactly that reason), though this log is high-volume/regenerable
+per-run rather than curated, so it's `.gitignore`d like
+`chroma_db/`/`xbrl_cache/`, not tracked.
+
+- **`traced_span()` now always writes one local JSONL line to
+  `TRACE_LOG_PATH`, regardless of whether Langfuse is configured** —
+  Langfuse is now the optional cloud/dashboard layer on top of an
+  always-on local baseline, not the reverse. This required a real
+  contract change: `traced_span()` used to yield `None` when tracing
+  was disabled (every call site guarded `.update()` with `if span is
+  not None:`); now it always yields a `_TracedSpan` wrapper, since the
+  local log needs to capture `output` regardless of Langfuse's state.
+  The now-always-true `if span is not None:` guards in `agent.py`
+  (`_dispatch_tool_call`, `run_agent`) and `mcp_server.py`'s three tool
+  handlers were removed as a direct, mechanical consequence — left in
+  place they'd be dead conditions actively misleading a future reader,
+  not just harmless.
+- **`run_id` grouping via `contextvars.ContextVar`** — the same
+  mechanism OTel already uses under the hood for Langfuse's own
+  nesting, reimplemented locally (a handful of lines) so the JSONL log
+  can group every span belonging to one `run_agent()` call (or one
+  direct MCP tool call) without threading an id through every function
+  signature. Deliberately just a flat `run_id` + `is_root` flag, not
+  full parent/child span-id linkage like Langfuse's own model — no
+  concrete need yet to reconstruct exact nesting locally.
+- **`record_unmet_metric_request()` dropped its `if not TRACING_ENABLED:
+  return`** — it now always goes through `traced_span()`, which itself
+  decides per-concern (Langfuse span vs. local log) whether each half
+  applies, so the unmet-request signal is captured locally even with no
+  Langfuse account at all.
+- **New config** (`config.py`/`.env.example`, same
+  `os.getenv("NAME", "<fallback>")` convention): `TRACE_LOG_PATH`,
+  default `"./trace_logs/traces.jsonl"`. Empty string disables it, but
+  unlike every other tracing setting, this one is **on by default** —
+  "always-on local backup" is the point.
+- **Out of scope, deliberately**: log rotation/pruning/size caps (no
+  evidence of runaway growth yet); richer local-only payloads beyond
+  what's already passed to `traced_span`'s `input`/`output` (e.g. full
+  retrieved chunk text) — would need a second `local_output=` parameter
+  at every call site for no concrete need yet, the backup/permanence
+  value is the point of this round, not maximizing local detail;
+  concurrency locking around the file append — `mcp_server.py` already
+  runs single-process (documented for the rate limiter), and one
+  small `write()` per line is effectively atomic at this scale.
+
+**A real bug found live, not by a test**: the very first full suite run
+after this change left **18 real lines in `./trace_logs/traces.jsonl`**
+in the actual project directory — every existing `agent.py`/
+`mcp_server.py` test that exercises `traced_span()` indirectly (most of
+them do, via `run_agent()`/`_dispatch_tool_call()`/the mcp_server tool
+handlers) was writing to the real default `TRACE_LOG_PATH` during
+`pytest`, since none of those pre-existing tests had any reason to mock
+a local-logging concern that didn't exist yet when they were written.
+Fixed with a new `tests/conftest.py` — an autouse fixture that sets
+`tracing.TRACE_LOG_PATH = ""` for every test by default;
+`tests/test_tracing.py`'s own tests still override it to a `tmp_path`
+within themselves, which simply takes precedence for those tests.
+
+**Six issues caught by `/code-review` before shipping**: (1) rewriting
+`tests/test_tracing.py` for local-log coverage accidentally dropped the
+only test exercising `record_unmet_metric_request(reason=
+"no_data_for_ticker")` together with the `question=None` default on the
+Langfuse-enabled path — both real, used call sites in `agent.py`
+(`_run_agent_impl`'s plain-metric/`yoy_growth`/multi-year-average
+no-data branches). The underlying code was already correct (nothing to
+fix there), just the regression coverage for it was missing — restored
+with a dedicated test. (2) `_write_local_log()` called
+`path.parent.mkdir(parents=True, exist_ok=True)` on every single write
+— cheap individually, but this runs on every `traced_span()` exit
+(every tool call and every `run_agent()` call), so re-verifying an
+already-created directory every time is wasted I/O on what's meant to
+be a high-volume log. Fixed by caching the last-ensured directory
+(`_ensured_log_dir`) and only calling `mkdir()` when it changes, with a
+regression test asserting exactly one `mkdir()` call across two writes
+to the same directory. (3) That very caching fix introduced a second-
+order bug on the *next* review pass: `_ensured_log_dir` was never
+invalidated on a write failure, so if `TRACE_LOG_PATH`'s directory got
+deleted externally while a long-running process (`mcp_server.py`) kept
+running -- plausible, since `trace_logs/` is documented as disposable/
+regenerable output -- every later write would keep skipping `mkdir()`
+(believing the directory already existed) and fail silently forever
+until the process restarted, defeating the entire "always-on backup"
+premise this feature exists for. Reproduced live via a test that
+deletes the directory mid-run: without the fix, no line ever landed
+again; fixed by resetting `_ensured_log_dir = None` inside the
+`except OSError` handler so the next write retries `mkdir()` and
+recovers on its own. (4) The exception handler was still only
+`except OSError`, narrower than the module's own documented contract
+("never raise, ever — logging must never break the real call it
+wraps"): `json.dumps(record, default=str)` can itself raise a
+non-`OSError` (e.g. `default=str`'s own fallback calling `str()` on a
+value whose `__str__` raises) with no I/O involved at all. Widened to
+`except Exception` with a regression test using a deliberately
+unstringable object. (5) Two tests
+(`test_traced_span_does_not_write_local_log_when_trace_log_path_empty`,
+`test_record_unmet_metric_request_noop_when_both_langfuse_and_local_log_disabled`)
+set `TRACE_LOG_PATH = ""` but asserted on an unrelated `tmp_path`
+never referenced by that empty string — they'd have passed even with
+the early-return guard deleted entirely. Confirmed live by actually
+deleting the guard: both tests still passed. Fixed by spying on
+`Path.open` and asserting it's never called — but the first attempt at
+that fix (raising `AssertionError` from inside the mock) *also* failed
+to catch the regression, for a subtler reason: `_write_local_log`'s own
+broad `except Exception` (fix #4 above) silently swallows a raised
+assertion exactly like any other error. Confirmed this the same way
+(deleted the guard, watched the "fixed" test still pass) before landing
+on the actual fix: track calls in a plain list and assert on it after
+the `with` block, which doesn't route through the try/except at all.
+(6) `traced_span()` measured duration with `time.time()` (wall clock)
+instead of `time.monotonic()` — on a long-running process
+(`mcp_server.py`), a backward wall-clock adjustment (e.g. an NTP
+correction) mid-span would corrupt `duration_ms` in the very backup log
+this feature exists to keep reliable. Fixed by switching both the start
+and end reads to `time.monotonic()`, with a regression test that
+freezes `time.time()` while advancing a fake `time.monotonic()` and
+confirms `duration_ms` reflects the monotonic delta, not zero.
+
+**Verified, not just tested.** `tests/test_tracing.py` grew to 18 tests
+(local-log content, missing-parent-directory creation, a simulated
+write failure that must not raise, `run_id`/`is_root` grouping across
+nested and sibling calls, the two code-review fixes above) — written
+red first, then green; full suite **347/347**, up from 336.
+Live-verified twice: (1) ran a real question through `agent.py` with
+`LANGFUSE_PUBLIC_KEY`/`LANGFUSE_SECRET_KEY` forced empty in the shell
+environment (so `config.py`'s `load_dotenv()` can't fill them from
+`.env`) and confirmed `trace_logs/traces.jsonl` was written anyway,
+with the expected `run_agent`/`get_financial_fact` lines sharing one
+`run_id`; (2) extended `tests/manual/verify_tracing.py` with
+`check_local_log_matches_the_same_run()` (confirms the local log and
+the real Langfuse trace agree for the same live run) and
+`check_local_log_independent_of_langfuse()` (flips `TRACING_ENABLED`
+off in-process and confirms local logging still fires) — both pass. One
+bug caught while writing the first check (not in `tracing.py`): a tool
+span's own `input` (ticker/metric/etc.) never contains the marker
+stamped into the free-text question, so filtering local log lines by
+"contains the marker" silently found zero tool lines; fixed by locating
+the `run_agent` line by marker first, then grouping every local log
+line sharing its `run_id` instead of re-searching for the marker in
+each one.
+
+### Local-only debug events beyond the Langfuse mirror (2026-09-05)
+
+The local JSONL log only ever wrote what `traced_span()`/
+`record_unmet_metric_request()` already produced — exactly the same
+spans/events that would also go to Langfuse if configured. The user
+wanted more: local-only signal for anything "important and can help
+debugging," independent of whether it's Langfuse-worthy. Several
+moments in this codebase already qualified — either printed only under
+`--verbose` (lost the instant the terminal scrolls) or not recorded
+anywhere at all — and this project's own history above shows these
+exact moments (retries, invented tool args, self-correction retries)
+have repeatedly needed hand-diagnosis.
+
+- **New `tracing.log_event(category, **fields)`.** Deliberately not
+  built on `traced_span()` — a retry attempt, a rejected tool call, a
+  self-correction decision are instantaneous facts, not spans of work
+  with a duration, and this project doesn't want every one of these
+  mirrored to a cloud dashboard. Tags `run_id` from the
+  currently-open `traced_span` when called from inside one (agent.py's
+  call sites always are), `None` when called standalone
+  (`mcp_server.py`'s auth/rate-limit rejections happen before any span
+  opens). Reuses `_write_local_log()`'s existing best-effort/
+  never-raise behavior, so it also respects `TRACE_LOG_PATH` being
+  disabled automatically.
+- **`llm_backends.py`**: `_ollama_call()`'s `ConnectionError` retry
+  loop and `_send_with_retry()`'s Gemini 429/503 retry loop had no
+  logging of any kind before — a flaky local Ollama server or a
+  rate-limited Gemini key was invisible after the fact. Both now log
+  `llm_retry` with `backend`/`attempt`/`max_attempts`/`exhausted` (plus
+  `error`/`status_code`) on every attempt. `_send_with_retry()`'s
+  compound `if code not in (429, 503) or attempt == 3: raise` was split
+  into two checks so the log call only fires for the retryable-error
+  path — behaviorally identical control flow, confirmed by 5 new tests
+  covering this function for the first time (it had none before).
+- **`agent.py`**: the citation self-correction retry (`_run_agent_impl()`)
+  now logs `citation_retry` (backend, warnings) right next to the
+  existing `--verbose` print, so it survives non-verbose runs and eval
+  sweeps. `call_get_financial_fact()`/`call_compare_financial_metric()`'s
+  boundary-rejection guards (extensively documented in both functions'
+  own docstrings as "don't trust the schema") now log `tool_call_rejected`
+  with a specific `reason` (`unrecognized_extra_argument`,
+  `unknown_ticker`, `missing_metric`, `invalid_multi_year_average_combo`,
+  `yoy_growth_unsupported_for_ratio`) — previously these returned
+  `None`/`{}` with **zero** signal anywhere, not even the existing
+  `unmet_metric_request` event (deliberately scoped to "formula doesn't
+  exist," not "model didn't follow the schema"). `missing_metric` was
+  found while implementing this round, not in the original plan: the
+  existing `metric is None` guard already distinguished "no formula for
+  this name" from "key omitted entirely," but only the former got any
+  signal — the omitted-key case was completely invisible until now.
+- **`mcp_server.py`**: `_AuthRateLimitMiddleware` now logs
+  `auth_rejected`/`rate_limited` (with `client_ip`) right before each
+  401/429 response, so exposing this server beyond localhost comes with
+  an audit trail of who's getting rejected and why.
+- **Out of scope, deliberately**: per-call LLM generation tracing
+  (already parked as its own future item — this round's `llm_retry`
+  event is a small, distinct signal, not a reopening of that); a
+  verbosity/sampling knob (these are all inherently rare, bounded
+  events, not high-volume spam).
+
+**Verified, not just tested.** New/extended tests: `tests/test_tracing.py`
+(+3, `log_event`'s run_id tagging and Langfuse-independence),
+`tests/test_llm_backends.py` (+5 new `_send_with_retry` tests — this
+function had none before — plus assertions added to the 3 existing
+`_ollama_call` retry tests), `tests/test_agent.py` (+11: one
+`tool_call_rejected` case per rejection reason, "not called on
+success" for both functions, and a `citation_retry` assertion added to
+the existing exhausted-retry-budget test). Full suite **365/365**, up
+from 347. Live-verified: pointed `OLLAMA_URL` at an unreachable port
+(rather than stopping any real running `ollama serve`) and confirmed
+all 3 `llm_retry` lines landed with `attempt=1,2,3`/
+`exhausted=false,false,true`, correctly grouped under the same `run_id`
+as the `run_agent` span — which itself was still recorded with
+`output: null` even though the `ConnectionError` propagated all the way
+out uncaught, confirming the `finally`-based local logging survives an
+unhandled exception escaping the span, not just the happy path.
+Extended `tests/manual/verify_mcp_server.py`'s `check_auth()`/
+`check_rate_limit()` to assert the new local log lines appear
+(`auth_rejected` ×2, `rate_limited` ×1) — one gotcha found while writing
+this, same shape as the earlier rate-limit-check gotcha:
+`_RunningServer`'s own startup probe (`GET /`, unauthenticated) also
+gets a 401 and would otherwise inflate the count by one; fixed by
+capturing the "before" baseline after the server is confirmed up
+rather than before starting it.
+
 ## Next steps
 
 > This section used to be a running "X: FIXED, see above" log that
@@ -3448,7 +3689,10 @@ left for item 6 below.
 above.** Citation hard-gate, Ollama retry/backoff, `mcp_server.py` auth
 + rate limiting, and Langfuse tracing (including the unmet-metric/
 ratio-request signal added as a requirement 2026-08-28) all shipped and
-live-verified. Week 7 is fully closed out.
+live-verified. Week 7 is fully closed out. **Follow-up, 2026-09-05 —
+see "Local JSONL trace log" above**: tracing now also writes an
+always-on local backup independent of Langfuse's free-tier cap/
+retention window.
 
 **New, 2026-09-04 — per-call LLM "generation" tracing.** Explicitly
 scoped out of Langfuse tracing (part 3 above) per the user's direction

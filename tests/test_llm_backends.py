@@ -9,7 +9,9 @@ from types import SimpleNamespace
 
 import requests
 
-from llm_backends import _ollama_call, _ollama_message_to_turn, _gemini_response_to_turn, _get_gemini_client
+from google.genai import errors as genai_errors
+
+from llm_backends import _ollama_call, _ollama_message_to_turn, _gemini_response_to_turn, _get_gemini_client, _send_with_retry
 
 
 def test_ollama_message_to_turn_with_tool_calls():
@@ -120,6 +122,8 @@ class _FakeOllamaResponse:
 
 def test_ollama_call_retries_on_connection_error_then_succeeds(monkeypatch):
     monkeypatch.setattr("llm_backends.time.sleep", lambda s: None)
+    log_calls = []
+    monkeypatch.setattr("llm_backends.log_event", lambda category, **fields: log_calls.append((category, fields)))
     attempts = []
 
     def fake_post(*args, **kwargs):
@@ -134,6 +138,15 @@ def test_ollama_call_retries_on_connection_error_then_succeeds(monkeypatch):
 
     assert message == {"role": "assistant", "content": "ok"}
     assert len(attempts) == 2
+    # Week 7 guardrails follow-up: every retry attempt is logged locally
+    # (tracing.log_event), not just printed under --verbose -- see
+    # PROJECT_CONTEXT.md's "local-only debug events" section.
+    assert len(log_calls) == 1
+    category, fields = log_calls[0]
+    assert category == "llm_retry"
+    assert fields["backend"] == "ollama"
+    assert fields["attempt"] == 1
+    assert fields["exhausted"] is False
 
 
 def test_ollama_call_retries_on_connect_timeout_then_succeeds(monkeypatch):
@@ -176,6 +189,8 @@ def test_ollama_call_does_not_retry_on_read_timeout(monkeypatch):
         raise requests.exceptions.ReadTimeout("generation took too long")
 
     monkeypatch.setattr("llm_backends.requests.post", fake_post)
+    log_calls = []
+    monkeypatch.setattr("llm_backends.log_event", lambda category, **fields: log_calls.append((category, fields)))
 
     try:
         _ollama_call({"messages": [], "tool_schemas": []})
@@ -184,10 +199,15 @@ def test_ollama_call_does_not_retry_on_read_timeout(monkeypatch):
         pass
 
     assert len(attempts) == 1
+    # A ReadTimeout never reaches the ConnectionError except block, so
+    # it's not a "retry" at all -- nothing should be logged for it.
+    assert log_calls == []
 
 
 def test_ollama_call_raises_after_exhausting_attempts(monkeypatch):
     monkeypatch.setattr("llm_backends.time.sleep", lambda s: None)
+    log_calls = []
+    monkeypatch.setattr("llm_backends.log_event", lambda category, **fields: log_calls.append((category, fields)))
 
     def fake_post(*args, **kwargs):
         raise requests.exceptions.ConnectionError("connection refused")
@@ -200,6 +220,9 @@ def test_ollama_call_raises_after_exhausting_attempts(monkeypatch):
     except requests.exceptions.ConnectionError:
         pass
 
+    assert [fields["attempt"] for _, fields in log_calls] == [1, 2, 3]
+    assert [fields["exhausted"] for _, fields in log_calls] == [False, False, True]
+
 
 def test_ollama_call_succeeds_first_try_without_sleeping(monkeypatch):
     sleeps = []
@@ -210,3 +233,93 @@ def test_ollama_call_succeeds_first_try_without_sleeping(monkeypatch):
 
     assert message == {"role": "assistant", "content": "ok"}
     assert sleeps == []
+
+
+# ---------------------------------------------------------------------------
+# _send_with_retry (Gemini) retry/backoff -- same pure control-flow
+# principle as _ollama_call above, plus the new Week 7 local-only
+# llm_retry logging (this function had no dedicated tests before now).
+# ---------------------------------------------------------------------------
+def _fake_gemini_error(code):
+    return genai_errors.ClientError(code, {"message": "error"})
+
+
+class _FakeChat:
+    def __init__(self, responses):
+        self._responses = iter(responses)
+
+    def send_message(self, message):
+        item = next(self._responses)
+        if isinstance(item, Exception):
+            raise item
+        return item
+
+
+def test_send_with_retry_retries_on_429_then_succeeds(monkeypatch):
+    monkeypatch.setattr("llm_backends.time.sleep", lambda s: None)
+    log_calls = []
+    monkeypatch.setattr("llm_backends.log_event", lambda category, **fields: log_calls.append((category, fields)))
+    chat = _FakeChat([_fake_gemini_error(429), "ok"])
+
+    result = _send_with_retry(chat, "question")
+
+    assert result == "ok"
+    assert len(log_calls) == 1
+    category, fields = log_calls[0]
+    assert category == "llm_retry"
+    assert fields == {"backend": "gemini", "attempt": 1, "max_attempts": 4, "status_code": 429, "exhausted": False}
+
+
+def test_send_with_retry_retries_on_503_then_succeeds(monkeypatch):
+    monkeypatch.setattr("llm_backends.time.sleep", lambda s: None)
+    monkeypatch.setattr("llm_backends.log_event", lambda *a, **k: None)
+    chat = _FakeChat([_fake_gemini_error(503), "ok"])
+
+    result = _send_with_retry(chat, "question")
+
+    assert result == "ok"
+
+
+def test_send_with_retry_does_not_retry_on_non_retryable_error(monkeypatch):
+    log_calls = []
+    monkeypatch.setattr("llm_backends.log_event", lambda category, **fields: log_calls.append((category, fields)))
+    chat = _FakeChat([_fake_gemini_error(400)])
+
+    try:
+        _send_with_retry(chat, "question")
+        assert False, "expected ClientError"
+    except genai_errors.ClientError as e:
+        assert e.code == 400
+
+    # Not a retryable code -- must not be logged as a retry attempt.
+    assert log_calls == []
+
+
+def test_send_with_retry_raises_after_exhausting_attempts(monkeypatch):
+    monkeypatch.setattr("llm_backends.time.sleep", lambda s: None)
+    log_calls = []
+    monkeypatch.setattr("llm_backends.log_event", lambda category, **fields: log_calls.append((category, fields)))
+    chat = _FakeChat([_fake_gemini_error(429)] * 4)
+
+    try:
+        _send_with_retry(chat, "question")
+        assert False, "expected ClientError"
+    except genai_errors.ClientError:
+        pass
+
+    assert [fields["attempt"] for _, fields in log_calls] == [1, 2, 3, 4]
+    assert [fields["exhausted"] for _, fields in log_calls] == [False, False, False, True]
+
+
+def test_send_with_retry_succeeds_first_try_without_sleeping(monkeypatch):
+    sleeps = []
+    monkeypatch.setattr("llm_backends.time.sleep", lambda s: sleeps.append(s))
+    log_calls = []
+    monkeypatch.setattr("llm_backends.log_event", lambda category, **fields: log_calls.append((category, fields)))
+    chat = _FakeChat(["ok"])
+
+    result = _send_with_retry(chat, "question")
+
+    assert result == "ok"
+    assert sleeps == []
+    assert log_calls == []

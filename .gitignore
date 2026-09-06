@@ -12,6 +12,10 @@ chroma_db/
 # Regenerable via xbrl_facts.py's fetch_concept() (disk cache of SEC companyconcept responses)
 xbrl_cache/
 
+# Local JSONL trace log (tracing.py) -- high-volume, per-run output,
+# not curated evidence like eval/eval_results/*.json.
+trace_logs/
+
 # Local Claude Code settings (personal, not shared project config)
 .claude/settings.local.json
 

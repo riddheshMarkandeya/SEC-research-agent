@@ -52,7 +52,7 @@ from bs4 import BeautifulSoup
 from mcp import ClientSession
 from mcp.client.streamable_http import streamable_http_client
 
-from config import SEC_USER_AGENT
+from config import SEC_USER_AGENT, TRACE_LOG_PATH
 
 PORT = 8799
 BASE_URL = f"http://127.0.0.1:{PORT}"
@@ -174,10 +174,22 @@ class _RunningServer:
             self._proc.kill()
 
 
+def _read_local_log_lines():
+    path = Path(TRACE_LOG_PATH)
+    if not TRACE_LOG_PATH or not path.exists():
+        return []
+    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+
+
 def check_auth():
     print("\n=== Auth (MCP_AUTH_TOKEN) ===")
     token = "verify-script-test-token"
     with _RunningServer(8800, env={"MCP_AUTH_TOKEN": token}) as server:
+        # Baseline captured AFTER the server is up, not before -- its
+        # own startup probe (an unauthenticated GET /) also gets 401'd
+        # and would otherwise inflate the "new lines" count below by
+        # one, same class of gotcha as check_rate_limit()'s comment.
+        log_baseline = len(_read_local_log_lines())
         resp = requests.post(server.mcp_url, json={}, headers=MCP_ACCEPT_HEADERS)
         assert resp.status_code == 401, f"expected 401 with no token, got {resp.status_code}"
         print("  [OK] request with no Authorization header rejected (401)")
@@ -198,6 +210,11 @@ def check_auth():
         asyncio.run(_authed_round_trip())
         print("  [OK] request with correct token succeeds end-to-end (list_tools -> 3 tools)")
 
+    new_lines = _read_local_log_lines()[log_baseline:]
+    auth_rejected_lines = [line for line in new_lines if line.get("category") == "auth_rejected"]
+    assert len(auth_rejected_lines) == 2, auth_rejected_lines  # the two 401s above, not the successful call
+    print(f"  [OK] {len(auth_rejected_lines)} 'auth_rejected' local log line(s) recorded")
+
 
 def check_rate_limit():
     print("\n=== Rate limiting (MCP_RATE_LIMIT_REQUESTS) ===")
@@ -209,6 +226,7 @@ def check_rate_limit():
         # once so the checks below start from a clean slate instead of
         # coupling this test to exactly how many requests startup used.
         time.sleep(3.5)
+        log_baseline = len(_read_local_log_lines())
         for i in range(2):
             resp = requests.post(server.mcp_url, json={}, headers=MCP_ACCEPT_HEADERS)
             assert resp.status_code != 429, f"request {i + 1}/2 unexpectedly rate-limited ({resp.status_code})"
@@ -218,6 +236,11 @@ def check_rate_limit():
         assert resp.status_code == 429, f"expected 429 on the 3rd rapid request, got {resp.status_code}"
         assert "Retry-After" in resp.headers, "expected a Retry-After header on 429"
         print(f"  [OK] 3rd rapid request rate-limited (429), Retry-After={resp.headers['Retry-After']}")
+
+        new_lines = _read_local_log_lines()[log_baseline:]
+        rate_limited_lines = [line for line in new_lines if line.get("category") == "rate_limited"]
+        assert len(rate_limited_lines) == 1, rate_limited_lines  # only the 3rd request above was rejected
+        print(f"  [OK] {len(rate_limited_lines)} 'rate_limited' local log line(s) recorded")
 
         time.sleep(3.5)
         resp = requests.post(server.mcp_url, json={}, headers=MCP_ACCEPT_HEADERS)

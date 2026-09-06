@@ -56,7 +56,7 @@ from agent import (
 from config import MCP_AUTH_TOKEN, MCP_RATE_LIMIT_REQUESTS, MCP_RATE_LIMIT_WINDOW_SECONDS
 from edgar_ingest import get_filing_url
 from retrieval import hybrid_search
-from tracing import traced_span
+from tracing import log_event, traced_span
 
 TEXT_FRAGMENT_EXCERPT_MAX_LEN = 100
 
@@ -131,8 +131,7 @@ def _search_filings(args: dict) -> list[dict]:
         if not query:
             return []
         results = hybrid_search(query, ticker=args.get("ticker"), top_k=CHUNKS_PER_SEARCH)
-        if span is not None:
-            span.update(output={"result_count": len(results)})
+        span.update(output={"result_count": len(results)})
         return [{"text": r["text"], "source": _chunk_source(r["metadata"], r["text"])} for r in results]
 
 
@@ -144,11 +143,9 @@ def _get_financial_fact(args: dict) -> dict:
     with traced_span("tool", "get_financial_fact", input=args) as span:
         fact = call_get_financial_fact(args)
         if fact is None:
-            if span is not None:
-                span.update(output={"found": False})
+            span.update(output={"found": False})
             return {"error": "not available for this company/metric/period"}
-        if span is not None:
-            span.update(output={"found": True, "value": fact.get("value")})
+        span.update(output={"found": True, "value": fact.get("value")})
         return {"value": fact["value"], "unit": fact["unit"], "source": _fact_source(args["ticker"], fact)}
 
 
@@ -156,11 +153,9 @@ def _compare_financial_metric(args: dict) -> dict:
     with traced_span("tool", "compare_financial_metric", input=args) as span:
         data = call_compare_financial_metric(args)
         if not data:
-            if span is not None:
-                span.update(output={"found": False})
+            span.update(output={"found": False})
             return {"error": "not available for this metric/period"}
-        if span is not None:
-            span.update(output={"found": True, "companies": sorted(data)})
+        span.update(output={"found": True, "companies": sorted(data)})
         return {
             ticker: {"value": fact["value"], "unit": fact["unit"], "source": _fact_source(ticker, fact)}
             for ticker, fact in data.items()
@@ -277,6 +272,11 @@ class _AuthRateLimitMiddleware:
         client = scope.get("client")
         key = client[0] if client else "unknown"
         if not _rate_limiter.allow(key, time.time()):
+            # Local-only debug event (Week 7 follow-up) -- lets someone
+            # exposing this server audit "who's getting rejected" after
+            # the fact; not sent to Langfuse (no traced_span is open at
+            # this point anyway -- this runs before any tool dispatch).
+            log_event("rate_limited", client_ip=key)
             response = JSONResponse(
                 {"error": "rate limit exceeded"},
                 status_code=429,
@@ -289,6 +289,7 @@ class _AuthRateLimitMiddleware:
         auth_header = auth_header.decode("latin-1") if auth_header is not None else None
 
         if not _is_authorized(auth_header, MCP_AUTH_TOKEN):
+            log_event("auth_rejected", client_ip=key)
             response = JSONResponse({"error": "unauthorized"}, status_code=401)
             return await response(scope, receive, send)
 

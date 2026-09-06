@@ -24,6 +24,7 @@ from google.genai import errors as genai_errors
 from google.genai import types
 
 from config import GEMINI_API_KEY, GEMINI_MODEL_NAME, OLLAMA_MODEL_NAME, OLLAMA_URL
+from tracing import log_event
 
 
 # Normalized shape both backends produce. tool_calls entries are
@@ -86,7 +87,19 @@ def _ollama_call(state: dict) -> dict:
             )
             response.raise_for_status()
             return response.json()["message"]
-        except requests.exceptions.ConnectionError:
+        except requests.exceptions.ConnectionError as e:
+            # Local-only debug event (Week 7 follow-up) -- not sent to
+            # Langfuse, just kept so a flaky local Ollama server is
+            # diagnosable after the fact instead of only visible in a
+            # scrolled-away --verbose terminal.
+            log_event(
+                "llm_retry",
+                backend="ollama",
+                attempt=attempt + 1,
+                max_attempts=OLLAMA_RETRY_ATTEMPTS,
+                error=str(e),
+                exhausted=attempt == OLLAMA_RETRY_ATTEMPTS - 1,
+            )
             if attempt == OLLAMA_RETRY_ATTEMPTS - 1:
                 raise
             time.sleep(OLLAMA_RETRY_DELAY_SECONDS * (attempt + 1))
@@ -168,7 +181,20 @@ def _send_with_retry(chat, message):
             return chat.send_message(message)
         except (genai_errors.ClientError, genai_errors.ServerError) as e:
             code = getattr(e, "code", None)
-            if code not in (429, 503) or attempt == 3:
+            if code not in (429, 503):
+                raise
+            # Local-only debug event (Week 7 follow-up), same reasoning
+            # as _ollama_call's matching log_event above -- only for the
+            # retryable-error path, not every ClientError/ServerError.
+            log_event(
+                "llm_retry",
+                backend="gemini",
+                attempt=attempt + 1,
+                max_attempts=4,
+                status_code=code,
+                exhausted=attempt == 3,
+            )
+            if attempt == 3:
                 raise
             time.sleep(RETRY_DELAY_SECONDS * (attempt + 1))
 
