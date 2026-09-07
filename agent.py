@@ -773,7 +773,7 @@ def value_is_citation_verified(value: float, unit: str, answer_text: str, all_re
 # _should_retry_for_citations below). Gated to Gemini only, decided
 # 2026-08-25 after live-verifying both backends: this exact mechanism
 # was already tried against Ollama once and reverted (Week 5j -- see
-# docs/superpowers/specs/2026-08-24-citation-retry-loop-design.md) after
+# docs/plans/2026-08-24-citation-retry-loop-design.md) after
 # qwen2.5:7b-instruct proved unable to reliably act on the corrective
 # feedback (giving up on an already-correct answer, or fabricating an
 # estimate under retry pressure). A fresh live re-run this time showed
@@ -797,7 +797,7 @@ def _should_retry_for_citations(citation_warnings: list[str], already_retried: b
 
 def _format_citation_retry_message(answer: str, citation_warnings: list[str]) -> str:
     """Builds the corrective follow-up message for a one-time citation
-    retry (see run_agent() and docs/superpowers/specs/2026-08-24-
+    retry (see run_agent() and docs/plans/2026-08-24-
     citation-retry-loop-design.md). Revisits Week 5j's reverted attempt,
     with wording that directly targets the two live failure modes that
     caused that revert:
@@ -967,7 +967,7 @@ def _run_agent_impl(question: str, backend: str = "ollama", verbose: bool = Fals
     One self-correction retry on an unverified citation, revisited
     2026-08-24 against the swappable-backend layer (originally tried
     and reverted in Week 5j -- see PROJECT_CONTEXT.md and
-    docs/superpowers/specs/2026-08-24-citation-retry-loop-design.md).
+    docs/plans/2026-08-24-citation-retry-loop-design.md).
     Gated to Gemini only (see _CITATION_RETRY_BACKENDS) -- decided
     2026-08-25 after live-verifying both backends showed no regression
     on this particular run, but Ollama's documented history with this

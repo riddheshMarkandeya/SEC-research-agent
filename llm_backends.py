@@ -5,7 +5,7 @@ This module was created to eliminate duplication: both Ollama (HTTP API)
 and Gemini (google-genai SDK) have different wire formats for tool calling.
 Normalizing both into one shape (ModelTurn) lets agent.py drive a single
 shared loop regardless of which backend answers -- see
-docs/superpowers/specs/2026-08-20-swappable-llm-backend-design.md.
+docs/plans/2026-08-20-swappable-llm-backend-design.md.
 
 Deliberately takes system_prompt/tool_schemas as parameters rather than
 importing them from agent.py -- agent.py needs `from llm_backends import

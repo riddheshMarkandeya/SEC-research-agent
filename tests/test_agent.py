@@ -1095,7 +1095,7 @@ def test_dispatch_tool_call_search_filings_uses_resolved_query_and_tracks_ticker
 # ---------------------------------------------------------------------------
 # _should_retry_for_citations / _format_citation_retry_message
 # (citation-verification retry loop, revisited Week 5j -> 2026-08-24 --
-# see PROJECT_CONTEXT.md and docs/superpowers/specs/2026-08-24-citation-
+# see PROJECT_CONTEXT.md and docs/plans/2026-08-24-citation-
 # retry-loop-design.md)
 # ---------------------------------------------------------------------------
 def test_should_retry_for_citations_true_with_warnings_and_not_yet_retried():
@@ -1119,7 +1119,7 @@ def test_should_retry_for_citations_false_with_no_warnings_regardless_of_retried
 
 def test_should_retry_for_citations_false_for_ollama_even_with_warnings_and_not_yet_retried():
     # Gated 2026-08-25 per live evidence in PROJECT_CONTEXT.md /
-    # docs/superpowers/specs/2026-08-24-citation-retry-loop-design.md:
+    # docs/plans/2026-08-24-citation-retry-loop-design.md:
     # this exact mechanism was tried and reverted once already (Week 5j)
     # because qwen2.5:7b-instruct couldn't reliably act on the corrective
     # feedback -- gated out for Ollama specifically rather than relying

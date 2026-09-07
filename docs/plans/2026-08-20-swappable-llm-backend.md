@@ -8,7 +8,7 @@
 
 **Tech Stack:** Python, `requests` (Ollama's HTTP API), `google-genai` (Gemini SDK), `pytest`.
 
-**Spec:** `docs/superpowers/specs/2026-08-20-swappable-llm-backend-design.md`
+**Spec:** `docs/plans/2026-08-20-swappable-llm-backend-design.md`
 
 ## Global Constraints
 
