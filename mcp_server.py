@@ -110,10 +110,12 @@ def _chunk_source(metadata: dict, text: str) -> dict:
 
 def _fact_source(ticker: str, fact: dict) -> dict:
     """Source block for one get_financial_fact/compare_financial_metric
-    value. `form`/`filed` are only included when present -- the
-    cross-company facts compare_financial_metric returns (via
-    xbrl_facts.get_frame()) carry no form/filed, only value/unit/
-    period_end/accession, so this can't assume every fact has them."""
+    value. `form`/`filed` are only included when present -- not every
+    fact shape has them: compare_financial_metric's duration-metric
+    facts (via xbrl_facts.get_frame()) carry neither, only value/unit/
+    period_end/accession; its instant-metric facts (total_assets etc.,
+    2026-09-07 redesign, via plain get_metric() per company) DO carry
+    both, same as a single-company get_financial_fact result."""
     source = {"ticker": ticker, "period_end": fact["period_end"], "accession": fact["accession"]}
     if "form" in fact:
         source["form"] = fact["form"]

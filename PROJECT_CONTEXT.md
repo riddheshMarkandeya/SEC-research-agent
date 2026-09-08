@@ -3556,6 +3556,126 @@ is `None` for FY2026 but MSFT's isn't, and confirmed
 returning all 5 (3 for `inventory`, which not every company tags)
 covered companies' values.
 
+**Addendum (2026-09-07): §4's fallback shipped with a real regression,
+found and corrected the next day, before the next backlog batch
+started.** Borrowing another covered company's SEC-assigned `frame`
+turned out to be wrong, not just an approximation: a `frame` anchors to
+a specific calendar window, and a DIFFERENT company's frame represents
+a genuinely different real time period, not "the same period, from
+someone else's data." Live-verified the actual failure: anchoring NVDA
+(own FY2026 total_assets = $206.8B, period ending 2026-01-25, no frame)
+against MSFT's frame (`CY2026Q2I`, representing June 2026) returned
+NVDA's *Q2 FY2027* balance ($320.3B, period ending 2026-07-26)
+mislabeled as if it were the requested FY2026 figure — a plausible-
+looking wrong number, worse than the original honest `{}`.
+
+Root-caused via two independent sources rather than another guess: (1)
+`formulas.py`'s own `RATIO_DEFINITIONS` comment already documented that
+a borrowed frame doesn't resolve correctly for instant concepts — missed
+on the first pass; (2) web research into how financial-data tools
+normally solve this confirmed SEC's frame-assignment gap on instant
+facts is intentional/documented SEC behavior, and that "calendarization"
+(aligning fiscal periods across companies to a shared calendar window) is
+standard practice for income-statement/cash-flow (duration) figures but
+is explicitly **not** applied to balance-sheet (instant) figures — a
+balance is a snapshot as of one date, not a period that can be shifted;
+real practice compares each company's own most-recent balance sheet.
+
+**Redesigned `get_metric_all_companies()` to split by concept type**
+instead of patching the fallback further (two alternatives were
+presented and discussed before choosing this one over a closest-date-
+match-with-tolerance mechanism, which would have fought against the
+research above rather than followed it): new `INSTANT_METRICS =
+{"total_assets", "cash_and_equivalents", "inventory"}` registry: for
+these, no frame, no anchor requirement at all — resolves each covered
+company independently via its own `get_metric()` call for the same
+requested period, returning whichever companies have data, each with its
+own real `period_end` (already surfaced per-company in the citation, so
+a reader sees the dates genuinely differ — nothing hidden). Duration
+metrics are completely unchanged — the frames-based anchor logic was
+never the problem. `agent.py`'s `_comparison_as_results()` now shows a
+real `form` (10-K/10-Q) for instant-metric citations instead of always
+hardcoding "XBRL frame data", since per-company `get_metric()` results
+carry one and frame results still don't.
+
+**Checked, not assumed, whether this touches any eval question**: none
+of the 40 existing questions exercise `get_metric_all_companies` for an
+instant metric — the only cross-company `type: "comparison"` questions
+use tax rate/employee count/revenue. That's also *why* neither the eval
+suite nor the same-day self-review caught the regression — a real
+coverage gap, not just bad luck. Closed it: new question
+`aapl-msft-total-assets-comparison` (AAPL FY2025 total_assets =
+$359,241M vs. MSFT FY2025 = $619,003M, both verified live against the
+real cached XBRL data, not guessed), live-verified passing end-to-end
+through the real agent/retrieval stack.
+
+**Verified, not just tested (this addendum).** `tests/test_xbrl_facts.py`:
+removed the 2 tests written for the abandoned frame-borrowing fallback,
+added 3 new ones for the instant-metric path (independent per-company
+resolution, missing-company exclusion, and a regression guard that
+`get_frame()` is never called for an instant metric). `tests/test_agent.py`:
++1 for `_comparison_as_results()`'s real-form pass-through. Full suite
+**378/378**. Live-verified the exact repro that exposed the bug:
+`get_metric_all_companies("NVDA", "total_assets", fiscal_year=2026, fiscal_period="FY")`
+now returns NVDA's own correct $206.8B/2026-01-25 (not MSFT's borrowed
+window).
+
+**Second addendum (2026-09-07): the layered review this change actually
+required (Substantial tier — a real architecture decision) surfaced 6
+more real findings, caught by the `/code-review` skill's background
+angle-agents where an independent architecture-focused subagent found
+nothing.** Two were duplicated independently by separate review angles
+— a strong signal they were real, not noise:
+
+- **[Fixed, High] `agent.py`'s `no_data_for_ticker` telemetry only fired
+  when the WHOLE comparison result was empty**, not when the requested
+  `anchor_ticker` itself was missing from an otherwise non-empty one —
+  newly reachable because the instant-metric path has no anchor-
+  availability precondition (unlike duration). Concretely:
+  `compare_financial_metric(anchor_ticker="PLTR", metric="inventory")`
+  returned AAPL/MSFT/NVDA's real data with PLTR silently absent and zero
+  signal that PLTR (the company actually asked about) has none. Fixed:
+  `if not result or anchor_ticker not in result:` — other companies'
+  data still returned (genuinely useful), telemetry now fires correctly
+  for the anchor-specific gap too. Live-verified against real PLTR/
+  inventory data.
+- **[Fixed, Medium-High] The redesign's docstring inaccurately claimed
+  duration metrics were "unchanged from before".** True relative to the
+  pre-2026-09-06 codebase, false relative to what actually shipped for
+  one day: yesterday's fallback applied to EVERY metric, including
+  duration ones, and today's redesign silently (and correctly — the
+  same borrowed-window bug applies equally there) removed it for those
+  too, undocumented and untested. Fixed the docstring to say so
+  explicitly; added a regression guard confirming a duration metric
+  never queries another company even when its own frame is missing.
+- **[Documented, not fixed, Medium] `period_end_date`-based cross-company
+  comparison for instant metrics effectively collapses to one company**
+  — the identical literal date is passed to every company, and
+  different companies' snapshots essentially never share an exact date.
+  A real, known trade-off of the chosen design (the closest-date-
+  matching alternative that would have handled this was explicitly
+  considered and declined during planning) — documented in the
+  docstring as a known limitation rather than silently left undiscussed.
+- **[Fixed, Low] `INSTANT_METRICS` could silently drift from
+  `DEFAULT_METRIC_TAGS`** — a future instant metric added without also
+  updating `INSTANT_METRICS` would reproduce this exact bug class with
+  no guard catching it. Proportionate fix for a Low-severity, no-
+  automated-cross-check-elsewhere-in-this-file risk: a cross-reference
+  comment at `DEFAULT_METRIC_TAGS` itself, at the point a future editor
+  would actually add a new metric.
+- **[Fixed, Low] Stale `mcp_server.py` docstring** claimed cross-company
+  facts never carry `form`/`filed` — no longer universally true for the
+  instant-metric path. Code already handled both shapes correctly;
+  updated the comment.
+- **[Deferred, Low] `formulas.py`'s `RATIO_DEFINITIONS`
+  `supports_cross_company=False` gate wasn't revisited** even though the
+  instant-frame problem it's justified by is now partly fixed for raw
+  metrics — `get_ratio_all_companies()` uses a separate, still frame-
+  only path. Real, but separate, larger-scope item; added to
+  `BACKLOG.md` rather than folded in here.
+
+Full suite **380/380** after these fixes.
+
 ## Next steps
 
 See `BACKLOG.md` for the live task backlog. This section used to hold

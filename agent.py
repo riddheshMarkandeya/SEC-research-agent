@@ -593,7 +593,14 @@ def call_compare_financial_metric(args: dict, question: str | None = None) -> di
         result = get_ratio_all_companies(anchor_ticker, metric, fiscal_year, fiscal_period, period_end_date)
     else:
         result = get_metric_all_companies(anchor_ticker, metric, fiscal_year, fiscal_period, period_end_date)
-    if not result:
+    # anchor_ticker not in result (not just `not result`) matters since
+    # 2026-09-07: instant metrics resolve each company independently
+    # with no requirement that the requested anchor itself has data
+    # (e.g. PLTR doesn't tag inventory but AAPL/MSFT do) -- found in
+    # code review, a non-empty-but-anchor-missing result used to record
+    # no signal at all that the specific company asked about has no
+    # data, even though everyone else's data is genuinely returned.
+    if not result or anchor_ticker not in result:
         record_unmet_metric_request(anchor_ticker, metric, reason="no_data_for_ticker", question=question)
     return result
 
@@ -601,10 +608,13 @@ def call_compare_financial_metric(args: dict, question: str | None = None) -> di
 def _comparison_as_results(data: dict[str, dict], metric: str) -> list[dict]:
     """Wrap a {ticker: fact} dict (from compare_financial_metric) as a
     list of {text, metadata} results, one per company, reusing the same
-    shape _fact_as_result uses for a single company. Unlike a
-    companyconcept entry, a frames entry doesn't carry a "form" field —
-    there's genuinely no per-company form to report here, so "XBRL
-    frame data" stands in for it rather than guessing 10-K vs. 10-Q."""
+    shape _fact_as_result uses for a single company. A frames entry
+    (duration metrics) doesn't carry a "form" field — "XBRL frame data"
+    stands in for it rather than guessing 10-K vs. 10-Q. Instant metrics
+    (total_assets etc., 2026-09-07 redesign) resolve independently per
+    company via get_metric(), which DOES carry a real form — used when
+    present via fact.get(...) instead of always hardcoding the frame
+    fallback label."""
     results = []
     for ticker, fact in sorted(data.items()):
         results.append(
@@ -612,7 +622,7 @@ def _comparison_as_results(data: dict[str, dict], metric: str) -> list[dict]:
                 "text": f"{ticker} {metric} = {_format_fact_value(fact)} (structured XBRL data, not filing prose)",
                 "metadata": {
                     "ticker": ticker,
-                    "form": "XBRL frame data",
+                    "form": fact.get("form", "XBRL frame data"),
                     "filingDate": fact["period_end"],
                     "reportDate": fact["period_end"],
                     "accessionNumber": fact["accession"],

@@ -522,46 +522,95 @@ def test_get_metric_all_companies_returns_empty_when_anchor_has_no_frame(monkeyp
     assert get_metric_all_companies("NVDA", "gross_profit", fiscal_year=2026, fiscal_period="Q1") == {}
 
 
-def test_get_metric_all_companies_falls_back_to_another_companys_frame(monkeypatch):
-    # Found in code review (2026-09-06): SEC doesn't assign a "frame" to
-    # the newest annual instant-fact entry for some companies (verified
-    # against real cached data for total_assets/cash_and_equivalents/
-    # inventory) -- but frame is a property of the (metric, period) pair,
-    # not of any one company, so another covered company's own entry for
-    # the same period is an equally valid anchor. Only the requested
-    # ticker's OWN get_metric() call returns no frame here; a different
-    # covered company's does, and that frame should be used instead of
-    # giving up with {}.
-    def fake_get_metric(ticker, metric, fiscal_year, fiscal_period, period_end_date):
-        if ticker == "NVDA":
-            return {"value": 1, "unit": "USD", "period_end": "2026-01-25", "frame": None}
-        if ticker == "MSFT":
-            return {"value": 2, "unit": "USD", "period_end": "2025-06-30", "frame": "CY2025Q2I"}
-        return {"value": 3, "unit": "USD", "period_end": "2026-01-01", "frame": None}
-
-    monkeypatch.setattr("xbrl_facts.get_metric", fake_get_metric)
-    calls = []
-    monkeypatch.setattr("xbrl_facts.get_frame", lambda metric, frame: calls.append((metric, frame)) or {})
-
-    get_metric_all_companies("NVDA", "total_assets", fiscal_year=2026, fiscal_period="FY")
-
-    assert calls == [("total_assets", "CY2025Q2I")]
-
-
-def test_get_metric_all_companies_still_anchors_on_requested_ticker_first(monkeypatch):
-    # The fallback must not change behavior when the requested ticker's
-    # own frame is already usable -- it should never even look at other
-    # companies in that case.
+def test_get_metric_all_companies_duration_metric_never_tries_other_companies(monkeypatch):
+    # Regression guard (found in code review 2026-09-07): yesterday's
+    # shipped fix applied a cross-company frame-borrowing fallback to
+    # EVERY metric, including duration ones -- today's redesign removes
+    # it for duration metrics too (the same borrowed-window bug applies
+    # equally: a different company's own fiscal_year/fiscal_period
+    # number represents a different real calendar window). Only the
+    # requested ticker should ever be queried for a duration metric,
+    # even when its own frame is missing -- never a fallback to another
+    # company.
     checked_tickers = []
 
     def fake_get_metric(ticker, metric, fiscal_year, fiscal_period, period_end_date):
         checked_tickers.append(ticker)
-        return {"value": 1, "unit": "USD", "period_end": "2026-04-26", "frame": "CY2026Q1"}
+        return {"value": 1, "unit": "USD", "period_end": "2026-04-26", "frame": None}
 
     monkeypatch.setattr("xbrl_facts.get_metric", fake_get_metric)
-    monkeypatch.setattr("xbrl_facts.get_frame", lambda metric, frame: {})
 
-    get_metric_all_companies("NVDA", "gross_profit", fiscal_year=2026, fiscal_period="Q1")
+    result = get_metric_all_companies("NVDA", "gross_profit", fiscal_year=2026, fiscal_period="Q1")
 
     assert checked_tickers == ["NVDA"]
+    assert result == {}
+
+
+# ---------------------------------------------------------------------------
+# get_metric_all_companies -- instant metrics (total_assets/
+# cash_and_equivalents/inventory) take a DIFFERENT path from duration
+# metrics (gross_profit etc. above), added 2026-09-07 to replace a
+# same-day regression: borrowing another company's SEC-assigned frame
+# for an instant concept silently substitutes a DIFFERENT requested
+# time window (verified live: anchoring NVDA's own frame-less FY2026
+# total_assets against MSFT's frame returned NVDA's Q2 FY2027 balance
+# mislabeled as FY2026). Real financial-analysis practice ("calendariza-
+# tion") explicitly does not apply calendar-window alignment to balance-
+# sheet figures the way it does to income-statement ones -- so instant
+# metrics are resolved independently per company instead, no frame, no
+# anchor requirement at all. Duration metrics (tested above) are
+# unaffected -- calendar-window bucketing via frames is the standard,
+# correct technique for THOSE and already works.
+# ---------------------------------------------------------------------------
+def test_get_metric_all_companies_resolves_instant_metrics_independently_per_company(monkeypatch):
+    def fake_get_metric(ticker, metric, fiscal_year, fiscal_period, period_end_date):
+        return {
+            "AAPL": {"value": 359241000000, "unit": "USD", "period_end": "2025-09-27", "form": "10-K"},
+            "MSFT": {"value": 619003000000, "unit": "USD", "period_end": "2025-06-30", "form": "10-K"},
+        }.get(ticker)
+
+    monkeypatch.setattr("xbrl_facts.get_metric", fake_get_metric)
+    monkeypatch.setattr("xbrl_facts.load_companies", lambda: {"AAPL": {}, "MSFT": {}, "NVDA": {}})
+
+    result = get_metric_all_companies("AAPL", "total_assets", fiscal_year=2025, fiscal_period="FY")
+
+    # Each company's own real (differing) period_end/value, unmodified --
+    # no forced shared calendar snapshot.
+    assert result["AAPL"]["period_end"] == "2025-09-27"
+    assert result["MSFT"]["period_end"] == "2025-06-30"
+    assert result["AAPL"]["value"] == 359241000000
+    assert result["MSFT"]["value"] == 619003000000
+
+
+def test_get_metric_all_companies_instant_metric_skips_companies_with_no_data(monkeypatch):
+    def fake_get_metric(ticker, metric, fiscal_year, fiscal_period, period_end_date):
+        if ticker == "PLTR":
+            return None  # Palantir doesn't tag inventory at all
+        return {"value": 1, "unit": "USD", "period_end": "2026-01-01", "form": "10-K"}
+
+    monkeypatch.setattr("xbrl_facts.get_metric", fake_get_metric)
+    monkeypatch.setattr("xbrl_facts.load_companies", lambda: {"AAPL": {}, "PLTR": {}})
+
+    result = get_metric_all_companies("AAPL", "inventory", fiscal_year=2026, fiscal_period="FY")
+
+    assert set(result.keys()) == {"AAPL"}
+
+
+def test_get_metric_all_companies_instant_metric_never_calls_get_frame(monkeypatch):
+    # Regression guard: instant metrics must never touch the frames API
+    # at all, not even as a fallback -- that's the exact mechanism that
+    # caused the 2026-09-07 regression.
+    monkeypatch.setattr(
+        "xbrl_facts.get_metric",
+        lambda ticker, metric, fiscal_year, fiscal_period, period_end_date: {
+            "value": 1, "unit": "USD", "period_end": "2026-01-01", "form": "10-K",
+        },
+    )
+    calls = []
+    monkeypatch.setattr("xbrl_facts.get_frame", lambda metric, frame: calls.append((metric, frame)) or {})
+    monkeypatch.setattr("xbrl_facts.load_companies", lambda: {"AAPL": {}, "MSFT": {}})
+
+    get_metric_all_companies("AAPL", "cash_and_equivalents", fiscal_year=2026, fiscal_period="FY")
+
+    assert calls == []
 

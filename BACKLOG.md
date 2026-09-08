@@ -25,11 +25,16 @@ _(nothing right now)_
 
 ## Backlog
 
+### From the 2026-09-07 review of the get_metric_all_companies redesign
+
+- [ ] **[Low]** `formulas.py`'s `RATIO_DEFINITIONS` `supports_cross_company=False` gate (return_on_assets/asset_turnover/cash_to_assets/inventory_turnover) is justified by the same instant-frame problem the 2026-09-07 fix corrected at the `get_metric_all_companies()` layer, but `get_ratio_all_companies()` uses a separate, still frame-only path (`_compute_ratio_metric_all_companies()`), so these ratios stay blocked for cross-company comparison even though their raw legs (e.g. `total_assets`, `cash_and_equivalents`) are now individually comparable. Real gap, but a separate, larger-scope item (would need `_compute_ratio_metric_all_companies()` to compose from independent per-company legs for these 4 ratios specifically) — not a defect in that fix, no concrete question needs it yet. See `PROJECT_CONTEXT.md`'s 2026-09-07 addendum.
+
 ### From the 2026-09-06 full-codebase review
 
 Full evidence/reasoning for each: `docs/reviews/2026-09-06-full-codebase-review.md`.
-The 4 High findings are DONE (fixed 2026-09-06) — see `PROJECT_CONTEXT.md`'s
-matching section.
+The 4 High findings are DONE — see `PROJECT_CONTEXT.md`'s matching
+section (2026-09-06) and its addendum (2026-09-07: §4's first fix shipped
+a real regression, found and corrected before this batch resumed).
 
 - [ ] **[Medium]** `chunk_documents.py`'s final chunk-flush produces malformed last chunks + wrong `contains_table` metadata (confirmed in 4/25 real filings) — [review §5](docs/reviews/2026-09-06-full-codebase-review.md#5-chunkdocumentspys-final-chunk-flush-has-no-tail-filter)
 - [ ] **[Medium]** `chunk_documents.py`'s `strip_leading_metadata()` can truncate a document to 1 character on an untested edge case — [review §6](docs/reviews/2026-09-06-full-codebase-review.md#6-chunkdocumentspy64-68s-stripleadingmetadata-truncates-to-1-character)

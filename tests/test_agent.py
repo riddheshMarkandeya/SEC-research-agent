@@ -411,6 +411,23 @@ def test_comparison_as_results_empty_dict_returns_empty_list():
     assert _comparison_as_results({}, "revenue") == []
 
 
+def test_comparison_as_results_uses_real_form_when_present():
+    # Instant metrics (total_assets etc., 2026-09-07 redesign) resolve
+    # via independent per-company get_metric() calls, which DO carry a
+    # real form (10-K/10-Q) unlike frame-sourced duration-metric facts.
+    data = {
+        "AAPL": {
+            "value": 359241000000,
+            "unit": "USD",
+            "period_end": "2025-09-27",
+            "accession": "a",
+            "form": "10-K",
+        },
+    }
+    results = _comparison_as_results(data, "total_assets")
+    assert results[0]["metadata"]["form"] == "10-K"
+
+
 # ---------------------------------------------------------------------------
 # call_get_financial_fact / call_compare_financial_metric
 # (margin dispatch + yoy_growth boundary validation)
@@ -1010,6 +1027,27 @@ def test_call_compare_financial_metric_does_not_record_unmet_request_on_success(
 
     assert result == {"AAPL": {"value": 1}}
     assert calls == []
+
+
+def test_call_compare_financial_metric_records_unmet_request_when_anchor_missing_from_partial_result(monkeypatch):
+    # Found in code review (2026-09-07): instant metrics (total_assets
+    # etc.) resolve each company independently with no requirement that
+    # the requested anchor itself has data -- e.g. PLTR doesn't tag
+    # inventory but AAPL/MSFT do. Without this, `if not result:` never
+    # fires for a non-empty-but-anchor-missing result, so the caller
+    # asked about PLTR specifically and gets a silently PLTR-less
+    # comparison with zero signal anywhere that PLTR's own data is
+    # missing.
+    calls = []
+    monkeypatch.setattr("agent.get_metric_all_companies", lambda *a, **k: {"AAPL": {"value": 1}, "MSFT": {"value": 2}})
+    monkeypatch.setattr("agent.record_unmet_metric_request", lambda *a, **k: calls.append((a, k)))
+
+    result = call_compare_financial_metric({"anchor_ticker": "PLTR", "metric": "inventory"})
+
+    # Other companies' data is still returned -- genuinely useful partial
+    # info -- but the anchor-specific gap is now signaled too.
+    assert result == {"AAPL": {"value": 1}, "MSFT": {"value": 2}}
+    assert calls == [(("PLTR", "inventory"), {"reason": "no_data_for_ticker", "question": None})]
 
 
 def test_call_compare_financial_metric_rejects_unrecognized_extra_argument(monkeypatch):

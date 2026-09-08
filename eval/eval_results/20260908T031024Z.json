@@ -1,0 +1,22 @@
+{
+  "backend": "ollama",
+  "answer_model": "qwen2.5:7b-instruct",
+  "judge_model": "qwen2.5:7b-instruct",
+  "results": [
+    {
+      "id": "aapl-msft-total-assets-comparison",
+      "ticker": [
+        "AAPL",
+        "MSFT"
+      ],
+      "question": "Compare Apple's total assets as of September 27, 2025 to Microsoft's total assets as of June 30, 2025.",
+      "type": "comparison",
+      "passed": true,
+      "detail": "found matching values for all 2 entities",
+      "has_citation": true,
+      "citation_warnings": [],
+      "answer": "Apple's total assets as of September 27, 2025 were $359.24 billion [1], while Microsoft's total assets as of June 30, 2025 were $619.00 billion [2].",
+      "n_chunks_retrieved": 2
+    }
+  ]
+}

@@ -77,6 +77,13 @@ REQUEST_DELAY_SECONDS = 0.3  # match edgar_ingest.py's courtesy delay
 # is_metric_tagged() below for how that distinction gets surfaced to
 # the model instead of silently looking identical to "just not tagged
 # for this specific period."
+# Adding a new metric here that's an XBRL "instant" (point-in-time
+# balance) concept, not "duration"? Add it to INSTANT_METRICS below too
+# -- found in code review (2026-09-07) that forgetting to would silently
+# reproduce the exact borrowed-calendar-window bug get_metric_all_
+# companies() had to be redesigned to fix (see that function's own
+# docstring). Check via a real fetched entry: "start" absent from the
+# entry (see _duration_days()) means instant.
 DEFAULT_METRIC_TAGS = {
     "revenue": "RevenueFromContractWithCustomerExcludingAssessedTax",
     "gross_profit": "GrossProfit",
@@ -91,6 +98,16 @@ DEFAULT_METRIC_TAGS = {
 METRIC_TAG_OVERRIDES = {
     "NVDA": {"revenue": "Revenues"},
 }
+
+# The only 3 metrics tagged to an XBRL "instant" (point-in-time balance)
+# concept -- everything else in DEFAULT_METRIC_TAGS is "duration"
+# (measured over a period). _duration_days()'s own docstring already
+# confirms one concept's entries are consistently all-instant or
+# all-duration, never mixed, so a static per-metric classification here
+# is valid. Used by get_metric_all_companies() below to resolve instant
+# metrics differently from duration ones (see that function's docstring
+# for why).
+INSTANT_METRICS = {"total_assets", "cash_and_equivalents", "inventory"}
 
 # A companyconcept response's entries aren't one-per-period: a single
 # 10-K/10-Q re-reports 2-3 years (or the prior-year comparative quarter)
@@ -451,32 +468,70 @@ def get_metric_all_companies(
     fiscal_period: str = "FY",
     period_end_date: str | None = None,
 ) -> dict[str, dict]:
-    """`metric` for every covered company, for the same period bucket as
-    `ticker`'s own period (specified the same way as get_metric() —
-    fiscal_year+fiscal_period, or period_end_date). Resolves `ticker`'s
-    own fact first via get_metric() to read off its SEC-assigned
-    `frame` label, then fetches that frame for every covered company —
-    see the module-level comment above for why this doesn't compute the
-    frame label independently.
+    """`metric` for every covered company, for the same period
+    (specified the same way as get_metric() — fiscal_year+fiscal_period,
+    or period_end_date).
 
-    Falls back to every OTHER covered company's own entry for the same
-    period if `ticker`'s own has no frame, trying `ticker` first so
-    today's behavior/tests are unaffected when it already works. Found
-    in code review (2026-09-06): SEC doesn't assign a frame to the
-    newest annual instant-fact entry for some companies (confirmed
-    against real data for total_assets/cash_and_equivalents/inventory),
-    which silently made cross-company comparisons of those metrics at
-    the latest fiscal year return nothing even though every individual
-    company's value is directly retrievable. `frame` is a property of
-    the (metric, period) pair, not of any one company, so any covered
-    company's real, SEC-assigned frame for that period is an equally
-    valid anchor — this never computes a frame label itself, only
-    reuses ones SEC already assigned. Returns {} only if no covered
-    company has a usable frame for this period."""
-    companies = load_companies()
-    candidates = [ticker] + [t for t in companies if t != ticker]
-    for candidate in candidates:
-        anchor = get_metric(candidate, metric, fiscal_year, fiscal_period, period_end_date)
-        if anchor is not None and anchor.get("frame") is not None:
-            return get_frame(metric, anchor["frame"])
-    return {}
+    Instant (balance-sheet) metrics -- INSTANT_METRICS, i.e.
+    total_assets/cash_and_equivalents/inventory -- are resolved
+    independently per company: no SEC frame, no anchor requirement at
+    all. Real financial-analysis practice ("calendarization") explains
+    why: calendar-window alignment across companies is standard for
+    income-statement/cash-flow (duration) figures, but explicitly NOT
+    applied to balance-sheet figures -- a balance is a snapshot as of
+    one date, not a period that can be shifted. Each company's own
+    real, correctly-resolved period_end is returned as-is; a company
+    with no data for the period is simply excluded, not fatal to the
+    others.
+
+    Known limitation, found in code review (2026-09-07): calling this
+    with `period_end_date` instead of fiscal_year/fiscal_period passes
+    the identical literal date to every company, and different
+    companies' balance-sheet snapshots essentially never land on the
+    exact same calendar date -- so a period_end_date-anchored instant
+    comparison effectively collapses to whichever company (usually only
+    the caller's own anchor) happens to match exactly. fiscal_year/
+    fiscal_period doesn't have this problem: each company resolves its
+    OWN fy/fp labels independently, a genuinely company-relative
+    concept. Not fixed here -- a real fix would need the closest-date-
+    matching mechanism considered and declined in favor of this
+    simpler design (see docs/plans/2026-09-07-fix-get-metric-all-
+    companies-instant-metrics.md); revisit if a real question needs it.
+
+    This replaced a same-day regression (2026-09-07): an earlier version
+    tried to borrow another covered company's SEC-assigned `frame` when
+    `ticker`'s own instant-fact entry lacked one (a real, documented SEC
+    API gap -- frames aren't assigned to every observation). That
+    silently substituted a DIFFERENT requested time window instead of
+    degrading honestly -- live-verified anchoring NVDA's own frame-less
+    FY2026 total_assets against MSFT's frame returned NVDA's Q2 FY2027
+    balance mislabeled as FY2026.
+
+    Duration metrics (revenue, income, etc.) resolve `ticker`'s own fact
+    via get_metric() to read its SEC-assigned `frame`, then fetch that
+    frame for every covered company (see the module-level comment above
+    for why this doesn't compute the frame label independently).
+    Calendar-window bucketing via frames IS the correct, standard
+    technique for these -- unlike instant metrics, this was never the
+    bug. Returns {} if `ticker`'s own fact isn't available or has no
+    frame, with NO fallback to another company's frame -- unlike the
+    instant-metrics branch above, this is correctly narrower than what
+    briefly shipped on 2026-09-06: that fix's fallback applied to EVERY
+    metric, including duration ones, which was equally wrong for the
+    same reason (a different company's own fiscal_year/fiscal_period
+    resolves to a different real calendar window). Found in code review
+    (2026-09-07) that an earlier draft of this docstring inaccurately
+    claimed duration metrics were "unchanged from before" -- true
+    relative to the pre-2026-09-06 codebase, false relative to what was
+    actually shipped for one day."""
+    if metric in INSTANT_METRICS:
+        results: dict[str, dict] = {}
+        for candidate in load_companies():
+            fact = get_metric(candidate, metric, fiscal_year, fiscal_period, period_end_date)
+            if fact is not None:
+                results[candidate] = fact
+        return results
+    anchor = get_metric(ticker, metric, fiscal_year, fiscal_period, period_end_date)
+    if anchor is None or anchor.get("frame") is None:
+        return {}
+    return get_frame(metric, anchor["frame"])
