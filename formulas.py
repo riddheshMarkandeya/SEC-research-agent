@@ -69,6 +69,8 @@ def _compute_ratio_metric(
         return None
     if numerator["period_end"] != denominator["period_end"]:
         return None
+    if denominator["value"] == 0:
+        return None
     ratio = numerator["value"] / denominator["value"]
     value = round(ratio * 100, 1) if as_percent else round(ratio, 2)
     return {
@@ -259,7 +261,7 @@ def _compute_ratio_metric_all_companies(
     results: dict[str, dict] = {}
     for t, num in numerators.items():
         den = denominators.get(t)
-        if den is None or den["period_end"] != num["period_end"]:
+        if den is None or den["period_end"] != num["period_end"] or den["value"] == 0:
             continue
         ratio = num["value"] / den["value"]
         results[t] = {

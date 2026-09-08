@@ -35,12 +35,10 @@ Full evidence/reasoning for each: `docs/reviews/2026-09-06-full-codebase-review.
 The 4 High findings are DONE — see `PROJECT_CONTEXT.md`'s matching
 section (2026-09-06) and its addendum (2026-09-07: §4's first fix shipped
 a real regression, found and corrected before this batch resumed).
+§5/§7/§9 are also DONE — see `PROJECT_CONTEXT.md`'s 2026-09-08 section.
 
-- [ ] **[Medium]** `chunk_documents.py`'s final chunk-flush produces malformed last chunks + wrong `contains_table` metadata (confirmed in 4/25 real filings) — [review §5](docs/reviews/2026-09-06-full-codebase-review.md#5-chunkdocumentspys-final-chunk-flush-has-no-tail-filter)
 - [ ] **[Medium]** `chunk_documents.py`'s `strip_leading_metadata()` can truncate a document to 1 character on an untested edge case — [review §6](docs/reviews/2026-09-06-full-codebase-review.md#6-chunkdocumentspy64-68s-stripleadingmetadata-truncates-to-1-character)
-- [ ] **[Medium]** `edgar_ingest.py`'s `get_filing_list()` call is unguarded, unlike the per-filing loop below it — one bad network call aborts ingestion for every remaining company — [review §7](docs/reviews/2026-09-06-full-codebase-review.md#7-edgaringestpy190s-getfilinglistcik-call-is-unguarded)
 - [ ] **[Medium]** A string `fiscal_year` silently misrecords as `"no_data_for_ticker"` telemetry instead of a schema-violation signal — [review §8](docs/reviews/2026-09-06-full-codebase-review.md#8-a-string-fiscalyear-silently-misrecords-as-nodataforticker)
-- [ ] **[Medium]** `formulas.py`'s ratio computation has no zero-denominator guard (unlike `get_yoy_growth`) — [review §9](docs/reviews/2026-09-06-full-codebase-review.md#9-formulaspys-ratio-computation-has-no-zero-denominator-guard)
 - [ ] **[Medium]** `tracing.py`'s `traced_span()` never records exception info — a crash and a no-op look identical in the local log — [review §10](docs/reviews/2026-09-06-full-codebase-review.md#10-tracingpys-tracedspan-never-records-exception-info)
 - [ ] **[Medium]** `mcp_server.py` never calls `tracing.flush()` on shutdown — Langfuse observations can be lost on restart — [review §11](docs/reviews/2026-09-06-full-codebase-review.md#11-mcpserverpy-never-calls-tracingflush-on-shutdown)
 - [ ] **[Medium]** `_format_no_comparison_message` is missing the "never tagged" hint its sibling has; `search_filings` doesn't validate/log an unknown ticker like the other two tools do — [review §12](docs/reviews/2026-09-06-full-codebase-review.md#12-two-smaller-consistency-gaps)
@@ -49,6 +47,13 @@ a real regression, found and corrected before this batch resumed).
 - [ ] **[Low]** `xbrl_facts.py`'s `get_frame()` cross-tag merge has an untested set-iteration-order dependency — [review §15](docs/reviews/2026-09-06-full-codebase-review.md#15-xbrlfactspys-getframe-has-an-untested-ordering-dependency)
 - [ ] **[Low, design note]** `query_chunks.py` duplicates `retrieval.py`'s query logic instead of reusing it
 - [ ] **[Low, design note]** `tracing.py` has two overlapping "record an instantaneous fact" primitives (`record_unmet_metric_request` vs `log_event`) with no documented decision rule for which to use
+
+### From the 2026-09-08 layered review of the §5/§7/§9 fixes
+
+Full evidence: `docs/reviews/2026-09-08-fix-3-medium-review-findings.md`.
+
+- [ ] **[Low, design note]** `formulas.py` now has 3 independently-written same-shape zero-denominator guards (`get_yoy_growth`, `_compute_ratio_metric`, `_compute_ratio_metric_all_companies`) with no shared `_safe_ratio()`/zero-guard helper — CLAUDE.md's Standard-tier minimalism rule is why this diff didn't extract one; worth doing once a 4th call site needs the same guard.
+- [ ] **[Low, latent, not currently reachable]** `chunk_documents.py`'s `chunk_blocks()` `current_is_only_overlap` flag would be incorrectly cleared by a hypothetical empty-string block merge (`f"{overlap}\n\n{''}".strip()` collapses back to the overlap value alone) — not currently reachable since `split_into_blocks()` only ever produces non-empty blocks, so this is a documentation-worthy assumption rather than a live bug.
 
 ### Carried over from `PROJECT_CONTEXT.md`'s old "Next steps" (pre-2026-09-06)
 

@@ -3676,6 +3676,127 @@ nothing.** Two were duplicated independently by separate review angles
 
 Full suite **380/380** after these fixes.
 
+### Fixed 3 Medium-priority findings from the 2026-09-06 full-codebase review (2026-09-08)
+
+See `docs/reviews/2026-09-06-full-codebase-review.md` §5/§7/§9 for the
+original findings and `BACKLOG.md` for what's still open from that
+review.
+
+- **`chunk_documents.py`'s final chunk-flush had no tail filter (§5).**
+  `chunk_blocks()` already dropped a small leftover chunk mid-loop when
+  it was nothing but the untouched overlap carry-over from the last
+  flush (a raw character slice that can land mid-`<TABLE>`), but the
+  final flush after the loop ends had no equivalent check, so a filing
+  that happened to end right after a mid-loop flush emitted that stale
+  overlap remnant as its own malformed, mistagged last chunk. Root cause
+  mattered here: the mid-loop check's `len(current) > MIN_STANDALONE_CHUNK_CHARS`
+  is only a safe *proxy* for "this is pure overlap, dropping it loses
+  nothing new" — the invariant that makes the proxy safe doesn't hold at
+  the final flush (a short *genuine* final block, e.g. a small paragraph
+  right after an oversized table, would have been silently discarded by
+  the same length check — trading a "malformed duplicate chunk" bug for
+  a worse "silently lost data" one). Fixed by tracking an explicit
+  `current_is_only_overlap` flag instead of guessing from length, used
+  at both the mid-loop and final flush; `MIN_STANDALONE_CHUNK_CHARS`
+  became dead and was removed. Live-verified against the 25 already-
+  ingested filings: `git stash`-ing just this fix and diffing
+  before/after found AAPL's `0000320193-26-000020` 10-Q dropping from 43
+  chunks to 42, with the removed chunk being exactly `OVERLAP_CHARS`
+  (200) characters — the exact bug pattern — and confirmed by hand that
+  its content (the signature-block `<TABLE>`) was already fully present,
+  intact, in the new last chunk.
+- **`edgar_ingest.py`'s `get_filing_list(cik)` call was unguarded (§7).**
+  Unlike the per-filing loop right below it, one company's network
+  failure aborted ingestion for every subsequent company too. Wrapped in
+  a broad, commented `except Exception` — matching the per-filing catch
+  three lines below rather than trying to enumerate every failure type
+  `get_filing_list()` could raise (see addendum below for why the first
+  attempt at the latter wasn't good enough) — printing the same
+  `✗ Failed: ...` style message and continuing to the next company.
+- **`formulas.py`'s ratio computation had no zero-denominator guard
+  (§9).** Unlike `get_yoy_growth`, which already handles this.
+  `inventory_turnover` (`cost_of_revenue / inventory`) was the most
+  exposed case per the review. Added `denominator["value"] == 0` guards
+  to both `_compute_ratio_metric()` (returns `None`, matching every
+  other "can't compute this" path) and
+  `_compute_ratio_metric_all_companies()` (skips just that company,
+  matching how a period-end mismatch is already handled, rather than
+  discarding the whole cross-company result).
+
+New/extended tests: `tests/test_chunk_documents.py` (+2: drops a
+final-flush-only overlap tail, keeps a short genuine final block),
+`tests/test_edgar_ingest.py` (+3: `main()` continues to the next company
+when `get_filing_list` raises a network error, a malformed-JSON error,
+or a malformed-schema error — the live boundary functions are mocked so
+this exercises `main()`'s own deterministic control flow, not a real
+network call), `tests/test_formulas.py` (+2: zero-denominator returns
+`None`/excludes just that company). Full suite **387/387**, then
+**388/388** after the round-2 addendum below.
+
+**Addendum: the layered review (step 7) caught a real gap in the first
+`edgar_ingest.py` fix.** `/code-review` flagged that the first attempt —
+`except (requests.RequestException, ValueError, KeyError)`, reasoning
+from `get_filing_list()`'s two calls (`raise_for_status()`, `resp.json()`)
+— was narrower than the function's real failure surface. A
+fresh-subagent architecture pass (no memory of the fix) then found the
+same gap from a different angle and went further: even that three-type
+tuple would still miss e.g. a `TypeError` if SEC ever returned
+`recent["form"]` as a non-sequence, and pointed out the fix's own
+comment already claimed parity with the per-filing catch below it
+without actually matching it (that catch is a bare `except Exception`).
+Two independent review angles converging on the same under-broad catch
+was a strong signal it was real, not noise — matching the
+2026-09-07 fix's own experience with layered review. Switched to a
+broad, commented `except Exception`, the same pattern already used one
+scope down, and added a `ValueError` test case alongside the existing
+`KeyError`/`ConnectionError` ones so more than one of the exception
+tuple's original members is actually exercised.
+
+**Second addendum: round 2 of the layered review (a second `/code-review`
+pass plus 4 fresh angle-subagents on the now-fixed diff) found one more
+real gap.** `chunk_blocks()`'s mid-loop overflow-close branch shares the
+exact same `current_is_only_overlap` flag-check logic as the final
+flush, but only the final-flush case had a test proving genuine short
+content survives rather than getting dropped — a regression that
+reintroduced a length check in just the mid-loop branch would have
+slipped past the full suite. Added
+`test_chunk_blocks_keeps_short_genuine_content_closed_out_mid_document`
+and confirmed by hand (a standalone simulation of the old length-
+heuristic body) that pre-fix logic really would have silently dropped
+that content. Two Low-severity, non-blocking design notes from this
+round (a `formulas.py` zero-guard duplication worth a future
+`_safe_ratio()` extraction, and a `chunk_blocks()` latent-but-
+unreachable empty-block edge case) went to `BACKLOG.md` instead of being
+fixed here, per CLAUDE.md's Standard-tier minimalism rule. Full
+findings: `docs/reviews/2026-09-08-fix-3-medium-review-findings.md`.
+
+**Third addendum: re-indexed and spot-checked end-to-end after
+confirming the vector index was stale.** The unit-test/`git stash`
+verification above confirmed `chunk_documents.py`'s fix at the chunk
+level, but `chroma_db/`'s collections predated this session by weeks —
+the fix hadn't actually reached retrieval yet. Ran `index_chunks.py`
+(drops and recreates the `sec_filings` collection, exactly the scenario
+its own comment already anticipated: "e.g. after a
+chunk_documents.py fix") — 3206 chunks re-embedded (`bge-small-en-v1.5`),
+counts by ticker unchanged (AAPL 245, CRM 772, MSFT 623, NVDA 451,
+PLTR 1115). Rather than the full ~40-question eval suite (expensive on
+local Ollama, and the fix only changed one filing's trailing,
+non-financial signature-block content), spot-checked the 4 eval
+questions that actually target the one changed filing (AAPL's
+`0000320193-26-000020`, its Q3 FY2026 10-Q) on both backends:
+`aapl-operating-margin-q3fy2026`, `aapl-revenue-growth-q3fy2026`,
+`aapl-cash-equivalents-q3fy2026`, `aapl-cash-and-buyback-q3fy2026`.
+Ollama: 3/4 passed (32.6% margin, 16.4% growth, $39.544B cash all
+correct); the comparison question failed the same way it's failed on
+Ollama every time it's been run since 2026-08-25
+(`20260825T044611Z`/`20260825T195207Z`), while passing cleanly on
+Gemini both then and now (`20260825T02*`/`20260825T190858Z`/
+`20260908T225358Z`) — a known local-model comparison-question ceiling
+already documented under "Cloud-model spike" above, not a regression
+from today's reindex. Gemini: 4/4 passed, including the comparison
+question. Confirms the reindexed corpus retrieves this filing's data
+correctly post-fix.
+
 ## Next steps
 
 See `BACKLOG.md` for the live task backlog. This section used to hold

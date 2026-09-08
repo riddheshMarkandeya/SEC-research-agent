@@ -39,10 +39,6 @@ TARGET_CHUNK_CHARS = 2000
 MAX_CHUNK_CHARS = 3000       # hard ceiling before we force a split
 OVERLAP_CHARS = 200          # trailing context carried into the next chunk
 
-# Below this size, a leftover overlap-tail fragment gets dropped instead of
-# emitted as its own chunk — see chunk_blocks() for why.
-MIN_STANDALONE_CHUNK_CHARS = OVERLAP_CHARS
-
 # SEC filings sometimes have hidden Inline XBRL taxonomy metadata (tag
 # paths, raw dates, "us-gaap:...Member" strings) sitting outside any
 # <table> tag, so Week 1's table-stripping doesn't catch it. This
@@ -254,33 +250,47 @@ def chunk_blocks(blocks: list[str]) -> list[str]:
     A table block is always kept whole, even if it alone exceeds the
     target (better an oversized-but-coherent chunk than a broken table).
     Adds a small trailing overlap of prose for context continuity.
+
+    `current_is_only_overlap` tracks whether `current` is nothing but
+    that untouched overlap carry-over (true right after the reset below,
+    false the moment any block gets merged into it or it's replaced by a
+    fresh block). This is checked -- not guessed from length -- before
+    ever emitting `current`, mid-loop or at the final flush below: an
+    overlap-only remnant is a raw character slice that duplicates
+    content already in the previous chunk and can land mid-`<TABLE>`, so
+    it's dropped rather than emitted as a malformed, mistagged chunk.
+    Genuine content is always kept, no matter how short -- a length
+    check alone can't tell the two cases apart once the loop has ended
+    (e.g. a short final paragraph reached via the fresh-block branch
+    below is real, never-before-emitted content, not overlap).
     """
     chunks = []
     current = ""
+    current_is_only_overlap = False
 
     for block in blocks:
         candidate = f"{current}\n\n{block}".strip() if current else block
 
         if len(candidate) <= MAX_CHUNK_CHARS:
             current = candidate
+            current_is_only_overlap = False
             if len(current) >= TARGET_CHUNK_CHARS:
                 chunks.append(current)
                 # carry a small tail forward for continuity
                 current = current[-OVERLAP_CHARS:]
+                current_is_only_overlap = True
         else:
-            # Adding this block would overflow — close out current chunk.
-            # If current is small enough that it can only be a leftover
-            # overlap tail (never unique unappended content — see the
-            # reset above, which always sets current to exactly
-            # OVERLAP_CHARS), drop it instead of emitting a near-empty,
-            # low-value chunk like a stray table-row fragment.
-            if current and len(current) > MIN_STANDALONE_CHUNK_CHARS:
+            # Adding this block would overflow — close out current chunk,
+            # unless it's nothing but the untouched overlap tail (see
+            # docstring above).
+            if current and not current_is_only_overlap:
                 chunks.append(current)
             # Start fresh with this block (even if it alone is oversized —
             # tables must stay atomic, so we accept the occasional big chunk)
             current = block
+            current_is_only_overlap = False
 
-    if current:
+    if current and not current_is_only_overlap:
         chunks.append(current)
 
     return chunks

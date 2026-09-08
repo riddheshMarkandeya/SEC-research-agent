@@ -7,7 +7,6 @@ script (see PROJECT_CONTEXT.md's "Verified working" section).
 
 from chunk_documents import (
     MAX_CHUNK_CHARS,
-    MIN_STANDALONE_CHUNK_CHARS,
     OVERLAP_CHARS,
     TARGET_CHUNK_CHARS,
     chunk_blocks,
@@ -264,3 +263,47 @@ def test_chunk_blocks_drops_leftover_overlap_only_tail():
     # If the overlap tail had been kept, chunks[1] would start with "A"s.
     assert chunks[1] == block2
     assert not chunks[1].startswith("A")
+
+
+def test_chunk_blocks_drops_leftover_overlap_only_tail_at_end_of_document():
+    # block1 exactly hits TARGET_CHUNK_CHARS, so it flushes mid-loop and
+    # leaves current = the last OVERLAP_CHARS chars of it. With no block
+    # after it, that stale overlap tail used to be emitted as its own
+    # malformed final "chunk" (review §5) -- pure duplicate content of
+    # chunks[0]'s own tail, with no unique content of its own.
+    block1 = "A" * TARGET_CHUNK_CHARS
+
+    chunks = chunk_blocks([block1])
+
+    assert chunks == [block1]
+
+
+def test_chunk_blocks_keeps_short_final_block_with_genuine_content():
+    # An oversized table forces an overflow-reset (current = the table
+    # alone, kept whole per test_chunk_blocks_keeps_oversized_table_block_whole
+    # above). The short paragraph right after it is genuine, never-before-
+    # emitted content -- unlike the overlap-tail case above, it must NOT
+    # be dropped just because it's short.
+    oversized_table = "<TABLE>\n" + ("X" * (MAX_CHUNK_CHARS + 2000)) + "\n</TABLE>"
+    short_final_paragraph = "Z" * (OVERLAP_CHARS - 50)
+
+    chunks = chunk_blocks([oversized_table, short_final_paragraph])
+
+    assert chunks == [oversized_table, short_final_paragraph]
+
+
+def test_chunk_blocks_keeps_short_genuine_content_closed_out_mid_document():
+    # A short first block (never touched by the overlap reset, so
+    # current_is_only_overlap is False) gets closed out by the MID-LOOP
+    # overflow branch, not the final flush, when the next block is too
+    # big to merge with it. Old code would have dropped it here too (its
+    # length check couldn't tell this apart from an overlap tail) -- this
+    # is the mid-loop counterpart to
+    # test_chunk_blocks_keeps_short_final_block_with_genuine_content
+    # above, which only covers the same guarantee at the final flush.
+    short_first_paragraph = "Y" * (OVERLAP_CHARS - 50)
+    oversized_table = "<TABLE>\n" + ("X" * (MAX_CHUNK_CHARS + 2000)) + "\n</TABLE>"
+
+    chunks = chunk_blocks([short_first_paragraph, oversized_table])
+
+    assert chunks == [short_first_paragraph, oversized_table]

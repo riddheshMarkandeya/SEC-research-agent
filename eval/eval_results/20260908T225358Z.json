@@ -1,0 +1,57 @@
+{
+  "backend": "gemini",
+  "answer_model": "gemini-flash-lite-latest",
+  "judge_model": "qwen2.5:7b-instruct",
+  "results": [
+    {
+      "id": "aapl-operating-margin-q3fy2026",
+      "ticker": "AAPL",
+      "question": "What was Apple's operating margin for the three months ended June 27, 2026?",
+      "type": "numeric",
+      "passed": true,
+      "detail": "found matching value: 32.6 (percent)",
+      "has_citation": true,
+      "citation_warnings": [],
+      "answer": "Apple's operating margin for the three months ended June 27, 2026, was 32.6% [1].",
+      "n_chunks_retrieved": 1
+    },
+    {
+      "id": "aapl-revenue-growth-q3fy2026",
+      "ticker": "AAPL",
+      "question": "What was Apple's year-over-year revenue growth for the three months ended June 27, 2026?",
+      "type": "numeric",
+      "passed": true,
+      "detail": "found matching value: 16.4 (percent)",
+      "has_citation": true,
+      "citation_warnings": [],
+      "answer": "Apple's year-over-year revenue growth for the three months ended June 27, 2026, was 16.4% [1].",
+      "n_chunks_retrieved": 1
+    },
+    {
+      "id": "aapl-cash-equivalents-q3fy2026",
+      "ticker": "AAPL",
+      "question": "What was Apple's cash and cash equivalents as of June 27, 2026, according to its balance sheet?",
+      "type": "numeric",
+      "passed": true,
+      "detail": "found matching value: 39544000000.0 (raw)",
+      "has_citation": true,
+      "citation_warnings": [],
+      "answer": "Apple's cash and cash equivalents as of June 27, 2026, according to its balance sheet, was $39,544,000,000 (or approximately $39.54 billion) [1].",
+      "n_chunks_retrieved": 1
+    },
+    {
+      "id": "aapl-cash-and-buyback-q3fy2026",
+      "ticker": [
+        "AAPL"
+      ],
+      "question": "As of June 27, 2026, what was Apple's cash and cash equivalents balance, and how much remaining availability did it have under its May 2025 $100 billion share repurchase program as of that same date?",
+      "type": "comparison",
+      "passed": true,
+      "detail": "found matching values for all 2 entities",
+      "has_citation": true,
+      "citation_warnings": [],
+      "answer": "As of June 27, 2026, Apple's cash and cash equivalents balance was **$39,544,000,000** ($39.544 billion) [1].\n\nAs of the same date, the remaining availability under Apple's May 2025 $100 billion share repurchase program was **$38.0 billion** [9].",
+      "n_chunks_retrieved": 11
+    }
+  ]
+}

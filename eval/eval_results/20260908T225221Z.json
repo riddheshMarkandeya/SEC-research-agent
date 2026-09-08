@@ -1,0 +1,60 @@
+{
+  "backend": "ollama",
+  "answer_model": "qwen2.5:7b-instruct",
+  "judge_model": "qwen2.5:7b-instruct",
+  "results": [
+    {
+      "id": "aapl-operating-margin-q3fy2026",
+      "ticker": "AAPL",
+      "question": "What was Apple's operating margin for the three months ended June 27, 2026?",
+      "type": "numeric",
+      "passed": true,
+      "detail": "found matching value: 32.6 (percent)",
+      "has_citation": true,
+      "citation_warnings": [],
+      "answer": "Apple's operating margin for the three months ended June 27, 2026 was 32.6% [1].",
+      "n_chunks_retrieved": 1
+    },
+    {
+      "id": "aapl-revenue-growth-q3fy2026",
+      "ticker": "AAPL",
+      "question": "What was Apple's year-over-year revenue growth for the three months ended June 27, 2026?",
+      "type": "numeric",
+      "passed": true,
+      "detail": "found matching value: 16.4 (percent)",
+      "has_citation": true,
+      "citation_warnings": [],
+      "answer": "Apple's year-over-year revenue growth for the three months ended June 27, 2026 was 16.4% [1].",
+      "n_chunks_retrieved": 1
+    },
+    {
+      "id": "aapl-cash-equivalents-q3fy2026",
+      "ticker": "AAPL",
+      "question": "What was Apple's cash and cash equivalents as of June 27, 2026, according to its balance sheet?",
+      "type": "numeric",
+      "passed": true,
+      "detail": "found matching value: 39544000000.0 (raw)",
+      "has_citation": true,
+      "citation_warnings": [],
+      "answer": "Apple's cash and cash equivalents as of June 27, 2026, according to its balance sheet, were $39,544,000,000 [1].",
+      "n_chunks_retrieved": 1
+    },
+    {
+      "id": "aapl-cash-and-buyback-q3fy2026",
+      "ticker": [
+        "AAPL"
+      ],
+      "question": "As of June 27, 2026, what was Apple's cash and cash equivalents balance, and how much remaining availability did it have under its May 2025 $100 billion share repurchase program as of that same date?",
+      "type": "comparison",
+      "passed": false,
+      "detail": "agent refused to answer (hard-gated on unverified citation(s)) -- no value to grade",
+      "has_citation": false,
+      "citation_warnings": [
+        "[3] claims 25.8 (billion) but that value doesn't appear in the cited source",
+        "[3] claims 74.2 (billion) but that value doesn't appear in the cited source"
+      ],
+      "answer": "I can't confirm this answer against the sources I retrieved -- the following claim(s) don't hold up under citation verification:\n- [3] claims 25.8 (billion) but that value doesn't appear in the cited source\n- [3] claims 74.2 (billion) but that value doesn't appear in the cited source\n\nRather than give you a number I can't verify, I'm refusing this answer.",
+      "n_chunks_retrieved": 7
+    }
+  ]
+}

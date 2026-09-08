@@ -471,6 +471,41 @@ def test_get_gross_margin_all_companies_excludes_company_with_mismatched_period_
     assert set(result.keys()) == {"NVDA"}
 
 
+def test_get_gross_margin_all_companies_excludes_company_with_zero_denominator(monkeypatch):
+    monkeypatch.setattr(
+        "formulas.get_ratio",
+        lambda ticker, ratio_name, fiscal_year, fiscal_period, period_end_date: {
+            "value": 74.9,
+            "unit": "percent",
+            "period_end": "2026-04-26",
+            "form": "10-Q",
+            "accession": "x",
+            "filed": None,
+            "frame": "CY2026Q1",
+        },
+    )
+
+    def fake_get_frame(metric, frame):
+        if metric == "gross_profit":
+            return {
+                "NVDA": {"value": 61157000000, "unit": "USD", "period_end": "2026-04-26", "accession": "a"},
+                "AAPL": {"value": 54781000000, "unit": "USD", "period_end": "2026-04-26", "accession": "c"},
+            }
+        # AAPL's revenue frame entry is zero -- a real, if rare, data
+        # quirk (e.g. a company between reporting periods) that used to
+        # raise ZeroDivisionError and blank the WHOLE cross-company
+        # result instead of just excluding AAPL, same as a period-end
+        # mismatch already does.
+        return {
+            "NVDA": {"value": 81615000000, "unit": "USD", "period_end": "2026-04-26", "accession": "b"},
+            "AAPL": {"value": 0, "unit": "USD", "period_end": "2026-04-26", "accession": "d"},
+        }
+
+    monkeypatch.setattr("formulas.get_frame", fake_get_frame)
+    result = get_gross_margin_all_companies("NVDA", period_end_date="2026-04-26")
+    assert set(result.keys()) == {"NVDA"}
+
+
 def test_get_gross_margin_all_companies_returns_empty_when_anchor_unavailable(monkeypatch):
     monkeypatch.setattr(
         "formulas.get_ratio",
@@ -600,6 +635,25 @@ def test_get_ratio_computes_inventory_turnover_as_raw_ratio(monkeypatch):
     result = get_ratio("NVDA", "inventory_turnover", fiscal_year=2026, fiscal_period="FY")
     assert result["value"] == 5.0
     assert result["unit"] == "raw"
+
+
+def test_get_ratio_returns_none_for_zero_denominator(monkeypatch):
+    # inventory_turnover (cost_of_revenue / inventory) is review §9's
+    # cited most-exposed case -- a zero inventory value used to raise
+    # ZeroDivisionError instead of degrading like every other "can't
+    # compute this" path in this module.
+    cost_of_revenue_entries = [
+        {"start": "2025-01-27", "end": "2026-01-25", "val": 100000000, "accn": "x", "fy": 2026, "fp": "FY", "form": "10-K"},
+    ]
+    zero_inventory_entries = [
+        {"end": "2026-01-25", "val": 0, "accn": "x", "fy": 2026, "fp": "FY", "form": "10-K"},
+    ]
+
+    def fake_fetch(ticker, tag):
+        return {"units": {"USD": cost_of_revenue_entries if tag == "CostOfRevenue" else zero_inventory_entries}}
+
+    monkeypatch.setattr("xbrl_facts.fetch_concept", fake_fetch)
+    assert get_ratio("NVDA", "inventory_turnover", fiscal_year=2026, fiscal_period="FY") is None
 
 
 def test_get_ratio_raises_key_error_for_unregistered_ratio_name():

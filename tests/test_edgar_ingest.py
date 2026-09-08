@@ -10,6 +10,8 @@ URL fetch_filing_html() would have fetched -- no new network calls.
 
 import json
 
+import requests
+
 import edgar_ingest
 
 
@@ -70,3 +72,92 @@ def test_fetch_filing_html_url_matches_get_filing_url(monkeypatch, tmp_path):
     fetched_from = edgar_ingest._filing_document_url(cik, accession, primary_doc)
 
     assert looked_up == fetched_from
+
+
+def test_main_continues_to_next_company_when_get_filing_list_fails(monkeypatch, tmp_path):
+    """get_filing_list(cik) (review §7) used to be unguarded, unlike the
+    per-filing loop right below it -- one company's network failure
+    aborted ingestion for every subsequent company too. get_filing_list
+    and fetch_filing_html/parse_filing are the live SEC boundary and are
+    mocked here so this test exercises main()'s own deterministic
+    resilience logic, not a real network call."""
+    monkeypatch.setattr(edgar_ingest, "OUTPUT_DIR", tmp_path)
+    monkeypatch.setattr(edgar_ingest, "REQUEST_DELAY_SECONDS", 0)
+    monkeypatch.setattr(
+        edgar_ingest,
+        "load_companies",
+        lambda: {
+            "BAD": {"cik": "0000000001"},
+            "GOOD": {"cik": "0000000002"},
+        },
+    )
+
+    def fake_get_filing_list(cik):
+        if cik == "0000000001":
+            raise requests.exceptions.ConnectionError("SEC unreachable")
+        return [{
+            "form": "10-K",
+            "accessionNumber": "0000000002-26-000001",
+            "filingDate": "2026-01-01",
+            "primaryDocument": "good-20260101.htm",
+            "reportDate": "2025-12-31",
+        }]
+
+    monkeypatch.setattr(edgar_ingest, "get_filing_list", fake_get_filing_list)
+    monkeypatch.setattr(edgar_ingest, "fetch_filing_html", lambda cik, accession, primary_doc: "<html></html>")
+    monkeypatch.setattr(edgar_ingest, "parse_filing", lambda html: ("some text", []))
+
+    edgar_ingest.main()  # must not raise despite BAD's get_filing_list failure
+
+    assert not (tmp_path / "BAD" / "0000000002-26-000001_meta.json").exists()
+    assert (tmp_path / "GOOD" / "0000000002-26-000001_meta.json").exists()
+
+
+def _assert_main_survives_get_filing_list_failure(monkeypatch, tmp_path, exception):
+    """Shared body for the malformed-response resilience tests below --
+    code review on the §7 fix flagged that catching only
+    requests.RequestException was narrower than get_filing_list()'s real
+    failure surface (it can also raise ValueError/json.JSONDecodeError
+    on a malformed body, or KeyError/TypeError on an unexpected
+    submissions schema), which is why main() now uses a broad, commented
+    `except Exception` there instead -- these tests each raise a
+    different one of those types to confirm none of them still slip
+    through and abort the whole run."""
+    monkeypatch.setattr(edgar_ingest, "OUTPUT_DIR", tmp_path)
+    monkeypatch.setattr(edgar_ingest, "REQUEST_DELAY_SECONDS", 0)
+    monkeypatch.setattr(
+        edgar_ingest,
+        "load_companies",
+        lambda: {
+            "BAD": {"cik": "0000000001"},
+            "GOOD": {"cik": "0000000002"},
+        },
+    )
+
+    def fake_get_filing_list(cik):
+        if cik == "0000000001":
+            raise exception
+        return [{
+            "form": "10-K",
+            "accessionNumber": "0000000002-26-000001",
+            "filingDate": "2026-01-01",
+            "primaryDocument": "good-20260101.htm",
+            "reportDate": "2025-12-31",
+        }]
+
+    monkeypatch.setattr(edgar_ingest, "get_filing_list", fake_get_filing_list)
+    monkeypatch.setattr(edgar_ingest, "fetch_filing_html", lambda cik, accession, primary_doc: "<html></html>")
+    monkeypatch.setattr(edgar_ingest, "parse_filing", lambda html: ("some text", []))
+
+    edgar_ingest.main()  # must not raise despite BAD's failure
+
+    assert not (tmp_path / "BAD" / "0000000002-26-000001_meta.json").exists()
+    assert (tmp_path / "GOOD" / "0000000002-26-000001_meta.json").exists()
+
+
+def test_main_continues_to_next_company_when_get_filing_list_hits_malformed_json(monkeypatch, tmp_path):
+    _assert_main_survives_get_filing_list_failure(monkeypatch, tmp_path, ValueError("Expecting value"))
+
+
+def test_main_continues_to_next_company_when_get_filing_list_hits_unexpected_schema(monkeypatch, tmp_path):
+    _assert_main_survives_get_filing_list_failure(monkeypatch, tmp_path, KeyError("filings"))

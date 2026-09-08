@@ -187,7 +187,18 @@ def main():
         out_dir = OUTPUT_DIR / ticker
         out_dir.mkdir(parents=True, exist_ok=True)
 
-        filings = get_filing_list(cik)
+        try:
+            filings = get_filing_list(cik)
+        # Broad and deliberate, matching the per-filing catch just below:
+        # get_filing_list() can fail in more ways than one clean type
+        # covers (requests.RequestException from the HTTP call itself,
+        # ValueError/json.JSONDecodeError from a malformed body, KeyError/
+        # TypeError if SEC's submissions schema doesn't match what's
+        # expected) — all should degrade the same way here (skip this
+        # company, keep going) rather than aborting every remaining one.
+        except Exception as e:
+            print(f"  ✗ Failed to fetch filing list for {ticker}: {e}")
+            continue
         print(f"Found {len(filings)} filings: "
               f"{[f['form'] + ' ' + f['filingDate'] for f in filings]}")
 
