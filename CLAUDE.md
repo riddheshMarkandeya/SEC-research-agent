@@ -6,7 +6,10 @@ default behavior. Agreed with the user on 2026-08-24; see
 version and the rest of the project's decision history. Extended
 2026-09-06 with explicit error-handling/logging, prior-art-research, and
 layered-review rules, and again the same day with the `docs/plans/`,
-`docs/reviews/`, and `BACKLOG.md` documentation system below.
+`docs/reviews/`, and `BACKLOG.md` documentation system below. Extended
+2026-09-08: the layered review in step 7 is now required for any code
+change regardless of tier, not just Substantial work — see that step's
+review-floor rule.
 
 **Scope tiers — apply the right amount of process, not the same amount
 every time.** Before starting any task, classify it, and use the table
@@ -15,6 +18,10 @@ default to Standard, or ask.
 
 - **Trivial**: typo/wording fix, config value change, formatting,
   `.gitignore` entry, comment fix, dependency bump with no code change.
+  This tier still skips steps 1-6 below. It does **not** skip step 7
+  (review) when the change touches a code file — see that step's
+  review-floor rule; only a change confined to a non-code file skips
+  review too.
 - **Standard**: a bug fix or small feature in an existing module — the
   usual day-to-day change.
 - **Substantial**: a new module, a new tool/capability, an architecture
@@ -34,7 +41,7 @@ inside plan mode.
 | 4. Error handling & logging | skip | apply to new/changed code | apply thoroughly; plan failure/logging points during step 1 |
 | 5. Debugging discipline | skip ceremony if cause is obvious | required once cause isn't obvious | required |
 | 6. Documentation | usually skip | one entry, proportional to size | full `###` write-up |
-| 7. Independent review | self-check the diff | self-check; layered review (see step 7) if it feels risky | layered review (see step 7) required |
+| 7. Independent review | required if code touched; self-check only for non-code (see step 7) | layered review (see step 7) required | layered review (see step 7) required |
 
 ## 1. Design before building
 
@@ -217,13 +224,33 @@ back into that shape either; prune it as items resolve.
 
 ## 7. Independent review pass
 
-Once a Substantial change (or a Standard one that feels risky) is
-implemented, tested, and verified working, review it from two
-independent angles before considering it done:
+**Review floor, regardless of tier: any change that touches code gets
+the full two-pass review below before it's done, no matter how small —
+a one-line fix included.** "Code" means any source file, test file, or
+config that affects behavior — including a comment-only edit *inside*
+one of those files, since it's still a change to a code file. Only a
+change confined entirely to a non-code file (a typo in `README.md`, a
+`PROJECT_CONTEXT.md`/`BACKLOG.md` entry, any other prose/markdown-only
+edit) can skip review entirely with just a self-check. This is
+deliberately stricter than tier-scaled effort everywhere else in this
+document — reviewing costs little, and this project has already shipped
+a same-day regression from a fix that looked simple and complete without
+it (see `PROJECT_CONTEXT.md`'s 2026-09-07 addendum: the layered review
+that only Substantial tier required at the time caught 6 real issues in
+a "done" fix, including one that had already shipped a wrong-data bug
+the day before). Effort level can still scale with size — a one-line
+code fix warrants `/code-review` at low effort and a quick subagent
+pass, not the same depth as a new module — but neither pass gets
+skipped outright for code.
+
+Once a change (or the whole task, for Substantial work) is implemented,
+tested, and verified working, review it from two independent angles
+before considering it done:
 
 1. **Correctness and compliance** — run the existing `/code-review`
-   skill (medium or high effort) for a fast, targeted pass on bugs and
-   CLAUDE.md adherence.
+   skill for a fast, targeted pass on bugs and CLAUDE.md adherence.
+   Scale effort to the change: low for a one-line fix, medium or high
+   for anything Substantial-sized.
 2. **Architecture, design, performance, and refactoring** — separately,
    launch a freshly-spawned subagent (one with no memory of the
    implementation session, so it isn't anchored to choices already
@@ -245,9 +272,9 @@ itself. Cap the loop: if two rounds in a row (across either pass)
 surface no new issues, or the same issue twice with no clean fix, stop
 iterating and bring it to the user instead of continuing to churn.
 
-For Standard-tier changes, a self-check of the diff is enough unless
-something about the change feels risky enough to warrant the layered
-review above — use judgment.
+A self-check of the diff, with no formal review pass, is only ever
+enough for a trivial *non-code* change — see the review-floor rule
+above. Any code change, at any tier, gets the full two-pass review.
 
 ## 8. Use git extensively as an inspection tool
 
