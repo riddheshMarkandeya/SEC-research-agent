@@ -21,6 +21,7 @@ from eval_harness import (
     grade_judged,
     grade_numeric,
     load_questions,
+    run_eval,
     save_report,
 )
 
@@ -249,8 +250,8 @@ def test_grade_does_not_short_circuit_judged_questions_with_citation_warnings(mo
     # expect a refusal as the CORRECT answer -- grade_judged must still
     # run and decide based on its own criteria, not be pre-empted.
     monkeypatch.setattr(
-        "eval_harness.requests.post",
-        lambda *a, **k: _FakeResponse("PASS\nCorrectly refused, no such data exists."),
+        "eval_harness.ollama_call",
+        lambda state: {"content": "PASS\nCorrectly refused, no such data exists."},
     )
     q = {
         "type": "judged",
@@ -270,23 +271,15 @@ def test_grade_raises_on_unknown_type():
 
 
 # ---------------------------------------------------------------------------
-# grade_judged — mocked Ollama call, testing only the response parsing
+# grade_judged — mocked ollama_call (llm_backends.py's retry/backoff-wrapped
+# Ollama call, found in code review 2026-09-06 to have previously bypassed it
+# entirely via a raw requests.post with no retry), testing only the
+# response-parsing logic and that it's wired up correctly.
 # ---------------------------------------------------------------------------
-class _FakeResponse:
-    def __init__(self, content: str):
-        self._content = content
-
-    def raise_for_status(self):
-        pass
-
-    def json(self):
-        return {"message": {"content": self._content}}
-
-
 def test_grade_judged_parses_pass(monkeypatch):
     monkeypatch.setattr(
-        "eval_harness.requests.post",
-        lambda *a, **k: _FakeResponse("PASS\nThe answer clearly satisfies the criteria."),
+        "eval_harness.ollama_call",
+        lambda state: {"content": "PASS\nThe answer clearly satisfies the criteria."},
     )
     passed, reason = grade_judged("Q?", "some answer", "some criteria")
     assert passed is True
@@ -295,8 +288,8 @@ def test_grade_judged_parses_pass(monkeypatch):
 
 def test_grade_judged_parses_fail(monkeypatch):
     monkeypatch.setattr(
-        "eval_harness.requests.post",
-        lambda *a, **k: _FakeResponse("FAIL\nThe answer does not mention the required risk."),
+        "eval_harness.ollama_call",
+        lambda state: {"content": "FAIL\nThe answer does not mention the required risk."},
     )
     passed, reason = grade_judged("Q?", "some answer", "some criteria")
     assert passed is False
@@ -304,12 +297,22 @@ def test_grade_judged_parses_fail(monkeypatch):
 
 
 def test_grade_judged_lowercase_pass_still_counts(monkeypatch):
-    monkeypatch.setattr(
-        "eval_harness.requests.post",
-        lambda *a, **k: _FakeResponse("pass\nfine."),
-    )
+    monkeypatch.setattr("eval_harness.ollama_call", lambda state: {"content": "pass\nfine."})
     passed, _ = grade_judged("Q?", "some answer", "some criteria")
     assert passed is True
+
+
+def test_grade_judged_calls_ollama_call_with_temperature_0_and_no_tools(monkeypatch):
+    # grade_judged wants stricter, more deterministic grading than
+    # generation's default temperature 0.1, and never needs tool-calling.
+    states = []
+    monkeypatch.setattr(
+        "eval_harness.ollama_call",
+        lambda state: states.append(state) or {"content": "PASS\nfine."},
+    )
+    grade_judged("Q?", "some answer", "some criteria")
+    assert states[0]["temperature"] == 0.0
+    assert states[0]["tool_schemas"] == []
 
 
 # ---------------------------------------------------------------------------
@@ -357,3 +360,50 @@ def test_save_report_records_judge_model_as_ollama_regardless_of_backend(monkeyp
         gemini_report = json.load(f)
 
     assert gemini_report["judge_model"] == "fake-ollama-model"
+
+
+# ---------------------------------------------------------------------------
+# run_eval — per-question exception isolation. run_eval()'s live agent
+# loop is otherwise "live" (real retrieval/LLM calls, exercised by manual
+# runs per this file's own top docstring), but once run_agent() is
+# mocked, the loop's own control flow is pure/deterministic, so this one
+# behavior gets a real unit test rather than only a manual check.
+# ---------------------------------------------------------------------------
+def test_run_eval_isolates_one_questions_exception_from_the_rest(monkeypatch, tmp_path):
+    # Found in code review (2026-09-06): previously, one question raising
+    # (e.g. run_agent() exhausting Ollama's retries) killed the whole
+    # batch -- no partial report, no flush -- discarding every
+    # already-graded result before it.
+    questions_path = tmp_path / "questions.jsonl"
+    questions_path.write_text(
+        "\n".join(
+            json.dumps(q)
+            for q in [
+                {"id": "q1", "question": "Q1?", "type": "numeric", "expected_value": 1, "expected_unit": "raw"},
+                {"id": "q2", "question": "Q2?", "type": "numeric", "expected_value": 2, "expected_unit": "raw"},
+                {"id": "q3", "question": "Q3?", "type": "numeric", "expected_value": 3, "expected_unit": "raw"},
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    def fake_run_agent(question, backend):
+        if question == "Q2?":
+            raise RuntimeError("Ollama exhausted retries")
+        return f"The answer is {question[1]}.", [], []
+
+    monkeypatch.setattr(eval_harness, "run_agent", fake_run_agent)
+    flush_calls = []
+    monkeypatch.setattr(eval_harness, "flush", lambda: flush_calls.append(1))
+
+    results = run_eval(questions_path)
+
+    assert [r["id"] for r in results] == ["q1", "q2", "q3"]
+    assert results[0]["passed"] is True
+    assert results[2]["passed"] is True
+    assert results[1]["passed"] is False
+    assert "RuntimeError" in results[1]["detail"]
+    assert "Ollama exhausted retries" in results[1]["detail"]
+    # Still flushes and returns a full (partial-failure) report rather
+    # than losing everything to the one exception.
+    assert flush_calls == [1]

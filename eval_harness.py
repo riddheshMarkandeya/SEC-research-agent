@@ -54,15 +54,15 @@ import re
 from datetime import datetime, timezone
 from pathlib import Path
 
-import requests
-
 from agent import run_agent, value_is_citation_verified
-from config import DEFAULT_BACKEND, GEMINI_MODEL_NAME, OLLAMA_MODEL_NAME, OLLAMA_URL
+from config import DEFAULT_BACKEND, GEMINI_MODEL_NAME, OLLAMA_MODEL_NAME
 
-# OLLAMA_MODEL_NAME/OLLAMA_URL are used directly by grade_judged() (always
-# Ollama, regardless of --backend); OLLAMA_MODEL_NAME/GEMINI_MODEL_NAME are
-# both also used by save_report() to record which model actually answered.
-from llm_backends import BACKENDS
+# OLLAMA_MODEL_NAME is used directly by save_report() to record which
+# judge model produced a report (grade_judged() always calls Ollama,
+# regardless of --backend); GEMINI_MODEL_NAME records which answer model
+# ran. ollama_call is grade_judged()'s retry/backoff-wrapped Ollama call,
+# shared with agent.py's generation path (see llm_backends.py).
+from llm_backends import BACKENDS, ollama_call
 from tracing import flush
 from numeric_utils import extract_numbers, normalize
 
@@ -148,32 +148,29 @@ Respond with exactly two lines: the first line is either PASS or FAIL, the secon
 
 
 def grade_judged(question: str, answer_text: str, criteria: str) -> tuple[bool, str]:
+    """Routes through llm_backends.ollama_call() rather than a raw
+    requests.post -- found in code review (2026-09-06) previously
+    bypassing that function's retry/backoff and log_event logging
+    entirely, reintroducing the exact "Ollama not accepting connections
+    yet" failure the generation path was already hardened against.
+    temperature=0.0 (stricter/more deterministic than generation's 0.1)
+    and no tool_schemas -- grading never calls tools."""
     user_prompt = (
         f"Question asked: {question}\n\n"
         f"Grading criteria: {criteria}\n\n"
         f"AI assistant's answer:\n{answer_text}\n\n"
         f"Does the answer satisfy the grading criteria?"
     )
-    response = requests.post(
-        OLLAMA_URL,
-        json={
-            "model": OLLAMA_MODEL_NAME,
-            "messages": [
-                {"role": "system", "content": JUDGE_SYSTEM_PROMPT},
-                {"role": "user", "content": user_prompt},
-            ],
-            "stream": False,
-            # See llm_backends.py's _ollama_call for why num_ctx is set explicitly
-            # rather than left at Ollama's 4096-token default. The judge's
-            # own input (question + criteria + one answer) is smaller than
-            # what generation sees, but the answer being graded can itself
-            # be long, so the same headroom applies.
-            "options": {"temperature": 0.0, "num_ctx": 8192},
-        },
-        timeout=240,
-    )
-    response.raise_for_status()
-    verdict_text = response.json()["message"]["content"].strip()
+    state = {
+        "messages": [
+            {"role": "system", "content": JUDGE_SYSTEM_PROMPT},
+            {"role": "user", "content": user_prompt},
+        ],
+        "tool_schemas": [],
+        "temperature": 0.0,
+    }
+    message = ollama_call(state)
+    verdict_text = (message.get("content") or "").strip()
 
     first_line = verdict_text.splitlines()[0].strip().upper() if verdict_text else ""
     passed = first_line.startswith("PASS")
@@ -253,16 +250,41 @@ def run_eval(
 
     for q in questions:
         print(f"[{q['id']}] {q['question']}")
-        answer_text, retrieved, citation_warnings = run_agent(q["question"], backend=backend)
-        # Excludes hard-gated refusals: agent.py's _format_refusal_message()
-        # echoes each warning's own "[n] claims ..." text verbatim, which
-        # still matches CITATION_PATTERN, so a refusal would otherwise get
-        # has_citation=True -- a real answer's citation and a refusal's
-        # description of a FAILED citation shouldn't count the same way in
-        # this stat. Found in code review (2026-08-26).
-        has_citation = not citation_warnings and bool(CITATION_PATTERN.search(answer_text))
+        try:
+            answer_text, retrieved, citation_warnings = run_agent(q["question"], backend=backend)
+            # Excludes hard-gated refusals: agent.py's _format_refusal_message()
+            # echoes each warning's own "[n] claims ..." text verbatim, which
+            # still matches CITATION_PATTERN, so a refusal would otherwise get
+            # has_citation=True -- a real answer's citation and a refusal's
+            # description of a FAILED citation shouldn't count the same way in
+            # this stat. Found in code review (2026-08-26).
+            has_citation = not citation_warnings and bool(CITATION_PATTERN.search(answer_text))
 
-        passed, detail = _grade(q, answer_text, citation_warnings, retrieved)
+            passed, detail = _grade(q, answer_text, citation_warnings, retrieved)
+        except Exception as e:
+            # Broad on purpose (found in code review, 2026-09-06): a
+            # network error, exhausted retries, or an unexpected bug in
+            # run_agent()/_grade() should all fail just THIS question the
+            # same way, not silently discard every already-graded result
+            # in the batch before it (no partial report, no flush) --
+            # this is a boundary where many different failure types
+            # should all degrade identically.
+            print(f"  -> ERROR: {type(e).__name__}: {e}")
+            results.append(
+                {
+                    "id": q["id"],
+                    "ticker": q.get("ticker") or q.get("tickers"),
+                    "question": q["question"],
+                    "type": q["type"],
+                    "passed": False,
+                    "detail": f"{type(e).__name__}: {e}",
+                    "has_citation": False,
+                    "citation_warnings": [],
+                    "answer": None,
+                    "n_chunks_retrieved": 0,
+                }
+            )
+            continue
 
         status = "PASS" if passed else "FAIL"
         print(f"  -> {status} ({detail})")

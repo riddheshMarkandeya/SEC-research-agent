@@ -28,11 +28,9 @@ _(nothing right now)_
 ### From the 2026-09-06 full-codebase review
 
 Full evidence/reasoning for each: `docs/reviews/2026-09-06-full-codebase-review.md`.
+The 4 High findings are DONE (fixed 2026-09-06) — see `PROJECT_CONTEXT.md`'s
+matching section.
 
-- [ ] **[High]** `agent.py`'s tool-dispatch functions crash (`TypeError`) on non-hashable/non-int LLM tool-call arguments instead of degrading gracefully — [review §1](docs/reviews/2026-09-06-full-codebase-review.md#1-agentpys-dont-trust-the-schema-defenses-have-gaps-that-crash-instead-of-degrading)
-- [ ] **[High]** `eval_harness.py`'s `run_eval()` has no per-question exception isolation — one failing question loses the whole batch's results — [review §2](docs/reviews/2026-09-06-full-codebase-review.md#2-evalharnesspy-has-no-per-question-exception-isolation)
-- [ ] **[High]** `eval_harness.py`'s `grade_judged()` bypasses `llm_backends.py`'s retry/backoff and logging entirely — [review §3](docs/reviews/2026-09-06-full-codebase-review.md#3-evalharnesspys-gradejudged-bypasses-llmbackendspy-entirely)
-- [ ] **[High]** `compare_financial_metric` silently returns empty for `total_assets`/`cash_and_equivalents`/`inventory` at the latest fiscal year (SEC frame-anchoring gap) — [review §4](docs/reviews/2026-09-06-full-codebase-review.md#4-comparefinancialmetric-silently-returns-empty-for-totalassetscashandequivalentsinventory-at-the-latest-fiscal-year)
 - [ ] **[Medium]** `chunk_documents.py`'s final chunk-flush produces malformed last chunks + wrong `contains_table` metadata (confirmed in 4/25 real filings) — [review §5](docs/reviews/2026-09-06-full-codebase-review.md#5-chunkdocumentspys-final-chunk-flush-has-no-tail-filter)
 - [ ] **[Medium]** `chunk_documents.py`'s `strip_leading_metadata()` can truncate a document to 1 character on an untested edge case — [review §6](docs/reviews/2026-09-06-full-codebase-review.md#6-chunkdocumentspy64-68s-stripleadingmetadata-truncates-to-1-character)
 - [ ] **[Medium]** `edgar_ingest.py`'s `get_filing_list()` call is unguarded, unlike the per-filing loop below it — one bad network call aborts ingestion for every remaining company — [review §7](docs/reviews/2026-09-06-full-codebase-review.md#7-edgaringestpy190s-getfilinglistcik-call-is-unguarded)

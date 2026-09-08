@@ -815,6 +815,55 @@ def test_call_get_financial_fact_logs_rejection_for_invalid_multi_year_average_c
     assert fields["reason"] == "invalid_multi_year_average_combo"
 
 
+def test_call_get_financial_fact_rejects_non_int_multi_year_average_years(monkeypatch):
+    # Found in code review (2026-09-06): a numeric-STRING year (a real
+    # shape of LLM tool-call quirk this file already documents elsewhere)
+    # used to crash formulas.py's end_fiscal_year - start_fiscal_year
+    # with an uncaught TypeError instead of degrading like every other
+    # boundary check here.
+    calls = []
+    monkeypatch.setattr("agent.log_event", lambda category, **fields: calls.append((category, fields)))
+
+    result = call_get_financial_fact(
+        {"ticker": "AAPL", "metric": "revenue", "start_fiscal_year": "2023", "end_fiscal_year": "2025"}
+    )
+
+    assert result is None
+    assert len(calls) == 1
+    category, fields = calls[0]
+    assert category == "tool_call_rejected"
+    assert fields["reason"] == "invalid_multi_year_average_combo"
+
+
+def test_call_get_financial_fact_rejects_non_hashable_ticker_without_crashing(monkeypatch):
+    # Found in code review (2026-09-06): `ticker not in COMPANIES` raises
+    # TypeError for an unhashable value (e.g. a list) instead of the
+    # graceful rejection every other malformed-argument case gets.
+    calls = []
+    monkeypatch.setattr("agent.log_event", lambda category, **fields: calls.append((category, fields)))
+
+    result = call_get_financial_fact({"ticker": ["AAPL"], "metric": "revenue"})
+
+    assert result is None
+    assert len(calls) == 1
+    category, fields = calls[0]
+    assert category == "tool_call_rejected"
+    assert fields["reason"] == "unknown_ticker"
+
+
+def test_call_get_financial_fact_rejects_non_hashable_metric_without_crashing(monkeypatch):
+    calls = []
+    monkeypatch.setattr("agent.log_event", lambda category, **fields: calls.append((category, fields)))
+
+    result = call_get_financial_fact({"ticker": "AAPL", "metric": ["revenue"]})
+
+    assert result is None
+    assert len(calls) == 1
+    category, fields = calls[0]
+    assert category == "tool_call_rejected"
+    assert fields["reason"] == "invalid_metric_type"
+
+
 def test_call_get_financial_fact_logs_rejection_for_yoy_growth_unsupported_for_ratio(monkeypatch):
     calls = []
     monkeypatch.setattr("agent.log_event", lambda category, **fields: calls.append((category, fields)))
@@ -890,6 +939,34 @@ def test_call_compare_financial_metric_logs_rejection_for_unknown_ticker(monkeyp
     category, fields = calls[0]
     assert category == "tool_call_rejected"
     assert fields["reason"] == "unknown_ticker"
+
+
+def test_call_compare_financial_metric_rejects_non_hashable_ticker_without_crashing(monkeypatch):
+    # Mirrors call_get_financial_fact's matching test — found in the same
+    # code-review pass (2026-09-06).
+    calls = []
+    monkeypatch.setattr("agent.log_event", lambda category, **fields: calls.append((category, fields)))
+
+    result = call_compare_financial_metric({"anchor_ticker": ["AAPL"], "metric": "revenue"})
+
+    assert result == {}
+    assert len(calls) == 1
+    category, fields = calls[0]
+    assert category == "tool_call_rejected"
+    assert fields["reason"] == "unknown_ticker"
+
+
+def test_call_compare_financial_metric_rejects_non_hashable_metric_without_crashing(monkeypatch):
+    calls = []
+    monkeypatch.setattr("agent.log_event", lambda category, **fields: calls.append((category, fields)))
+
+    result = call_compare_financial_metric({"anchor_ticker": "AAPL", "metric": ["revenue"]})
+
+    assert result == {}
+    assert len(calls) == 1
+    category, fields = calls[0]
+    assert category == "tool_call_rejected"
+    assert fields["reason"] == "invalid_metric_type"
 
 
 def test_call_compare_financial_metric_does_not_log_rejection_on_success(monkeypatch):

@@ -45,7 +45,7 @@ OLLAMA_RETRY_DELAY_SECONDS = 3  # local server startup/model-load stalls, not ra
 OLLAMA_RETRY_ATTEMPTS = 3
 
 
-def _ollama_call(state: dict) -> dict:
+def ollama_call(state: dict) -> dict:
     """Retries only on ConnectionError (including ConnectTimeout, a
     ConnectionError subclass for a stalled connect phase) -- a local
     `ollama serve` still starting up, or a large model still loading
@@ -78,7 +78,11 @@ def _ollama_call(state: dict) -> dict:
                     # (~3000 chars each). See PROJECT_CONTEXT.md's agent.py
                     # section for how this was found (a comparison question
                     # silently truncating context, caught via `ollama ps`).
-                    "options": {"temperature": 0.1, "num_ctx": 8192},
+                    # temperature defaults to 0.1 (agent generation) but is
+                    # overridable via state["temperature"] -- eval_harness.py's
+                    # grade_judged() reuses this function and wants 0.0 for
+                    # stricter, more deterministic grading.
+                    "options": {"temperature": state.get("temperature", 0.1), "num_ctx": 8192},
                 },
                 # (connect timeout, read timeout) -- split so a stalled
                 # connect phase fails fast into the retry loop instead of
@@ -113,7 +117,7 @@ def _ollama_start(question: str, system_prompt: str, tool_schemas: list[dict]) -
         ],
         "tool_schemas": tool_schemas,
     }
-    message = _ollama_call(state)
+    message = ollama_call(state)
     state["messages"].append(message)
     return state, _ollama_message_to_turn(message)
 
@@ -121,7 +125,7 @@ def _ollama_start(question: str, system_prompt: str, tool_schemas: list[dict]) -
 def _ollama_send(state: dict, results: list[dict]) -> ModelTurn:
     for r in results:
         state["messages"].append({"role": "tool", "content": r["content"]})
-    message = _ollama_call(state)
+    message = ollama_call(state)
     state["messages"].append(message)
     return _ollama_message_to_turn(message)
 
@@ -134,7 +138,7 @@ def _ollama_send_followup(state: dict, text: str) -> ModelTurn:
     to attach a result to. Symmetric with _ollama_send, just a "user"
     role message instead of a "tool" one."""
     state["messages"].append({"role": "user", "content": text})
-    message = _ollama_call(state)
+    message = ollama_call(state)
     state["messages"].append(message)
     return _ollama_message_to_turn(message)
 
@@ -184,7 +188,7 @@ def _send_with_retry(chat, message):
             if code not in (429, 503):
                 raise
             # Local-only debug event (Week 7 follow-up), same reasoning
-            # as _ollama_call's matching log_event above -- only for the
+            # as ollama_call's matching log_event above -- only for the
             # retryable-error path, not every ClientError/ServerError.
             log_event(
                 "llm_retry",

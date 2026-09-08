@@ -521,3 +521,47 @@ def test_get_metric_all_companies_returns_empty_when_anchor_has_no_frame(monkeyp
     )
     assert get_metric_all_companies("NVDA", "gross_profit", fiscal_year=2026, fiscal_period="Q1") == {}
 
+
+def test_get_metric_all_companies_falls_back_to_another_companys_frame(monkeypatch):
+    # Found in code review (2026-09-06): SEC doesn't assign a "frame" to
+    # the newest annual instant-fact entry for some companies (verified
+    # against real cached data for total_assets/cash_and_equivalents/
+    # inventory) -- but frame is a property of the (metric, period) pair,
+    # not of any one company, so another covered company's own entry for
+    # the same period is an equally valid anchor. Only the requested
+    # ticker's OWN get_metric() call returns no frame here; a different
+    # covered company's does, and that frame should be used instead of
+    # giving up with {}.
+    def fake_get_metric(ticker, metric, fiscal_year, fiscal_period, period_end_date):
+        if ticker == "NVDA":
+            return {"value": 1, "unit": "USD", "period_end": "2026-01-25", "frame": None}
+        if ticker == "MSFT":
+            return {"value": 2, "unit": "USD", "period_end": "2025-06-30", "frame": "CY2025Q2I"}
+        return {"value": 3, "unit": "USD", "period_end": "2026-01-01", "frame": None}
+
+    monkeypatch.setattr("xbrl_facts.get_metric", fake_get_metric)
+    calls = []
+    monkeypatch.setattr("xbrl_facts.get_frame", lambda metric, frame: calls.append((metric, frame)) or {})
+
+    get_metric_all_companies("NVDA", "total_assets", fiscal_year=2026, fiscal_period="FY")
+
+    assert calls == [("total_assets", "CY2025Q2I")]
+
+
+def test_get_metric_all_companies_still_anchors_on_requested_ticker_first(monkeypatch):
+    # The fallback must not change behavior when the requested ticker's
+    # own frame is already usable -- it should never even look at other
+    # companies in that case.
+    checked_tickers = []
+
+    def fake_get_metric(ticker, metric, fiscal_year, fiscal_period, period_end_date):
+        checked_tickers.append(ticker)
+        return {"value": 1, "unit": "USD", "period_end": "2026-04-26", "frame": "CY2026Q1"}
+
+    monkeypatch.setattr("xbrl_facts.get_metric", fake_get_metric)
+    monkeypatch.setattr("xbrl_facts.get_frame", lambda metric, frame: {})
+
+    get_metric_all_companies("NVDA", "gross_profit", fiscal_year=2026, fiscal_period="Q1")
+
+    assert checked_tickers == ["NVDA"]
+

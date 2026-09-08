@@ -3475,6 +3475,87 @@ gets a 401 and would otherwise inflate the count by one; fixed by
 capturing the "before" baseline after the server is confirmed up
 rather than before starting it.
 
+### Fixed the 4 High-priority findings from the 2026-09-06 full-codebase review (2026-09-06)
+
+See `docs/reviews/2026-09-06-full-codebase-review.md` for the original
+findings (findings §1-§4) and `BACKLOG.md` for what's still open from
+that review. All four were real, live-verified bugs, not theoretical:
+
+- **`agent.py`'s schema-violation guards crashed instead of degrading
+  (§1).** `ticker not in COMPANIES` and the matching `metric` check both
+  raise `TypeError` on an unhashable value (e.g. the model passing
+  `"ticker": ["AAPL"]`) — the same "don't trust the schema" lesson this
+  file has already been bitten by three times, just a fourth/fifth
+  still-open instance, and with zero `try`/`except` anywhere in the
+  file, either crashed the whole request. Fixed with `isinstance`
+  guards ahead of the existing membership checks in both
+  `call_get_financial_fact` and `call_compare_financial_metric`; a
+  non-string `metric` gets its own new `invalid_metric_type` rejection
+  reason rather than being folded into `unknown_metric`, so it doesn't
+  pollute `record_unmet_metric_request`'s formula-registration signal
+  with garbage values. Also fixed: a numeric-*string*
+  `start_fiscal_year`/`end_fiscal_year` crashed `formulas.py`'s
+  `end_fiscal_year - start_fiscal_year`; `not isinstance(x, int)` checks
+  replace the old `x is None` checks (a strict superset, so the
+  existing `None` handling is unchanged).
+- **`eval_harness.py`'s `grade_judged()` bypassed `llm_backends.py`
+  entirely (§3), fixed first since it also reduces §2's blast radius.**
+  It made its own raw `requests.post` with no retry, reintroducing the
+  exact "Ollama not accepting connections yet" failure the *answering*
+  path was already hardened against. `llm_backends._ollama_call()` was
+  renamed to `ollama_call()` (public — it's now used from a second
+  module) and its hardcoded `temperature: 0.1` became
+  `state.get("temperature", 0.1)`, since the judge deliberately wants
+  `0.0` for stricter grading; `grade_judged()` now builds a `state`
+  dict and calls it directly, gaining the same retry/backoff and
+  `log_event("llm_retry", ...)` logging the generation path already
+  had, for free.
+- **`eval_harness.py`'s `run_eval()` had no per-question exception
+  isolation (§2).** One question exhausting its retries (now less
+  likely after the §3 fix, but still possible, and other bugs could
+  still raise) used to discard every already-graded result in the
+  batch — no partial report, no Langfuse flush. Wrapped the per-question
+  body in `try`/`except Exception` (broad and commented as deliberate:
+  this is a boundary where many different failure types should all
+  degrade the same way), recording a `passed: False` result with the
+  exception detail instead, then continuing to the next question.
+  `flush()` still always runs after the loop.
+- **`compare_financial_metric` silently returned empty for
+  `total_assets`/`cash_and_equivalents`/`inventory` at the latest
+  fiscal year (§4).** `get_metric_all_companies()` anchored only on the
+  requested ticker's own fact to read its SEC-assigned `frame`, and gave
+  up if that one company's latest annual entry happened to lack a frame
+  — confirmed live this happens routinely (SEC doesn't always assign a
+  frame to the newest annual instant-fact entry). Since a frame is a
+  property of the (metric, period) pair, not of any one company, the
+  fix tries every *other* covered company's own entry for the same
+  period as a fallback anchor before giving up — still never computes a
+  frame label independently (ruled out by this module's own top-level
+  comment, from a bug fought twice before). Requested ticker is tried
+  first, so today's success path is unaffected.
+
+**Verified, not just tested.** New/extended tests: `tests/test_agent.py`
+(+5: non-hashable ticker/metric in both tool functions, non-int
+multi-year-average years), `tests/test_llm_backends.py` (+2: `ollama_call`
+respects/defaults `state["temperature"]`, plus a rename of `_ollama_call`
+→ `ollama_call` throughout), `tests/test_eval_harness.py` (+2: `grade_judged`
+tests updated to mock `ollama_call` instead of `requests.post`, one new
+test asserting `temperature=0.0`/`tool_schemas=[]`, plus `run_eval()`'s
+first-ever unit test for its per-question exception isolation — the
+loop's control flow is pure once `run_agent`/`grade_judged` are mocked,
+even though the loop as a whole is otherwise live-only),
+`tests/test_xbrl_facts.py` (+2: fallback-to-another-company's-frame,
+and a regression guard that the requested ticker is still tried first).
+Full suite **376/376**, up from 365. Live-verified: (1) ran a small real
+eval batch (`crm-rpo-fy26`, `pltr-dividend-2019-refusal`) end-to-end,
+confirming `grade_judged` still parses PASS/FAIL correctly through the
+new `ollama_call` path; (2) found a real case in the cached XBRL data
+where NVDA's own `total_assets`/`cash_and_equivalents`/`inventory` frame
+is `None` for FY2026 but MSFT's isn't, and confirmed
+`get_metric_all_companies("NVDA", ...)` went from returning `{}` to
+returning all 5 (3 for `inventory`, which not every company tags)
+covered companies' values.
+
 ## Next steps
 
 See `BACKLOG.md` for the live task backlog. This section used to hold

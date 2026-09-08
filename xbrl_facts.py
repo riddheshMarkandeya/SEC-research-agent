@@ -457,10 +457,26 @@ def get_metric_all_companies(
     own fact first via get_metric() to read off its SEC-assigned
     `frame` label, then fetches that frame for every covered company —
     see the module-level comment above for why this doesn't compute the
-    frame label independently. Returns {} if `ticker`'s own fact isn't
-    available (no frame to anchor to) or has no frame at all (some
-    entries genuinely lack one, e.g. certain annual-only concepts)."""
-    anchor = get_metric(ticker, metric, fiscal_year, fiscal_period, period_end_date)
-    if anchor is None or anchor.get("frame") is None:
-        return {}
-    return get_frame(metric, anchor["frame"])
+    frame label independently.
+
+    Falls back to every OTHER covered company's own entry for the same
+    period if `ticker`'s own has no frame, trying `ticker` first so
+    today's behavior/tests are unaffected when it already works. Found
+    in code review (2026-09-06): SEC doesn't assign a frame to the
+    newest annual instant-fact entry for some companies (confirmed
+    against real data for total_assets/cash_and_equivalents/inventory),
+    which silently made cross-company comparisons of those metrics at
+    the latest fiscal year return nothing even though every individual
+    company's value is directly retrievable. `frame` is a property of
+    the (metric, period) pair, not of any one company, so any covered
+    company's real, SEC-assigned frame for that period is an equally
+    valid anchor — this never computes a frame label itself, only
+    reuses ones SEC already assigned. Returns {} only if no covered
+    company has a usable frame for this period."""
+    companies = load_companies()
+    candidates = [ticker] + [t for t in companies if t != ticker]
+    for candidate in candidates:
+        anchor = get_metric(candidate, metric, fiscal_year, fiscal_period, period_end_date)
+        if anchor is not None and anchor.get("frame") is not None:
+            return get_frame(metric, anchor["frame"])
+    return {}

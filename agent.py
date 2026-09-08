@@ -445,8 +445,18 @@ def call_get_financial_fact(args: dict, question: str | None = None) -> dict | N
         return None
     ticker = args.get("ticker")
     metric = args.get("metric")
-    if ticker not in COMPANIES:
+    if not isinstance(ticker, str) or ticker not in COMPANIES:
         log_event("tool_call_rejected", tool="get_financial_fact", reason="unknown_ticker", args=args)
+        return None
+    if metric is not None and not isinstance(metric, str):
+        # Found in code review (2026-09-06): the `in` check right below
+        # this raises TypeError for an unhashable metric (e.g. a list),
+        # crashing the whole request instead of degrading like every
+        # other boundary check here. Kept as its own reason rather than
+        # folded into "unknown_metric" so it doesn't pollute
+        # record_unmet_metric_request's "should we add a formula for
+        # this" telemetry with a non-name value.
+        log_event("tool_call_rejected", tool="get_financial_fact", reason="invalid_metric_type", args=args)
         return None
     if metric not in DEFAULT_METRIC_TAGS and metric not in RATIO_DEFINITIONS:
         # metric is None here means the model omitted a required key
@@ -466,7 +476,15 @@ def call_get_financial_fact(args: dict, question: str | None = None) -> dict | N
     start_fiscal_year = args.get("start_fiscal_year")
     end_fiscal_year = args.get("end_fiscal_year")
     if start_fiscal_year is not None or end_fiscal_year is not None:
-        if args.get("yoy_growth") or start_fiscal_year is None or end_fiscal_year is None:
+        # not isinstance(..., int) is a superset of the original "is
+        # None" checks, so this also catches a numeric-STRING year --
+        # found in code review (2026-09-06) crashing formulas.py's
+        # end_fiscal_year - start_fiscal_year with an uncaught TypeError.
+        if (
+            args.get("yoy_growth")
+            or not isinstance(start_fiscal_year, int)
+            or not isinstance(end_fiscal_year, int)
+        ):
             log_event(
                 "tool_call_rejected", tool="get_financial_fact", reason="invalid_multi_year_average_combo", args=args
             )
@@ -552,8 +570,12 @@ def call_compare_financial_metric(args: dict, question: str | None = None) -> di
         return {}
     anchor_ticker = args.get("anchor_ticker")
     metric = args.get("metric")
-    if anchor_ticker not in COMPANIES:
+    if not isinstance(anchor_ticker, str) or anchor_ticker not in COMPANIES:
         log_event("tool_call_rejected", tool="compare_financial_metric", reason="unknown_ticker", args=args)
+        return {}
+    if metric is not None and not isinstance(metric, str):
+        # See call_get_financial_fact's matching guard.
+        log_event("tool_call_rejected", tool="compare_financial_metric", reason="invalid_metric_type", args=args)
         return {}
     if metric not in DEFAULT_METRIC_TAGS and metric not in RATIO_DEFINITIONS:
         # See call_get_financial_fact's matching guard: metric=None is a

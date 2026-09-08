@@ -12,8 +12,9 @@ real cached/ingested data rather than reading-and-guessing. Each also
 read `PROJECT_CONTEXT.md` for grounding on already-decided tradeoffs, so
 deliberate design choices wouldn't get flagged as bugs.
 
-**Status:** all findings below are open — nothing has been fixed yet.
-Tracked individually in `BACKLOG.md`.
+**Status:** the 4 High findings are FIXED (2026-09-06, same day) — see
+`PROJECT_CONTEXT.md`'s matching section for what changed and how it was
+verified. Everything else below is still open, tracked in `BACKLOG.md`.
 
 ---
 

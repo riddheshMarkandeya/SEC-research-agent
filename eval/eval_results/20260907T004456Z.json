@@ -1,0 +1,31 @@
+{
+  "backend": "ollama",
+  "answer_model": "qwen2.5:7b-instruct",
+  "judge_model": "qwen2.5:7b-instruct",
+  "results": [
+    {
+      "id": "crm-rpo-fy26",
+      "ticker": "CRM",
+      "question": "What is Salesforce's total remaining performance obligation as of January 31, 2026?",
+      "type": "numeric",
+      "passed": true,
+      "detail": "found matching value: 72.4 (billion)",
+      "has_citation": true,
+      "citation_warnings": [],
+      "answer": "Based on the SEC filings, Salesforce's total remaining performance obligation as of January 31, 2026 was approximately $72.4 billion [1].\n\n[1] CRM 10-K (reportDate=2026-01-31)",
+      "n_chunks_retrieved": 5
+    },
+    {
+      "id": "pltr-dividend-2019-refusal",
+      "ticker": "PLTR",
+      "question": "What was Palantir's dividend per share in 2019?",
+      "type": "judged",
+      "passed": true,
+      "detail": "The answer explicitly states that the provided filing excerpts do not contain information about dividends in 2019.",
+      "has_citation": true,
+      "citation_warnings": [],
+      "answer": "After reviewing the provided SEC filings, I did not find any specific mention of Palantir's dividend per share in 2019. The financial statements and notes do not contain this information.\n\n[1] - [5] These excerpts from Palantir Technologies Inc.'s 10-Q and 10-K filings do not include details about dividends paid or declared for the year 2019. Typically, dividend information would be found in the \"Liquidity and Capital Resources\" section of the 10-K filing or in the notes to the financial statements, but it is not present here.\n\nTherefore, based on the available information from these filings, Palantir Technologies Inc. did not declare any dividends for the year 2019. If you need more detailed historical dividend data, you may want to search additional sources such as SEC EDGAR database or financial news services that track dividend history over a longer period.",
+      "n_chunks_retrieved": 5
+    }
+  ]
+}
