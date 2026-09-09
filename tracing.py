@@ -112,6 +112,7 @@ class _TracedSpan:
 
     def __init__(self, langfuse_span=None):
         self.output = None
+        self.error = None
         self._langfuse_span = langfuse_span
 
     def update(self, *, output=None, **kwargs) -> None:
@@ -131,7 +132,27 @@ def traced_span(as_type: str, name: str, input: dict | None = None) -> Iterator[
     nested calls automatically nest under whichever Langfuse observation
     is currently open, per the SDK's own OpenTelemetry-based context
     propagation. The local log's `run_id` grouping (see _current_run_id
-    above) is independent of that and always applied."""
+    above) is independent of that and always applied.
+
+    If the wrapped code raises, the exception is recorded as an `error`
+    field in the local log line and then always re-raised -- this never
+    swallows an exception, only observes it, so a crash and a clean
+    no-op are no longer indistinguishable in the local backup log. The
+    Langfuse side needs no equivalent manual step: OpenTelemetry's own
+    `start_as_current_span()` (which `start_as_current_observation()`
+    wraps) already records the exception and sets ERROR status on the
+    real Langfuse span by default (`record_exception`/
+    `set_status_on_exception`, both True) -- confirmed by reading
+    `opentelemetry.trace.use_span()`'s source rather than assumed. A
+    manual `span.update(level="ERROR", ...)` call from out here would
+    fire too late to matter anyway: that inner `with` block's own
+    `__exit__` (which is what performs the auto-recording above) always
+    runs first as the exception unwinds through it, ending the span
+    before control ever reaches this function's own `except` clause --
+    `LangfuseObservationWrapper.update()` silently no-ops on an
+    already-ended span (`if not self._otel_span.is_recording(): return
+    self`), so a manual call here would be dead code, not a real
+    guarantee."""
     is_root = _current_run_id.get() is None
     run_id = _current_run_id.get() or uuid.uuid4().hex[:12]
     token = _current_run_id.set(run_id) if is_root else None
@@ -149,6 +170,16 @@ def traced_span(as_type: str, name: str, input: dict | None = None) -> Iterator[
                 yield span
         else:
             yield span
+    except Exception as e:
+        # Re-raises unconditionally -- this only adds visibility into a
+        # crash that already propagates untouched today (nothing here
+        # swallowed exceptions before this fix either), it must never
+        # start swallowing them. No Langfuse-side call here on purpose --
+        # see this function's own docstring for why a manual one would be
+        # both redundant with and, worse, silently ineffective against
+        # OpenTelemetry's own default exception-recording.
+        span.error = f"{type(e).__name__}: {e}"
+        raise
     finally:
         _write_local_log(
             {
@@ -159,6 +190,7 @@ def traced_span(as_type: str, name: str, input: dict | None = None) -> Iterator[
                 "name": name,
                 "input": input,
                 "output": span.output,
+                "error": span.error,
                 "duration_ms": round((time.monotonic() - start) * 1000, 1),
             }
         )
@@ -212,11 +244,23 @@ def log_event(category: str, **fields) -> None:
 
 def flush() -> None:
     """Flushes buffered Langfuse spans -- call before a short-lived CLI
-    process (agent.py's main(), eval_harness.py's run_eval()) exits,
-    since Langfuse batches and sends observations asynchronously in the
-    background. No-op when Langfuse isn't configured; the local JSONL
-    log is written synchronously on every traced_span() exit, so it
-    needs no flush."""
+    process (agent.py's main(), eval_harness.py's run_eval()) exits, or
+    on an MCP server shutdown (mcp_server.py's main()), since Langfuse
+    batches and sends observations asynchronously in the background.
+    No-op when Langfuse isn't configured; the local JSONL log is
+    written synchronously on every traced_span() exit, so it needs no
+    flush.
+
+    Best-effort, same "never raise, ever" contract as
+    _write_local_log() above: found in code review (2026-09-10) that
+    mcp_server.py's main() calls this inside a `finally` wrapping
+    uvicorn.run() -- an unguarded failure here (e.g. a real Langfuse
+    network error at shutdown) would replace/mask whatever original
+    exception uvicorn.run() was propagating, hiding the actual crash
+    reason from whoever's debugging the restart."""
     if not TRACING_ENABLED:
         return
-    _get_langfuse_client().flush()
+    try:
+        _get_langfuse_client().flush()
+    except Exception as e:
+        print(f"[tracing] flush failed: {e}", file=sys.stderr)

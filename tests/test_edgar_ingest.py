@@ -1,11 +1,16 @@
 """
-Unit tests for edgar_ingest.py's get_filing_url() -- the only pure,
-deterministic logic in this module (everything else is a live SEC
-fetch). Covers the (ticker, accession) -> real EDGAR filing URL lookup
-built for mcp_server.py's `source` blocks (Week 6): given an already-
-ingested filing's _meta.json (which already stores `cik` and
-`primaryDocument`, written by this same module), construct the exact
-URL fetch_filing_html() would have fetched -- no new network calls.
+Unit tests for edgar_ingest.py's pure, deterministic logic --
+get_filing_url() and parse_filing() (everything else in this module is
+a live SEC fetch). get_filing_url() covers the (ticker, accession) ->
+real EDGAR filing URL lookup built for mcp_server.py's `source` blocks
+(Week 6): given an already-ingested filing's _meta.json (which already
+stores `cik` and `primaryDocument`, written by this same module),
+construct the exact URL fetch_filing_html() would have fetched -- no
+new network calls. parse_filing() (review §13) takes raw HTML strings
+and returns (text, tables) with no I/O or global state, so it's tested
+directly with inline HTML literals, no fixtures needed -- it had zero
+test coverage before this despite being pure, unlike every other
+finding in this project's TDD-scope rule.
 """
 
 import json
@@ -161,3 +166,101 @@ def test_main_continues_to_next_company_when_get_filing_list_hits_malformed_json
 
 def test_main_continues_to_next_company_when_get_filing_list_hits_unexpected_schema(monkeypatch, tmp_path):
     _assert_main_survives_get_filing_list_failure(monkeypatch, tmp_path, KeyError("filings"))
+
+
+# ---------------------------------------------------------------------------
+# parse_filing (review §13)
+# ---------------------------------------------------------------------------
+def test_parse_filing_extracts_simple_table_and_leaves_marker():
+    html = "<html><body><p>Revenue grew.</p><table><tr><td>Revenue</td><td>100</td></tr></table></body></html>"
+    text, tables = edgar_ingest.parse_filing(html)
+    assert tables == [{"table_index": 0, "rows": [["Revenue", "100"]]}]
+    assert "[TABLE_0]" in text
+    assert "Revenue grew." in text
+
+
+def test_parse_filing_multiple_tables_indices_align_with_markers():
+    html = (
+        "<html><body>"
+        "<table><tr><td>A</td></tr></table>"
+        "<p>middle</p>"
+        "<table><tr><td>B</td></tr></table>"
+        "</body></html>"
+    )
+    text, tables = edgar_ingest.parse_filing(html)
+    assert [t["table_index"] for t in tables] == [0, 1]
+    assert "[TABLE_0]" in text
+    assert "[TABLE_1]" in text
+    assert text.index("[TABLE_0]") < text.index("middle") < text.index("[TABLE_1]")
+
+
+def test_parse_filing_drops_empty_layout_table_without_marker():
+    html = "<html><body><table><tr><td></td><td>  </td></tr></table><p>real content</p></body></html>"
+    text, tables = edgar_ingest.parse_filing(html)
+    assert tables == []
+    assert "[TABLE_0]" not in text
+    assert "real content" in text
+
+
+def test_parse_filing_skips_entirely_empty_rows_within_table():
+    html = (
+        "<html><body><table>"
+        "<tr><td>Revenue</td><td>100</td></tr>"
+        "<tr><td></td><td></td></tr>"
+        "<tr><td>Costs</td><td>50</td></tr>"
+        "</table></body></html>"
+    )
+    _, tables = edgar_ingest.parse_filing(html)
+    assert tables == [{"table_index": 0, "rows": [["Revenue", "100"], ["Costs", "50"]]}]
+
+
+def test_parse_filing_collapses_internal_whitespace_in_cell_text():
+    html = "<html><body><table><tr><td>Revenue\n\t 100</td></tr></table></body></html>"
+    _, tables = edgar_ingest.parse_filing(html)
+    assert tables[0]["rows"] == [["Revenue 100"]]
+
+
+def test_parse_filing_collapses_excess_blank_lines_in_prose():
+    html = "<html><body><p>first</p>\n\n\n\n\n<p>second</p></body></html>"
+    text, _ = edgar_ingest.parse_filing(html)
+    assert "\n\n\n" not in text
+    assert "first" in text and "second" in text
+
+
+def test_parse_filing_strips_header_footer_noise_lines():
+    html = "<html><body><p>Apple Inc. | Q3 2026 Form 10-Q | 13</p><p>real content here</p></body></html>"
+    text, _ = edgar_ingest.parse_filing(html)
+    assert "Form 10-Q" not in text
+    assert "real content here" in text
+
+
+def test_parse_filing_strips_header_footer_noise_at_document_edges():
+    # Found in code review (round 2, 2026-09-10) while writing the tests
+    # above: text.strip() runs BEFORE the header/footer-stripping block,
+    # so removing a noise line sitting at the very start or end of the
+    # document left a stray leading/trailing newline behind -- the block
+    # had no second .strip() of its own to clean up after itself.
+    html = "<html><body><p>Apple Inc. | Q3 2026 Form 10-Q | 13</p><p>real content here</p></body></html>"
+    text, _ = edgar_ingest.parse_filing(html)
+    assert text == text.strip()
+    assert text == "real content here"
+
+
+def test_parse_filing_does_not_strip_prose_with_single_pipe():
+    html = "<html><body><p>Segment A | Segment B combined revenue grew this quarter.</p></body></html>"
+    text, _ = edgar_ingest.parse_filing(html)
+    assert "Segment A | Segment B combined revenue grew this quarter." in text
+
+
+def test_parse_filing_returns_empty_tables_list_when_no_tables_present():
+    html = "<html><body><p>Just prose, no tables here.</p></body></html>"
+    text, tables = edgar_ingest.parse_filing(html)
+    assert tables == []
+    assert "Just prose, no tables here." in text
+
+
+def test_parse_filing_strips_leading_and_trailing_whitespace():
+    html = "<html><body>\n\n  <p>content</p>  \n\n</body></html>"
+    text, _ = edgar_ingest.parse_filing(html)
+    assert text == text.strip()
+    assert text.startswith("content")

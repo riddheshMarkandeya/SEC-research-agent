@@ -3797,6 +3797,238 @@ from today's reindex. Gemini: 4/4 passed, including the comparison
 question. Confirms the reindexed corpus retrieves this filing's data
 correctly post-fix.
 
+### Fixed 3 more findings from the 2026-09-06 full-codebase review (2026-09-09)
+
+See `docs/reviews/2026-09-06-full-codebase-review.md` §6/§8/§10 for the
+original findings and `BACKLOG.md` for what's still open from that
+review.
+
+- **`chunk_documents.py`'s `strip_leading_metadata()` could truncate a
+  document to 1 character (§6).** Its nested `rfind()` needs the
+  newline two lines back from the anchor; with fewer than 2 newlines
+  preceding it (anchor on/near the very first line — never happened
+  across the 25 currently-ingested filings, but nothing prevents a
+  future one), the inner-then-outer `rfind` chain returned `-1`, and
+  `text[-1:]` doesn't mean "from the start" in Python — it silently
+  returned the document's last character. Traced by hand: `"UNITED
+  STATES\nSECURITIES AND EXCHANGE COMMISSION\nreal content"` returned
+  `"t"`. Fixed by guarding the outer `rfind`'s result, falling back to
+  `0` (keep everything) when no second newline exists.
+- **A non-int `fiscal_year` silently misrecorded as
+  `"no_data_for_ticker"` telemetry (§8).** Unlike
+  `start_fiscal_year`/`end_fiscal_year` (already guarded in the
+  2026-09-06 High-priority batch), plain `fiscal_year` was never
+  type-checked in either `call_get_financial_fact` or
+  `call_compare_financial_metric` — a numeric-string year didn't crash,
+  it just failed every downstream lookup and got recorded as a genuine
+  data gap, polluting the "should we add a formula for this" signal
+  with schema-violation false negatives. Fixed by mirroring the
+  existing `invalid_metric_type` guard shape: a new
+  `reason="invalid_fiscal_year_type"` rejection in both functions,
+  logged via `log_event` (not `record_unmet_metric_request`, since it's
+  a schema violation, not a data gap) — checked once per function,
+  before any of the branches that read `fiscal_year` downstream.
+- **`tracing.py`'s `traced_span()` never recorded exception info
+  (§10).** `try`/`finally` with no `except` meant a crash and a clean
+  no-op wrote an identical local JSONL log line and left an
+  identical-looking Langfuse observation — undercutting the "always-on
+  debugging backup" this exists for. Fixed by adding an
+  `except Exception as e: ...; raise` between the existing `try` and
+  `finally`: records `span.error = f"{type(e).__name__}: {e}"`, marks
+  the Langfuse observation via `span.update(level="ERROR",
+  status_message=str(e))` (the exact pattern the `langfuse` SDK's own
+  internal call sites use, confirmed in the installed 4.15.1 package —
+  no new API surface guessed at), then always re-raises. No
+  propagation change: nothing swallowed exceptions before this fix
+  either, and nothing does now — this only adds visibility. `_TracedSpan`
+  gained an `error` attribute (`None` on success) and the local log
+  record gained a matching `"error"` field.
+
+New/extended tests: `tests/test_chunk_documents.py` (+2: one-newline-
+and zero-newline-before-anchor cases), `tests/test_agent.py` (+2:
+non-int `fiscal_year` rejected in both `call_get_financial_fact` and
+`call_compare_financial_metric`), `tests/test_tracing.py` (+2: exception
+recorded and re-raised, both with Langfuse enabled and disabled). All
+three fixes are pure/deterministic logic — full TDD, no live-only
+carve-out needed. Full suite **394/394**.
+
+**Addendum: round 2 of the layered review (a second `/code-review` pass
+plus a fresh architecture subagent) found two real gaps, both in the
+§8/§10 fixes rather than §6.**
+
+1. **`agent.py`'s new `fiscal_year` guard was placed before the
+   multi-year-average branch even checks whether it applies** — that
+   branch (`start_fiscal_year`/`end_fiscal_year`) never reads plain
+   `fiscal_year` at all, so a stray/malformed `fiscal_year` alongside a
+   *valid* start/end pair used to be silently ignored (pre-fix) but got
+   wrongly rejected outright (post-fix) before ever reaching the branch
+   that would have ignored it — a real regression the fix's own test
+   suite never exercised (no test combined `fiscal_year` with
+   `start_fiscal_year`/`end_fiscal_year`). Fixed by moving the guard to
+   after the multi-year-average branch's own early returns, so it only
+   gates the two branches that actually read `fiscal_year`
+   (`yoy_growth` and the plain lookup). Added
+   `test_call_get_financial_fact_ignores_malformed_fiscal_year_in_multi_year_average_request`
+   as the regression guard.
+2. **`tracing.py`'s manual Langfuse `span.update(level="ERROR", ...)`
+   call was dead code** — confirmed by reading the actual installed SDK
+   source (`opentelemetry/trace/__init__.py`'s `use_span()`), not
+   assumed: `start_as_current_span()` already defaults to
+   `record_exception=True, set_status_on_exception=True`, so it
+   auto-records the exception and sets ERROR status on the real
+   Langfuse span *before* control ever reaches this function's own
+   `except` clause — that inner `with` block's own `__exit__` (which
+   performs the auto-recording) always runs first as the exception
+   unwinds through it, ending the span in the process. By the time the
+   manual `.update()` call ran, `LangfuseObservationWrapper.update()`'s
+   own `if not self._otel_span.is_recording(): return self` guard
+   silently no-ops it — confirmed by reading `langfuse/_client/span.py`
+   directly. The unit test's `_FakeObservation` stub couldn't reveal
+   this: it has no `is_recording()`/close semantics, so it happily
+   recorded the call anyway. Removed the manual call entirely (it was
+   both redundant with and strictly less complete than OTel's own
+   default recording) and rewrote the docstring/comment to document
+   why, so a future maintainer doesn't "helpfully" re-add it. The local
+   JSONL `error` field — the actual gap §10 named — is unaffected and
+   still correctly populated; only the never-functional Langfuse-side
+   addition was cut.
+
+Round 2 also confirmed (not a new finding, re-verified independently):
+the `isinstance(fiscal_year, int)` bool-subclass-of-int gotcha
+(`isinstance(True, int)` is `True`) is real but pre-existing — the
+identical pattern already shipped for `start_fiscal_year`/
+`end_fiscal_year` before this diff, so this fix mirrors an existing,
+accepted limitation rather than introducing a new one. Not worth fixing
+in isolation for one call site while the other two stay as-is; added to
+`BACKLOG.md` as a single cross-cutting note covering all three instead.
+
+Full suite **395/395** after the round-2 fixes. Full findings:
+`docs/reviews/2026-09-09-fix-3-more-review-findings.md`.
+
+### Fixed 3 more findings from the 2026-09-06 full-codebase review (2026-09-10)
+
+See `docs/reviews/2026-09-06-full-codebase-review.md` §11/§12/§13 for
+the original findings and `BACKLOG.md` for what's still open from that
+review.
+
+- **`mcp_server.py` never called `tracing.flush()` on shutdown (§11).**
+  Confirmed by reading the actual installed `mcp`/Starlette/uvicorn
+  source, not assumed: `Server.streamable_http_app()` builds its own
+  internal Starlette lifespan with no hook exposed for caller-supplied
+  shutdown logic, so there's no clean way to plug into it from
+  `mcp_server.py`. Separately, `uvicorn.Server` converts both `SIGINT`
+  and `SIGTERM` into a clean `serve()` exit, so `uvicorn.run()` returns
+  normally (no exception) on either — both realistic shutdown paths.
+  Fixed with a `try/finally` around `uvicorn.run()` calling `flush()`
+  in `finally`, which also covers an unexpected crash inside
+  `uvicorn.run()` itself, not just the two clean-exit paths.
+- **Two smaller `agent.py` consistency gaps (§12).**
+  `_format_no_comparison_message` was missing the "never tagged" hint
+  its sibling `_format_no_fact_message` already has (the compare tool's
+  `args` already carries `anchor_ticker`/`metric` — no new plumbing
+  needed, just the same `_never_tagged_hint()` call). `search_filings`
+  never validated a provided ticker the way
+  `call_get_financial_fact`/`call_compare_financial_metric` do — a
+  hallucinated ticker fell through to `hybrid_search` with no
+  rejection or telemetry signal. Fixed by rejecting a
+  provided-but-invalid ticker in `_dispatch_tool_call`'s search-filings
+  branch with the same `reason="unknown_ticker"` `log_event`, while
+  still allowing `ticker=None` (a broad, unsure search is deliberately
+  valid for this tool, unlike the other two).
+- **`edgar_ingest.py`'s `parse_filing()` had zero test coverage (§13).**
+  No code change — `parse_filing()` is genuinely pure (only touches its
+  `html` argument, `BeautifulSoup`, and `re`; no I/O, no globals, no
+  randomness), confirmed by reading the full function body, but had
+  never been called directly by any test (only ever monkeypatched away
+  in `main()`'s resilience tests). Added 10 unit tests covering every
+  edge case the function's own comments call out: empty/layout-only
+  table dropping, marker-index alignment across multiple tables,
+  empty-row skipping within a table, cell/prose whitespace collapsing,
+  and the header/footer noise-stripping regex (including a case
+  proving it doesn't over-match ordinary prose with one `|` character).
+  All 10 passed immediately against the unchanged function — this was
+  a real, not just theoretical, coverage gap, not a bug.
+
+New/extended tests: `tests/test_mcp_server.py` (+2: `main()` flushes
+after `uvicorn.run()` returns, and even when it raises),
+`tests/test_agent.py` (+4: comparison-message never-tagged hint
+included/omitted, `search_filings` rejects an unrecognized ticker,
+`search_filings` still allows no ticker filter),
+`tests/test_edgar_ingest.py` (+10: `parse_filing()`, see above). Full
+suite **411/411**.
+
+**Addendum: round 2 of the layered review (a second `/code-review` pass
+— 8 background finder angles — plus a fresh architecture subagent)
+found four more real gaps, three of them pre-existing bugs the new
+tests happened to expose or the new code happened to sit next to,
+rather than something the §11/§12/§13 fixes introduced themselves.**
+
+1. **`tracing.py`'s `flush()` had no "never raise" contract**, unlike
+   `_write_local_log()`'s explicitly documented one — found
+   independently by the architecture subagent and two `/code-review`
+   angles. Newly consequential because of §11's own fix: `mcp_server.py`'s
+   `main()` now calls `flush()` inside a `finally` wrapping
+   `uvicorn.run()`, so an unguarded Langfuse network failure there would
+   have replaced/masked whatever real exception `uvicorn.run()` was
+   propagating — hiding the actual shutdown/crash reason. Fixed by
+   wrapping `flush()`'s body in the same broad,
+   commented `except Exception` pattern `_write_local_log()` already
+   uses, printing to stderr instead of raising. Benefits every caller
+   (`agent.py`, `eval_harness.py` too), not just the new one.
+2. **`search_filings`' ticker guard still crashed on a non-hashable
+   ticker** (e.g. a list) — found independently by two angles. The
+   §12 fix's guard ran *after* `_resolve_search_args()`, which already
+   crashes first on `ticker not in searched_tickers` (a set) for an
+   unhashable value — the exact crash class `call_get_financial_fact`/
+   `call_compare_financial_metric` were already fixed for on
+   2026-09-06, just never closed for this third tool. Fixed by moving
+   the check before `_resolve_search_args()` runs, and folding it into
+   the same single `not isinstance(ticker, str) or ticker not in
+   COMPANIES` condition (with the same `reason="unknown_ticker"`) the
+   sibling tools already use, instead of the two separate checks the
+   first pass had.
+3. **`edgar_ingest.py`'s `parse_filing()` had a real, pre-existing
+   leading/trailing-newline bug**, found by the architecture subagent
+   (verified by actually running the function): the header/footer
+   noise-stripping regex ran *after* the function's own `.strip()`, so
+   removing a noise line sitting at the very start or end of a document
+   left a stray blank line behind — none of the 10 new tests happened
+   to combine "noise line" with "at the document edge," so the gap
+   wasn't caught by the coverage addition itself. Fixed with a second
+   `.strip()` after the header/footer block; also corrected that
+   block's comment, which inaccurately claimed the code was "left
+   commented out" when it's active.
+4. **Three independent review angles flagged the same duplication**:
+   the new `fiscal_year` type guard (§8, 2026-09-09) was hand-copied
+   verbatim between `call_get_financial_fact` and
+   `call_compare_financial_metric`. Extracted into a shared
+   `_rejects_invalid_fiscal_year(tool, args)` helper.
+
+Also applied: a redundant `if first_nl != -1 else 0` branch in §6's
+`strip_leading_metadata()` fix (verified by hand and empirically that
+`preceding.rfind("\n", 0, first_nl)` is already `-1` whenever
+`first_nl == -1`, so the ternary never changed the result); trimmed
+`mcp_server.py`'s `main()` comment, which had grown several times
+longer than the 3 lines of code it explained (the deeper
+investigation notes already live in this section).
+
+Four Low-severity findings went to `BACKLOG.md` instead of being fixed
+here, per CLAUDE.md's Standard-tier minimalism rule: `_never_tagged_hint()`'s
+redundant SEC network call on the never-tagged-concept case (root cause
+is in `xbrl_facts.fetch_concept()`'s 404-doesn't-cache behavior, a
+separate, larger-scope item); `tracing.py`'s `span.error` formatting
+could theoretically raise if an exception's own `__str__` raised (not
+currently reachable — no exception type actually raised anywhere in
+this codebase has a broken `__str__`); a broader "generic schema-driven
+arg-validator" idea spanning all three tools (Substantial-scope
+redesign, not a bug); and an incidental inconsistency in how the three
+tools' unknown-ticker rejections are worded (a real but deliberate-
+decision-later item, not a defect).
+
+Round 3 (a third `/code-review` pass on the fixed diff) came back
+clean, closing the loop. Full suite **414/414**. Full findings:
+`docs/reviews/2026-09-10-fix-3-more-review-findings.md`.
+
 ## Next steps
 
 See `BACKLOG.md` for the live task backlog. This section used to hold

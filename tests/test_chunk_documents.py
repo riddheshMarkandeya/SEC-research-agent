@@ -94,6 +94,30 @@ def test_strip_leading_metadata_anchor_absent_returns_unchanged():
     assert strip_leading_metadata(text) == text
 
 
+def test_strip_leading_metadata_one_newline_before_united_states():
+    # "UNITED STATES" is the very first line -- only one newline (its own
+    # trailing one) exists anywhere before the anchor, unlike the happy-
+    # path test above which has a junk line ahead of it too. review §6:
+    # the nested rfind() used to return -1 here, and text[-1:] silently
+    # slices from the END of the string instead of the start, truncating
+    # the whole document down to its last character.
+    text = "UNITED STATES\nSECURITIES AND EXCHANGE COMMISSION\nreal content"
+    result = strip_leading_metadata(text)
+    assert result.startswith("UNITED STATES")
+    assert result.endswith("real content")
+
+
+def test_strip_leading_metadata_no_newline_before_united_states():
+    # Zero newlines anywhere before the anchor -- "UNITED STATES" and the
+    # anchor are effectively on the same unbroken run of text. Same -1
+    # landmine as the one-newline case above, just via the OUTER rfind
+    # failing this time instead of not existing to call at all.
+    text = "UNITED STATESSECURITIES AND EXCHANGE COMMISSION\nreal content"
+    result = strip_leading_metadata(text)
+    assert result.startswith("UNITED STATES")
+    assert result.endswith("real content")
+
+
 # ---------------------------------------------------------------------------
 # reconstruct_document
 # ---------------------------------------------------------------------------

@@ -36,13 +36,9 @@ The 4 High findings are DONE — see `PROJECT_CONTEXT.md`'s matching
 section (2026-09-06) and its addendum (2026-09-07: §4's first fix shipped
 a real regression, found and corrected before this batch resumed).
 §5/§7/§9 are also DONE — see `PROJECT_CONTEXT.md`'s 2026-09-08 section.
+§6/§8/§10 are also DONE — see `PROJECT_CONTEXT.md`'s 2026-09-09 section.
+§11/§12/§13 are also DONE — see `PROJECT_CONTEXT.md`'s 2026-09-10 section.
 
-- [ ] **[Medium]** `chunk_documents.py`'s `strip_leading_metadata()` can truncate a document to 1 character on an untested edge case — [review §6](docs/reviews/2026-09-06-full-codebase-review.md#6-chunkdocumentspy64-68s-stripleadingmetadata-truncates-to-1-character)
-- [ ] **[Medium]** A string `fiscal_year` silently misrecords as `"no_data_for_ticker"` telemetry instead of a schema-violation signal — [review §8](docs/reviews/2026-09-06-full-codebase-review.md#8-a-string-fiscalyear-silently-misrecords-as-nodataforticker)
-- [ ] **[Medium]** `tracing.py`'s `traced_span()` never records exception info — a crash and a no-op look identical in the local log — [review §10](docs/reviews/2026-09-06-full-codebase-review.md#10-tracingpys-tracedspan-never-records-exception-info)
-- [ ] **[Medium]** `mcp_server.py` never calls `tracing.flush()` on shutdown — Langfuse observations can be lost on restart — [review §11](docs/reviews/2026-09-06-full-codebase-review.md#11-mcpserverpy-never-calls-tracingflush-on-shutdown)
-- [ ] **[Medium]** `_format_no_comparison_message` is missing the "never tagged" hint its sibling has; `search_filings` doesn't validate/log an unknown ticker like the other two tools do — [review §12](docs/reviews/2026-09-06-full-codebase-review.md#12-two-smaller-consistency-gaps)
-- [ ] **[Low]** `edgar_ingest.py`'s `parse_filing()` has zero test coverage despite being pure/deterministic — [review §13](docs/reviews/2026-09-06-full-codebase-review.md#13-edgaringestpys-parsefiling-has-zero-test-coverage)
 - [ ] **[Low]** `retrieval.py`'s live half has no `tests/manual/verify_*.py` script, unlike every other live-only integration point — [review §14](docs/reviews/2026-09-06-full-codebase-review.md#14-retrievalpys-live-half-has-no-manual-verification-script)
 - [ ] **[Low]** `xbrl_facts.py`'s `get_frame()` cross-tag merge has an untested set-iteration-order dependency — [review §15](docs/reviews/2026-09-06-full-codebase-review.md#15-xbrlfactspys-getframe-has-an-untested-ordering-dependency)
 - [ ] **[Low, design note]** `query_chunks.py` duplicates `retrieval.py`'s query logic instead of reusing it
@@ -54,6 +50,21 @@ Full evidence: `docs/reviews/2026-09-08-fix-3-medium-review-findings.md`.
 
 - [ ] **[Low, design note]** `formulas.py` now has 3 independently-written same-shape zero-denominator guards (`get_yoy_growth`, `_compute_ratio_metric`, `_compute_ratio_metric_all_companies`) with no shared `_safe_ratio()`/zero-guard helper — CLAUDE.md's Standard-tier minimalism rule is why this diff didn't extract one; worth doing once a 4th call site needs the same guard.
 - [ ] **[Low, latent, not currently reachable]** `chunk_documents.py`'s `chunk_blocks()` `current_is_only_overlap` flag would be incorrectly cleared by a hypothetical empty-string block merge (`f"{overlap}\n\n{''}".strip()` collapses back to the overlap value alone) — not currently reachable since `split_into_blocks()` only ever produces non-empty blocks, so this is a documentation-worthy assumption rather than a live bug.
+
+### From the 2026-09-09 layered review of the §6/§8/§10 fixes
+
+Full evidence: `docs/reviews/2026-09-09-fix-3-more-review-findings.md`.
+
+- [ ] **[Low, design note, pre-existing]** `agent.py`'s `isinstance(x, int)` fiscal-year-type guards (`fiscal_year`, `start_fiscal_year`, `end_fiscal_year` — 3 call sites now) all accept a JSON boolean (`isinstance(True, int)` is `True` in Python), silently treating it as `0`/`1` instead of rejecting it like every other non-int value. Real but pre-existing (the `start_fiscal_year`/`end_fiscal_year` guard already had this before the §8 fix mirrored it to a third site) and low-likelihood (requires a tool-calling LLM to emit a JSON bool where an integer is expected, not the numeric-string shape these guards were actually written for) — a single cross-cutting fix (e.g. `isinstance(x, int) and not isinstance(x, bool)`) covering all 3 sites at once would be cleaner than patching them one at a time.
+
+### From the 2026-09-10 layered review of the §11/§12/§13 fixes
+
+Full evidence: `docs/reviews/2026-09-10-fix-3-more-review-findings.md`.
+
+- [ ] **[Low, design note]** `_never_tagged_hint()` (called from both `_format_no_fact_message` and, as of §12, `_format_no_comparison_message`) re-fetches `xbrl_facts.fetch_concept()` for the exact (ticker, tag) pair the caller's own lookup just fetched moments earlier — normally a free disk-cache hit, but `fetch_concept()` never caches a 404 response, so on the one case this hint actually exists for (a company that genuinely never tags a concept at all) it makes a real second live SEC network round-trip synchronously inside message formatting. Root cause is in `xbrl_facts.fetch_concept()`'s caching, not in either message formatter — a separate, larger-scope item than either function's own fix.
+- [ ] **[Low, latent, not currently reachable]** `tracing.py`'s `traced_span()` builds `span.error = f"{type(e).__name__}: {e}"` inside its `except` block before `raise` — if the caught exception's own `__str__` raised, that would replace the original exception instead of re-raising it, contradicting the docstring's "never swallows" claim. Not currently reachable: no exception type actually raised anywhere in this codebase (`ValueError`, `KeyError`, `requests.RequestException`, etc.) has a `__str__` that can raise.
+- [ ] **[Low, design note]** Three tools now each hand-validate their own ticker/metric/fiscal_year arguments against their own `*_TOOL_SCHEMA` declarations (`call_get_financial_fact`, `call_compare_financial_metric`, and now `search_filings`'s dispatch branch), each guard discovered and patched separately across three different review dates (2026-09-06, 2026-09-09, 2026-09-10) rather than derived from the schema once. A generic schema-driven arg-validator (checking enum membership/JSON-schema type for every declared property before a tool body runs) would close this whole class of bug structurally instead of one field at a time — a Substantial-scope redesign, not a Standard-tier fix.
+- [ ] **[Low, design note]** `search_filings`' unknown-ticker rejection returns a bespoke, actionable string built inline in `_dispatch_tool_call` (naming the invalid ticker and listing valid ones), while `call_get_financial_fact`/`call_compare_financial_metric` fold the same failure into their generic `_format_no_fact_message`/`_format_no_comparison_message` (which don't name the ticker as the problem). An incidental inconsistency between three sibling "unknown ticker" paths, not a bug — worth a deliberate decision later (upgrade the other two similarly, or document why search_filings needs to differ) rather than leaving it accidental.
 
 ### Carried over from `PROJECT_CONTEXT.md`'s old "Next steps" (pre-2026-09-06)
 

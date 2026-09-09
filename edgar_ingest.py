@@ -152,14 +152,10 @@ def parse_filing(html: str) -> tuple[str, list[dict]]:
     text = text.strip()
 
     # ------------------------------------------------------------------
-    # OPTIONAL: strip repeating page header/footer noise (e.g.
-    # "Apple Inc. | Q3 2026 Form 10-Q | 13"). Left commented out for now —
-    # it's cosmetic and doesn't hurt chunking/retrieval much, and writing
-    # a per-company matcher isn't worth it yet. If it starts bothering you
-    # later, this generic pattern (matches "<Anything> | <Anything> | <page#>"
-    # on its own line) should catch most companies' variants without
-    # hardcoding company names:
-    #
+    # Strips repeating page header/footer noise (e.g. "Apple Inc. |
+    # Q3 2026 Form 10-Q | 13") -- a generic pattern (matches "<Anything>
+    # | <Anything> | <page#>" on its own line) that catches most
+    # companies' variants without hardcoding company names.
     text = re.sub(
         r"^.{0,80}\|.{0,60}\|\s*\d{1,4}\s*$",
         "",
@@ -167,6 +163,11 @@ def parse_filing(html: str) -> tuple[str, list[dict]]:
         flags=re.MULTILINE,
     )
     text = re.sub(r"\n{3,}", "\n\n", text)  # re-collapse blank lines after stripping
+    # Found in code review (2026-09-10): a noise line at the very start
+    # or end of the document left a stray leading/trailing newline
+    # behind, since the earlier .strip() above ran before this block
+    # existed to create one.
+    text = text.strip()
     # ------------------------------------------------------------------
 
     return text, tables

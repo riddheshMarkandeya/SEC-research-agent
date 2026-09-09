@@ -58,7 +58,19 @@ def strip_leading_metadata(text: str) -> str:
     # anchor, if it's there, so we keep that line rather than starting
     # mid-header.
     preceding = text[:idx]
-    last_line_start = preceding.rfind("\n", 0, preceding.rfind("\n"))
+    # Need the newline TWO lines back (the one ending the line above
+    # "UNITED STATES"). Guard both rfind()s explicitly rather than
+    # chaining them directly: fewer than 2 newlines before the anchor
+    # (e.g. "UNITED STATES" is the very first line, or shares no
+    # newline with it at all) used to leave this at -1, and text[-1:]
+    # doesn't mean "from the start" -- it silently truncated the whole
+    # document to its last character (review §6, found live via a
+    # future filing, not any of the 25 already ingested here).
+    first_nl = preceding.rfind("\n")
+    # No ternary on first_nl == -1 needed: when "\n" isn't in `preceding`
+    # at all, it can't be found in any sub-range of it either, so the
+    # inner rfind is already -1 in that case too (verified, not assumed).
+    last_line_start = max(preceding.rfind("\n", 0, first_nl), 0)
     if "UNITED STATES" in preceding[-30:]:
         return text[last_line_start:].strip()
     return text[idx:].strip()

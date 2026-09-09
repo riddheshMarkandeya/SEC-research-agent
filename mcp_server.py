@@ -56,7 +56,7 @@ from agent import (
 from config import MCP_AUTH_TOKEN, MCP_RATE_LIMIT_REQUESTS, MCP_RATE_LIMIT_WINDOW_SECONDS
 from edgar_ingest import get_filing_url
 from retrieval import hybrid_search
-from tracing import log_event, traced_span
+from tracing import flush, log_event, traced_span
 
 TEXT_FRAGMENT_EXCERPT_MAX_LEN = 100
 
@@ -316,7 +316,14 @@ def build_app(host: str = "127.0.0.1"):
 @click.option("--host", default="127.0.0.1", help="Host to bind to")
 @click.option("--port", default=8765, help="Port to listen on for HTTP")
 def main(host: str, port: int):
-    uvicorn.run(build_app(host=host), host=host, port=port)
+    # uvicorn.run() returns normally (no exception) on both SIGINT and
+    # SIGTERM, so `finally` here flushes Langfuse on every real shutdown,
+    # not just uncaught errors -- see PROJECT_CONTEXT.md's 2026-09-10
+    # section for why this is `finally` and not a Starlette lifespan hook.
+    try:
+        uvicorn.run(build_app(host=host), host=host, port=port)
+    finally:
+        flush()
 
 
 if __name__ == "__main__":

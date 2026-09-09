@@ -5,8 +5,13 @@ citations (Week 6). The actual MCP protocol/HTTP wiring (Server,
 streamable_http_app) is live-only -- exercised by a manual verification
 script against a real running server, documented in PROJECT_CONTEXT.md,
 not mocked into unit tests here (same carve-out as hybrid_search/
-Ollama/Gemini elsewhere in this project).
+Ollama/Gemini elsewhere in this project). main()'s own shutdown-flush
+control flow (below) is the one exception -- it's deterministic once
+uvicorn.run/build_app/flush are mocked, even though what it wraps is
+live-only.
 """
+
+import pytest
 
 import mcp_server
 
@@ -285,3 +290,37 @@ def test_rate_limiter_prunes_expired_windows_to_avoid_unbounded_growth():
 
     assert len(limiter._windows) == 1
     assert "key-c" in limiter._windows
+
+
+# ---------------------------------------------------------------------------
+# main() -- flush() on shutdown
+# ---------------------------------------------------------------------------
+def test_main_calls_flush_after_uvicorn_run_returns(monkeypatch):
+    # review §11: main() never called tracing.flush() on shutdown, so
+    # not-yet-flushed Langfuse observations could be lost on a normal
+    # restart/redeploy (uvicorn.run() returns cleanly, no exception, on
+    # both SIGINT and SIGTERM -- confirmed in uvicorn's own source).
+    calls = []
+    monkeypatch.setattr(mcp_server, "build_app", lambda host: "fake-app")
+    monkeypatch.setattr(mcp_server.uvicorn, "run", lambda app, host, port: calls.append(("run", app, host, port)))
+    monkeypatch.setattr(mcp_server, "flush", lambda: calls.append(("flush",)))
+
+    mcp_server.main.callback(host="127.0.0.1", port=8765)
+
+    assert calls == [("run", "fake-app", "127.0.0.1", 8765), ("flush",)]
+
+
+def test_main_calls_flush_even_when_uvicorn_run_raises(monkeypatch):
+    calls = []
+    monkeypatch.setattr(mcp_server, "build_app", lambda host: "fake-app")
+
+    def raising_run(app, host, port):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(mcp_server.uvicorn, "run", raising_run)
+    monkeypatch.setattr(mcp_server, "flush", lambda: calls.append("flush"))
+
+    with pytest.raises(RuntimeError):
+        mcp_server.main.callback(host="127.0.0.1", port=8765)
+
+    assert calls == ["flush"]

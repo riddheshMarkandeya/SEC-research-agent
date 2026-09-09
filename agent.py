@@ -361,15 +361,40 @@ def _format_no_fact_message(args: dict) -> str:
 
 def _format_no_comparison_message(args: dict) -> str:
     """compare_financial_metric counterpart to _format_no_fact_message --
-    the same Q4 reporting gap applies just as much to a cross-company
-    comparison question as to a single-company one."""
+    the same Q4 reporting gap and never-tagged-concept gap both apply
+    just as much to a cross-company comparison question as to a
+    single-company one. The never-tagged hint only reflects the anchor
+    company (args' `anchor_ticker`, this tool's ticker key), not every
+    company in the comparison -- same scoping limit _never_tagged_hint()
+    itself already documents, not a new one introduced here."""
     message = (
         f"(no structured data found for metric={args.get('metric')!r} "
         "across companies for this period — try search_filings per company instead)"
     )
     if args.get("fiscal_period") == "Q4":
         message += f" {_Q4_NOT_DISCLOSED_HINT}"
+    never_tagged = _never_tagged_hint(args.get("anchor_ticker"), args.get("metric"))
+    if never_tagged:
+        message += f" {never_tagged}"
     return message
+
+
+def _rejects_invalid_fiscal_year(tool: str, args: dict) -> bool:
+    """True (having already logged the rejection) if args["fiscal_year"]
+    is present but not an int -- shared by call_get_financial_fact and
+    call_compare_financial_metric, which otherwise each hand-rolled an
+    identical check (found in code review, 2026-09-10). A non-int
+    fiscal_year (e.g. a numeric string) doesn't crash any downstream
+    lookup -- it just fails to match and returns None/{}, which used to
+    get recorded as reason="no_data_for_ticker" via
+    record_unmet_metric_request(), polluting that "should we add a
+    formula for this" telemetry with a schema-violation false negative
+    instead of a real data gap."""
+    fiscal_year = args.get("fiscal_year")
+    if fiscal_year is not None and not isinstance(fiscal_year, int):
+        log_event("tool_call_rejected", tool=tool, reason="invalid_fiscal_year_type", args=args)
+        return True
+    return False
 
 
 _FACT_ARG_KEYS = {
@@ -480,6 +505,8 @@ def call_get_financial_fact(args: dict, question: str | None = None) -> dict | N
         # None" checks, so this also catches a numeric-STRING year --
         # found in code review (2026-09-06) crashing formulas.py's
         # end_fiscal_year - start_fiscal_year with an uncaught TypeError.
+        # Deliberately does not check plain fiscal_year here (see below)
+        # -- this branch never reads it, so a value here is irrelevant.
         if (
             args.get("yoy_growth")
             or not isinstance(start_fiscal_year, int)
@@ -493,6 +520,14 @@ def call_get_financial_fact(args: dict, question: str | None = None) -> dict | N
         if result is None:
             record_unmet_metric_request(ticker, metric, reason="no_data_for_ticker", question=question)
         return result
+    # Checked AFTER the multi-year-average branch above (found in round-2
+    # review, 2026-09-09): that branch never reads fiscal_year at all, so
+    # checking it any earlier would wrongly reject a valid multi-year-
+    # average request over a stray, irrelevant fiscal_year value -- this
+    # must only gate the two branches below, which are the only ones
+    # that actually use it.
+    if _rejects_invalid_fiscal_year("get_financial_fact", args):
+        return None
     if args.get("yoy_growth"):
         if metric in RATIO_DEFINITIONS:
             log_event(
@@ -585,6 +620,8 @@ def call_compare_financial_metric(args: dict, question: str | None = None) -> di
             record_unmet_metric_request(anchor_ticker, metric, reason="unknown_metric", question=question)
         else:
             log_event("tool_call_rejected", tool="compare_financial_metric", reason="missing_metric", args=args)
+        return {}
+    if _rejects_invalid_fiscal_year("compare_financial_metric", args):
         return {}
     fiscal_year = args.get("fiscal_year")
     fiscal_period = args.get("fiscal_period", "FY")
@@ -951,6 +988,23 @@ def _dispatch_tool_call(
             span.update(output={"found": True, "companies": sorted(data)})
             return _format_results_block(results, start_index)
 
+    raw_ticker = args.get("ticker")
+    if raw_ticker is not None and (not isinstance(raw_ticker, str) or raw_ticker not in COMPANIES):
+        # Found in code review (2026-09-06, closed 2026-09-10): unlike
+        # get_financial_fact/compare_financial_metric's matching guard,
+        # a hallucinated ticker here used to fall through to
+        # hybrid_search silently -- no rejection, no telemetry signal.
+        # Checked BEFORE _resolve_search_args() runs (round-2 review
+        # finding), not after -- that function's own `ticker not in
+        # searched_tickers` (a set) already crashes on a non-hashable
+        # ticker like a list, the exact unhashable-ticker crash class
+        # already fixed for the other two tools. ticker is optional for
+        # this tool (a broad, unsure search is valid), so only a
+        # PROVIDED-but-invalid value is rejected here, never a missing
+        # one -- same single isinstance-or-membership condition and
+        # reason string as the sibling tools' guards, for parity.
+        log_event("tool_call_rejected", tool="search_filings", reason="unknown_ticker", args=args)
+        return f"(ticker={raw_ticker!r} is not a recognized company — try one of {sorted(COMPANIES)} or omit the ticker filter)"
     query, ticker = _resolve_search_args(args, fallback_query=question, searched_tickers=searched_tickers)
     searched_tickers.add(ticker)
     if verbose:

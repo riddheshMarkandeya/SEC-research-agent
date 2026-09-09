@@ -72,6 +72,58 @@ def test_traced_span_forwards_update_to_langfuse_client_when_enabled(monkeypatch
     assert fake_client._observation.update_calls == [{"output": {"count": 1}}]
 
 
+def test_traced_span_records_exception_and_reraises(monkeypatch, tmp_path):
+    # review §10: traced_span() used to be try/finally only -- a crash
+    # and a benign no-op wrote an identical local log line, undercutting
+    # the "always-on debugging backup" this exists for. The fix must add
+    # visibility WITHOUT swallowing the exception -- the caller's own
+    # try/except still has to see it. No assertion on the Langfuse fake's
+    # update_calls here: the real fix deliberately makes no manual
+    # Langfuse call on the error path (see traced_span()'s own
+    # docstring -- OpenTelemetry's default exception-recording already
+    # covers it, and a manual call from here would fire too late to have
+    # any effect anyway), so asserting update_calls would test a Langfuse
+    # code path this fix doesn't touch.
+    fake_client = _FakeClient()
+    log_path = tmp_path / "traces.jsonl"
+    monkeypatch.setattr(tracing, "TRACING_ENABLED", True)
+    monkeypatch.setattr(tracing, "TRACE_LOG_PATH", str(log_path))
+    monkeypatch.setattr(tracing, "_get_langfuse_client", lambda: fake_client)
+
+    try:
+        with tracing.traced_span("tool", "search_filings", input={"query": "revenue"}):
+            raise ValueError("boom")
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("traced_span must not swallow the exception")
+
+    lines = _read_log_lines(log_path)
+    assert len(lines) == 1
+    assert lines[0]["error"] == "ValueError: boom"
+
+
+def test_traced_span_records_exception_when_langfuse_disabled(monkeypatch, tmp_path):
+    log_path = tmp_path / "traces.jsonl"
+    monkeypatch.setattr(tracing, "TRACING_ENABLED", False)
+    monkeypatch.setattr(tracing, "TRACE_LOG_PATH", str(log_path))
+    monkeypatch.setattr(
+        tracing, "_get_langfuse_client", lambda: (_ for _ in ()).throw(AssertionError("should not be called"))
+    )
+
+    try:
+        with tracing.traced_span("tool", "search_filings"):
+            raise ValueError("boom")
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("traced_span must not swallow the exception")
+
+    lines = _read_log_lines(log_path)
+    assert len(lines) == 1
+    assert lines[0]["error"] == "ValueError: boom"
+
+
 # ---------------------------------------------------------------------------
 # traced_span -- local JSONL log (independent of Langfuse)
 # ---------------------------------------------------------------------------
@@ -416,3 +468,24 @@ def test_flush_calls_client_flush_when_enabled(monkeypatch):
     tracing.flush()
 
     assert fake_client.flush_calls == 1
+
+
+def test_flush_swallows_client_failure_instead_of_raising(monkeypatch, capsys):
+    # Found in code review (2026-09-10): mcp_server.py's main() now calls
+    # flush() inside a finally wrapping uvicorn.run() -- if flush() itself
+    # raised (e.g. a real Langfuse network failure at shutdown), that
+    # would replace/mask whatever original exception uvicorn.run() was
+    # propagating, exactly the "never raise, ever" contract
+    # _write_local_log() already documents and this module is built
+    # around (Langfuse's own SDK gives its own errors the same
+    # treatment).
+    class _RaisingClient:
+        def flush(self):
+            raise RuntimeError("network unreachable")
+
+    monkeypatch.setattr(tracing, "TRACING_ENABLED", True)
+    monkeypatch.setattr(tracing, "_get_langfuse_client", lambda: _RaisingClient())
+
+    tracing.flush()  # must not raise
+
+    assert "network unreachable" in capsys.readouterr().err

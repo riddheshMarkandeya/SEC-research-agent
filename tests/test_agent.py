@@ -161,6 +161,24 @@ def test_format_no_comparison_message_omits_q4_hint_for_other_periods():
     assert "estimate" not in message.lower()
 
 
+def test_format_no_comparison_message_includes_never_tagged_hint_when_concept_not_tagged_at_all(monkeypatch):
+    # review §12 parity fix: _format_no_fact_message's never-tagged hint
+    # (see the PLTR/inventory tests below) applies just as much to a
+    # cross-company comparison as to a single-company lookup -- the
+    # compare tool's args carry anchor_ticker (not ticker), which
+    # _never_tagged_hint() already accepts positionally.
+    monkeypatch.setattr("agent.is_metric_tagged", lambda ticker, metric: False)
+    message = _format_no_comparison_message({"metric": "inventory", "anchor_ticker": "PLTR", "fiscal_period": "FY", "fiscal_year": 2025})
+    assert "does not report" in message.lower() or "not applicable" in message.lower() or "business model" in message.lower()
+    assert "fabricate" in message.lower() or "estimate" in message.lower()
+
+
+def test_format_no_comparison_message_omits_never_tagged_hint_when_concept_is_tagged(monkeypatch):
+    monkeypatch.setattr("agent.is_metric_tagged", lambda ticker, metric: True)
+    message = _format_no_comparison_message({"metric": "inventory", "anchor_ticker": "NVDA", "fiscal_period": "FY", "fiscal_year": 2020})
+    assert "business model" not in message.lower()
+
+
 def test_format_no_fact_message_includes_never_tagged_hint_when_concept_not_tagged_at_all(monkeypatch):
     # Regression case: pltr-inventory-turnover-fy2025-refusal. Palantir
     # genuinely never tags inventory at all (a real fact about its
@@ -601,6 +619,35 @@ def test_call_get_financial_fact_dispatches_multi_year_average(monkeypatch):
     assert calls == [("AAPL", "operating_margin", 2023, 2025)]
 
 
+def test_call_get_financial_fact_ignores_malformed_fiscal_year_in_multi_year_average_request(monkeypatch):
+    # Found in code review (round 2, 2026-09-09): the new §8 fiscal_year
+    # type guard was placed before this branch even checks whether
+    # start_fiscal_year/end_fiscal_year are present -- fiscal_year is
+    # never read inside get_multi_year_average()'s call below, so a
+    # stray malformed fiscal_year alongside a VALID start/end pair used
+    # to wrongly reject the whole request instead of being ignored, the
+    # same as it always was pre-fix.
+    calls = []
+    monkeypatch.setattr(
+        "agent.get_multi_year_average",
+        lambda ticker, metric, start_fiscal_year, end_fiscal_year: calls.append(
+            (ticker, metric, start_fiscal_year, end_fiscal_year)
+        )
+        or {"value": 31.1, "unit": "percent"},
+    )
+    result = call_get_financial_fact(
+        {
+            "ticker": "AAPL",
+            "metric": "operating_margin",
+            "start_fiscal_year": 2023,
+            "end_fiscal_year": 2025,
+            "fiscal_year": "bogus",
+        }
+    )
+    assert result == {"value": 31.1, "unit": "percent"}
+    assert calls == [("AAPL", "operating_margin", 2023, 2025)]
+
+
 def test_call_get_financial_fact_rejects_multi_year_average_combined_with_yoy_growth():
     # Nonsensical combination -- caught explicitly rather than silently
     # picking one, same discipline as the yoy_growth+margin rejection.
@@ -850,6 +897,40 @@ def test_call_get_financial_fact_rejects_non_int_multi_year_average_years(monkey
     category, fields = calls[0]
     assert category == "tool_call_rejected"
     assert fields["reason"] == "invalid_multi_year_average_combo"
+
+
+def test_call_get_financial_fact_rejects_non_int_fiscal_year(monkeypatch):
+    # review §8: a non-int fiscal_year (e.g. a numeric string) doesn't
+    # crash -- get_metric()/get_ratio() just fail to find a match and
+    # return None, which used to record reason="no_data_for_ticker" via
+    # record_unmet_metric_request(), polluting that "should we add a
+    # formula for this" telemetry with a schema-violation false negative
+    # instead of a real data gap.
+    calls = []
+    monkeypatch.setattr("agent.log_event", lambda category, **fields: calls.append((category, fields)))
+
+    result = call_get_financial_fact({"ticker": "AAPL", "metric": "revenue", "fiscal_year": "2025"})
+
+    assert result is None
+    assert len(calls) == 1
+    category, fields = calls[0]
+    assert category == "tool_call_rejected"
+    assert fields["reason"] == "invalid_fiscal_year_type"
+
+
+def test_call_compare_financial_metric_rejects_non_int_fiscal_year(monkeypatch):
+    # Parity with call_get_financial_fact above -- same fiscal_year
+    # argument, same unvalidated read, same telemetry-pollution risk.
+    calls = []
+    monkeypatch.setattr("agent.log_event", lambda category, **fields: calls.append((category, fields)))
+
+    result = call_compare_financial_metric({"anchor_ticker": "AAPL", "metric": "revenue", "fiscal_year": "2025"})
+
+    assert result == {}
+    assert len(calls) == 1
+    category, fields = calls[0]
+    assert category == "tool_call_rejected"
+    assert fields["reason"] == "invalid_fiscal_year_type"
 
 
 def test_call_get_financial_fact_rejects_non_hashable_ticker_without_crashing(monkeypatch):
@@ -1205,6 +1286,66 @@ def test_dispatch_tool_call_search_filings_uses_resolved_query_and_tracks_ticker
     assert all_results == fake_results
     assert "AAPL" in searched_tickers
     assert "[1]" in content
+
+
+def test_dispatch_tool_call_search_filings_rejects_unrecognized_ticker(monkeypatch):
+    # review §12: unlike call_get_financial_fact/call_compare_financial_metric,
+    # search_filings never validated a provided ticker -- a hallucinated
+    # ticker silently fell through to hybrid_search with no rejection or
+    # telemetry signal, unlike every other schema-violation case in this
+    # module.
+    monkeypatch.setattr(
+        "agent.hybrid_search", lambda *a, **k: (_ for _ in ()).throw(AssertionError("should not be called"))
+    )
+    calls = []
+    monkeypatch.setattr("agent.log_event", lambda category, **fields: calls.append((category, fields)))
+    all_results = []
+    call = {"name": "search_filings", "args": {"query": "revenue", "ticker": "NOTREAL"}}
+
+    content = _dispatch_tool_call(call, "q", all_results, set(), verbose=False)
+
+    assert "NOTREAL" in content
+    assert all_results == []
+    assert len(calls) == 1
+    category, fields = calls[0]
+    assert category == "tool_call_rejected"
+    assert fields["reason"] == "unknown_ticker"
+
+
+def test_dispatch_tool_call_search_filings_rejects_non_hashable_ticker_without_crashing(monkeypatch):
+    # Found in code review (round 2, 2026-09-10): the §12 fix's guard
+    # ran AFTER _resolve_search_args(), which already crashes first on
+    # `ticker not in searched_tickers` (a set) for a non-hashable ticker
+    # like a list -- the exact same unhashable-ticker crash class
+    # get_financial_fact/compare_financial_metric were already fixed
+    # for on 2026-09-06, just never closed for search_filings.
+    monkeypatch.setattr(
+        "agent.hybrid_search", lambda *a, **k: (_ for _ in ()).throw(AssertionError("should not be called"))
+    )
+    calls = []
+    monkeypatch.setattr("agent.log_event", lambda category, **fields: calls.append((category, fields)))
+    call = {"name": "search_filings", "args": {"query": "revenue", "ticker": ["AAPL"]}}
+
+    content = _dispatch_tool_call(call, "q", [], set(), verbose=False)
+
+    assert len(calls) == 1
+    category, fields = calls[0]
+    assert category == "tool_call_rejected"
+    assert fields["reason"] == "unknown_ticker"
+    assert "not a recognized company" in content
+
+
+def test_dispatch_tool_call_search_filings_allows_no_ticker_filter(monkeypatch):
+    # ticker is optional for this tool (a broad, unsure search) -- must
+    # NOT be rejected just for being absent.
+    monkeypatch.setattr("agent.hybrid_search", lambda query, ticker, top_k: [])
+    calls = []
+    monkeypatch.setattr("agent.log_event", lambda category, **fields: calls.append((category, fields)))
+    call = {"name": "search_filings", "args": {"query": "revenue"}}
+
+    _dispatch_tool_call(call, "q", [], set(), verbose=False)
+
+    assert calls == []
 
 
 # ---------------------------------------------------------------------------
