@@ -11,7 +11,7 @@ import requests
 
 from google.genai import errors as genai_errors
 
-from llm_backends import ollama_call, _ollama_message_to_turn, _gemini_response_to_turn, _get_gemini_client, _send_with_retry
+from llm_backends import ollama_call, _ollama_message_to_turn, _gemini_response_to_turn, _get_gemini_client, _send_with_retry, _to_gemini_tool
 
 
 def test_ollama_message_to_turn_with_tool_calls():
@@ -84,6 +84,111 @@ def test_gemini_response_to_turn_multiple_tool_calls_preserve_order():
     turn = _gemini_response_to_turn(resp)
 
     assert [c["args"]["ticker"] for c in turn.tool_calls] == ["AAPL", "MSFT"]
+
+
+# ---------------------------------------------------------------------------
+# _to_gemini_tool -- regression coverage for a live bug found via a
+# Gemini spot-check eval run (2026-09-09): Gemini's Schema type (a
+# stricter OpenAPI 3.0 subset than Ollama's OpenAI-style wire format)
+# doesn't support "additionalProperties" at all -- every tool-calling
+# request failed with a 400 INVALID_ARGUMENT until this was stripped.
+# ---------------------------------------------------------------------------
+def _search_filings_like_schema():
+    return {
+        "type": "function",
+        "function": {
+            "name": "search_filings",
+            "description": "desc",
+            "parameters": {
+                "type": "object",
+                "properties": {"query": {"type": "string"}},
+                "required": ["query"],
+                "additionalProperties": False,
+            },
+        },
+    }
+
+
+def test_to_gemini_tool_strips_additional_properties():
+    # tool.parameters is a google.genai.types.Schema (pydantic), not a
+    # dict -- it has its own additional_properties field (unlike the REST
+    # backend, which rejects it as "Unknown name"), which stays at its
+    # default None as long as the source dict never sets it, matching
+    # how a field the SDK's own request builder would otherwise omit.
+    tool = _to_gemini_tool(_search_filings_like_schema())
+    assert tool.parameters.additional_properties is None
+
+
+def test_to_gemini_tool_preserves_everything_else():
+    tool = _to_gemini_tool(_search_filings_like_schema())
+    assert tool.name == "search_filings"
+    assert tool.description == "desc"
+    assert tool.parameters.required == ["query"]
+    assert set(tool.parameters.properties) == {"query"}
+
+
+# ---------------------------------------------------------------------------
+# Response-shape validation (2026-09-09 schema-validator redesign): both
+# _ollama_message_to_turn and _gemini_response_to_turn used to index
+# straight into the raw response (c["function"]["name"], resp.candidates[0])
+# with no shape check, crashing with a bare KeyError/IndexError before a
+# tool call ever reached agent.py's own boundary validation.
+# ---------------------------------------------------------------------------
+def test_ollama_message_to_turn_raises_on_tool_call_missing_function_key(monkeypatch):
+    calls = []
+    monkeypatch.setattr("llm_backends.log_event", lambda category, **fields: calls.append((category, fields)))
+    message = {"role": "assistant", "content": "", "tool_calls": [{"not_function": {}}]}
+
+    try:
+        _ollama_message_to_turn(message)
+        assert False, "expected RuntimeError"
+    except RuntimeError as e:
+        assert "ollama" in str(e)
+    assert calls[0][1]["backend"] == "ollama"
+
+
+def test_ollama_message_to_turn_raises_on_non_dict_arguments(monkeypatch):
+    monkeypatch.setattr("llm_backends.log_event", lambda *a, **k: None)
+    message = {
+        "role": "assistant",
+        "content": "",
+        "tool_calls": [{"function": {"name": "search_filings", "arguments": "not-a-dict"}}],
+    }
+
+    try:
+        _ollama_message_to_turn(message)
+        assert False, "expected RuntimeError"
+    except RuntimeError:
+        pass
+
+
+def test_gemini_response_to_turn_raises_on_empty_candidates(monkeypatch):
+    calls = []
+    monkeypatch.setattr("llm_backends.log_event", lambda category, **fields: calls.append((category, fields)))
+    resp = SimpleNamespace(candidates=[], text=None)
+
+    try:
+        _gemini_response_to_turn(resp)
+        assert False, "expected RuntimeError"
+    except RuntimeError as e:
+        assert "candidates" in str(e)
+    assert calls[0][1]["backend"] == "gemini"
+
+
+def test_gemini_response_to_turn_raises_on_non_string_function_name(monkeypatch):
+    # dict(fc.args or {}) already guarantees "args" is a real dict by the
+    # time it's built, so a malformed name is the one residual risk the
+    # shared normalized-shape check catches on this path.
+    monkeypatch.setattr("llm_backends.log_event", lambda *a, **k: None)
+    fc = SimpleNamespace(name=None, args={"ticker": "AAPL"})
+    part = SimpleNamespace(function_call=fc)
+    resp = SimpleNamespace(candidates=[SimpleNamespace(content=SimpleNamespace(parts=[part]))], text=None)
+
+    try:
+        _gemini_response_to_turn(resp)
+        assert False, "expected RuntimeError"
+    except RuntimeError:
+        pass
 
 
 def test_get_gemini_client_returns_same_instance_across_calls(monkeypatch):

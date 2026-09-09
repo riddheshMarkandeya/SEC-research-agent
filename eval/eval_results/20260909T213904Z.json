@@ -1,0 +1,94 @@
+{
+  "backend": "gemini",
+  "answer_model": "gemini-flash-lite-latest",
+  "judge_model": "qwen2.5:7b-instruct",
+  "results": [
+    {
+      "id": "pltr-dividend-2019-refusal",
+      "ticker": "PLTR",
+      "question": "What was Palantir's dividend per share in 2019?",
+      "type": "judged",
+      "passed": false,
+      "detail": "ClientError: 400 INVALID_ARGUMENT. {'error': {'code': 400, 'message': 'Invalid JSON payload received. Unknown name \"additional_properties\" at \\'tools[0].function_declarations[0].parameters\\': Cannot find field.\\nInvalid JSON payload received. Unknown name \"additional_properties\" at \\'tools[0].function_declarations[1].parameters\\': Cannot find field.\\nInvalid JSON payload received. Unknown name \"additional_properties\" at \\'tools[0].function_declarations[2].parameters\\': Cannot find field.', 'status': 'INVALID_ARGUMENT', 'details': [{'@type': 'type.googleapis.com/google.rpc.BadRequest', 'fieldViolations': [{'field': 'tools[0].function_declarations[0].parameters', 'description': 'Invalid JSON payload received. Unknown name \"additional_properties\" at \\'tools[0].function_declarations[0].parameters\\': Cannot find field.'}, {'field': 'tools[0].function_declarations[1].parameters', 'description': 'Invalid JSON payload received. Unknown name \"additional_properties\" at \\'tools[0].function_declarations[1].parameters\\': Cannot find field.'}, {'field': 'tools[0].function_declarations[2].parameters', 'description': 'Invalid JSON payload received. Unknown name \"additional_properties\" at \\'tools[0].function_declarations[2].parameters\\': Cannot find field.'}]}]}}",
+      "has_citation": false,
+      "citation_warnings": [],
+      "answer": null,
+      "n_chunks_retrieved": 0
+    },
+    {
+      "id": "aapl-msft-tax-rate-comparison",
+      "ticker": [
+        "AAPL",
+        "MSFT"
+      ],
+      "question": "Compare Apple's effective tax rate for the three months ended June 27, 2026 to Microsoft's effective tax rate for the three months ended December 31, 2025.",
+      "type": "comparison",
+      "passed": false,
+      "detail": "ClientError: 400 INVALID_ARGUMENT. {'error': {'code': 400, 'message': 'Invalid JSON payload received. Unknown name \"additional_properties\" at \\'tools[0].function_declarations[0].parameters\\': Cannot find field.\\nInvalid JSON payload received. Unknown name \"additional_properties\" at \\'tools[0].function_declarations[1].parameters\\': Cannot find field.\\nInvalid JSON payload received. Unknown name \"additional_properties\" at \\'tools[0].function_declarations[2].parameters\\': Cannot find field.', 'status': 'INVALID_ARGUMENT', 'details': [{'@type': 'type.googleapis.com/google.rpc.BadRequest', 'fieldViolations': [{'field': 'tools[0].function_declarations[0].parameters', 'description': 'Invalid JSON payload received. Unknown name \"additional_properties\" at \\'tools[0].function_declarations[0].parameters\\': Cannot find field.'}, {'field': 'tools[0].function_declarations[1].parameters', 'description': 'Invalid JSON payload received. Unknown name \"additional_properties\" at \\'tools[0].function_declarations[1].parameters\\': Cannot find field.'}, {'field': 'tools[0].function_declarations[2].parameters', 'description': 'Invalid JSON payload received. Unknown name \"additional_properties\" at \\'tools[0].function_declarations[2].parameters\\': Cannot find field.'}]}]}}",
+      "has_citation": false,
+      "citation_warnings": [],
+      "answer": null,
+      "n_chunks_retrieved": 0
+    },
+    {
+      "id": "nvda-revenue-fy26",
+      "ticker": "NVDA",
+      "question": "What was NVIDIA's total revenue for fiscal year 2026?",
+      "type": "numeric",
+      "passed": false,
+      "detail": "ClientError: 400 INVALID_ARGUMENT. {'error': {'code': 400, 'message': 'Invalid JSON payload received. Unknown name \"additional_properties\" at \\'tools[0].function_declarations[0].parameters\\': Cannot find field.\\nInvalid JSON payload received. Unknown name \"additional_properties\" at \\'tools[0].function_declarations[1].parameters\\': Cannot find field.\\nInvalid JSON payload received. Unknown name \"additional_properties\" at \\'tools[0].function_declarations[2].parameters\\': Cannot find field.', 'status': 'INVALID_ARGUMENT', 'details': [{'@type': 'type.googleapis.com/google.rpc.BadRequest', 'fieldViolations': [{'field': 'tools[0].function_declarations[0].parameters', 'description': 'Invalid JSON payload received. Unknown name \"additional_properties\" at \\'tools[0].function_declarations[0].parameters\\': Cannot find field.'}, {'field': 'tools[0].function_declarations[1].parameters', 'description': 'Invalid JSON payload received. Unknown name \"additional_properties\" at \\'tools[0].function_declarations[1].parameters\\': Cannot find field.'}, {'field': 'tools[0].function_declarations[2].parameters', 'description': 'Invalid JSON payload received. Unknown name \"additional_properties\" at \\'tools[0].function_declarations[2].parameters\\': Cannot find field.'}]}]}}",
+      "has_citation": false,
+      "citation_warnings": [],
+      "answer": null,
+      "n_chunks_retrieved": 0
+    },
+    {
+      "id": "crm-ai-risk",
+      "ticker": "CRM",
+      "question": "What risks does Salesforce describe related to artificial intelligence?",
+      "type": "judged",
+      "passed": false,
+      "detail": "ClientError: 400 INVALID_ARGUMENT. {'error': {'code': 400, 'message': 'Invalid JSON payload received. Unknown name \"additional_properties\" at \\'tools[0].function_declarations[0].parameters\\': Cannot find field.\\nInvalid JSON payload received. Unknown name \"additional_properties\" at \\'tools[0].function_declarations[1].parameters\\': Cannot find field.\\nInvalid JSON payload received. Unknown name \"additional_properties\" at \\'tools[0].function_declarations[2].parameters\\': Cannot find field.', 'status': 'INVALID_ARGUMENT', 'details': [{'@type': 'type.googleapis.com/google.rpc.BadRequest', 'fieldViolations': [{'field': 'tools[0].function_declarations[0].parameters', 'description': 'Invalid JSON payload received. Unknown name \"additional_properties\" at \\'tools[0].function_declarations[0].parameters\\': Cannot find field.'}, {'field': 'tools[0].function_declarations[1].parameters', 'description': 'Invalid JSON payload received. Unknown name \"additional_properties\" at \\'tools[0].function_declarations[1].parameters\\': Cannot find field.'}, {'field': 'tools[0].function_declarations[2].parameters', 'description': 'Invalid JSON payload received. Unknown name \"additional_properties\" at \\'tools[0].function_declarations[2].parameters\\': Cannot find field.'}]}]}}",
+      "has_citation": false,
+      "citation_warnings": [],
+      "answer": null,
+      "n_chunks_retrieved": 0
+    },
+    {
+      "id": "aapl-revenue-growth-q3fy2026",
+      "ticker": "AAPL",
+      "question": "What was Apple's year-over-year revenue growth for the three months ended June 27, 2026?",
+      "type": "numeric",
+      "passed": false,
+      "detail": "ClientError: 400 INVALID_ARGUMENT. {'error': {'code': 400, 'message': 'Invalid JSON payload received. Unknown name \"additional_properties\" at \\'tools[0].function_declarations[0].parameters\\': Cannot find field.\\nInvalid JSON payload received. Unknown name \"additional_properties\" at \\'tools[0].function_declarations[1].parameters\\': Cannot find field.\\nInvalid JSON payload received. Unknown name \"additional_properties\" at \\'tools[0].function_declarations[2].parameters\\': Cannot find field.', 'status': 'INVALID_ARGUMENT', 'details': [{'@type': 'type.googleapis.com/google.rpc.BadRequest', 'fieldViolations': [{'field': 'tools[0].function_declarations[0].parameters', 'description': 'Invalid JSON payload received. Unknown name \"additional_properties\" at \\'tools[0].function_declarations[0].parameters\\': Cannot find field.'}, {'field': 'tools[0].function_declarations[1].parameters', 'description': 'Invalid JSON payload received. Unknown name \"additional_properties\" at \\'tools[0].function_declarations[1].parameters\\': Cannot find field.'}, {'field': 'tools[0].function_declarations[2].parameters', 'description': 'Invalid JSON payload received. Unknown name \"additional_properties\" at \\'tools[0].function_declarations[2].parameters\\': Cannot find field.'}]}]}}",
+      "has_citation": false,
+      "citation_warnings": [],
+      "answer": null,
+      "n_chunks_retrieved": 0
+    },
+    {
+      "id": "nvda-segment-revenue-comparison-q1fy27",
+      "ticker": "NVDA",
+      "question": "For the quarter ended April 26, 2026, did NVIDIA's Compute & Networking segment generate more revenue than its Graphics segment?",
+      "type": "judged",
+      "passed": false,
+      "detail": "ClientError: 400 INVALID_ARGUMENT. {'error': {'code': 400, 'message': 'Invalid JSON payload received. Unknown name \"additional_properties\" at \\'tools[0].function_declarations[0].parameters\\': Cannot find field.\\nInvalid JSON payload received. Unknown name \"additional_properties\" at \\'tools[0].function_declarations[1].parameters\\': Cannot find field.\\nInvalid JSON payload received. Unknown name \"additional_properties\" at \\'tools[0].function_declarations[2].parameters\\': Cannot find field.', 'status': 'INVALID_ARGUMENT', 'details': [{'@type': 'type.googleapis.com/google.rpc.BadRequest', 'fieldViolations': [{'field': 'tools[0].function_declarations[0].parameters', 'description': 'Invalid JSON payload received. Unknown name \"additional_properties\" at \\'tools[0].function_declarations[0].parameters\\': Cannot find field.'}, {'field': 'tools[0].function_declarations[1].parameters', 'description': 'Invalid JSON payload received. Unknown name \"additional_properties\" at \\'tools[0].function_declarations[1].parameters\\': Cannot find field.'}, {'field': 'tools[0].function_declarations[2].parameters', 'description': 'Invalid JSON payload received. Unknown name \"additional_properties\" at \\'tools[0].function_declarations[2].parameters\\': Cannot find field.'}]}]}}",
+      "has_citation": false,
+      "citation_warnings": [],
+      "answer": null,
+      "n_chunks_retrieved": 0
+    },
+    {
+      "id": "aapl-3yr-avg-operating-margin-fy2023-fy2025",
+      "ticker": "AAPL",
+      "question": "What was Apple's 3-year average operating margin from fiscal year 2023 through fiscal year 2025?",
+      "type": "numeric",
+      "passed": false,
+      "detail": "ClientError: 400 INVALID_ARGUMENT. {'error': {'code': 400, 'message': 'Invalid JSON payload received. Unknown name \"additional_properties\" at \\'tools[0].function_declarations[0].parameters\\': Cannot find field.\\nInvalid JSON payload received. Unknown name \"additional_properties\" at \\'tools[0].function_declarations[1].parameters\\': Cannot find field.\\nInvalid JSON payload received. Unknown name \"additional_properties\" at \\'tools[0].function_declarations[2].parameters\\': Cannot find field.', 'status': 'INVALID_ARGUMENT', 'details': [{'@type': 'type.googleapis.com/google.rpc.BadRequest', 'fieldViolations': [{'field': 'tools[0].function_declarations[0].parameters', 'description': 'Invalid JSON payload received. Unknown name \"additional_properties\" at \\'tools[0].function_declarations[0].parameters\\': Cannot find field.'}, {'field': 'tools[0].function_declarations[1].parameters', 'description': 'Invalid JSON payload received. Unknown name \"additional_properties\" at \\'tools[0].function_declarations[1].parameters\\': Cannot find field.'}, {'field': 'tools[0].function_declarations[2].parameters', 'description': 'Invalid JSON payload received. Unknown name \"additional_properties\" at \\'tools[0].function_declarations[2].parameters\\': Cannot find field.'}]}]}}",
+      "has_citation": false,
+      "citation_warnings": [],
+      "answer": null,
+      "n_chunks_retrieved": 0
+    }
+  ]
+}

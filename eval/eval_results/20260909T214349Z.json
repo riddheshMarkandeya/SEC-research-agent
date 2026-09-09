@@ -1,0 +1,98 @@
+{
+  "backend": "gemini",
+  "answer_model": "gemini-flash-lite-latest",
+  "judge_model": "qwen2.5:7b-instruct",
+  "results": [
+    {
+      "id": "pltr-dividend-2019-refusal",
+      "ticker": "PLTR",
+      "question": "What was Palantir's dividend per share in 2019?",
+      "type": "judged",
+      "passed": true,
+      "detail": "The AI assistant's response does not imply or state an actual per-share cash dividend amount for 2019 and correctly notes that the information cannot be verified from the provided sources.",
+      "has_citation": false,
+      "citation_warnings": [
+        "[6] claims 0.0 (raw) but that value doesn't appear in the cited source"
+      ],
+      "answer": "I can't confirm this answer against the sources I retrieved -- the following claim(s) don't hold up under citation verification:\n- [6] claims 0.0 (raw) but that value doesn't appear in the cited source\n\nRather than give you a number I can't verify, I'm refusing this answer.",
+      "n_chunks_retrieved": 10
+    },
+    {
+      "id": "aapl-msft-tax-rate-comparison",
+      "ticker": [
+        "AAPL",
+        "MSFT"
+      ],
+      "question": "Compare Apple's effective tax rate for the three months ended June 27, 2026 to Microsoft's effective tax rate for the three months ended December 31, 2025.",
+      "type": "comparison",
+      "passed": true,
+      "detail": "found matching values for all 2 entities",
+      "has_citation": true,
+      "citation_warnings": [],
+      "answer": "- **Apple Inc. (AAPL):** For the three months ended June 27, 2026 (Apple's third fiscal quarter of 2026), Apple's effective tax rate was **17.9%** (with a provision for income taxes of $6,478 million) [2].\n- **Microsoft Corporation (MSFT):** For the three months ended December 31, 2025 (Microsoft's second fiscal quarter of 2026), Microsoft's effective tax rate was **20%** [6].\n\nComparing the two, Microsoft's effective tax rate for its quarter ended December 31, 2025 was higher than Apple's effective tax rate for its quarter ended June 27, 2026 by 2.1 percentage points.",
+      "n_chunks_retrieved": 10
+    },
+    {
+      "id": "nvda-revenue-fy26",
+      "ticker": "NVDA",
+      "question": "What was NVIDIA's total revenue for fiscal year 2026?",
+      "type": "numeric",
+      "passed": true,
+      "detail": "found matching value: 215938000000.0 (raw)",
+      "has_citation": true,
+      "citation_warnings": [],
+      "answer": "For fiscal year 2026, NVIDIA's total revenue was $215,938,000,000 (or approximately $215.94 billion) [1].",
+      "n_chunks_retrieved": 1
+    },
+    {
+      "id": "crm-ai-risk",
+      "ticker": "CRM",
+      "question": "What risks does Salesforce describe related to artificial intelligence?",
+      "type": "judged",
+      "passed": true,
+      "detail": "The answer clearly identifies various risks associated with Salesforce's AI offerings, including reputational, legal, regulatory, competitive, and cybersecurity risks, as specified in the criteria.",
+      "has_citation": true,
+      "citation_warnings": [],
+      "answer": "Salesforce describes several risks and challenges associated with its artificial intelligence (AI) offerings, including generative and agentic AI features (such as Agentforce) [4]:\n\n* **Emerging Ethical Issues and Controversy:** Developing AI offerings and platforms that process customer data creates emerging ethical concerns [4]. If Salesforce's solutions draw controversy regarding their perceived or actual impact on human rights, privacy, employment, or other social contexts, the company could face increased governmental or regulatory scrutiny, brand or reputational harm, competitive harm, or legal liability [4].\n* **Inadequate Development, Deployment, or Governance:** Inadequate or ineffective AI development, governance, content labeling, or deployment by Salesforce or others could result in controversy, impair the adoption and acceptance of AI solutions, or cause unintended service performance [4]. This can undermine user confidence in AI-generated decisions, predictions, analyses, or content, potentially leading to legal liability and reputational damage [4].\n* **Accuracy, Bias, Toxicity, Privacy, and Security Risks:** Moving from AI content classification to content generation through products like Agentforce introduces specific generative AI risks, including issues related to accuracy, bias, toxicity, privacy, security, and data provenance [4]. For instance, AI technologies may generate content that appears correct but is actually factually inaccurate, flawed, or contains copyrighted or protected material [9]. If customers or third parties rely on flawed content or if copyright owners enforce their rights, Salesforce may face legal liability and brand or reputational harm [9].\n* **Increased Costs and Impact on Profit Margins:** The rapid evolution of AI requires ongoing investments in compliance, governance, specialized testing systems (to check for accuracy and bias), proprietary datasets, and machine learning models [4]. These complex compliance and development requirements, alongside the substantial computing costs involved in developing, testing, and deploying AI systems, can increase the cost profile of Salesforce's offerings and potentially impact profit margins [4, 9].\n* **Resource Demands:** Ensuring that AI is implemented ethically and minimizing unintended harmful impacts requires significant ongoing allocation of resources to develop, test, and maintain products and services [4].",
+      "n_chunks_retrieved": 10
+    },
+    {
+      "id": "aapl-revenue-growth-q3fy2026",
+      "ticker": "AAPL",
+      "question": "What was Apple's year-over-year revenue growth for the three months ended June 27, 2026?",
+      "type": "numeric",
+      "passed": true,
+      "detail": "found matching value: 16.4 (percent)",
+      "has_citation": true,
+      "citation_warnings": [],
+      "answer": "Apple's year-over-year revenue growth for the three months ended June 27, 2026, was 16.4% [1].",
+      "n_chunks_retrieved": 1
+    },
+    {
+      "id": "nvda-segment-revenue-comparison-q1fy27",
+      "ticker": "NVDA",
+      "question": "For the quarter ended April 26, 2026, did NVIDIA's Compute & Networking segment generate more revenue than its Graphics segment?",
+      "type": "judged",
+      "passed": true,
+      "detail": "The answer correctly states that the Compute & Networking segment generated more revenue than the Graphics segment and provides accurate figures close to those specified in the criteria.",
+      "has_citation": true,
+      "citation_warnings": [],
+      "answer": "Yes, for the quarter ended April 26, 2026, NVIDIA's Compute & Networking segment generated substantially more revenue than its Graphics segment [5]. \n\nAccording to NVIDIA's segment reporting for the three months ended April 26, 2026:\n- **Compute & Networking segment revenue:** $74,550 million ($74.55 billion) [5]\n- **Graphics segment revenue:** $7,065 million ($7.065 billion) [5]",
+      "n_chunks_retrieved": 5
+    },
+    {
+      "id": "aapl-3yr-avg-operating-margin-fy2023-fy2025",
+      "ticker": "AAPL",
+      "question": "What was Apple's 3-year average operating margin from fiscal year 2023 through fiscal year 2025?",
+      "type": "numeric",
+      "passed": false,
+      "detail": "agent refused to answer (hard-gated on unverified citation(s)) -- no value to grade",
+      "has_citation": false,
+      "citation_warnings": [
+        "[1] claims 3.0 (raw) but that value doesn't appear in the cited source"
+      ],
+      "answer": "I can't confirm this answer against the sources I retrieved -- the following claim(s) don't hold up under citation verification:\n- [1] claims 3.0 (raw) but that value doesn't appear in the cited source\n\nRather than give you a number I can't verify, I'm refusing this answer.",
+      "n_chunks_retrieved": 6
+    }
+  ]
+}

@@ -13,7 +13,10 @@ monkeypatched BACKENDS entries instead.
 """
 
 from agent import (
+    COMPARE_TOOL_SCHEMA,
+    FACT_TOOL_SCHEMA,
     RATIO_DEFINITIONS,
+    SEARCH_TOOL_SCHEMA,
     call_compare_financial_metric,
     call_get_financial_fact,
     _comparison_as_results,
@@ -28,6 +31,7 @@ from agent import (
     _format_results_block,
     _resolve_search_args,
     _should_retry_for_citations,
+    validate_tool_args,
     run_agent,
     value_is_citation_verified,
     verify_citations,
@@ -447,6 +451,190 @@ def test_comparison_as_results_uses_real_form_when_present():
 
 
 # ---------------------------------------------------------------------------
+# validate_tool_args -- the generic jsonschema-driven replacement for the
+# hand-rolled per-tool extra-key/type/enum checks that broke three separate
+# times across three review dates (2026-09-06, 2026-09-09, 2026-09-10). The
+# schema-shape checks below exercise the generic function directly, walking
+# each *_TOOL_SCHEMA's declared properties rather than one hand-written test
+# per field -- the call_get_financial_fact/call_compare_financial_metric/
+# _dispatch_tool_call tests further down still cover the same schema-
+# violation cases end-to-end (unrecognized_extra_argument, ticker_not_in_enum,
+# etc.), so this section is additive, not a replacement for those.
+# ---------------------------------------------------------------------------
+def test_validate_tool_args_accepts_valid_args():
+    assert validate_tool_args("get_financial_fact", FACT_TOOL_SCHEMA, {"ticker": "AAPL", "metric": "revenue"}) is False
+
+
+def test_validate_tool_args_rejects_extra_argument(monkeypatch):
+    calls = []
+    monkeypatch.setattr("agent.log_event", lambda category, **fields: calls.append((category, fields)))
+
+    rejected = validate_tool_args(
+        "get_financial_fact", FACT_TOOL_SCHEMA, {"ticker": "AAPL", "metric": "revenue", "segment": "Graphics"}
+    )
+
+    assert rejected is True
+    assert calls == [("tool_call_rejected", {"tool": "get_financial_fact", "reason": "unrecognized_extra_argument", "args": {"ticker": "AAPL", "metric": "revenue", "segment": "Graphics"}})]
+
+
+def test_validate_tool_args_rejects_missing_required_property(monkeypatch):
+    calls = []
+    monkeypatch.setattr("agent.log_event", lambda category, **fields: calls.append((category, fields)))
+
+    rejected = validate_tool_args("get_financial_fact", FACT_TOOL_SCHEMA, {"ticker": "AAPL"})
+
+    assert rejected is True
+    assert calls[0][1]["reason"] == "missing_required_argument"
+
+
+def test_validate_tool_args_reason_names_property_and_violation_kind(monkeypatch):
+    calls = []
+    monkeypatch.setattr("agent.log_event", lambda category, **fields: calls.append((category, fields)))
+
+    validate_tool_args("get_financial_fact", FACT_TOOL_SCHEMA, {"ticker": 123, "metric": "revenue"})
+
+    assert calls[0][1]["reason"] == "ticker_wrong_type"
+
+
+def test_validate_tool_args_lets_metric_enum_violation_through():
+    # The one deliberate carve-out: a recognized-shape-but-unsupported
+    # metric name must NOT be a generic hard rejection -- callers route it
+    # to record_unmet_metric_request instead (see call_get_financial_fact).
+    rejected = validate_tool_args(
+        "get_financial_fact", FACT_TOOL_SCHEMA, {"ticker": "AAPL", "metric": "effective_tax_rate"}
+    )
+    assert rejected is False
+
+
+def test_validate_tool_args_still_rejects_wrong_typed_metric():
+    # Contrast with the enum carve-out above: a wrong-TYPE metric (not a
+    # string at all) is not the same carve-out and must still hard-fail.
+    rejected = validate_tool_args("get_financial_fact", FACT_TOOL_SCHEMA, {"ticker": "AAPL", "metric": ["revenue"]})
+    assert rejected is True
+
+
+def test_validate_tool_args_soft_required_allows_missing_property():
+    # search_filings' query: schema-required (encourages the model to
+    # include it) but tolerated absent at runtime -- _resolve_search_args
+    # substitutes the original question instead of rejecting.
+    rejected = validate_tool_args(
+        "search_filings", SEARCH_TOOL_SCHEMA, {"ticker": "AAPL"}, soft_required=frozenset({"query"})
+    )
+    assert rejected is False
+
+
+def test_validate_tool_args_skip_properties_ignores_malformed_value():
+    # get_financial_fact's fiscal_year: the multi-year-average request
+    # shape never reads it, so a malformed value must be ignored generically
+    # -- _rejects_invalid_fiscal_year only fires on the single-period path.
+    rejected = validate_tool_args(
+        "get_financial_fact",
+        FACT_TOOL_SCHEMA,
+        {"ticker": "AAPL", "metric": "revenue", "fiscal_year": "bogus"},
+        skip_properties=frozenset({"fiscal_year", "start_fiscal_year", "end_fiscal_year"}),
+    )
+    assert rejected is False
+
+
+def test_validate_tool_args_treats_null_optional_property_as_absent():
+    # Found in code review: this diff's own period_end_date fix (adding
+    # "null" to that one property's declared type after live testing)
+    # was the first instance of a general problem, not a one-off -- every
+    # other optional property had the same gap. search_filings' ticker is
+    # optional (a broad, unsure search is valid) and the old hand-rolled
+    # check explicitly tolerated `ticker: None` as "no filter"
+    # (`if raw_ticker is not None and (...)`) -- an explicit JSON null
+    # must be treated the same way now, not hard-rejected.
+    rejected = validate_tool_args(
+        "search_filings", SEARCH_TOOL_SCHEMA, {"query": "revenue", "ticker": None}, soft_required=frozenset({"query"})
+    )
+    assert rejected is False
+
+
+def test_validate_tool_args_treats_null_required_property_as_missing():
+    # The other half of the same fix: for a REQUIRED property, null must
+    # still be rejected (as "missing", not "wrong type") -- not silently
+    # tolerated just because it's declared.
+    rejected = validate_tool_args("get_financial_fact", FACT_TOOL_SCHEMA, {"ticker": None, "metric": "revenue"})
+    assert rejected is True
+
+
+def test_validate_tool_args_still_rejects_null_valued_extra_key(monkeypatch):
+    # additionalProperties: false must still catch an unrecognized key
+    # even when its value happens to be null -- the key itself is the
+    # problem, not its value, so it must not be silently stripped away
+    # before validation runs.
+    calls = []
+    monkeypatch.setattr("agent.log_event", lambda category, **fields: calls.append((category, fields)))
+
+    rejected = validate_tool_args(
+        "get_financial_fact", FACT_TOOL_SCHEMA, {"ticker": "AAPL", "metric": "revenue", "segment": None}
+    )
+
+    assert rejected is True
+    assert calls[0][1]["reason"] == "unrecognized_extra_argument"
+
+
+def test_call_get_financial_fact_tolerates_null_fiscal_period(monkeypatch):
+    # Regression case for the same null-optional-property fix, exercised
+    # through the real call site rather than validate_tool_args directly.
+    monkeypatch.setattr("agent.get_metric", lambda *a, **k: {"value": 42})
+    result = call_get_financial_fact({"ticker": "AAPL", "metric": "revenue", "fiscal_period": None})
+    assert result == {"value": 42}
+
+
+def test_dispatch_tool_call_search_filings_tolerates_null_ticker(monkeypatch):
+    monkeypatch.setattr("agent.hybrid_search", lambda query, ticker, top_k: [])
+    call = {"name": "search_filings", "args": {"query": "revenue", "ticker": None}}
+    content = _dispatch_tool_call(call, "q", [], set(), verbose=False)
+    assert "invalid" not in content
+
+
+def test_validate_tool_args_skip_properties_still_allows_the_property_itself(monkeypatch):
+    # additionalProperties: false must not treat a skip_propertied but
+    # otherwise-declared property as an unrecognized extra key.
+    calls = []
+    monkeypatch.setattr("agent.log_event", lambda category, **fields: calls.append((category, fields)))
+
+    rejected = validate_tool_args(
+        "get_financial_fact",
+        FACT_TOOL_SCHEMA,
+        {"ticker": "AAPL", "metric": "revenue", "fiscal_year": 2026},
+        skip_properties=frozenset({"fiscal_year", "start_fiscal_year", "end_fiscal_year"}),
+    )
+    assert rejected is False
+    assert calls == []
+
+
+# ---------------------------------------------------------------------------
+# jsonschema's bool-exclusion from "integer" -- the recurring bug this whole
+# redesign exists to fix structurally: isinstance(True, int) is True in
+# Python, so the old hand-rolled `isinstance(fiscal_year, int)` check
+# silently accepted a JSON boolean (2026-09-09 review, left open at the
+# time). jsonschema's default type checker already excludes bool from
+# "integer", so this is fixed as a side effect of the library switch.
+# ---------------------------------------------------------------------------
+def test_call_get_financial_fact_rejects_boolean_fiscal_year(monkeypatch):
+    calls = []
+    monkeypatch.setattr("agent.log_event", lambda category, **fields: calls.append((category, fields)))
+
+    result = call_get_financial_fact({"ticker": "AAPL", "metric": "revenue", "fiscal_year": True})
+
+    assert result is None
+    assert calls[-1][1]["reason"] == "invalid_fiscal_year_type"
+
+
+def test_call_compare_financial_metric_rejects_boolean_fiscal_year(monkeypatch):
+    calls = []
+    monkeypatch.setattr("agent.log_event", lambda category, **fields: calls.append((category, fields)))
+
+    result = call_compare_financial_metric({"anchor_ticker": "AAPL", "metric": "revenue", "fiscal_year": True})
+
+    assert result == {}
+    assert calls[-1][1]["reason"] == "invalid_fiscal_year_type"
+
+
+# ---------------------------------------------------------------------------
 # call_get_financial_fact / call_compare_financial_metric
 # (margin dispatch + yoy_growth boundary validation)
 # ---------------------------------------------------------------------------
@@ -863,7 +1051,7 @@ def test_call_get_financial_fact_logs_rejection_for_unknown_ticker(monkeypatch):
     assert len(calls) == 1
     category, fields = calls[0]
     assert category == "tool_call_rejected"
-    assert fields["reason"] == "unknown_ticker"
+    assert fields["reason"] == "ticker_not_in_enum"
 
 
 def test_call_get_financial_fact_logs_rejection_for_invalid_multi_year_average_combo(monkeypatch):
@@ -946,7 +1134,7 @@ def test_call_get_financial_fact_rejects_non_hashable_ticker_without_crashing(mo
     assert len(calls) == 1
     category, fields = calls[0]
     assert category == "tool_call_rejected"
-    assert fields["reason"] == "unknown_ticker"
+    assert fields["reason"] == "ticker_wrong_type"
 
 
 def test_call_get_financial_fact_rejects_non_hashable_metric_without_crashing(monkeypatch):
@@ -959,7 +1147,7 @@ def test_call_get_financial_fact_rejects_non_hashable_metric_without_crashing(mo
     assert len(calls) == 1
     category, fields = calls[0]
     assert category == "tool_call_rejected"
-    assert fields["reason"] == "invalid_metric_type"
+    assert fields["reason"] == "metric_wrong_type"
 
 
 def test_call_get_financial_fact_logs_rejection_for_yoy_growth_unsupported_for_ratio(monkeypatch):
@@ -985,7 +1173,7 @@ def test_call_get_financial_fact_logs_rejection_for_missing_metric(monkeypatch):
     assert len(calls) == 1
     category, fields = calls[0]
     assert category == "tool_call_rejected"
-    assert fields["reason"] == "missing_metric"
+    assert fields["reason"] == "missing_required_argument"
 
 
 def test_call_compare_financial_metric_logs_rejection_for_missing_metric(monkeypatch):
@@ -998,7 +1186,7 @@ def test_call_compare_financial_metric_logs_rejection_for_missing_metric(monkeyp
     assert len(calls) == 1
     category, fields = calls[0]
     assert category == "tool_call_rejected"
-    assert fields["reason"] == "missing_metric"
+    assert fields["reason"] == "missing_required_argument"
 
 
 def test_call_get_financial_fact_does_not_log_rejection_on_success(monkeypatch):
@@ -1036,7 +1224,7 @@ def test_call_compare_financial_metric_logs_rejection_for_unknown_ticker(monkeyp
     assert len(calls) == 1
     category, fields = calls[0]
     assert category == "tool_call_rejected"
-    assert fields["reason"] == "unknown_ticker"
+    assert fields["reason"] == "anchor_ticker_not_in_enum"
 
 
 def test_call_compare_financial_metric_rejects_non_hashable_ticker_without_crashing(monkeypatch):
@@ -1051,7 +1239,7 @@ def test_call_compare_financial_metric_rejects_non_hashable_ticker_without_crash
     assert len(calls) == 1
     category, fields = calls[0]
     assert category == "tool_call_rejected"
-    assert fields["reason"] == "unknown_ticker"
+    assert fields["reason"] == "anchor_ticker_wrong_type"
 
 
 def test_call_compare_financial_metric_rejects_non_hashable_metric_without_crashing(monkeypatch):
@@ -1064,7 +1252,7 @@ def test_call_compare_financial_metric_rejects_non_hashable_metric_without_crash
     assert len(calls) == 1
     category, fields = calls[0]
     assert category == "tool_call_rejected"
-    assert fields["reason"] == "invalid_metric_type"
+    assert fields["reason"] == "metric_wrong_type"
 
 
 def test_call_compare_financial_metric_does_not_log_rejection_on_success(monkeypatch):
@@ -1309,7 +1497,7 @@ def test_dispatch_tool_call_search_filings_rejects_unrecognized_ticker(monkeypat
     assert len(calls) == 1
     category, fields = calls[0]
     assert category == "tool_call_rejected"
-    assert fields["reason"] == "unknown_ticker"
+    assert fields["reason"] == "ticker_not_in_enum"
 
 
 def test_dispatch_tool_call_search_filings_rejects_non_hashable_ticker_without_crashing(monkeypatch):
@@ -1331,7 +1519,7 @@ def test_dispatch_tool_call_search_filings_rejects_non_hashable_ticker_without_c
     assert len(calls) == 1
     category, fields = calls[0]
     assert category == "tool_call_rejected"
-    assert fields["reason"] == "unknown_ticker"
+    assert fields["reason"] == "ticker_wrong_type"
     assert "not a recognized company" in content
 
 

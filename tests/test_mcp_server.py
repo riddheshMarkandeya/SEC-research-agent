@@ -158,6 +158,18 @@ def test_search_filings_empty_query_returns_no_results(monkeypatch):
     assert mcp_server._search_filings({"ticker": "AAPL"}) == []
 
 
+def test_search_filings_rejects_unrecognized_ticker(monkeypatch):
+    # Found during the 2026-09-09 schema-validator redesign: unlike
+    # agent.py's own search_filings dispatch (fixed 2026-09-10, review
+    # §12), this MCP entry point never validated ticker at all -- a
+    # hallucinated ticker fell straight through to hybrid_search with no
+    # rejection, unlike get_financial_fact/compare_financial_metric here
+    # (which inherit validation for free via agent.py's call_* functions).
+    monkeypatch.setattr(mcp_server, "hybrid_search", lambda *a, **k: (_ for _ in ()).throw(AssertionError("should not be called")))
+
+    assert mcp_server._search_filings({"query": "revenue", "ticker": "NOTREAL"}) == []
+
+
 def test_get_financial_fact_wraps_value_with_source(monkeypatch):
     monkeypatch.setattr(
         mcp_server, "call_get_financial_fact", lambda args: {"value": 416161, "unit": "million", "period_end": "2025-09-27", "accession": "0000320193-25-000079"}

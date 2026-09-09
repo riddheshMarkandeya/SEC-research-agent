@@ -4029,6 +4029,143 @@ Round 3 (a third `/code-review` pass on the fixed diff) came back
 clean, closing the loop. Full suite **414/414**. Full findings:
 `docs/reviews/2026-09-10-fix-3-more-review-findings.md`.
 
+### Schema-driven arg/input validation redesign (2026-09-09)
+
+Substantial-scope redesign — see `docs/plans/2026-09-09-schema-driven-arg-validation.md`
+for the full design and `docs/reviews/2026-09-09-schema-driven-arg-validation.md`
+for the two-pass review. Picked up from `BACKLOG.md`'s highest-impact
+open item: the same hand-rolled tool-arg validation pattern
+(`call_get_financial_fact`, `call_compare_financial_metric`,
+`search_filings`'s dispatch branch, each hand-checking args against its
+own `*_TOOL_SCHEMA`) had broken three separate times across three
+different review dates — most recently `isinstance(fiscal_year, int)`
+silently accepting a JSON boolean, since `isinstance(True, int)` is
+`True` in Python.
+
+**Core fix: one generic `validate_tool_args()` in `agent.py`, backed by
+the `jsonschema` library (pinned `4.26.0`, chosen over hand-rolling —
+`jsonschema`'s default type checker already excludes `bool` from
+`"integer"`, fixing the recurring bool/int bug as a side effect of the
+library switch rather than a special case written a 4th time).** Each
+`*_TOOL_SCHEMA["function"]["parameters"]` dict got `"additionalProperties":
+false` added, so the same schema now doubles as both what's advertised
+to the LLM and what's enforced at runtime — replacing the hand-rolled
+`set(args) - _FACT_ARG_KEYS`-style extra-key checks entirely. Two
+carve-outs preserve behavior a flat schema check can't express: a
+`metric` enum violation is let through so callers can still route a
+recognized-shape-but-unsupported metric name to
+`record_unmet_metric_request()`'s telemetry instead of a silent
+rejection; `fiscal_year`/`start_fiscal_year`/`end_fiscal_year` are
+excluded from the generic pass entirely (their own type is still
+checked by `_rejects_invalid_fiscal_year`, now itself jsonschema-backed)
+since the multi-year-average request shape never reads plain
+`fiscal_year` at all, and a malformed value there must be ignored, not
+rejected. Also fixed as a natural side effect: `mcp_server.py`'s
+`_search_filings` handler had zero ticker validation (unlike its
+siblings, which inherit validation for free by delegating into
+`agent.py`'s now-validated `call_*` functions) — now calls the same
+`validate_tool_args()` against `SEARCH_TOOL_SCHEMA`.
+
+**Extended to two more trust boundaries, per the user's own follow-up
+question ("where else would this help?") after the core fix was
+designed:**
+- `llm_backends.py` used to index straight into the raw LLM response
+  (`c["function"]["name"]`, `resp.candidates[0]`) with no shape check —
+  a malformed/unexpected response crashed with a bare `KeyError`/
+  `IndexError` *before* a tool call ever reached `agent.py`'s own
+  validation. Ollama's raw response is a plain dict (a genuine
+  JSON-native boundary), so it gets a `jsonschema` check; Gemini's raw
+  response is an SDK object, not JSON, so `jsonschema` doesn't apply
+  directly there — a plain guard clause instead (`if not resp.candidates:
+  raise RuntimeError(...)`), a deliberate, documented exception. Both
+  backends' *normalized* `ModelTurn.tool_calls` output (the one truly
+  shared, JSON-native boundary `agent.py`'s dispatch actually indexes
+  into) gets one shared `jsonschema` check regardless of which backend
+  produced it.
+- `companies.py`'s `load_companies()` had no runtime shape check on
+  `companies.json` — a malformed entry surfaced as a confusing `KeyError`
+  three layers down in some unrelated ticker/metric lookup instead of
+  one clear error at load time. Fixed with a small schema + a
+  `_validate()` function that re-raises `jsonschema.ValidationError` as
+  a plain `ValueError` naming the file and the specific violation.
+
+**Tests**: the ~25 existing hand-written per-field validation tests in
+`tests/test_agent.py` were mostly kept (each still documents a real
+found-bug scenario, not blanket-replaced) with their `reason=` string
+assertions updated to the new taxonomy (`f"{property}_{violation_kind}"`,
+e.g. `ticker_not_in_enum`, `fiscal_year_wrong_type`; fixed literals
+`unrecognized_extra_argument`/`missing_required_argument` for the two
+violation kinds with no single named property) — expected migration
+cost, not a correctness change, confirmed by running the full suite
+before and after each taxonomy update. New: a dedicated
+`validate_tool_args` test section (schema-driven, walks properties
+rather than one hand-written test per field), a direct regression test
+proving `fiscal_year=True` is now rejected (the bug that motivated the
+whole redesign), new `tests/test_llm_backends.py`/`tests/test_companies.py`
+tests for the two extended boundaries, and a new
+`tests/test_mcp_server.py` test for the previously-unvalidated
+`search_filings` ticker gap. Full suite **440/440**. Manually verified
+both live paths still accept legitimate args after the change: a real
+`python agent.py "..."` run (Ollama backend, both `get_financial_fact`
+and `search_filings` tool calls) and a full `tests/manual/verify_mcp_server.py`
+pass (including the fixed `search_filings` ticker check).
+
+**Two-pass layered review found and fixed one real regression, plus two
+smaller design issues in round 2:**
+1. **A real regression, round 1**: the `period_end_date` schema field
+   was made nullable (`["string", "null"]`) after live testing showed
+   the model can send an explicit `null` for an unset optional argument
+   — but this was applied as a one-off patch to that single property
+   instead of recognizing the general problem. `SEARCH_TOOL_SCHEMA`'s
+   `ticker` (previously tolerated as `null` = "no filter" by the old
+   hand-rolled check) and `FACT_TOOL_SCHEMA`'s `fiscal_period`/
+   `yoy_growth` had the identical gap, silently turning a previously-valid
+   `null` into a hard rejection. Fixed generally instead of per-property:
+   `validate_tool_args` now treats any declared property's `null` value
+   as equivalent to the key being absent (correctly converting to
+   "missing" for a required property, "no violation" for an optional
+   one), and the `period_end_date`-specific `["string", "null"]` patch
+   was reverted as redundant. An unrecognized extra key is deliberately
+   NOT exempted even when null-valued — `additionalProperties: false`
+   must still catch it, since the key itself is the problem.
+2. **Round 2 (fresh architecture subagent) found two more real issues**:
+   the null-handling fix above had (in passing) routed its "which
+   properties are declared" check through `set(...)`, losing the dict's
+   declaration order and making `validate_tool_args`'s same-kind
+   multi-violation tie-break silently depend on the process's hash seed
+   instead of schema order — fixed by using the dict directly (`in` on a
+   dict is already O(1), no reason to convert to a set first). Separately,
+   `_validate_tool_args` (the original name) had become genuine shared
+   production infrastructure imported by `mcp_server.py`, but kept its
+   underscore-prefixed "internal" naming, inconsistent with every other
+   cross-module import in this codebase — renamed to `validate_tool_args`
+   throughout `agent.py`, `mcp_server.py`, and the tests.
+3. **Round 2 also flagged two lower-priority items, deliberately not
+   fixed**: `_dispatch_tool_call`'s `search_filings` branch re-derives
+   ticker validity by hand a second time (after `validate_tool_args`
+   already checked it) purely to pick which rejection message to show —
+   filed to `BACKLOG.md` rather than fixed, since a clean fix means
+   changing `validate_tool_args`'s return type across all 4 call sites
+   for a 2-line message-selection convenience. A fresh
+   `jsonschema.Draft202012Validator` built on every call rather than
+   cached at module scope was flagged independently by both review
+   rounds — left as-is both times: negligible cost given this app's
+   dominant per-request latency is LLM inference itself (60-70s+ on the
+   CPU-only Ollama setup), and the same-issue-twice-with-no-clean-fix
+   case is exactly CLAUDE.md's own stated stopping condition for the
+   review loop.
+
+Also surfaced (not part of this change, filed to `BACKLOG.md` as new
+Low items): `xbrl_facts.py`'s `get_metric()` does unchecked SEC-response
+entry indexing after `_pick_entry*` filters it; `eval_harness.py`'s
+`_select_questions` reads `q["id"]` before the per-question `try/except`
+that contains most other malformed-question crashes.
+
+Two originally-scoped items — the `xbrl_facts.py` `get_frame()` ordering
+bug and a `retrieval.py` manual verification script — were explicitly
+descoped by the user mid-planning to keep this change focused on schema
+validation; both remain open in `BACKLOG.md`, untouched.
+
 ## Next steps
 
 See `BACKLOG.md` for the live task backlog. This section used to hold

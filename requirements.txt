@@ -1,6 +1,12 @@
 # Shared config (config.py) — loads .env, see .env.example
 python-dotenv==1.2.2
 
+# Schema-driven arg/input validation (agent.py tool schemas, llm_backends.py
+# response shapes, companies.py) -- was already installed transitively via
+# chromadb/mcp, promoted to a direct pin since agent.py/llm_backends.py/
+# companies.py now import it directly.
+jsonschema==4.26.0
+
 # Ingestion (edgar_ingest.py)
 requests==2.34.2
 beautifulsoup4==4.15.0

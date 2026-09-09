@@ -29,6 +29,8 @@ Usage:
 import argparse
 import re
 
+import jsonschema
+
 from companies import load_companies
 from config import DEFAULT_BACKEND
 from formulas import (
@@ -125,6 +127,7 @@ SEARCH_TOOL_SCHEMA = {
                 },
             },
             "required": ["query"],
+            "additionalProperties": False,
         },
     },
 }
@@ -193,6 +196,7 @@ FACT_TOOL_SCHEMA = {
                 },
             },
             "required": ["ticker", "metric"],
+            "additionalProperties": False,
         },
     },
 }
@@ -245,6 +249,7 @@ COMPARE_TOOL_SCHEMA = {
                 },
             },
             "required": ["anchor_ticker", "metric"],
+            "additionalProperties": False,
         },
     },
 }
@@ -379,34 +384,160 @@ def _format_no_comparison_message(args: dict) -> str:
     return message
 
 
+_INT_TYPE_VALIDATOR = jsonschema.Draft202012Validator({"type": "integer"})
+
+
+def _is_valid_int(value) -> bool:
+    """True if value is a JSON-Schema-valid "integer" -- an int but NOT a
+    bool. jsonschema's default type checker already excludes bool from
+    "integer" (JSON itself treats true/false as their own type, distinct
+    from numbers), so this gets that exclusion for free instead of
+    writing `isinstance(x, int) and not isinstance(x, bool)` by hand --
+    the exact shape of bug (isinstance(True, int) is True in Python) that
+    silently let fiscal_year=true through the old hand-rolled check
+    (2026-09-09 review). Shared by _rejects_invalid_fiscal_year and the
+    multi-year-average combo check below, both of which read
+    fiscal_year-shaped args outside of validate_tool_args's generic pass
+    (see call_get_financial_fact's skip_properties)."""
+    return _INT_TYPE_VALIDATOR.is_valid(value)
+
+
 def _rejects_invalid_fiscal_year(tool: str, args: dict) -> bool:
     """True (having already logged the rejection) if args["fiscal_year"]
-    is present but not an int -- shared by call_get_financial_fact and
-    call_compare_financial_metric, which otherwise each hand-rolled an
-    identical check (found in code review, 2026-09-10). A non-int
-    fiscal_year (e.g. a numeric string) doesn't crash any downstream
-    lookup -- it just fails to match and returns None/{}, which used to
-    get recorded as reason="no_data_for_ticker" via
-    record_unmet_metric_request(), polluting that "should we add a
-    formula for this" telemetry with a schema-violation false negative
-    instead of a real data gap."""
+    is present but not a valid int -- shared by call_get_financial_fact
+    and call_compare_financial_metric, which otherwise each hand-rolled
+    an identical check (found in code review, 2026-09-10). A malformed
+    fiscal_year doesn't crash any downstream lookup -- it just fails to
+    match and returns None/{}, which used to get recorded as
+    reason="no_data_for_ticker" via record_unmet_metric_request(),
+    polluting that "should we add a formula for this" telemetry with a
+    schema-violation false negative instead of a real data gap."""
     fiscal_year = args.get("fiscal_year")
-    if fiscal_year is not None and not isinstance(fiscal_year, int):
+    if fiscal_year is not None and not _is_valid_int(fiscal_year):
         log_event("tool_call_rejected", tool=tool, reason="invalid_fiscal_year_type", args=args)
         return True
     return False
 
 
-_FACT_ARG_KEYS = {
-    "ticker",
-    "metric",
-    "fiscal_year",
-    "fiscal_period",
-    "period_end_date",
-    "yoy_growth",
-    "start_fiscal_year",
-    "end_fiscal_year",
-}
+_VALIDATOR_KIND_PRIORITY = {"additionalProperties": 0, "required": 1, "type": 2, "enum": 3}
+
+
+def _reason_for_error(error: jsonschema.exceptions.ValidationError) -> str:
+    """Maps a jsonschema ValidationError to this project's own
+    tool_call_rejected reason= taxonomy -- distinct, greppable-by-
+    tool+reason values, not jsonschema's own vocabulary verbatim, since a
+    couple of its violation kinds don't map 1:1 onto a single named
+    property: additionalProperties covers every extra key at once (no
+    single offending property), and required's offending property isn't
+    exposed via error.path (the key doesn't exist in the instance, so
+    there's nothing for a JSON pointer to point at)."""
+    if error.validator == "additionalProperties":
+        return "unrecognized_extra_argument"
+    if error.validator == "required":
+        return "missing_required_argument"
+    prop = error.path[0] if error.path else "args"
+    kind = "not_in_enum" if error.validator == "enum" else "wrong_type"
+    return f"{prop}_{kind}"
+
+
+def validate_tool_args(
+    tool: str,
+    schema: dict,
+    args: dict,
+    *,
+    soft_required: frozenset = frozenset(),
+    skip_properties: frozenset = frozenset(),
+) -> bool:
+    """True (having already logged the rejection) if args fails schema's
+    parameter validation -- the generic replacement for what used to be
+    a hand-rolled extra-key/type/enum check per tool, duplicated three
+    times and broken three separate times across three review dates
+    (most recently: a hand-rolled `isinstance(fiscal_year, int)` silently
+    accepting a JSON boolean). `schema` is one of *_TOOL_SCHEMA, doing
+    double duty as both what's advertised to the LLM and what's enforced
+    here -- `additionalProperties: false` on each schema's `parameters`
+    is what replaces the old `set(args) - _FACT_ARG_KEYS`-style checks.
+
+    Two carve-outs exist because a handful of properties have runtime
+    semantics a flat JSON Schema check can't safely express without
+    leaking business logic into the LLM-facing schema:
+    - `soft_required`: schema-advertised required properties the caller
+      tolerates being absent at runtime instead of rejecting -- e.g.
+      search_filings' `query`, which _resolve_search_args substitutes
+      the original question for when the model omits it (observed live,
+      not a bug -- see that function's own docstring).
+    - `skip_properties`: properties whose declared type is only
+      conditionally meaningful -- e.g. get_financial_fact's
+      `fiscal_year`, which the multi-year-average request shape never
+      reads at all, so a malformed value there must be ignored, not
+      rejected (test_call_get_financial_fact_ignores_malformed_fiscal_year_in_multi_year_average_request).
+      Their own type is still checked by the caller's own business logic
+      instead (see _rejects_invalid_fiscal_year), just not generically
+      here -- their sub-schema is swapped for `{}` (matches anything)
+      rather than removed from `properties` entirely, so a present value
+      still satisfies `additionalProperties: false`.
+
+    A `metric` enum violation is ALSO always allowed through (regardless
+    of skip_properties) so callers can route a recognized-shape-but-
+    unsupported metric name to record_unmet_metric_request() instead of
+    a silent generic boundary rejection -- see call_get_financial_fact's
+    own metric-enum check right after this returns False.
+
+    A declared-but-null-valued property (e.g. `{"ticker": None}`) is
+    validated as though the key were absent, for any DECLARED property --
+    an explicit JSON null for an unset optional argument is exactly as
+    valid as omitting it (nothing in this codebase distinguishes the two
+    afterwards; every reader uses `args.get(...)`, which returns None
+    either way) and just as invalid as omitting it for a required one.
+    Found in code review: this diff's own period_end_date fix (added
+    "null" to that one property's declared type after live testing showed
+    it) was the first instance of the general problem, not a one-off --
+    every other optional property (`ticker`, `fiscal_period`,
+    `yoy_growth`, ...) had the exact same gap, just not yet observed live.
+    Handling it once, generically, here closes the whole class instead of
+    enumerating `["string", "null"]" per property as each one is
+    separately noticed. An unrecognized EXTRA key is deliberately NOT
+    stripped even if null-valued -- `additionalProperties: false` must
+    still catch e.g. `{"segment": None}`, since the key itself is the
+    problem, not its value."""
+    params = schema["function"]["parameters"]
+    if soft_required or skip_properties:
+        params = dict(params)
+        if soft_required:
+            params["required"] = [r for r in params.get("required", []) if r not in soft_required]
+        if skip_properties:
+            params["properties"] = {
+                name: ({} if name in skip_properties else sub_schema)
+                for name, sub_schema in params["properties"].items()
+            }
+    # dict, not set -- a dict already preserves declaration order (used
+    # below for property_order's tie-break) and `in` on a dict is an O(1)
+    # key check same as a set, so routing through set() first would only
+    # lose that ordering for no benefit (found in code review: an earlier
+    # version did exactly that, making priority()'s tie-break silently
+    # dependent on this process's hash seed instead of schema order).
+    declared_properties = params.get("properties", {})
+    instance = {k: v for k, v in args.items() if v is not None or k not in declared_properties}
+    validator = jsonschema.Draft202012Validator(params)
+    property_order = list(declared_properties)
+
+    def priority(error):
+        prop = error.path[0] if error.path else None
+        prop_rank = property_order.index(prop) if prop in property_order else -1
+        return (_VALIDATOR_KIND_PRIORITY.get(error.validator, 9), prop_rank)
+
+    for error in sorted(validator.iter_errors(instance), key=priority):
+        if error.validator == "enum" and list(error.path) == ["metric"]:
+            continue
+        log_event("tool_call_rejected", tool=tool, reason=_reason_for_error(error), args=args)
+        return True
+    return False
+
+
+# fiscal_year/start_fiscal_year/end_fiscal_year are excluded from
+# call_get_financial_fact's generic validate_tool_args pass -- see that
+# function's call site and validate_tool_args's own docstring for why.
+_FISCAL_YEAR_PROPS = frozenset({"fiscal_year", "start_fiscal_year", "end_fiscal_year"})
 
 
 def call_get_financial_fact(args: dict, question: str | None = None) -> dict | None:
@@ -418,8 +549,10 @@ def call_get_financial_fact(args: dict, question: str | None = None) -> dict | N
     whole run with an unhandled ValueError from xbrl_facts._tag_for
     before this guard existed. Same class of issue as
     _resolve_search_args's docstring above (the model doesn't always
-    include every schema-declared argument) — validate here, at the
-    boundary, rather than trusting the schema was followed.
+    include every schema-declared argument) — validated generically by
+    validate_tool_args at the boundary, rather than trusting the schema
+    was followed (required/type/enum/no-extra-keys); this function only
+    layers the business rules a flat schema check can't express.
 
     `yoy_growth=True` combined with a margin metric is rejected the same
     way: get_yoy_growth() only supports the raw tagged metrics (see its
@@ -433,9 +566,10 @@ def call_get_financial_fact(args: dict, question: str | None = None) -> dict | N
     code only ever read known keys (`args.get(...)`), so the invented
     key was silently dropped -- both "segment" calls quietly returned
     the SAME consolidated total instead of erroring, and the model
-    concluded the two segments had equal revenue. Rejecting any
-    unrecognized key outright (rather than silently ignoring it) turns
-    that into a clean "not supported, try search_filings" fallback.
+    concluded the two segments had equal revenue. validate_tool_args's
+    `additionalProperties: false` check rejects any unrecognized key
+    outright now (rather than silently ignoring it), turning that into a
+    clean "not supported, try search_filings" fallback.
 
     `start_fiscal_year`/`end_fiscal_year` (both required together, and
     rejected if combined with yoy_growth) dispatch to
@@ -465,53 +599,27 @@ def call_get_financial_fact(args: dict, question: str | None = None) -> dict | N
     review: the yoy_growth/multi-year-average paths were initially
     missed, only the plain get_metric()/get_ratio() path recorded this
     at first."""
-    if set(args) - _FACT_ARG_KEYS:
-        log_event("tool_call_rejected", tool="get_financial_fact", reason="unrecognized_extra_argument", args=args)
+    if validate_tool_args("get_financial_fact", FACT_TOOL_SCHEMA, args, skip_properties=_FISCAL_YEAR_PROPS):
         return None
-    ticker = args.get("ticker")
-    metric = args.get("metric")
-    if not isinstance(ticker, str) or ticker not in COMPANIES:
-        log_event("tool_call_rejected", tool="get_financial_fact", reason="unknown_ticker", args=args)
-        return None
-    if metric is not None and not isinstance(metric, str):
-        # Found in code review (2026-09-06): the `in` check right below
-        # this raises TypeError for an unhashable metric (e.g. a list),
-        # crashing the whole request instead of degrading like every
-        # other boundary check here. Kept as its own reason rather than
-        # folded into "unknown_metric" so it doesn't pollute
-        # record_unmet_metric_request's "should we add a formula for
-        # this" telemetry with a non-name value.
-        log_event("tool_call_rejected", tool="get_financial_fact", reason="invalid_metric_type", args=args)
-        return None
+    ticker = args["ticker"]
+    metric = args["metric"]
     if metric not in DEFAULT_METRIC_TAGS and metric not in RATIO_DEFINITIONS:
-        # metric is None here means the model omitted a required key
-        # entirely (schema violation, like the invented-extra-key case
-        # above) rather than naming a real but unsupported metric --
-        # only the latter belongs on the unmet-metric-request signal
-        # (found in code review); the former still gets a local-only
-        # tool_call_rejected event instead, so it isn't invisible either.
-        if metric is not None:
-            record_unmet_metric_request(ticker, metric, reason="unknown_metric", question=question)
-        else:
-            log_event("tool_call_rejected", tool="get_financial_fact", reason="missing_metric", args=args)
+        # A recognized-shape-but-unsupported metric name (the one
+        # violation validate_tool_args deliberately lets through) --
+        # this belongs on the unmet-metric-request signal, not a local-
+        # only tool_call_rejected event, since it's real evidence a
+        # formula might be worth adding.
+        record_unmet_metric_request(ticker, metric, reason="unknown_metric", question=question)
         return None
-    fiscal_year = args.get("fiscal_year")
     fiscal_period = args.get("fiscal_period", "FY")
     period_end_date = args.get("period_end_date")
     start_fiscal_year = args.get("start_fiscal_year")
     end_fiscal_year = args.get("end_fiscal_year")
     if start_fiscal_year is not None or end_fiscal_year is not None:
-        # not isinstance(..., int) is a superset of the original "is
-        # None" checks, so this also catches a numeric-STRING year --
-        # found in code review (2026-09-06) crashing formulas.py's
-        # end_fiscal_year - start_fiscal_year with an uncaught TypeError.
-        # Deliberately does not check plain fiscal_year here (see below)
-        # -- this branch never reads it, so a value here is irrelevant.
-        if (
-            args.get("yoy_growth")
-            or not isinstance(start_fiscal_year, int)
-            or not isinstance(end_fiscal_year, int)
-        ):
+        # Deliberately does not check plain fiscal_year here -- this
+        # branch never reads it, so a value here is irrelevant (found in
+        # round-2 review, 2026-09-09).
+        if args.get("yoy_growth") or not _is_valid_int(start_fiscal_year) or not _is_valid_int(end_fiscal_year):
             log_event(
                 "tool_call_rejected", tool="get_financial_fact", reason="invalid_multi_year_average_combo", args=args
             )
@@ -528,6 +636,7 @@ def call_get_financial_fact(args: dict, question: str | None = None) -> dict | N
     # that actually use it.
     if _rejects_invalid_fiscal_year("get_financial_fact", args):
         return None
+    fiscal_year = args.get("fiscal_year")
     if args.get("yoy_growth"):
         if metric in RATIO_DEFINITIONS:
             log_event(
@@ -576,22 +685,23 @@ def _fact_as_result(fact: dict, args: dict) -> dict:
     }
 
 
-_COMPARE_ARG_KEYS = {"anchor_ticker", "metric", "fiscal_year", "fiscal_period", "period_end_date"}
-
-
 def call_compare_financial_metric(args: dict, question: str | None = None) -> dict[str, dict]:
     """Same boundary-validation reasoning as call_get_financial_fact —
-    don't trust the schema was followed, including rejecting an
-    unrecognized extra key (e.g. an invented `segment` filter) rather
-    than silently ignoring it. No yoy_growth here: there's no current
-    evidence/use case for a cross-company YoY-growth comparison, so it
-    isn't exposed on this tool (see get_yoy_growth()'s docstring). A
-    ratio with `supports_cross_company=False` (return_on_assets/
+    don't trust the schema was followed; validate_tool_args generically
+    rejects an unrecognized extra key (e.g. an invented `segment` filter)
+    rather than silently ignoring it. No yoy_growth here: there's no
+    current evidence/use case for a cross-company YoY-growth comparison,
+    so it isn't exposed on this tool (see get_yoy_growth()'s docstring).
+    A ratio with `supports_cross_company=False` (return_on_assets/
     asset_turnover/cash_to_assets/inventory_turnover/rd_intensity) still
     passes this function's own boundary check (it's a real, known ratio
-    name), but get_ratio_all_companies() checks the flag internally and
-    returns the same graceful `{}` any other unsupported metric gets --
-    see RATIO_DEFINITIONS' own comment for why there's no cross-company
+    name -- COMPARE_TOOL_SCHEMA's own metric enum is narrower, only
+    _CROSS_COMPANY_RATIOS, but validate_tool_args lets any metric-enum
+    violation through regardless of which schema declared it, deferring
+    to this same broader RATIO_DEFINITIONS check), but
+    get_ratio_all_companies() checks the flag internally and returns the
+    same graceful `{}` any other unsupported metric gets -- see
+    RATIO_DEFINITIONS' own comment for why there's no cross-company
     version of those five yet.
 
     Same Week 7 Langfuse unmet-metric-request tracing as
@@ -600,26 +710,17 @@ def call_compare_financial_metric(args: dict, question: str | None = None) -> di
     `reason="no_data_for_ticker"` bucket rather than a third reason
     value: a human looking at the metric name in the Langfuse dashboard
     can already tell that case apart, not worth the extra complexity."""
-    if set(args) - _COMPARE_ARG_KEYS:
-        log_event("tool_call_rejected", tool="compare_financial_metric", reason="unrecognized_extra_argument", args=args)
+    if validate_tool_args(
+        "compare_financial_metric", COMPARE_TOOL_SCHEMA, args, skip_properties=frozenset({"fiscal_year"})
+    ):
         return {}
-    anchor_ticker = args.get("anchor_ticker")
-    metric = args.get("metric")
-    if not isinstance(anchor_ticker, str) or anchor_ticker not in COMPANIES:
-        log_event("tool_call_rejected", tool="compare_financial_metric", reason="unknown_ticker", args=args)
-        return {}
-    if metric is not None and not isinstance(metric, str):
-        # See call_get_financial_fact's matching guard.
-        log_event("tool_call_rejected", tool="compare_financial_metric", reason="invalid_metric_type", args=args)
-        return {}
+    anchor_ticker = args["anchor_ticker"]
+    metric = args["metric"]
     if metric not in DEFAULT_METRIC_TAGS and metric not in RATIO_DEFINITIONS:
-        # See call_get_financial_fact's matching guard: metric=None is a
-        # schema violation, not a "this formula doesn't exist" signal --
-        # still gets a local-only tool_call_rejected event instead.
-        if metric is not None:
-            record_unmet_metric_request(anchor_ticker, metric, reason="unknown_metric", question=question)
-        else:
-            log_event("tool_call_rejected", tool="compare_financial_metric", reason="missing_metric", args=args)
+        # See call_get_financial_fact's matching guard: a recognized-
+        # shape-but-unsupported metric name belongs on the unmet-metric-
+        # request signal, not a local-only tool_call_rejected event.
+        record_unmet_metric_request(anchor_ticker, metric, reason="unknown_metric", question=question)
         return {}
     if _rejects_invalid_fiscal_year("compare_financial_metric", args):
         return {}
@@ -988,23 +1089,29 @@ def _dispatch_tool_call(
             span.update(output={"found": True, "companies": sorted(data)})
             return _format_results_block(results, start_index)
 
-    raw_ticker = args.get("ticker")
-    if raw_ticker is not None and (not isinstance(raw_ticker, str) or raw_ticker not in COMPANIES):
-        # Found in code review (2026-09-06, closed 2026-09-10): unlike
-        # get_financial_fact/compare_financial_metric's matching guard,
-        # a hallucinated ticker here used to fall through to
-        # hybrid_search silently -- no rejection, no telemetry signal.
-        # Checked BEFORE _resolve_search_args() runs (round-2 review
-        # finding), not after -- that function's own `ticker not in
-        # searched_tickers` (a set) already crashes on a non-hashable
-        # ticker like a list, the exact unhashable-ticker crash class
-        # already fixed for the other two tools. ticker is optional for
-        # this tool (a broad, unsure search is valid), so only a
-        # PROVIDED-but-invalid value is rejected here, never a missing
-        # one -- same single isinstance-or-membership condition and
-        # reason string as the sibling tools' guards, for parity.
-        log_event("tool_call_rejected", tool="search_filings", reason="unknown_ticker", args=args)
-        return f"(ticker={raw_ticker!r} is not a recognized company — try one of {sorted(COMPANIES)} or omit the ticker filter)"
+    # soft_required={"query"}: query is schema-required (encourages the
+    # model to include it), but _resolve_search_args below tolerates it
+    # being absent by substituting the original question -- observed
+    # live, not a bug (see that function's own docstring) -- so a
+    # missing query must not be a hard rejection here.
+    #
+    # Checked BEFORE _resolve_search_args() runs (round-2 review
+    # finding, 2026-09-10), not after -- that function's own `ticker not
+    # in searched_tickers` (a set) already crashes on a non-hashable
+    # ticker like a list, the exact unhashable-ticker crash class
+    # validate_tool_args is also safe against (jsonschema's type/enum
+    # checks use plain equality, never hashing the instance).
+    if validate_tool_args("search_filings", SEARCH_TOOL_SCHEMA, args, soft_required=frozenset({"query"})):
+        raw_ticker = args.get("ticker")
+        if raw_ticker is not None and (not isinstance(raw_ticker, str) or raw_ticker not in COMPANIES):
+            # A hallucinated ticker gets its own actionable message
+            # (names the bad value, lists valid ones) rather than a
+            # generic one -- unlike get_financial_fact/
+            # compare_financial_metric's boundary rejections, this is
+            # the one case validate_tool_args's caller has enough
+            # schema/enum context in hand to do that cheaply.
+            return f"(ticker={raw_ticker!r} is not a recognized company — try one of {sorted(COMPANIES)} or omit the ticker filter)"
+        return "(search_filings arguments were invalid — check the tool schema)"
     query, ticker = _resolve_search_args(args, fallback_query=question, searched_tickers=searched_tickers)
     searched_tickers.add(ticker)
     if verbose:

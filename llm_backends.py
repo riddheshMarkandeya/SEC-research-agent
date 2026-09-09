@@ -17,6 +17,7 @@ strings/dicts.
 import time
 from typing import Callable, NamedTuple
 
+import jsonschema
 import requests
 
 from google import genai
@@ -34,10 +35,72 @@ from tracing import log_event
 # `Part.from_function_response(name=..., response=...)`, also no id).
 ModelTurn = NamedTuple("ModelTurn", [("tool_calls", list[dict]), ("text", str | None)])
 
+# Ollama's raw wire-format tool_calls shape (response.json()["message"]["tool_calls"]),
+# checked BEFORE _ollama_message_to_turn indexes into it -- found during
+# the 2026-09-09 schema-validator redesign: c["function"]["name"]/
+# c["function"]["arguments"] crashed with a bare KeyError on a malformed
+# entry, before the tool call ever reached agent.py's own boundary
+# validation. A genuine JSON-native boundary (response.json() is already
+# a plain dict), unlike Gemini's raw response below.
+_OLLAMA_RAW_TOOL_CALLS_SCHEMA = {
+    "type": "array",
+    "items": {
+        "type": "object",
+        "properties": {
+            "function": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string"},
+                    "arguments": {"type": "object"},
+                },
+                "required": ["name", "arguments"],
+            },
+        },
+        "required": ["function"],
+    },
+}
+_OLLAMA_RAW_TOOL_CALLS_VALIDATOR = jsonschema.Draft202012Validator(_OLLAMA_RAW_TOOL_CALLS_SCHEMA)
+
+# The normalized ModelTurn.tool_calls shape documented above -- the one
+# truly shared, JSON-native boundary both backends converge on, and
+# exactly what agent.py's _dispatch_tool_call actually indexes into
+# (call["name"]/call["args"]). Validated at the end of both
+# _ollama_message_to_turn and _gemini_response_to_turn so a malformed
+# turn fails loudly here, with the backend name attached, rather than as
+# a confusing KeyError three layers away inside agent.py.
+_NORMALIZED_TOOL_CALLS_SCHEMA = {
+    "type": "array",
+    "items": {
+        "type": "object",
+        "properties": {"name": {"type": "string"}, "args": {"type": "object"}},
+        "required": ["name", "args"],
+        "additionalProperties": False,
+    },
+}
+_NORMALIZED_TOOL_CALLS_VALIDATOR = jsonschema.Draft202012Validator(_NORMALIZED_TOOL_CALLS_SCHEMA)
+
+
+def _validate_tool_calls(backend: str, tool_calls: list[dict]) -> None:
+    """Raises RuntimeError (after logging) if tool_calls doesn't match
+    the normalized {"name": str, "args": dict} shape ModelTurn's own
+    docstring documents. This is a wire-format bug, not a recoverable
+    per-request situation -- fail loudly rather than let a malformed
+    turn silently propagate into agent.py's dispatch."""
+    error = next(_NORMALIZED_TOOL_CALLS_VALIDATOR.iter_errors(tool_calls), None)
+    if error is None:
+        return
+    log_event("llm_response_malformed", backend=backend, error=error.message, tool_calls=tool_calls)
+    raise RuntimeError(f"{backend} produced a malformed tool call: {error.message}")
+
 
 def _ollama_message_to_turn(message: dict) -> ModelTurn:
     tool_calls = message.get("tool_calls") or []
+    error = next(_OLLAMA_RAW_TOOL_CALLS_VALIDATOR.iter_errors(tool_calls), None)
+    if error is not None:
+        log_event("llm_response_malformed", backend="ollama", error=error.message, tool_calls=tool_calls)
+        raise RuntimeError(f"ollama produced a malformed tool_calls shape: {error.message}")
     normalized = [{"name": c["function"]["name"], "args": c["function"]["arguments"]} for c in tool_calls]
+    _validate_tool_calls("ollama", normalized)
     return ModelTurn(tool_calls=normalized, text=message.get("content"))
 
 
@@ -168,12 +231,26 @@ def _get_gemini_client() -> genai.Client:
 
 def _to_gemini_tool(schema: dict) -> types.FunctionDeclaration:
     """agent.py's tool schemas are plain, lowercase JSON-schema dicts
-    (OpenAI/Ollama wire-format style) -- Gemini's SDK accepts that
-    shape directly for `parameters` (verified live in the original
-    spike), so this just unwraps the {"function": {...}} envelope
-    rather than re-describing each tool a second time."""
+    (OpenAI/Ollama wire-format style) -- Gemini's SDK accepts most of
+    that shape directly for `parameters` (verified live in the original
+    spike), so this just unwraps the {"function": {...}} envelope rather
+    than re-describing each tool a second time.
+
+    "additionalProperties" is the one exception, stripped here before
+    handing the dict to Gemini's SDK: Gemini's Schema type (a stricter
+    OpenAPI 3.0 subset) doesn't support that keyword at all -- unlike
+    Ollama, which tolerates it fine -- and passing it through made
+    EVERY tool-calling request on this backend fail with a live 400
+    INVALID_ARGUMENT ("Unknown name additional_properties"), found via a
+    live Gemini spot-check eval run immediately after the 2026-09-09
+    schema-validator redesign added `additionalProperties: false` to
+    every *_TOOL_SCHEMA. Ollama's own wire format and
+    agent.py's/mcp_server.py's runtime `validate_tool_args()` both still
+    see the real, unmodified dict -- this only narrows what's advertised
+    to Gemini's stricter dialect, not what's enforced at the boundary."""
     fn = schema["function"]
-    return types.FunctionDeclaration(name=fn["name"], description=fn["description"], parameters=fn["parameters"])
+    parameters = {k: v for k, v in fn["parameters"].items() if k != "additionalProperties"}
+    return types.FunctionDeclaration(name=fn["name"], description=fn["description"], parameters=parameters)
 
 
 def _send_with_retry(chat, message):
@@ -204,9 +281,22 @@ def _send_with_retry(chat, message):
 
 
 def _gemini_response_to_turn(resp) -> ModelTurn:
+    """resp is a google-genai SDK object, not a JSON dict -- jsonschema
+    doesn't apply directly without first converting it, unwarranted
+    ceremony for the one field that actually needs a check here.
+    `candidates` can legitimately be empty (e.g. a safety-filtered
+    response), which used to raise a bare IndexError on
+    resp.candidates[0] before this guard existed (found during the
+    2026-09-09 schema-validator redesign) -- a plain guard clause instead,
+    deliberately not jsonschema-based, unlike the normalized-output check
+    below."""
+    if not resp.candidates:
+        log_event("llm_response_malformed", backend="gemini", error="no candidates in response")
+        raise RuntimeError("Gemini response has no candidates (likely blocked by safety filters, or empty)")
     parts = resp.candidates[0].content.parts or []
     function_calls = [p.function_call for p in parts if p.function_call]
     tool_calls = [{"name": fc.name, "args": dict(fc.args or {})} for fc in function_calls]
+    _validate_tool_calls("gemini", tool_calls)
     return ModelTurn(tool_calls=tool_calls, text=resp.text if not tool_calls else None)
 
 

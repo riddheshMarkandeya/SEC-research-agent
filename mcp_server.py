@@ -52,6 +52,7 @@ from agent import (
     SEARCH_TOOL_SCHEMA,
     call_compare_financial_metric,
     call_get_financial_fact,
+    validate_tool_args,
 )
 from config import MCP_AUTH_TOKEN, MCP_RATE_LIMIT_REQUESTS, MCP_RATE_LIMIT_WINDOW_SECONDS
 from edgar_ingest import get_filing_url
@@ -128,7 +129,24 @@ def _fact_source(ticker: str, fact: dict) -> dict:
 
 
 def _search_filings(args: dict) -> list[dict]:
+    """Unlike get_financial_fact/compare_financial_metric above (which
+    inherit boundary validation for free by delegating into agent.py's
+    already-validated call_get_financial_fact/call_compare_financial_metric),
+    this handler builds its result directly from hybrid_search() with no
+    such delegation -- so it never got the same validation an MCP client
+    could bypass entirely (a hallucinated ticker used to fall through to
+    hybrid_search with no rejection, unlike the agent.py dispatch path,
+    found during the 2026-09-09 schema-validator redesign). Uses the same
+    generic validate_tool_args() agent.py's own search_filings dispatch
+    branch does, against the same SEARCH_TOOL_SCHEMA, so both entry
+    points enforce identical rules from one source of truth. soft_required
+    -- query is schema-required but the empty-query case below has always
+    just returned [] rather than erroring, so a missing query still isn't
+    a hard rejection here either."""
     with traced_span("tool", "search_filings", input=args) as span:
+        if validate_tool_args("search_filings", SEARCH_TOOL_SCHEMA, args, soft_required=frozenset({"query"})):
+            span.update(output={"found": False, "rejected": True})
+            return []
         query = args.get("query")
         if not query:
             return []
