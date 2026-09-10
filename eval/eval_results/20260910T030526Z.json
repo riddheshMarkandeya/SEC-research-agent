@@ -1,0 +1,84 @@
+{
+  "backend": "gemini",
+  "answer_model": "gemini-flash-lite-latest",
+  "judge_model": "qwen2.5:7b-instruct",
+  "results": [
+    {
+      "id": "aapl-employees-fy25",
+      "ticker": "AAPL",
+      "question": "How many full-time equivalent employees did Apple have as of September 27, 2025?",
+      "type": "numeric",
+      "passed": true,
+      "detail": "found matching value: 166000.0 (raw)",
+      "has_citation": true,
+      "citation_warnings": [],
+      "answer": "As of September 27, 2025, Apple Inc. had approximately 166,000 full-time equivalent employees [2].",
+      "n_chunks_retrieved": 5
+    },
+    {
+      "id": "pltr-dividend-2019-refusal",
+      "ticker": "PLTR",
+      "question": "What was Palantir's dividend per share in 2019?",
+      "type": "judged",
+      "passed": true,
+      "detail": "The AI assistant's response does not imply or state any specific dividend amount for Palantir in 2019 and correctly acknowledges the lack of verifiable information from the provided sources.",
+      "has_citation": false,
+      "citation_warnings": [
+        "claims 0.0 (raw) but no citation marker appears anywhere near it to trace the claim to a source"
+      ],
+      "answer": "I can't confirm this answer against the sources I retrieved -- the following claim(s) don't hold up under citation verification:\n- claims 0.0 (raw) but no citation marker appears anywhere near it to trace the claim to a source\n\nRather than give you a number I can't verify, I'm refusing this answer.",
+      "n_chunks_retrieved": 5
+    },
+    {
+      "id": "nvda-revenue-fy26",
+      "ticker": "NVDA",
+      "question": "What was NVIDIA's total revenue for fiscal year 2026?",
+      "type": "numeric",
+      "passed": true,
+      "detail": "found matching value: 215938000000.0 (raw)",
+      "has_citation": true,
+      "citation_warnings": [],
+      "answer": "NVIDIA's total revenue for fiscal year 2026 was $215,938,000,000 (or approximately $215.94 billion) [1].",
+      "n_chunks_retrieved": 1
+    },
+    {
+      "id": "nvda-crm-revenue-comparison",
+      "ticker": [
+        "NVDA",
+        "CRM"
+      ],
+      "question": "Compare NVIDIA's total revenue for the quarter ended April 26, 2026 to Salesforce's total revenue for the quarter ended April 30, 2026.",
+      "type": "comparison",
+      "passed": true,
+      "detail": "found matching values for all 2 entities",
+      "has_citation": true,
+      "citation_warnings": [],
+      "answer": "For the quarter ended April 26, 2026, NVIDIA's total revenue was $81,615,000,000 ($81.615 billion) [1].\n\nFor the quarter ended April 30, 2026, Salesforce's total revenue was $11,133,000,000 ($11.133 billion) [2].",
+      "n_chunks_retrieved": 2
+    },
+    {
+      "id": "crm-ai-risk",
+      "ticker": "CRM",
+      "question": "What risks does Salesforce describe related to artificial intelligence?",
+      "type": "judged",
+      "passed": true,
+      "detail": "The answer clearly identifies various risks related to AI for Salesforce, including reputational, legal, regulatory, competitive, and cybersecurity risks, and includes citation markers as required.",
+      "has_citation": true,
+      "citation_warnings": [],
+      "answer": "In its SEC filings, Salesforce describes several risks and challenges related to artificial intelligence (including generative AI and agentic AI tools like Agentforce), which include:\n\n* **Ethical Issues and Public Controversy:** The development of AI offerings and platforms that process customer data presents emerging ethical issues [4]. If Salesforce enables or offers solutions perceived or actual to impact human rights, privacy, employment, or other social contexts, it may face regulatory scrutiny, brand or reputational harm, competitive harm, or legal liability [4].\n* **Performance, Accuracy, and Unintended Outputs:** Inadequate or ineffective AI development, deployment, content labeling, or governance could result in controversies, impair AI acceptance, or lead to unintended service performance [4]. Technologies like generative AI may create content that appears correct but is factually inaccurate, flawed, biased, toxic, or insecure, which could undermine confidence in AI-produced decisions, predictions, and analysis [4].\n* **Compliance, Governance, and Financial Costs:** The rapid evolution of AI requires extensive resources to test, maintain, and ensure ethical implementation [4]. Uncertainty around new AI applications necessitates additional investment in compliance, governance, proprietary datasets, machine learning models, and testing systems for accuracy and bias, which can be costly and impact profit margins [4].\n* **Evolving Legal and Regulatory Frameworks:** Jurisdictions globally are applying existing data privacy, consumer protection, and other laws to AI, and are enacting or considering AI-specific legal frameworks (such as the EU AI Act, the Utah Artificial Intelligence Policy Act, the Colorado Artificial Intelligence Act, and draft CCPA regulations on automated decision-making technology) [9]. Compliance with these evolving frameworks could impose additional restrictions and compliance obligations, and any failure or perceived failure to comply could adversely affect Salesforce's business [9].",
+      "n_chunks_retrieved": 10
+    },
+    {
+      "id": "msft-cash-to-assets-fy2025",
+      "ticker": "MSFT",
+      "question": "What percentage of Microsoft's total assets was held as cash and cash equivalents at the end of fiscal year 2025?",
+      "type": "numeric",
+      "passed": true,
+      "detail": "found matching value: 4.9 (percent)",
+      "has_citation": true,
+      "citation_warnings": [],
+      "answer": "At the end of fiscal year 2025, Microsoft's cash and cash equivalents were $30,242,000,000 [1], and its total assets were $619,003,000,000 [2]. This represents **4.9%** of Microsoft's total assets held as cash and cash equivalents [3].",
+      "n_chunks_retrieved": 3
+    }
+  ]
+}

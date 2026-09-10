@@ -1,0 +1,97 @@
+{
+  "backend": "ollama",
+  "answer_model": "qwen2.5:7b-instruct",
+  "judge_model": "qwen2.5:7b-instruct",
+  "results": [
+    {
+      "id": "aapl-employees-fy25",
+      "ticker": "AAPL",
+      "question": "How many full-time equivalent employees did Apple have as of September 27, 2025?",
+      "type": "numeric",
+      "passed": false,
+      "detail": "agent refused to answer (hard-gated on unverified citation(s)) -- no value to grade",
+      "has_citation": false,
+      "citation_warnings": [
+        "[1] claims 166000.0 (raw) but that value doesn't appear in the cited source"
+      ],
+      "answer": "I can't confirm this answer against the sources I retrieved -- the following claim(s) don't hold up under citation verification:\n- [1] claims 166000.0 (raw) but that value doesn't appear in the cited source\n\nRather than give you a number I can't verify, I'm refusing this answer.",
+      "n_chunks_retrieved": 5
+    },
+    {
+      "id": "pltr-dividend-2019-refusal",
+      "ticker": "PLTR",
+      "question": "What was Palantir's dividend per share in 2019?",
+      "type": "judged",
+      "passed": true,
+      "detail": "The answer explicitly states that Palantir did not declare any dividends in 2019, as per their SEC filings, without providing an actual dividend amount.",
+      "has_citation": true,
+      "citation_warnings": [],
+      "answer": "After reviewing the SEC filings, I found that Palantir Technologies Inc. did not declare any dividends in 2019 [1] through [5]. \n\n[1] PLTR 10-Q (reportDate=2026-03-31)\n[2] PLTR 10-Q (reportDate=2026-03-31)\n[3] PLTR 10-Q (reportDate=2025-09-30)\n[4] PLTR 10-Q (reportDate=2026-06-30)\n[5] PLTR 10-Q (reportDate=2025-06-30)\n\nPalantir Technologies Inc. has never paid dividends and does not have any plans to do so in the future [4].",
+      "n_chunks_retrieved": 5
+    },
+    {
+      "id": "nvda-revenue-fy26",
+      "ticker": "NVDA",
+      "question": "What was NVIDIA's total revenue for fiscal year 2026?",
+      "type": "numeric",
+      "passed": true,
+      "detail": "found matching value: 215938000000.0 (raw)",
+      "has_citation": true,
+      "citation_warnings": [],
+      "answer": "NVIDIA's total revenue for fiscal year 2026 was $215,938,000,000 [1].",
+      "n_chunks_retrieved": 1
+    },
+    {
+      "id": "nvda-crm-revenue-comparison",
+      "ticker": [
+        "NVDA",
+        "CRM"
+      ],
+      "question": "Compare NVIDIA's total revenue for the quarter ended April 26, 2026 to Salesforce's total revenue for the quarter ended April 30, 2026.",
+      "type": "comparison",
+      "passed": false,
+      "detail": "agent refused to answer (hard-gated on unverified citation(s)) -- no value to grade",
+      "has_citation": false,
+      "citation_warnings": [
+        "[1] claims 8.1615 (billion) but that value doesn't appear in the cited source",
+        "[2] claims 1.1133 (billion) but that value doesn't appear in the cited source"
+      ],
+      "answer": "I can't confirm this answer against the sources I retrieved -- the following claim(s) don't hold up under citation verification:\n- [1] claims 8.1615 (billion) but that value doesn't appear in the cited source\n- [2] claims 1.1133 (billion) but that value doesn't appear in the cited source\n\nRather than give you a number I can't verify, I'm refusing this answer.",
+      "n_chunks_retrieved": 2
+    },
+    {
+      "id": "crm-ai-risk",
+      "ticker": "CRM",
+      "question": "What risks does Salesforce describe related to artificial intelligence?",
+      "type": "judged",
+      "passed": true,
+      "detail": "The answer clearly identifies various risks related to AI, including reputational, legal, and regulatory concerns, and includes citation markers as required.",
+      "has_citation": true,
+      "citation_warnings": [],
+      "answer": "Salesforce describes several risks related to artificial intelligence (AI) in its SEC filings:\n\n- **Ethical Issues**: The development of AI offerings and the Salesforce Platform presents emerging ethical issues. If these solutions draw controversy due to their perceived or actual impact on human rights, privacy, employment, or other social contexts, it could lead to new or enhanced governmental or regulatory scrutiny, brand or reputational harm, competitive harm, or legal liability [1][2].\n\n- **AI Development and Deployment Risks**: Inadequate or ineffective AI development, deployment, content labeling, or governance by Salesforce or others that result in controversy could impair the acceptance of AI solutions or lead to unintended performance of services. This could undermine confidence in the decisions, predictions, analysis, or other content produced by AI applications [4].\n\n- **Rapid Evolution of AI**: The rapid evolution of AI will require significant resources for development, testing, and maintenance to ensure ethical implementation and minimize unintended harmful impacts [4].\n\n- **Generative AI Risks**: Known risks associated with generative AI include accuracy, bias, toxicity, privacy, security, and data provenance. These technologies may create content that appears correct but is factually inaccurate or flawed [5].\n\nThese risks highlight the potential challenges Salesforce faces as it integrates and deploys advanced AI technologies across its platform.\n\n[1] CRM 10-Q (reportDate=2026-04-30)\n[2] CRM 10-Q (reportDate=2025-07-31)\n[4] CRM 10-Q (reportDate=2025-04-30)\n[5] CRM 10-Q (reportDate=2025-07-31)",
+      "n_chunks_retrieved": 5
+    },
+    {
+      "id": "msft-cash-to-assets-fy2025",
+      "ticker": "MSFT",
+      "question": "What percentage of Microsoft's total assets was held as cash and cash equivalents at the end of fiscal year 2025?",
+      "type": "numeric",
+      "passed": false,
+      "detail": "agent refused to answer (hard-gated on unverified citation(s)) -- no value to grade",
+      "has_citation": false,
+      "citation_warnings": [
+        "[9] claims 876.0 (billion) but that value doesn't appear in the cited source",
+        "[3] claims 129.76 (billion) but that value doesn't appear in the cited source",
+        "[9] claims 14.83 (raw) but that value doesn't appear in the cited source",
+        "[9] claims 14.83 (percent) but that value doesn't appear in the cited source",
+        "claims 1.0 (raw) but no citation marker appears anywhere near it to trace the claim to a source",
+        "claims 2.0 (raw) but no citation marker appears anywhere near it to trace the claim to a source",
+        "claims 100.0 (raw) but no citation marker appears anywhere near it to trace the claim to a source",
+        "claims 129.76 (raw) but no citation marker appears anywhere near it to trace the claim to a source",
+        "claims 876.0 (raw) but no citation marker appears anywhere near it to trace the claim to a source"
+      ],
+      "answer": "I can't confirm this answer against the sources I retrieved -- the following claim(s) don't hold up under citation verification:\n- [9] claims 876.0 (billion) but that value doesn't appear in the cited source\n- [3] claims 129.76 (billion) but that value doesn't appear in the cited source\n- [9] claims 14.83 (raw) but that value doesn't appear in the cited source\n- [9] claims 14.83 (percent) but that value doesn't appear in the cited source\n- claims 1.0 (raw) but no citation marker appears anywhere near it to trace the claim to a source\n- claims 2.0 (raw) but no citation marker appears anywhere near it to trace the claim to a source\n- claims 100.0 (raw) but no citation marker appears anywhere near it to trace the claim to a source\n- claims 129.76 (raw) but no citation marker appears anywhere near it to trace the claim to a source\n- claims 876.0 (raw) but no citation marker appears anywhere near it to trace the claim to a source\n\nRather than give you a number I can't verify, I'm refusing this answer.",
+      "n_chunks_retrieved": 10
+    }
+  ]
+}

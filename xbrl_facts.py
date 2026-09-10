@@ -35,6 +35,7 @@ import requests
 
 from companies import load_companies
 from config import SEC_USER_AGENT
+from tracing import log_event
 
 HEADERS = {"User-Agent": SEC_USER_AGENT}
 CACHE_DIR = Path("./xbrl_cache")
@@ -426,6 +427,18 @@ def fetch_frame(tag: str, frame: str) -> dict | None:
     return data
 
 
+def _frame_entry(entry: dict) -> dict:
+    """One frame-API `data` entry, normalized to the same shape get_frame()
+    returns per ticker -- factored out so get_frame()'s tag-override
+    branch (see below) doesn't have to duplicate this construction."""
+    return {
+        "value": entry["val"],
+        "unit": "USD",
+        "period_end": entry["end"],
+        "accession": entry["accn"],
+    }
+
+
 def get_frame(metric: str, frame: str) -> dict[str, dict]:
     """`metric` for every covered company that reported it under
     `frame`, keyed by ticker. A single frames call only covers filers
@@ -441,23 +454,79 @@ def get_frame(metric: str, frame: str) -> dict[str, dict]:
     construction rather than by remembering to special-case it."""
     companies = load_companies()
     cik_to_ticker = {int(info["cik"]): ticker for ticker, info in companies.items()}
-    tags_in_play = {_tag_for(ticker, metric) for ticker in companies}
+    # sorted(), not a bare set iteration: if two distinct tags ever both
+    # report data for the SAME ticker (none of the 5 covered companies
+    # do today, but a company mid-transition between two GAAP tags
+    # plausibly could), which value wins used to be nondeterministic
+    # (Python's set iteration order, an implementation detail). Sorting
+    # makes processing order deterministic; it's only a FALLBACK
+    # tie-break now, though -- see the ticker's-own-designated-tag
+    # preference below, which is what actually decides the winner in
+    # the common case.
+    tags_in_play = sorted({_tag_for(ticker, metric) for ticker in companies})
 
     results: dict[str, dict] = {}
+    winning_tag: dict[str, str] = {}
     for tag in tags_in_play:
         data = fetch_frame(tag, frame)
         if data is None:
             continue
         for entry in data.get("data", []):
             ticker = cik_to_ticker.get(entry["cik"])
-            if ticker is None or ticker in results:
+            if ticker is None:
                 continue
-            results[ticker] = {
-                "value": entry["val"],
-                "unit": "USD",
-                "period_end": entry["end"],
-                "accession": entry["accn"],
-            }
+            if ticker in results:
+                if tag == winning_tag[ticker]:
+                    # Same-tag duplicate entry (e.g. an amended filing
+                    # appearing twice under one accession), not a
+                    # cross-tag disagreement -- found in code review:
+                    # this must not be mislabeled as one below.
+                    # First-entry-wins here, silently, matching this
+                    # same-tag case's unchanged, pre-existing behavior.
+                    continue
+                # Prefer the ticker's OWN designated tag over whichever
+                # tag happened to be processed first -- found in code
+                # review: plain alphabetical-sort tie-break is arbitrary,
+                # not principled, and _tag_for(ticker, metric) already
+                # gives the objectively correct answer for THIS ticker
+                # (it's what built tags_in_play in the first place).
+                # Without this, a ticker whose own tag sorts second
+                # would silently keep a wrong value from a different
+                # tag that happens to also report its CIK. (The
+                # "winning_tag[ticker] != designated_tag" half of this
+                # check a prior version had here was dead code, found in
+                # code review: the same-tag-duplicate branch above
+                # already rules out tag == winning_tag[ticker], so
+                # tag == designated_tag alone already implies
+                # winning_tag[ticker] != designated_tag.)
+                designated_tag = _tag_for(ticker, metric)
+                if tag == designated_tag:
+                    log_event(
+                        "xbrl_tag_conflict",
+                        metric=metric,
+                        frame=frame,
+                        ticker=ticker,
+                        winning_tag=tag,
+                        winning_value=entry["val"],
+                        discarded_tag=winning_tag[ticker],
+                        discarded_value=results[ticker]["value"],
+                    )
+                    winning_tag[ticker] = tag
+                    results[ticker] = _frame_entry(entry)
+                    continue
+                log_event(
+                    "xbrl_tag_conflict",
+                    metric=metric,
+                    frame=frame,
+                    ticker=ticker,
+                    winning_tag=winning_tag[ticker],
+                    winning_value=results[ticker]["value"],
+                    discarded_tag=tag,
+                    discarded_value=entry["val"],
+                )
+                continue
+            winning_tag[ticker] = tag
+            results[ticker] = _frame_entry(entry)
     return results
 
 

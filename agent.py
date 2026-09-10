@@ -41,7 +41,7 @@ from formulas import (
     get_yoy_growth,
 )
 from llm_backends import BACKENDS
-from numeric_utils import UNIT_MULTIPLIERS, extract_numbers, normalize
+from numeric_utils import UNIT_MULTIPLIERS, extract_numbers, extract_numbers_with_spans, normalize
 from retrieval import hybrid_search
 from tracing import flush, log_event, record_unmet_metric_request, traced_span
 from xbrl_facts import DEFAULT_METRIC_TAGS, get_metric, get_metric_all_companies, is_metric_tagged
@@ -870,6 +870,129 @@ def _iter_citation_claims(answer_text: str, all_results: list[dict]):
             yield n, value, unit, verified
 
 
+# Sentence-ending punctuation followed by whitespace signals a break
+# UNLESS what comes after that whitespace is a citation marker
+# ("...total. [1]" is one sentence, not two) or a lowercase letter (an
+# abbreviation like "U.S." continuing mid-clause, not a real sentence
+# start) -- found in code review: without the lowercase exclusion, "...
+# primarily from U.S. sales [1]" registered a false break, making a
+# correctly-cited claim look unreachable from its own marker and
+# wrongly refusing an otherwise-correct answer.
+#
+# Both lookaheads deliberately sit INSIDE the pattern (matching only the
+# punctuation character itself, zero-width beyond it) rather than
+# consuming "\s+" before checking what follows -- found in code review:
+# an earlier version (`r"[.!?]\s+(?![\[a-z])"`) let the greedy `\s+`
+# backtrack to a SHORTER whitespace match whenever the maximal one
+# failed the lookahead, so "billion.  [1]" (two spaces) still registered
+# a false break by matching only the first space and finding the SECOND
+# space didn't look like "[" or a letter either -- the exact same false-
+# refusal bug the lookahead was built to prevent, just triggered by
+# extra whitespace instead of an abbreviation. `(?!\s*[\[a-z])` checks
+# ALL possible amounts of trailing whitespace at once (a negative
+# lookahead has no successful match to backtrack away from), so it's
+# immune to this regardless of how much whitespace follows.
+#
+# Residual, deliberately-not-fixed gaps this still doesn't catch: a
+# marker with NO whitespace after the preceding period at all
+# ("[1].Revenue...", judged too rare in real LLM output -- and too easy
+# to over-fix into misreading a decimal point like "109.4" as a break --
+# to be worth the added complexity); and a genuine new sentence that
+# happens to start with a lowercase word (rare in real prose, and a
+# false NEGATIVE -- silently missing a break -- rather than the false
+# POSITIVE (wrongly refusing a correct answer) the lowercase exception
+# exists to prevent, so accepted as the safer side to err on.
+_SENTENCE_BREAK = re.compile(r"[.!?](?=\s)(?!\s*[\[a-z])")
+
+
+def _iter_uncited_claims(answer_text: str):
+    """Yields (value, unit) for every numeric claim in `answer_text` that
+    has NO citation marker attached to it -- the counterpart gap
+    _iter_citation_claims() above can't see, since that walk is driven
+    entirely by _CITATION_MARKER matches: a claim with no marker nearby
+    never enters that loop at all. Found live (PROJECT_CONTEXT.md's
+    2026-08-25 "Formula registry extended" section, msft-cash-to-assets-
+    fy2025): the model self-computed a ratio from two separately-
+    retrieved raw values and stated the result with no citation marker
+    nearby, in 2 of 4 manual runs -- an answer that sailed through
+    unrefused despite violating the same "every numeric claim must trace
+    to a source" principle _iter_citation_claims() enforces for the
+    cited case.
+
+    Current contract: each marker attaches to EVERY REACHABLE claim on
+    ONE side of it -- all reachable claims immediately before it (the
+    dominant "$X [1]." convention), or, only if NONE is reachable on
+    that side, all reachable claims immediately after it (the "Per
+    source [1], $X" convention). Never both sides for the same marker.
+    A claim is "reachable" from a marker if it's within
+    _CITATION_WINDOW_CHARS and no sentence boundary (_SENTENCE_BREAK,
+    with an exception for a period immediately followed by a marker --
+    "...total. [1]" is one sentence, not two) separates them.
+
+    "Every reachable claim," not just the nearest one, matters: a marker
+    attaching to only its single nearest claim (an earlier version of
+    this function) broke a common, legitimate phrasing -- "Revenue grew
+    from $10 million to $12 million, a 20% increase [1]." states THREE
+    numbers all genuinely grounded in one source, and attaching [1] to
+    only the last one (20%) left the other two unattached to any
+    citation at all, wrongly flagged as uncited even though they're
+    correct. Covering the whole reachable side lets _iter_citation_claims()
+    above independently verify each one against the source for accuracy
+    (unaffected by this function) while this function only answers "does
+    it have a citation at all." "Never both sides" is still what keeps
+    the original bug fixed: "$20 billion [1], representing approximately
+    4.0% of total assets" has one claim on each side of [1], and the
+    4.0% (an ungrounded, self-computed figure, not a second grounded
+    fact) must stay unattached -- see
+    docs/plans/2026-09-09-citation-gap-frame-ordering-retrieval-verify.md
+    and its matching docs/reviews/ file for the full history of designs
+    tried and rejected against this codebase's own existing test cases.
+
+    Two implementation notes:
+    - Operates on the UNTOUCHED original answer_text throughout, never a
+      sliced/re-stripped substring -- unlike _iter_citation_claims(),
+      which only needs positions relative to an already-sliced window,
+      this function measures distance/sentence-membership in the whole
+      text, so re-slicing would silently drift the offsets.
+    - marker_spans excludes the bare digit INSIDE a "[n]" marker itself
+      from candidate claims -- NUMBER_PATTERN also matches it (documented
+      harmless noise for extract_numbers()'s other callers), but left in
+      here it would count as its own unverifiable claim whenever it's
+      the LAST marker in the answer."""
+    non_claim_spans = [m.span() for m in _NON_CLAIM_PATTERN.finditer(answer_text)]
+    marker_spans = [m.span() for m in _CITATION_MARKER.finditer(answer_text)]
+    # Computed once on the untouched full text, not via a range-restricted
+    # search per claim/marker pair -- pos/endpos-restricted re.search()
+    # makes a lookahead assertion (the "(?!\[)" above) unable to see past
+    # endpos, so a break's own trailing-marker exception would silently
+    # misfire if checked with the search range clipped right before that
+    # marker. Precomputing on the full string sidesteps that entirely.
+    sentence_breaks = [m.start() for m in _SENTENCE_BREAK.finditer(answer_text)]
+
+    def _reachable(lo: int, hi: int) -> bool:
+        return (hi - lo) <= _CITATION_WINDOW_CHARS and not any(lo <= b < hi for b in sentence_breaks)
+
+    excluded_spans = non_claim_spans + marker_spans
+    claims = [
+        (value, unit, start, end)
+        for value, unit, start, end in extract_numbers_with_spans(answer_text)
+        if not any(s <= start < e for s, e in excluded_spans)
+    ]
+
+    covered_spans = set()
+    for m_start, m_end in marker_spans:
+        before = [(s, e) for _, _, s, e in claims if e <= m_start and _reachable(e, m_start)]
+        if before:
+            covered_spans.update(before)
+            continue
+        after = [(s, e) for _, _, s, e in claims if s >= m_end and _reachable(m_end, s)]
+        covered_spans.update(after)
+
+    for value, unit, start, end in claims:
+        if (start, end) not in covered_spans:
+            yield value, unit
+
+
 def verify_citations(answer_text: str, all_results: list[dict]) -> list[str]:
     """Cheap, deterministic check for one specific silent-misgrounding
     pattern: a numeric claim attributed to a citation whose own cited
@@ -889,18 +1012,53 @@ def verify_citations(answer_text: str, all_results: list[dict]) -> list[str]:
     which is also where the date-noise and duplicate-warning issues
     below were found and fixed, not assumed.
 
+    Also flags a numeric claim with NO citation marker anywhere near it
+    at all -- see _iter_uncited_claims()'s own docstring for the second
+    real, observed case (msft-cash-to-assets-fy2025) this closes.
+
     Returns a list of human-readable warning strings (deduplicated),
     empty if nothing looks unverified."""
+    # Two dedup sets, deliberately not one -- found in code review, in
+    # two rounds: a single value+unit-only key (fixing the cross-loop
+    # duplicate below) ALSO collapsed two genuinely different,
+    # independently-broken citations that happen to share a value --
+    # "$99 million [1]. ... $99 million [2]." with neither source
+    # containing 99 -- into one warning, silently dropping that [2] is
+    # ALSO broken. `seen_citation_keys` keeps citation-claims' own dedup
+    # precise (index + value, so different citation indices stay
+    # distinct); `seen_values` is value+unit only, populated by
+    # citation-claims and checked by the uncited-claims loop below, for
+    # the DIFFERENT problem that loop exists to solve: with two
+    # sentences like "Total costs were $30 million. Total revenue was
+    # $50 million [1]." (source backs only $50M), _iter_citation_claims's
+    # flat backward window (no sentence-boundary awareness, unlike
+    # _iter_uncited_claims) still attributes the unrelated "$30 million"
+    # to [1] and flags it as misattributed, while _iter_uncited_claims
+    # separately (and also correctly, by ITS OWN sentence-aware
+    # definition) finds no marker actually reachable from "30" and would
+    # flag it as uncited too -- the same claim occurrence producing two
+    # different, redundant messages. citation-claims (more specific/
+    # actionable) runs first and wins the wording in that case.
     warnings: list[str] = []
-    seen: set[tuple[int, str]] = set()
+    seen_citation_keys: set[tuple[str, str]] = set()
+    seen_values: set[str] = set()
     for n, value, unit, verified in _iter_citation_claims(answer_text, all_results):
         if verified:
             continue
-        key = (n, f"{value}{unit}")
-        if key in seen:
+        citation_key = (str(n), f"{value}{unit}")
+        if citation_key in seen_citation_keys:
             continue
-        seen.add(key)
+        seen_citation_keys.add(citation_key)
+        seen_values.add(f"{value}{unit}")
         warnings.append(f"[{n}] claims {value} ({unit}) but that value doesn't appear in the cited source")
+    for value, unit in _iter_uncited_claims(answer_text):
+        value_key = f"{value}{unit}"
+        if value_key in seen_values:
+            continue
+        seen_values.add(value_key)
+        warnings.append(
+            f"claims {value} ({unit}) but no citation marker appears anywhere near it to trace the claim to a source"
+        )
     return warnings
 
 

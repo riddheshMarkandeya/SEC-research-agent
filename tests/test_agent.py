@@ -355,6 +355,219 @@ def test_verify_citations_tolerance_matches_grade_numeric_tolerance():
 
 
 # ---------------------------------------------------------------------------
+# verify_citations -- uncited numeric claims (2026-09-09). The existing
+# checks above only ever look at numbers already sitting near a [n]
+# marker; a claim with NO marker anywhere near it was previously
+# invisible to this function entirely. Found live (PROJECT_CONTEXT.md's
+# 2026-08-25 "Formula registry extended" section): asked for
+# msft-cash-to-assets-fy2025, the model self-computed the ratio from two
+# separately-retrieved raw values and stated the result with zero
+# citation marker nearby, in 2 of 4 manual runs.
+# ---------------------------------------------------------------------------
+def test_verify_citations_flags_a_bare_uncited_claim():
+    answer = "Apple's cash to assets ratio was approximately 24.3%."
+    warnings = verify_citations(answer, [])
+    assert len(warnings) == 1
+    assert "24.3" in warnings[0]
+    assert "no citation" in warnings[0]
+
+
+def test_verify_citations_reproduces_the_msft_cash_to_assets_case():
+    # The actual observed shape: two properly-cited raw figures, then a
+    # self-computed, entirely uncited derived percentage in the same
+    # answer.
+    results = [
+        _fake_result(text="cash_and_equivalents = 20000000000.0 USD"),
+        _fake_result(text="total_assets = 500000000000.0 USD"),
+    ]
+    answer = (
+        "Microsoft's cash and cash equivalents were $20.0 billion [1], and its "
+        "total assets were $500.0 billion [2]. This means cash made up "
+        "approximately 4.0% of total assets."
+    )
+    warnings = verify_citations(answer, results)
+    assert len(warnings) == 1
+    assert "4.0" in warnings[0]
+
+
+def test_verify_citations_flags_a_second_uncited_claim_comma_joined_to_a_real_citation():
+    # Found in code review: an earlier version treated ANY claim within
+    # window+no-sentence-break as covered by a marker, regardless of how
+    # many OTHER claims sat between it and the marker -- a comma-joined
+    # second, uncited claim in the SAME sentence as a real citation
+    # (rather than msft-cash-to-assets' own separate-sentence phrasing)
+    # slipped through completely undetected.
+    results = [_fake_result(text="cash_and_equivalents = 20000000000.0 USD")]
+    answer = "Microsoft's cash was $20 billion [1], representing approximately 4.0% of total assets."
+    warnings = verify_citations(answer, results)
+    assert len(warnings) == 1
+    assert "4.0" in warnings[0]
+    assert "no citation" in warnings[0]
+
+
+def test_verify_citations_leading_marker_covers_every_reachable_claim_that_follows_it():
+    # A leading marker attaches to EVERY reachable claim after it, not
+    # just the first -- "Per the 10-Q filing [1], revenue was $X and
+    # margin was Y%." is one clause introduced by [1] covering both
+    # facts. (An earlier version of this test asserted the opposite --
+    # only the first claim covered -- but that was this function's own
+    # invented assumption, not an observed bug; the "attach to only the
+    # nearest claim" design it was guarding is what code review later
+    # found broke the more common multi-claim-per-citation phrasing --
+    # see the next test.)
+    results = [_fake_result(text="revenue = 109417000000.0 USD")]
+    answer = "Per the 10-Q filing [1], revenue was $109,417 million and margin improved to 42%."
+    assert verify_citations(answer, results) == []
+
+
+def test_verify_citations_covers_every_reachable_claim_sharing_one_trailing_citation():
+    # Found in code review: an earlier "at most one claim per marker"
+    # design (added to fix the comma-joined uncited-claim bug below)
+    # broke this common, legitimate phrasing -- three numbers, all
+    # genuinely grounded in the one cited source, sharing a single
+    # trailing citation. Attaching the marker to only its nearest claim
+    # (20%) left the other two (10, 12) unattached to any citation at
+    # all, wrongly flagged as uncited even though they're correct.
+    results = [_fake_result(text="revenue = 10000000.0 USD, prior_revenue = 12000000.0 USD")]
+    answer = "Revenue grew from $10 million to $12 million, a 20% increase [1]."
+    warnings = verify_citations(answer, results)
+    # The 20% is genuinely NOT in the cited source -- still correctly
+    # caught by the existing misattribution check (_iter_citation_claims),
+    # unaffected by this function. Only that one warning, not three.
+    assert len(warnings) == 1
+    assert "20.0" in warnings[0]
+    assert "doesn't appear in the cited source" in warnings[0]
+
+
+def test_verify_citations_does_not_treat_an_abbreviation_period_as_a_sentence_break():
+    # Found in code review: an abbreviation period with nothing else
+    # after it in the same clause ("U.S.") was registering as a false
+    # sentence break, making a correctly-cited claim look unreachable
+    # from its own marker and wrongly refusing an otherwise-correct
+    # answer. Real financial-prose phrasing, not a contrived edge case.
+    results = [_fake_result(text="revenue = 50000000000.0 USD")]
+    answer = "Revenue was $50 billion, primarily from U.S. sales [1]."
+    assert verify_citations(answer, results) == []
+
+
+def test_verify_citations_extra_whitespace_before_a_marker_does_not_create_a_false_break():
+    # Found in code review: an earlier _SENTENCE_BREAK regex used a
+    # greedy `\s+` that could backtrack to a SHORTER whitespace match
+    # whenever the maximal one failed the trailing-marker exception, so
+    # two spaces before "[1]" (double-spaced LLM output, or markdown
+    # normalization) still registered a false break -- the same
+    # false-refusal bug the exception exists to prevent, just triggered
+    # by extra whitespace instead of an abbreviation.
+    results = [_fake_result(text="revenue = 50000000000.0 USD")]
+    assert verify_citations("Revenue was $50 billion.  [1].", results) == []
+
+
+def test_verify_citations_accepts_missing_a_break_for_a_lowercase_starting_sentence():
+    # Documents a known, deliberately-accepted limitation (not a bug to
+    # fix): the lowercase-letter exception that protects abbreviations
+    # like "U.S." also means a genuine new sentence that happens to
+    # start with a lowercase word is treated as NOT a break, so "30"
+    # here is (wrongly, but harmlessly) considered reachable from [1] --
+    # it's still correctly caught by the pre-existing misattribution
+    # check (not in the cited source), just not ALSO double-reported as
+    # a separate "uncited" claim. Rare in real prose (sentences start
+    # capitalized), and a false NEGATIVE (silently missing a break)
+    # rather than the false POSITIVE (wrongly refusing an otherwise-
+    # correct answer) the exception exists to prevent -- accepted as the
+    # safer side to err on. Locks in that choice so a future "fix"
+    # doesn't reintroduce the original abbreviation false-positive.
+    results = [_fake_result(text="revenue = 50000000000.0 USD")]
+    answer = "Total costs were $30 million. revenue was $50 billion [1]."
+    warnings = verify_citations(answer, results)
+    assert len(warnings) == 1
+    assert "doesn't appear in the cited source" in warnings[0]
+
+
+def test_verify_citations_does_not_double_report_the_same_value_via_both_checks():
+    # Found in code review: _iter_citation_claims's flat backward window
+    # (character distance only, no sentence-boundary awareness) and
+    # _iter_uncited_claims's sentence-aware reachability check define
+    # "near a marker" differently -- a value can be misattributed by the
+    # first (within its flat window) and simultaneously judged uncited
+    # by the second (not reachable across the sentence boundary that
+    # actually separates it from the marker). Only one warning should
+    # surface, not a redundant restatement of the same problem.
+    results = [_fake_result(text="revenue = 50000000000.0 USD")]
+    answer = "Total costs were $30 million. Total revenue was $50 billion [1]."
+    warnings = verify_citations(answer, results)
+    assert len(warnings) == 1
+    assert "30" in warnings[0]
+    assert "doesn't appear in the cited source" in warnings[0]
+
+
+def test_verify_citations_reports_two_different_misattributed_citations_with_the_same_value():
+    # Found in code review: fixing the cross-loop duplicate above by
+    # deduping on value+unit alone ALSO collapsed two genuinely
+    # different, independently-broken citations that happen to share a
+    # value -- silently dropping the fact that [2] is broken too, not
+    # just [1]. Citation index must stay part of citation-claims' own
+    # dedup key even though the cross-loop check (above) doesn't use it.
+    results = [_fake_result(text="unrelated text one"), _fake_result(text="unrelated text two")]
+    answer = "Revenue was $99 million [1]. Margin was $99 million [2]."
+    warnings = verify_citations(answer, results)
+    assert len(warnings) == 2
+    assert any("[1]" in w for w in warnings)
+    assert any("[2]" in w for w in warnings)
+
+
+def test_verify_citations_uncited_claim_does_not_duplicate_windowed_warning():
+    # A claim already flagged by the existing near-a-citation check
+    # (misattributed, not uncited) must not ALSO get a second, redundant
+    # "uncited" warning just because it happens to be counted once by
+    # each loop -- it's near a marker, so the new check must skip it.
+    results = [_fake_result(text="revenue = 109417000000.0 USD")]
+    answer = "The year-over-year revenue growth was approximately 16.27%. [1] [2]"
+    warnings = verify_citations(answer, [results[0], results[0]])
+    assert len(warnings) == 1
+
+
+def test_verify_citations_ignores_the_digit_inside_a_trailing_citation_marker():
+    # Found while implementing the uncited-claim check: NUMBER_PATTERN
+    # (numeric_utils.py) deliberately also matches the bare digit INSIDE
+    # a "[n]" marker itself (documented there as harmless noise for
+    # extract_numbers()'s other callers). Left unfiltered here, that
+    # self-match would itself count as an unverifiable claim whenever
+    # it's the LAST marker in the answer (nothing follows it to "cover"
+    # it) -- a false positive on the single most common answer shape in
+    # this codebase (one citation ending the sentence).
+    results = [_fake_result(text="revenue = 109417000000.0 USD")]
+    assert verify_citations("Apple's revenue was $109,417 million [1].", results) == []
+    assert verify_citations("Revenue was $109,417 million [1] and [2].", results + results) == []
+
+
+def test_verify_citations_ignores_non_claim_text_with_no_citation_at_all():
+    # Dates/years/form-type mentions must stay excluded from the new
+    # check the same way they're excluded from the existing one --
+    # otherwise a plain, fully-qualitative sentence with a date in it
+    # would wrongly refuse.
+    answer = "Apple filed its 10-K on June 27, 2026, covering fiscal year 2026."
+    assert verify_citations(answer, []) == []
+
+
+def test_verify_citations_q4_not_disclosed_hint_text_does_not_trip_uncited_check():
+    # The Q4-refusal hint text (agent.py's _Q4_NOT_DISCLOSED_HINT) can end
+    # up echoed/paraphrased into a final answer -- confirm its own
+    # wording contains nothing the new check would misread as an uncited
+    # numeric claim.
+    from agent import _Q4_NOT_DISCLOSED_HINT
+
+    assert verify_citations(_Q4_NOT_DISCLOSED_HINT, []) == []
+
+
+def test_format_refusal_message_renders_an_uncited_only_warning_list():
+    warnings = verify_citations("The ratio was approximately 24.3%.", [])
+    message = _format_refusal_message(warnings)
+    assert "24.3" in message
+    assert "no citation" in message
+    assert "refusing this answer" in message
+
+
+# ---------------------------------------------------------------------------
 # value_is_citation_verified (eval_harness.py's numeric/comparison gate)
 # ---------------------------------------------------------------------------
 def test_value_is_citation_verified_true_when_cited_source_backs_it():
@@ -1665,6 +1878,30 @@ def test_run_agent_refuses_when_ollama_answer_has_unverified_citation(monkeypatc
 
     assert answer == _format_refusal_message(["[1] claims 100.0 ... doesn't appear"])
     assert warnings == ["[1] claims 100.0 ... doesn't appear"]
+
+
+def test_run_agent_refuses_a_bare_uncited_claim_end_to_end(monkeypatch):
+    # Same wiring as the test above, but through the REAL verify_citations()
+    # (not mocked) -- proves the uncited-claim check (agent.py's
+    # _iter_uncited_claims, 2026-09-09) is actually reached by run_agent()'s
+    # own control flow, not just correct in isolation. Reproduces the
+    # msft-cash-to-assets-fy2025 shape: a self-computed percentage with no
+    # citation marker anywhere near it.
+    final_answer_turn = ModelTurn(
+        tool_calls=[], text="Microsoft's cash to assets ratio was approximately 4.0%."
+    )
+
+    def fake_start(question, system_prompt, tool_schemas):
+        return {}, final_answer_turn
+
+    monkeypatch.setattr("agent.BACKENDS", {"ollama": (fake_start, None, None)})
+
+    answer, all_results, warnings = run_agent("What is Microsoft's cash to assets ratio?", backend="ollama")
+
+    assert "refusing this answer" in answer
+    assert len(warnings) == 1
+    assert "4.0" in warnings[0]
+    assert "no citation" in warnings[0]
 
 
 def test_run_agent_returns_generic_timeout_message_unchanged_when_iterations_exhausted(monkeypatch):

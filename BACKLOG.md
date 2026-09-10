@@ -52,9 +52,8 @@ a real regression, found and corrected before this batch resumed).
 §5/§7/§9 are also DONE — see `PROJECT_CONTEXT.md`'s 2026-09-08 section.
 §6/§8/§10 are also DONE — see `PROJECT_CONTEXT.md`'s 2026-09-09 section.
 §11/§12/§13 are also DONE — see `PROJECT_CONTEXT.md`'s 2026-09-10 section.
+§14/§15 are also DONE — see `PROJECT_CONTEXT.md`'s 2026-09-09/10 section.
 
-- [ ] **[test-coverage, Low, Standard]** `retrieval.py`'s live half has no `tests/manual/verify_*.py` script, unlike every other live-only integration point — [review §14](docs/reviews/2026-09-06-full-codebase-review.md#14-retrievalpys-live-half-has-no-manual-verification-script)
-- [ ] **[bug (latent), Low, Standard]** `xbrl_facts.py`'s `get_frame()` cross-tag merge has an untested set-iteration-order dependency — [review §15](docs/reviews/2026-09-06-full-codebase-review.md#15-xbrlfactspys-getframe-has-an-untested-ordering-dependency)
 - [ ] **[refactor, Low, Standard]** `query_chunks.py` duplicates `retrieval.py`'s query logic instead of reusing it
 - [ ] **[design, Low, Standard]** `tracing.py` has two overlapping "record an instantaneous fact" primitives (`record_unmet_metric_request` vs `log_event`) with no documented decision rule for which to use
 
@@ -86,7 +85,6 @@ Full evidence/reasoning: `docs/plans/2026-09-09-schema-driven-arg-validation.md`
 - [ ] **[feature, Low, Substantial]** Per-call LLM "generation" tracing (token counts, prompt/completion text, per-call cost/latency as Langfuse generation objects) — explicitly scoped out of the Langfuse tracing work, parked until a real debugging need shows up. See `PROJECT_CONTEXT.md`'s "Week 7 guardrails, part 3" section.
 - [ ] **[feature, Low, Substantial]** Multi-turn conversational QA (ConvFinQA-style follow-ups) — `run_agent()` is single-turn only. Parked; revisit only on a real multi-turn need. See `PROJECT_CONTEXT.md`'s Next-steps history (2026-08-25).
 - [ ] **[feature, Low, Substantial]** Graph DB (Neo4j) as a retrieval layer — parked; only worth it if a relationship/multi-hop-shaped question actually appears. See `PROJECT_CONTEXT.md` (2026-08-20 discussion).
-- [ ] **[bug (latent), Low, Standard]** `cash_to_assets` ratio's citation-verification gap — `verify_citations()` doesn't check uncited numeric claims at all; no concrete failing case yet. See `PROJECT_CONTEXT.md`'s "Formula registry extended" section (2026-08-25).
 - [ ] **[test-coverage, Low, Standard]** Growing the eval set further toward the original 30-50 FinanceBench-style target — optional, not a fixed requirement.
 - [ ] **[misc, Low, TBD]** "Week 8 — polish + write-up" — no detail scoped yet.
 

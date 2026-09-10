@@ -8,7 +8,7 @@ would be circular the other way).
 
 import pytest
 
-from numeric_utils import extract_numbers, normalize
+from numeric_utils import extract_numbers, extract_numbers_with_spans, normalize
 
 
 # ---------------------------------------------------------------------------
@@ -47,6 +47,32 @@ def test_extract_numbers_ignores_digit_glued_to_letter():
     # "Q3" and "FY2026" shouldn't be read as the numbers 3 / 026.
     assert extract_numbers("Revenue in fiscal Q3 2025") == [(2025.0, "raw")]
     assert extract_numbers("FY2026 results") == []
+
+
+# ---------------------------------------------------------------------------
+# extract_numbers_with_spans -- position-aware sibling of extract_numbers,
+# added for agent.py's uncited-numeric-claim detection (verify_citations()),
+# which needs to measure a claim's distance from the nearest [n] citation
+# marker in the ORIGINAL answer text, not just its (value, unit).
+# ---------------------------------------------------------------------------
+def test_extract_numbers_with_spans_returns_correct_offsets():
+    text = "revenue was $72.4 billion last quarter"
+    [(value, unit, start, end)] = extract_numbers_with_spans(text)
+    assert (value, unit) == (72.4, "billion")
+    assert text[start:end] == "72.4"
+
+
+def test_extract_numbers_with_spans_matches_extract_numbers_values():
+    # Same (value, unit) pairs as the position-less version, just with
+    # spans attached -- extract_numbers() itself becomes a thin wrapper
+    # around this, so the two must never drift apart.
+    text = "Apple had 166,000 full-time equivalent employees, a 20% increase."
+    with_spans = [(v, u) for v, u, _, _ in extract_numbers_with_spans(text)]
+    assert with_spans == extract_numbers(text)
+
+
+def test_extract_numbers_with_spans_empty_for_no_digits():
+    assert extract_numbers_with_spans("no numbers in this sentence at all") == []
 
 
 # ---------------------------------------------------------------------------

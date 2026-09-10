@@ -46,9 +46,15 @@ NUMBER_PATTERN = re.compile(
 UNIT_MULTIPLIERS = {"thousand": 1e3, "million": 1e6, "billion": 1e9}
 
 
-def extract_numbers(text: str) -> list[tuple[float, str]]:
-    """Return every (value, unit) candidate found in text. unit is one of
-    'raw', 'thousand', 'million', 'billion', 'percent'."""
+def extract_numbers_with_spans(text: str) -> list[tuple[float, str, int, int]]:
+    """Like extract_numbers() below, but also returns each candidate's
+    (start, end) character span (of the digit group only, e.g. "72.4" in
+    "$72.4 billion") in `text`. Added for agent.py's uncited-numeric-
+    claim detection, which needs a claim's position relative to the
+    nearest [n] citation marker in the ORIGINAL, unmodified answer text
+    -- unlike verify_citations()'s existing marker-anchored check, which
+    only ever needs positions relative to an already-sliced window and
+    so never needed this."""
     candidates = []
     for match in NUMBER_PATTERN.finditer(text):
         raw_value, unit_word, percent_sign = match.groups()
@@ -62,8 +68,14 @@ def extract_numbers(text: str) -> list[tuple[float, str]]:
             unit = unit_word.lower()
         else:
             unit = "raw"
-        candidates.append((value, unit))
+        candidates.append((value, unit, match.start(1), match.end(1)))
     return candidates
+
+
+def extract_numbers(text: str) -> list[tuple[float, str]]:
+    """Return every (value, unit) candidate found in text. unit is one of
+    'raw', 'thousand', 'million', 'billion', 'percent'."""
+    return [(value, unit) for value, unit, _, _ in extract_numbers_with_spans(text)]
 
 
 def normalize(value: float, unit: str) -> tuple[str, float]:

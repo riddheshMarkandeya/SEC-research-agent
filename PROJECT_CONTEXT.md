@@ -4166,6 +4166,122 @@ bug and a `retrieval.py` manual verification script — were explicitly
 descoped by the user mid-planning to keep this change focused on schema
 validation; both remain open in `BACKLOG.md`, untouched.
 
+### Uncited-claim detection, get_frame() ordering fix, verify_retrieval.py (2026-09-09/10)
+
+Picked up the next 3 highest-impact `BACKLOG.md` items (per the new
+`[type, priority, effort]` tagging, chosen for real correctness/coverage
+impact over the parked `Substantial` feature items): see
+`docs/plans/2026-09-09-citation-gap-frame-ordering-retrieval-verify.md`
+for the full design and `docs/reviews/2026-09-09-citation-gap-frame-ordering-retrieval-verify.md`
+for the complete five-round review history.
+
+**1. `verify_citations()` now detects numeric claims with NO citation
+marker anywhere near them** — the gap the existing
+`_iter_citation_claims()` couldn't see (its scan is driven entirely by
+`[n]` marker matches, so a claim with no marker nearby never entered it
+at all). Motivated by a real, observed case (2026-08-25's "Formula
+registry extended" section): asked for `msft-cash-to-assets-fy2025`,
+the model self-computed the ratio from two separately-retrieved raw
+values and stated the result with zero citation marker nearby, in 2 of
+4 manual runs — an answer that sailed through unrefused despite
+violating this project's own "every numeric claim must trace to a
+source" design principle.
+
+New `_iter_uncited_claims()` (`agent.py`) implements this via a
+marker-to-claim "attachment" rule: each marker attaches to every
+REACHABLE claim on one side of it (all claims immediately before it if
+any are reachable — the dominant `"$X [1]."` convention — else all
+reachable claims immediately after it — the `"Per source [1], $X"`
+convention), where "reachable" means within `_CITATION_WINDOW_CHARS`
+and no sentence boundary separates them (with an exception for a period
+immediately followed by a marker, so `"...total. [1]"` still counts as
+one sentence). `numeric_utils.py` gained `extract_numbers_with_spans()`
+(position-aware; `extract_numbers()` is now a one-line wrapper around it),
+needed because this check measures a claim's distance from markers in
+the whole, untouched answer text rather than a pre-sliced window.
+
+**This design went through five real review rounds, not a straight
+implementation** — worth recording here because each round found a
+genuinely different, non-obvious failure mode in what looks like a
+simple text-matching problem:
+- Round 1: a comma-joined second, uncited claim sharing a sentence with
+  a real citation (`"$20B [1], representing 4.0%..."`) slipped through
+  entirely — fixed by requiring "no sentence break," which in turn
+  needed the "attach to at most one claim" rule to avoid a marker
+  covering an unrelated claim on the wrong side.
+- Round 2: that same "at most one claim" rule turned out to be *too*
+  restrictive — it broke the equally common pattern of multiple
+  genuinely-grounded numbers sharing one trailing citation
+  (`"$10M to $12M, a 20% increase [1]"`), wrongly flagging the correct
+  $10M/$12M as uncited. Redesigned to "every reachable claim on one
+  side," relying on the pre-existing `_iter_citation_claims()` to still
+  independently catch the genuinely-wrong value.
+- Round 3: a regex backtracking bug let extra whitespace before a
+  marker defeat the abbreviation-period exception (the same
+  false-refusal shape as the original "U.S." bug, triggered by spacing
+  instead); a cross-loop duplicate-warning bug where the two checks'
+  slightly different "near a marker" definitions could both fire on the
+  same value; and a regression in THAT fix which collapsed two
+  genuinely different, independently-broken citations sharing a value
+  into one warning.
+- Round 4: a purely cosmetic dead-code cleanup in the (unrelated,
+  same-diff) `get_frame()` fix below.
+
+Every fix has a regression test locking in the specific failure mode
+(see `tests/test_agent.py`'s citation-verification section). Two
+deliberately-accepted, documented (not fixed) limitations: a genuine
+sentence that happens to start with a lowercase word is missed as a
+break (a false negative, not the false positive the abbreviation
+exception exists to prevent); an out-of-range citation marker (`[5]`
+with fewer real sources) is pre-existing, already-tested tolerant
+behavior, left unchanged for consistency.
+
+**2. `xbrl_facts.py`'s `get_frame()` no longer has an undefined
+tag-merge tiebreak.** If two distinct XBRL tags both report data for
+the same ticker in the same frame (none of the 5 covered companies do
+today, but a company mid-transition between GAAP tags plausibly
+could), the result used to silently depend on Python's `set` iteration
+order. Now: `tags_in_play` is sorted for determinism, a genuine
+cross-tag conflict is logged (`xbrl_tag_conflict`, not silently
+discarded), and — found in review — the winner is the ticker's OWN
+designated tag (`_tag_for(ticker, metric)`, already computed to build
+`tags_in_play` in the first place) rather than an arbitrary
+alphabetically-first tag, so a ticker whose correct tag happens to sort
+second no longer silently loses to a wrong value. A same-tag duplicate
+entry (e.g. an amended filing) is distinguished from a real cross-tag
+conflict and not mislabeled as one.
+
+**3. New `tests/manual/verify_retrieval.py`** — the one live-only
+integration point (`retrieval.py`'s `bm25_search`/`vector_search`/
+`hybrid_search`/`rerank`) that had no manual verification script,
+unlike every other live dependency in this project. Follows
+`verify_period_labels.py`'s conventions (real local data, no API-key
+gating); runs a handful of real known queries and reports in a
+checked/confirmed/problems style — a search returning zero results or
+the wrong company's data is a real, flaggable problem, "is this the
+single best chunk" is left for a human to eyeball via the printed
+preview.
+
+**Verification**: full suite 464/464 (up from 454 at the start, net of
+all review-round fixes and their regression tests). Live spot-check
+eval on both backends (`nvda-revenue-fy26`, `nvda-crm-revenue-comparison`
+— exercises the `get_frame()` fix via `compare_financial_metric`,
+`msft-cash-to-assets-fy2025` — the original motivating case,
+`crm-ai-risk`, `pltr-dividend-2019-refusal`, `aapl-employees-fy25`):
+Gemini 6/6 clean, including `msft-cash-to-assets-fy2025` now passing
+with a correctly-cited 4.9% (previously flaky/uncited). Ollama 3/6, but
+all three failures independently confirmed against `PROJECT_CONTEXT.md`
+history as pre-existing, already-documented local-model flakiness on
+those exact questions — `msft-cash-to-assets-fy2025`'s own 2026-08-25
+section already recorded it as flaky (2 of 4 manual runs), so a refusal
+there is the correct, intended new behavior; the eval's `numeric`-type
+grading just can't award credit for a correct refusal (same limitation
+already accepted for the Q4-refusal questions). Also ran
+`tests/manual/verify_mcp_server.py` live (confirms the `get_frame()`
+fix doesn't break real MCP `compare_financial_metric` calls, which
+matched ground truth for all 5 companies) and `tests/manual/verify_retrieval.py`
+live (16/16 checks passed, plausible results).
+
 ## Next steps
 
 See `BACKLOG.md` for the live task backlog. This section used to hold

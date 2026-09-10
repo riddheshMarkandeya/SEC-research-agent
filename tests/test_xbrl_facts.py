@@ -473,6 +473,93 @@ def test_get_frame_skips_tags_with_no_frame_data(monkeypatch):
     assert get_frame("gross_profit", "CY2026Q1") == {}
 
 
+def test_get_frame_resolves_tag_collision_deterministically_and_logs_it(monkeypatch):
+    # review §15: if two distinct tags both report data for the SAME
+    # ticker in the same frame (a company mid-transition between two
+    # GAAP tags could plausibly show up in both tags' frame responses,
+    # even though companies.json only maps it to one "current" tag), the
+    # merge used to silently depend on Python's set iteration order --
+    # untestable before, since tags_in_play was an unordered set.
+    # tags_in_play is now sorted, so "AaaTag" (alphabetically first)
+    # deterministically wins over "ZzzTag" regardless of hash order, and
+    # the conflict itself is logged instead of silently discarded.
+    aaa_response = {"data": [{"accn": "a", "cik": 320193, "end": "2026-03-28", "val": 100.0}]}
+    zzz_response = {"data": [{"accn": "z", "cik": 320193, "end": "2026-03-28", "val": 200.0}]}
+
+    monkeypatch.setattr(
+        "xbrl_facts.fetch_frame", lambda tag, frame: aaa_response if tag == "AaaTag" else zzz_response
+    )
+    monkeypatch.setattr("xbrl_facts._tag_for", lambda ticker, metric: "AaaTag" if ticker == "AAPL" else "ZzzTag")
+    calls = []
+    monkeypatch.setattr("xbrl_facts.log_event", lambda category, **fields: calls.append((category, fields)))
+
+    result = get_frame("revenue", "CY2026Q1")
+
+    assert result["AAPL"]["value"] == 100.0
+    assert len(calls) == 1
+    category, fields = calls[0]
+    assert category == "xbrl_tag_conflict"
+    assert fields["ticker"] == "AAPL"
+    assert fields["winning_tag"] == "AaaTag"
+    assert fields["winning_value"] == 100.0
+    assert fields["discarded_tag"] == "ZzzTag"
+    assert fields["discarded_value"] == 200.0
+
+
+def test_get_frame_does_not_log_a_conflict_for_a_same_tag_duplicate_entry(monkeypatch):
+    # Found in code review: two entries for the same ticker within ONE
+    # tag's own data list (e.g. an amended/restated filing appearing
+    # twice under a different accession) isn't a cross-tag disagreement
+    # and must not be mislabeled as one -- first-entry-wins, silently,
+    # matching this same-tag case's pre-existing (unlogged) behavior.
+    duplicate_response = {
+        "data": [
+            {"accn": "original", "cik": 320193, "end": "2026-03-28", "val": 100.0},
+            {"accn": "amended", "cik": 320193, "end": "2026-03-28", "val": 105.0},
+        ]
+    }
+    monkeypatch.setattr("xbrl_facts.fetch_frame", lambda tag, frame: duplicate_response)
+    monkeypatch.setattr("xbrl_facts._tag_for", lambda ticker, metric: "SameTag")
+    calls = []
+    monkeypatch.setattr("xbrl_facts.log_event", lambda category, **fields: calls.append((category, fields)))
+
+    result = get_frame("revenue", "CY2026Q1")
+
+    assert result["AAPL"]["value"] == 100.0
+    assert calls == []
+
+
+def test_get_frame_prefers_tickers_own_designated_tag_over_alphabetical_order(monkeypatch):
+    # Found in code review: a plain alphabetical-sort tie-break is
+    # arbitrary, not principled -- get_frame() already has the
+    # objectively correct answer for a given ticker available via
+    # _tag_for(ticker, metric) (it's what built tags_in_play in the
+    # first place) and was ignoring it. Without this, a ticker whose own
+    # designated tag happens to sort SECOND would silently keep a wrong
+    # value from a different tag that incidentally also reports its CIK
+    # (e.g. a company mid-transition between two GAAP tags), forever,
+    # regardless of which is actually correct.
+    aaa_response = {"data": [{"accn": "wrong", "cik": 320193, "end": "2026-03-28", "val": 999.0}]}
+    zzz_response = {"data": [{"accn": "right", "cik": 320193, "end": "2026-03-28", "val": 100.0}]}
+
+    monkeypatch.setattr(
+        "xbrl_facts.fetch_frame", lambda tag, frame: aaa_response if tag == "AaaTag" else zzz_response
+    )
+    # AAPL's own designated tag is "ZzzTag" -- the one that sorts SECOND.
+    monkeypatch.setattr("xbrl_facts._tag_for", lambda ticker, metric: "ZzzTag" if ticker == "AAPL" else "AaaTag")
+    calls = []
+    monkeypatch.setattr("xbrl_facts.log_event", lambda category, **fields: calls.append((category, fields)))
+
+    result = get_frame("revenue", "CY2026Q1")
+
+    assert result["AAPL"]["value"] == 100.0
+    assert len(calls) == 1
+    category, fields = calls[0]
+    assert category == "xbrl_tag_conflict"
+    assert fields["winning_tag"] == "ZzzTag"
+    assert fields["discarded_tag"] == "AaaTag"
+
+
 def test_get_metric_all_companies_anchors_on_the_given_tickers_frame(monkeypatch):
     monkeypatch.setattr(
         "xbrl_facts.get_metric",
