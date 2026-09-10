@@ -222,6 +222,43 @@ section already had to be cleaned up once (2026-08-19) after growing to
 entirely (2026-09-06) for the same reason — don't let `BACKLOG.md` grow
 back into that shape either; prune it as items resolve.
 
+**Backlog tagging convention (added 2026-09-09).** Every `BACKLOG.md`
+bullet gets tagged `**[type, priority, effort]**` right after its
+checkbox, so a human can scan the file and pick something without
+reading every entry — the same job GitHub issue labels do. Tag every new
+item you add; a `BACKLOG.md` entry without one is incomplete.
+
+- **Type** — one of:
+  - `bug` — real or latent incorrect behavior. Append `(latent)` when
+    the defect exists but no current code path actually triggers it
+    (still worth tracking, just lower practical urgency than an active
+    one).
+  - `refactor` — structural or duplication cleanup with no behavior
+    change.
+  - `feature` — a new capability or scope expansion.
+  - `performance` — an efficiency/latency concern.
+  - `test-coverage` — a missing test or manual verification script.
+  - `design` — an inconsistency or asymmetry that needs a deliberate
+    decision, not a clear-cut fix (upgrade one side to match the other,
+    or document why they're allowed to differ).
+  - `misc` — doesn't fit any of the above; don't force-fit an item into
+    a category it doesn't really belong to.
+- **Priority** — `Low` / `Med` / `High`, independent of type: how
+  urgent, not what kind.
+- **Effort** — this file's own Trivial/Standard/Substantial tiers (see
+  the scope-tiers table above), reused rather than inventing a separate
+  T-shirt-size scale — it does double duty, signaling both size and
+  which rows of the tier table apply once the item is picked up. Use
+  `TBD` only when the item genuinely hasn't been scoped enough to size
+  yet (e.g. a one-line placeholder like "Week 8 — polish + write-up").
+
+Keep items grouped by originating review/change (the existing `###`
+sections), not regrouped by type — that keeps each section's single
+"full evidence" link coherent. The tags are what make the file scannable
+regardless of how it's grouped; add a one-line legend at the top of
+`BACKLOG.md` (already there) rather than repeating the type/priority/
+effort definitions in every session.
+
 ## 7. Independent review pass
 
 **Review floor, regardless of tier: any change that touches code gets
