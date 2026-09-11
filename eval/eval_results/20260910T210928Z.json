@@ -1,0 +1,33 @@
+{
+  "backend": "gemini",
+  "answer_model": "gemini-flash-lite-latest",
+  "judge_model": "gemini-flash-lite-latest",
+  "results": [
+    {
+      "id": "aapl-rd-pct-gross-profit-fy2025",
+      "ticker": "AAPL",
+      "question": "What percentage of Apple's fiscal year 2025 gross profit was spent on research and development?",
+      "type": "numeric",
+      "passed": false,
+      "detail": "agent refused to answer (hard-gated on unverified citation(s)) -- no value to grade",
+      "has_citation": false,
+      "citation_warnings": [
+        "[1] claims 17.7 (percent) but that value doesn't appear in the cited source"
+      ],
+      "answer": "I can't confirm this answer against the sources I retrieved -- the following claim(s) don't hold up under citation verification:\n- [1] claims 17.7 (percent) but that value doesn't appear in the cited source\n\nRather than give you a number I can't verify, I'm refusing this answer.",
+      "n_chunks_retrieved": 2,
+      "withheld_answer": "For fiscal year 2025, Apple's gross profit was $195,201,000,000 [1], and its research and development expense was $34,550,000,000 [2]. \n\nSpending on research and development represented approximately **17.70%** of Apple's fiscal year 2025 gross profit [1][2].",
+      "gate_withheld_would_have_passed": false,
+      "gate_withheld_detail": "found matching value: 17.7 (percent) but its citation isn't actually supported by the source (likely self-computed or misattributed)",
+      "citation_warning_details": [
+        {
+          "check": "cited_claim_unsupported",
+          "citation_index": 1,
+          "value": 17.7,
+          "unit": "percent",
+          "message": "[1] claims 17.7 (percent) but that value doesn't appear in the cited source"
+        }
+      ]
+    }
+  ]
+}

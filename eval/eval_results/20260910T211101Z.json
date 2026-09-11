@@ -1,0 +1,33 @@
+{
+  "backend": "gemini",
+  "answer_model": "gemini-flash-lite-latest",
+  "judge_model": "gemini-flash-lite-latest",
+  "results": [
+    {
+      "id": "nvda-revenue-fy26-us-gaap",
+      "ticker": "NVDA",
+      "question": "What was NVIDIA's total revenue for fiscal year 2026, and confirm this figure is presented in accordance with U.S. GAAP?",
+      "type": "numeric",
+      "passed": false,
+      "detail": "agent refused to answer (hard-gated on unverified citation(s)) -- no value to grade",
+      "has_citation": false,
+      "citation_warnings": [
+        "claims 1.0 (raw) but no citation marker appears anywhere near it to trace the claim to a source"
+      ],
+      "answer": "I can't confirm this answer against the sources I retrieved -- the following claim(s) don't hold up under citation verification:\n- claims 1.0 (raw) but no citation marker appears anywhere near it to trace the claim to a source\n\nRather than give you a number I can't verify, I'm refusing this answer.",
+      "n_chunks_retrieved": 6,
+      "withheld_answer": "For fiscal year 2026 (ended January 25, 2026), NVIDIA\u2019s total revenue was **$215,938 million** [3]. \n\nThis figure is presented in accordance with U.S. GAAP, as stated in NVIDIA\u2019s Consolidated Financial Statements (Note 1, \"Organization and Summary of Significant Accounting Policies\") within its Annual Report on Form 10-K, which notes that the preparation of its financial statements conforms to accounting principles generally accepted in the United States of America [2].",
+      "gate_withheld_would_have_passed": true,
+      "gate_withheld_detail": "found matching value: 215938.0 (million)",
+      "citation_warning_details": [
+        {
+          "check": "uncited_claim",
+          "citation_index": null,
+          "value": 1.0,
+          "unit": "raw",
+          "message": "claims 1.0 (raw) but no citation marker appears anywhere near it to trace the claim to a source"
+        }
+      ]
+    }
+  ]
+}

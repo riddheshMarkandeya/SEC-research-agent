@@ -1,0 +1,57 @@
+{
+  "backend": "gemini",
+  "answer_model": "gemini-flash-lite-latest",
+  "judge_model": "gemini-flash-lite-latest",
+  "results": [
+    {
+      "id": "nvda-revenue-fy26-us-gaap",
+      "ticker": "NVDA",
+      "question": "State NVIDIA's total revenue for fiscal year 2026 in a single sentence that also confirms the figure is reported under U.S. GAAP.",
+      "type": "numeric",
+      "passed": false,
+      "detail": "agent refused to answer (hard-gated on unverified citation(s)) -- no value to grade",
+      "has_citation": false,
+      "citation_warnings": [
+        "claims 215938.0 (million) but no citation marker appears anywhere near it to trace the claim to a source",
+        "claims 1.0 (raw) but no citation marker appears anywhere near it to trace the claim to a source",
+        "claims 2.0 (raw) but no citation marker appears anywhere near it to trace the claim to a source",
+        "claims 3.0 (raw) but no citation marker appears anywhere near it to trace the claim to a source"
+      ],
+      "answer": "I can't confirm this answer against the sources I retrieved -- the following claim(s) don't hold up under citation verification:\n- claims 215938.0 (million) but no citation marker appears anywhere near it to trace the claim to a source\n- claims 1.0 (raw) but no citation marker appears anywhere near it to trace the claim to a source\n- claims 2.0 (raw) but no citation marker appears anywhere near it to trace the claim to a source\n- claims 3.0 (raw) but no citation marker appears anywhere near it to trace the claim to a source\n\nRather than give you a number I can't verify, I'm refusing this answer.",
+      "n_chunks_retrieved": 6,
+      "withheld_answer": "NVIDIA reported total revenue of $215,938 million for fiscal year 2026 in its consolidated financial statements prepared in conformity with U.S. GAAP [1, 2, 3].",
+      "gate_withheld_would_have_passed": true,
+      "gate_withheld_detail": "found matching value: 215938.0 (million)",
+      "citation_warning_details": [
+        {
+          "check": "uncited_claim",
+          "citation_index": null,
+          "value": 215938.0,
+          "unit": "million",
+          "message": "claims 215938.0 (million) but no citation marker appears anywhere near it to trace the claim to a source"
+        },
+        {
+          "check": "uncited_claim",
+          "citation_index": null,
+          "value": 1.0,
+          "unit": "raw",
+          "message": "claims 1.0 (raw) but no citation marker appears anywhere near it to trace the claim to a source"
+        },
+        {
+          "check": "uncited_claim",
+          "citation_index": null,
+          "value": 2.0,
+          "unit": "raw",
+          "message": "claims 2.0 (raw) but no citation marker appears anywhere near it to trace the claim to a source"
+        },
+        {
+          "check": "uncited_claim",
+          "citation_index": null,
+          "value": 3.0,
+          "unit": "raw",
+          "message": "claims 3.0 (raw) but no citation marker appears anywhere near it to trace the claim to a source"
+        }
+      ]
+    }
+  ]
+}

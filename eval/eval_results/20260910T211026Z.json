@@ -1,0 +1,25 @@
+{
+  "backend": "gemini",
+  "answer_model": "gemini-flash-lite-latest",
+  "judge_model": "gemini-flash-lite-latest",
+  "results": [
+    {
+      "id": "msft-three-segments-revenue-q3fy2026",
+      "ticker": [
+        "MSFT"
+      ],
+      "question": "What was Microsoft's revenue for each of its three reportable segments \u2014 Productivity and Business Processes, Intelligent Cloud, and More Personal Computing \u2014 for the three months ended March 31, 2026?",
+      "type": "comparison",
+      "passed": true,
+      "detail": "found matching values for all 3 entities",
+      "has_citation": true,
+      "citation_warnings": [],
+      "answer": "For the three months ended March 31, 2026, Microsoft's revenue for each of its three reportable segments was as follows:\n\n* **Productivity and Business Processes:** $35,013 million (or approximately $35.01 billion) [6]\n* **Intelligent Cloud:** $34,681 million (or approximately $34.68 billion) [6]\n* **More Personal Computing:** $13,192 million (or approximately $13.19 billion) [6]",
+      "n_chunks_retrieved": 10,
+      "withheld_answer": null,
+      "gate_withheld_would_have_passed": null,
+      "gate_withheld_detail": null,
+      "citation_warning_details": []
+    }
+  ]
+}

@@ -1,0 +1,23 @@
+{
+  "backend": "gemini",
+  "answer_model": "gemini-flash-lite-latest",
+  "judge_model": "gemini-flash-lite-latest",
+  "results": [
+    {
+      "id": "aapl-ai-risk",
+      "ticker": "AAPL",
+      "question": "What risks does Apple describe related to artificial intelligence?",
+      "type": "judged",
+      "passed": true,
+      "detail": "The answer explicitly mentions that AI issues create reputational, legal, financial, and competitive risks, and it includes multiple proper citation markers.",
+      "has_citation": true,
+      "citation_warnings": [],
+      "answer": "Apple describes several categories of risks related to artificial intelligence (AI) and machine learning in its SEC filings:\n\n* **Reputational, Competitive, and Financial Harm:** Issues related to AI can cause competitive and reputational harm, financial loss, regulatory actions, and legal liability [1]. Apple notes that it may be unsuccessful in identifying or resolving all potential issues or failures before they arise [1].\n* **Operational, Legal, Ethical, and Strategic Risks:** AI efforts give rise to risks concerning strategy and competition, return on investments and recouping costs, product liability, intellectual property infringement, data privacy, cybersecurity, export controls and sanctions, exposing users to harmful or inaccurate content, bias and discrimination, and online safety and the protection of minors [1].\n* **Cybersecurity and Security Threats:** The rapid advancement of AI significantly increases cyberattack risks [2]. Threat actors use AI to run targeted phishing campaigns, automate vulnerability discovery and exploitation, generate deepfakes to bypass authentication protocols, and accelerate attacks [2]. Furthermore, AI technologies themselves can be susceptible to security threats, and developing and deploying AI may expose Apple and its suppliers to additional vulnerabilities [2].\n* **Infrastructure and Compute Constraints:** Apple\u2019s AI and machine learning offerings depend on access to sufficient computing resources [5]. High industry-wide demand for cloud computing and AI infrastructure has caused constrained supply, extended lead times, and increasing costs [5]. Apple relies on its own data center infrastructure as well as third-party cloud service providers, and if it is unable to secure adequate compute capacity in a timely manner or on commercially reasonable terms, it could limit product functionality, delay new feature deployments, or increase operating costs [5].\n* **Regulatory, Compliance, and Legal Considerations:** Expanding the use of AI and machine learning features requires Apple to navigate new and changing legal, regulatory, and ethical considerations, increasing overall risks and potential compliance costs [4].",
+      "n_chunks_retrieved": 5,
+      "withheld_answer": null,
+      "gate_withheld_would_have_passed": null,
+      "gate_withheld_detail": null,
+      "citation_warning_details": []
+    }
+  ]
+}

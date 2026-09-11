@@ -1,0 +1,101 @@
+{
+  "backend": "gemini",
+  "answer_model": "gemini-flash-lite-latest",
+  "judge_model": "gemini-flash-lite-latest",
+  "results": [
+    {
+      "id": "aapl-rd-pct-gross-profit-fy2025",
+      "ticker": "AAPL",
+      "question": "What percentage of Apple's fiscal year 2025 gross profit was spent on research and development?",
+      "type": "numeric",
+      "passed": false,
+      "detail": "agent refused to answer (hard-gated on unverified citation(s)) -- no value to grade",
+      "has_citation": false,
+      "citation_warnings": [
+        "claims 0.177002 (raw) but no citation marker appears anywhere near it to trace the claim to a source",
+        "claims 17.7 (percent) but no citation marker appears anywhere near it to trace the claim to a source"
+      ],
+      "answer": "I can't confirm this answer against the sources I retrieved -- the following claim(s) don't hold up under citation verification:\n- claims 0.177002 (raw) but no citation marker appears anywhere near it to trace the claim to a source\n- claims 17.7 (percent) but no citation marker appears anywhere near it to trace the claim to a source\n\nRather than give you a number I can't verify, I'm refusing this answer.",
+      "n_chunks_retrieved": 2,
+      "withheld_answer": "For Apple's fiscal year 2025:\n\n* **Gross Profit:** $195,201,000,000 [1]\n* **Research and Development Expense:** $34,550,000,000 [2]\n\nDividing the R&D expense ($34,550,000,000 [2]) by the gross profit ($195,201,000,000 [1]) gives approximately 0.177002, or **17.70%**.",
+      "gate_withheld_would_have_passed": true,
+      "gate_withheld_detail": "found matching value: 17.7 (percent)",
+      "citation_warning_details": [
+        {
+          "check": "uncited_claim",
+          "citation_index": null,
+          "value": 0.177002,
+          "unit": "raw",
+          "message": "claims 0.177002 (raw) but no citation marker appears anywhere near it to trace the claim to a source"
+        },
+        {
+          "check": "uncited_claim",
+          "citation_index": null,
+          "value": 17.7,
+          "unit": "percent",
+          "message": "claims 17.7 (percent) but no citation marker appears anywhere near it to trace the claim to a source"
+        }
+      ]
+    },
+    {
+      "id": "msft-three-segments-revenue-q3fy2026",
+      "ticker": [
+        "MSFT"
+      ],
+      "question": "What was Microsoft's revenue for each of its three reportable segments \u2014 Productivity and Business Processes, Intelligent Cloud, and More Personal Computing \u2014 for the three months ended March 31, 2026?",
+      "type": "comparison",
+      "passed": true,
+      "detail": "found matching values for all 3 entities",
+      "has_citation": true,
+      "citation_warnings": [],
+      "answer": "For the three months ended March 31, 2026, Microsoft's revenue for each of its three reportable segments was as follows:\n\n* **Productivity and Business Processes:** $35,013 million ($35.013 billion) [10]\n* **Intelligent Cloud:** $34,681 million ($34.681 billion) [10]\n* **More Personal Computing:** $13,192 million ($13.192 billion) [10]",
+      "n_chunks_retrieved": 10,
+      "withheld_answer": null,
+      "gate_withheld_would_have_passed": null,
+      "gate_withheld_detail": null,
+      "citation_warning_details": []
+    },
+    {
+      "id": "nvda-revenue-fy26-us-gaap",
+      "ticker": "NVDA",
+      "question": "In one short sentence, state NVIDIA's total revenue for fiscal year 2026 and note that it is presented under U.S. GAAP. Cite a single source.",
+      "type": "numeric",
+      "passed": false,
+      "detail": "agent refused to answer (hard-gated on unverified citation(s)) -- no value to grade",
+      "has_citation": false,
+      "citation_warnings": [
+        "claims 215938.0 (million) but no citation marker appears anywhere near it to trace the claim to a source"
+      ],
+      "answer": "I can't confirm this answer against the sources I retrieved -- the following claim(s) don't hold up under citation verification:\n- claims 215938.0 (million) but no citation marker appears anywhere near it to trace the claim to a source\n\nRather than give you a number I can't verify, I'm refusing this answer.",
+      "n_chunks_retrieved": 6,
+      "withheld_answer": "NVIDIA\u2019s total revenue for fiscal year 2026 was $215,938 million, presented in conformity with U.S. GAAP [3].",
+      "gate_withheld_would_have_passed": true,
+      "gate_withheld_detail": "found matching value: 215938.0 (million)",
+      "citation_warning_details": [
+        {
+          "check": "uncited_claim",
+          "citation_index": null,
+          "value": 215938.0,
+          "unit": "million",
+          "message": "claims 215938.0 (million) but no citation marker appears anywhere near it to trace the claim to a source"
+        }
+      ]
+    },
+    {
+      "id": "nvda-revenue-two-quarter-comparison",
+      "ticker": "NVDA",
+      "question": "Compare NVIDIA's total revenue for the quarter ended April 26, 2026 to the quarter ended April 27, 2025.",
+      "type": "comparison",
+      "passed": true,
+      "detail": "found matching values for all 2 entities",
+      "has_citation": true,
+      "citation_warnings": [],
+      "answer": "NVIDIA's total revenue for the quarter ended April 26, 2026 was **$81,615,000,000** ($81.615 billion) [1]. \n\nFor the comparative prior-year period ended April 27, 2025, NVIDIA's total revenue was **$44,062,000,000** ($44.062 billion) [2]. \n\nThis represents a year-over-year revenue growth of **85.2%** [3].",
+      "n_chunks_retrieved": 3,
+      "withheld_answer": null,
+      "gate_withheld_would_have_passed": null,
+      "gate_withheld_detail": null,
+      "citation_warning_details": []
+    }
+  ]
+}
