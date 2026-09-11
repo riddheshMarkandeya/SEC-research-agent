@@ -14,6 +14,7 @@ agent.py's verify_citations()) — see tests/test_numeric_utils.py.
 import json
 
 import eval_harness
+from agent import AgentResult
 from eval_harness import (
     _grade,
     _select_questions,
@@ -431,7 +432,7 @@ def test_run_eval_isolates_one_questions_exception_from_the_rest(monkeypatch, tm
     def fake_run_agent(question, backend):
         if question == "Q2?":
             raise RuntimeError("Ollama exhausted retries")
-        return f"The answer is {question[1]}.", [], [], None
+        return AgentResult(f"The answer is {question[1]}.", [], [], None, [])
 
     monkeypatch.setattr(eval_harness, "run_agent", fake_run_agent)
     flush_calls = []
@@ -486,11 +487,20 @@ def test_run_eval_records_gate_withheld_would_have_passed_true_for_a_correct_but
     retrieved = [{"text": "value = 100 raw"}]
 
     def fake_run_agent(question, backend):
-        return (
+        return AgentResult(
             "I can't confirm this answer against the sources I retrieved...",
             retrieved,
             ["claims 100.0 (raw) but no citation marker appears anywhere near it to trace the claim to a source"],
             "The value was 100.",
+            [
+                {
+                    "check": "uncited_claim",
+                    "citation_index": None,
+                    "value": 100.0,
+                    "unit": "raw",
+                    "message": "claims 100.0 (raw) but no citation marker appears anywhere near it to trace the claim to a source",
+                }
+            ],
         )
 
     monkeypatch.setattr(eval_harness, "run_agent", fake_run_agent)
@@ -509,11 +519,20 @@ def test_run_eval_records_gate_withheld_would_have_passed_false_for_a_wrong_valu
     retrieved = [{"text": "value = 100 raw"}]
 
     def fake_run_agent(question, backend):
-        return (
+        return AgentResult(
             "I can't confirm this answer against the sources I retrieved...",
             retrieved,
             ["claims 999.0 (raw) but no citation marker appears anywhere near it to trace the claim to a source"],
             "The value was 999.",
+            [
+                {
+                    "check": "uncited_claim",
+                    "citation_index": None,
+                    "value": 999.0,
+                    "unit": "raw",
+                    "message": "claims 999.0 (raw) but no citation marker appears anywhere near it to trace the claim to a source",
+                }
+            ],
         )
 
     monkeypatch.setattr(eval_harness, "run_agent", fake_run_agent)
@@ -529,7 +548,7 @@ def test_run_eval_gate_fields_are_empty_when_the_gate_never_fired(monkeypatch, t
     questions_path = _write_one_numeric_question(tmp_path)
 
     def fake_run_agent(question, backend):
-        return "The value was 100 [1].", [{"text": "value = 100 raw"}], [], None
+        return AgentResult("The value was 100 [1].", [{"text": "value = 100 raw"}], [], None, [])
 
     monkeypatch.setattr(eval_harness, "run_agent", fake_run_agent)
 
@@ -552,7 +571,7 @@ def test_run_eval_backend_default_follows_config(monkeypatch, tmp_path):
 
     def fake_run_agent(question, backend):
         backends_seen.append(backend)
-        return "The value was 100 [1].", [{"text": "value = 100 raw"}], [], None
+        return AgentResult("The value was 100 [1].", [{"text": "value = 100 raw"}], [], None, [])
 
     monkeypatch.setattr(eval_harness, "run_agent", fake_run_agent)
     monkeypatch.setattr(eval_harness, "DEFAULT_BACKEND", "totally-custom-backend")

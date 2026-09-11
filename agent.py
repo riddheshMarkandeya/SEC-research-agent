@@ -27,7 +27,9 @@ Usage:
 """
 
 import argparse
+import difflib
 import re
+import unicodedata
 from collections import Counter
 from typing import NamedTuple
 
@@ -93,10 +95,11 @@ COMPANIES = {ticker: info["name"] for ticker, info in load_companies().items()}
 SYSTEM_PROMPT = f"""You are a financial research assistant answering questions about SEC filings for five companies:
 {chr(10).join(f"- {ticker}: {name}" for ticker, name in COMPANIES.items())}
 
-You have three tools:
+You have four tools:
 - `get_financial_fact` searches structured XBRL data for a small set of standard financial metrics: {", ".join(sorted(DEFAULT_METRIC_TAGS) + sorted(RATIO_DEFINITIONS))}. Prefer this tool FIRST whenever the question asks for one of these specific metrics for a specific fiscal year or fiscal quarter, for ONE company — it returns an exact, unambiguous reported value instead of relying on you to find the right sentence in a filing excerpt. This tool ONLY returns a company's consolidated, company-wide total — it has NO way to get one segment's or one product line's figure (e.g. Microsoft's "Intelligent Cloud" segment, NVIDIA's "Compute & Networking" segment). If a question asks about a specific segment or product line, do NOT call this tool at all, not even to try — go straight to `search_filings` instead. It only works for the metrics listed above and returns "not available" if the company doesn't tag it or the period wasn't recognized — fall back to `search_filings` when that happens, or for anything else this tool doesn't cover (risk factors, narrative discussion, any metric not in the list above). Only pass the arguments this tool actually defines — never invent an extra filter argument (e.g. there is no `segment` parameter); an unrecognized argument is rejected outright, so search_filings instead if you need something this tool doesn't support. To ask for year-over-year growth of one of the raw metrics (not the ratios) instead of its plain value, add `yoy_growth: true` — never compute a growth percentage yourself from two separate calls to this tool, always use this flag. To ask for a multi-year average (e.g. "3-year average operating margin"), pass `start_fiscal_year` and `end_fiscal_year` instead of `fiscal_year`/`fiscal_period`/`period_end_date` — never average multiple years yourself from separate calls, always use these.
 - `compare_financial_metric` gets the SAME metric for ALL FIVE companies at once, for one period. Use this instead of calling `get_financial_fact` five times when a question asks you to compare or rank companies against each other (e.g. "which company had the highest gross margin", "compare revenue across all five companies") — one call instead of five. A company can be missing from the result if it doesn't tag that metric for that period; that's not an error, just note it's unavailable for that company. Note: {", ".join(_SINGLE_COMPANY_ONLY_RATIOS)} are NOT available on this tool (no cross-company version exists) — use `get_financial_fact` once per company for those instead.
 - `search_filings` searches these companies' 10-K/10-Q filings for anything else. Call it once per company if a question spans more than one, and call it again with a different query if your first search doesn't turn up what you need.
+- `submit_answer` delivers your final answer -- this is the ONLY way to answer; never reply with plain text instead. See rule 9 below.
 
 Do not answer from prior knowledge about these companies; every answer must come from what a tool returns.
 
@@ -108,7 +111,8 @@ Rules:
 5. Search results often report the same metric for several different periods in one excerpt — not just in tables, but within a single sentence, e.g. "the rate was 20% for the current quarter, and 18% for the same quarter last year." Before citing a number, check that its stated period exactly matches the period asked about, even when both numbers appear right next to each other in the same sentence — do not substitute a prior-year or prior-quarter value just because it's nearby.
 6. For a question spanning multiple companies, you must query EVERY company mentioned — with `search_filings` if `get_financial_fact` didn't cover it — before writing your final answer. A `get_financial_fact` call returning "not available" for one company is not a reason to stop; it means try `search_filings` for that same company next, and you must still go on to query every other company the question asks about. Do not conclude a company's data is unavailable unless you have actually searched for it.
 7. If `compare_financial_metric` returns fewer than all five companies, your final answer must explicitly name which companies were and weren't covered (e.g. "data was only available for AAPL and PLTR; the others hadn't filed a matching quarter yet") — do not phrase a conclusion as if it covers "all five companies" or similar when it only covers the ones that were actually returned.
-8. ONLY when a single sentence combines facts from two or more DIFFERENT companies (e.g. comparing NVIDIA and Salesforce), put each citation marker immediately after the specific fact it supports, not bundled together at the end — write "NVIDIA's revenue was $81.6 billion [1], while Salesforce's was $11.1 billion [2]." not "NVIDIA's revenue was $81.6 billion, while Salesforce's was $11.1 billion [1][2]." This rule does not add any new requirement to single-company answers or to a refusal under rule 2 — never search for extra facts just to have something to cite per-sentence; a plain, single citation at the end of a normal sentence is already correct and needs no change."""
+8. ONLY when a single sentence combines facts from two or more DIFFERENT companies (e.g. comparing NVIDIA and Salesforce), put each citation marker immediately after the specific fact it supports, not bundled together at the end — write "NVIDIA's revenue was $81.6 billion [1], while Salesforce's was $11.1 billion [2]." not "NVIDIA's revenue was $81.6 billion, while Salesforce's was $11.1 billion [1][2]." This rule does not add any new requirement to single-company answers or to a refusal under rule 2 — never search for extra facts just to have something to cite per-sentence; a plain, single citation at the end of a normal sentence is already correct and needs no change.
+9. Deliver your final answer ONLY by calling `submit_answer` -- never as plain text. Put the reader-facing answer in `answer_text` (citation markers there are for the reader, same as rules 1 and 8 above). For EVERY number in `answer_text`, add a matching entry to `claims`: the value, its unit, which numbered search result it comes from, and the exact supporting text copied verbatim from that result -- do not paraphrase or summarize the quote. A tool's own computed output (e.g. `get_financial_fact` with `yoy_growth: true`, or any ratio metric) is still a single, directly reported value -- quote that result's own text, the same as any other directly-stated number, per rule 3. This rule matters for a number YOU worked out yourself despite rule 3 telling you not to (e.g. you compared two separate results by hand instead of using a tool) -- quote the result(s) it came from, not the number itself, since there is nothing that states it directly. A number with no matching claim at all will be treated as ungrounded and the whole answer refused, so it is better to omit a number you can't support than to state it without a claim."""
 
 SEARCH_TOOL_SCHEMA = {
     "type": "function",
@@ -251,6 +255,79 @@ COMPARE_TOOL_SCHEMA = {
                 },
             },
             "required": ["anchor_ticker", "metric"],
+            "additionalProperties": False,
+        },
+    },
+}
+
+# 2026-09-10 -- see docs/plans/2026-09-10-structured-claims-citation-verification.md.
+# Deliberately NOT in mcp_server.py's _TOOL_SCHEMAS: this is a final-answer
+# mechanism internal to agent.py's own tool-calling loop (the model's
+# structured "here is my answer" instead of free text), not something an
+# external MCP client would ever want to call itself.
+#
+# `unit`'s enum is exactly numeric_utils.normalize()'s vocabulary --
+# "raw" and "percent" pass through normalize() unchanged (multiplier 1.0,
+# UNIT_MULTIPLIERS.get(unit, 1.0)), "thousand"/"million"/"billion" are its
+# declared keys. Keeping this list explicit rather than deriving it from
+# UNIT_MULTIPLIERS.keys() because "raw"/"percent" aren't IN that dict (they're
+# normalize()'s two special-cased categories) -- deriving would silently
+# drop them, not add them.
+_CLAIM_UNITS = ["raw", "thousand", "million", "billion", "percent"]
+
+SUBMIT_TOOL_SCHEMA = {
+    "type": "function",
+    "function": {
+        "name": "submit_answer",
+        "description": (
+            "Deliver your final answer. This is the ONLY way to answer -- do not reply with plain "
+            "text instead. `answer_text` is what the user reads; `claims` is a structured list of "
+            "every numeric fact in it, each tied to the specific search result it comes from. Every "
+            "number stated in `answer_text` must have a matching entry in `claims` -- a number with "
+            "no matching claim will be treated as ungrounded and the whole answer refused. `claims` "
+            "may be empty for a qualitative or refusal answer with no numbers to ground."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "answer_text": {
+                    "type": "string",
+                    "description": (
+                        "The full final answer, formatted for the user. You may still include [n] "
+                        "citation markers here for readability, matching the search result numbering "
+                        "-- they are for the reader, not for grounding, which claims below handles."
+                    ),
+                },
+                "claims": {
+                    "type": "array",
+                    "description": "One entry per numeric fact stated in answer_text.",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "value": {"type": "number", "description": "The numeric value, e.g. 72.4 for $72.4 billion."},
+                            "unit": {
+                                "type": "string",
+                                "enum": _CLAIM_UNITS,
+                                "description": "raw (a plain count/dollar amount with no scale word), thousand, million, billion, or percent.",
+                            },
+                            "citation_index": {
+                                "type": "integer",
+                                "description": "Which numbered search result (as shown to you, 1-based) this value comes from.",
+                            },
+                            "quote": {
+                                "type": "string",
+                                "description": (
+                                    "The exact text from that search result supporting this value -- "
+                                    "copy it verbatim, do not paraphrase or summarize it."
+                                ),
+                            },
+                        },
+                        "required": ["value", "unit", "citation_index", "quote"],
+                        "additionalProperties": False,
+                    },
+                },
+            },
+            "required": ["answer_text", "claims"],
             "additionalProperties": False,
         },
     },
@@ -776,6 +853,23 @@ def _comparison_as_results(data: dict[str, dict], metric: str) -> list[dict]:
 _CITATION_MARKER = re.compile(r"\[(\d+)\]")
 _CITATION_WINDOW_CHARS = 150
 
+# Broader than _CITATION_MARKER on purpose: matches a comma-separated
+# multi-source bracket like "[1, 3, 5]" too, not just a single-index
+# "[1]". _CITATION_MARKER can't just be widened to cover this -- the OLD
+# prose pipeline below (_iter_citation_claims/_iter_uncited_claims) walks
+# it marker-by-marker via finditer() and reads group(1) as ONE index, so
+# widening it would break that per-index logic, not just the pattern.
+# This one exists solely for verify_claims()'s coverage check, which
+# only needs to strip citation-marker-SHAPED text before scanning for
+# numbers -- it never reads the indices out. Real false positive found
+# live 2026-09-11 (41-question baseline re-run): a multi-source bracket
+# like "[1, 3, 5]" survived _CITATION_MARKER.sub() untouched, so its bare
+# digits 1/3/5 were themselves extracted as spurious uncovered-number
+# claims and refused an otherwise fully-grounded answer -- the same
+# marker-format gap BACKLOG.md already tracked for the prose fallback
+# path, turning out to also hit this newer coverage check.
+_ANY_CITATION_BRACKET = re.compile(r"\[\s*\d+(?:\s*,\s*\d+)*\s*\]")
+
 # Text that looks number-shaped but isn't a claim to verify -- stripped
 # from the claim window before extraction, not from numeric_utils.py's
 # shared extract_numbers() itself, since grade_numeric() doesn't have
@@ -798,18 +892,141 @@ _CITATION_WINDOW_CHARS = 150
 #     and "10" isn't glued to a preceding letter (there's a space before
 #     it), so the digit-glued-to-letter fix in numeric_utils.py doesn't
 #     catch it.
+#   - "Note 1"/"Note 12" (a footnote/financial-statement-note reference)
+#     and "3-year"/"5-day" (an ordinal/count phrase, often echoing the
+#     question's own wording, e.g. "3-year average operating margin") --
+#     both added 2026-09-10 (see
+#     docs/plans/2026-09-10-structured-claims-citation-verification.md),
+#     found live verifying the structured-claims coverage check inherits
+#     this same prose-noise problem: a bare `1` from "Note 1" or `3` from
+#     "3-year" sitting near a real citation gets treated as its own
+#     spurious claim. Confirmed live: the 41-question baseline's
+#     `aapl-3yr-avg-operating-margin-fy2023-fy2025` was wrongly refused
+#     this exact way (BACKLOG.md).
 _NON_CLAIM_PATTERN = re.compile(
     r"\b(?:January|February|March|April|May|June|July|August|September|October|November|December)"
-    r"\s+\d{1,2},?\s+\d{4}\b|\b\d{4}-\d{2}-\d{2}\b|\b(?:19|20)\d{2}\b|\b10-[KQ]\b",
+    r"\s+\d{1,2},?\s+\d{4}\b|\b\d{4}-\d{2}-\d{2}\b|\b(?:19|20)\d{2}\b|\b10-[KQ]\b"
+    r"|\bNote\s+\d+\b|\b\d+-(?:year|day)s?\b",
     re.IGNORECASE,
 )
 
 
-def _source_number_candidates(source_text: str) -> list[tuple[str, float]]:
-    """Every (category, comparable_number) a source chunk's text could
-    plausibly support -- not just each number under its own immediately-
-    adjacent unit, but also each bare/raw number under any unit word the
-    chunk mentions ANYWHERE.
+# ---------------------------------------------------------------------------
+# Structured-claims quote grounding (2026-09-10) -- verifies a
+# submit_answer claim's `quote` genuinely appears in its cited source
+# chunk, allowing for reformatting/paraphrase but not fabrication. See
+# docs/plans/2026-09-10-structured-claims-citation-verification.md for
+# the full design reasoning behind every choice below.
+# ---------------------------------------------------------------------------
+_QUOTE_MIN_CHARS = 15  # a 2-character quote like "$5" would match almost any source trivially
+_QUOTE_COVERAGE_THRESHOLD = 0.90
+_QUOTE_ANCHOR_CHARS = 30  # a real quote's whole span usually appears as one long contiguous match
+# A bare-number quote (no surrounding prose -- e.g. quoting an XBRL fact's
+# raw value directly, "391035000000") needs a different length bar than
+# prose: DIGIT count, not character count, is what makes a number
+# specific enough to trust. Found live (2026-09-10, running the newly-
+# wired agent loop end to end): the model quoted just an XBRL fact's bare
+# number with no surrounding "revenue = ... USD" context, and 12
+# normalized characters is under _QUOTE_MIN_CHARS (15), so a completely
+# correct, unambiguous quote was wrongly rejected as "too short to
+# verify" -- forcing an unnecessary retry/refusal on an otherwise-correct
+# answer. A 6+ digit number is astronomically unlikely to match by
+# coincidence even though it's short as text.
+_BARE_NUMBER_MIN_DIGITS = 6
+
+
+def _normalize_for_match(text: str) -> str:
+    """Collapses cosmetic differences that would otherwise defeat quote
+    matching without weakening what's actually being verified: NFKC
+    normalization folds curly quotes/en-dashes/other Unicode
+    compatibility variants Gemini routinely re-renders (e.g. a straight
+    "-" restated as an em dash) into one canonical form; casefold() is a
+    stronger case-insensitive comparison than .lower() for non-ASCII
+    text; collapsing whitespace runs handles a quote that wraps
+    differently than the source (a mid-sentence line break, doubled
+    spaces from table formatting)."""
+    text = unicodedata.normalize("NFKC", text)
+    text = text.casefold()
+    return " ".join(text.split())
+
+
+def _quote_is_long_enough(quote_norm: str) -> bool:
+    """Shared length gate for a normalized quote, used by both
+    _quote_matches() and _verify_one_claim()'s own pre-check -- pulled
+    out as its own function after a 2026-09-10 code review found the two
+    call sites had drifted: _verify_one_claim() still ran a plain
+    len(quote_norm) < _QUOTE_MIN_CHARS check of its own, missing the
+    digit-count exception below, so it silently reproduced the exact
+    bare-XBRL-number false positive that exception exists to fix. See
+    _BARE_NUMBER_MIN_DIGITS's own comment for why a short-as-text bare
+    number can still be long/specific enough to trust."""
+    digit_count = sum(ch.isdigit() for ch in quote_norm)
+    return len(quote_norm) >= _QUOTE_MIN_CHARS or digit_count >= _BARE_NUMBER_MIN_DIGITS
+
+
+def _quote_matches(quote: str, source: str) -> bool:
+    """True if `quote` is genuinely present in `source`, allowing for
+    reformatting/paraphrase but not fabrication.
+
+    A quote shorter than _QUOTE_MIN_CHARS (normalized) is rejected
+    outright -- too short to tell a real match from a coincidence.
+
+    Exact-substring match (after normalization) is the fast path.
+    Otherwise falls back to a COVERAGE ratio via difflib.SequenceMatcher
+    -- deliberately NOT .ratio(), which scores a short quote against a
+    much longer chunk near zero even on exact containment (ratio is
+    symmetric -- 2*matches/(len(a)+len(b)) -- but "is the quote IN the
+    source" is not a symmetric relationship: it cares only how much of
+    the QUOTE is covered, not how much of the source is). Coverage is
+    the sum of matched-block lengths divided by the quote's own length.
+
+    `autojunk=False` is mandatory, not a style choice: SequenceMatcher's
+    autojunk heuristic is keyed off len(b) -- here, the QUOTE
+    (quote_norm is passed as the third/`b` argument below, source_norm
+    as the second/`a`), not the source chunk. Once a quote reaches 200+
+    normalized characters, autojunk treats any character appearing in
+    more than ~1% of IT as "popular" junk excluded from the initial
+    anchor search -- effectively every common letter in ordinary prose
+    -- and match quality collapses silently (no error, just a wrong low
+    score) whenever the quote also isn't a clean exact substring of the
+    source. Covered by a dedicated regression test (which actually
+    exercises this by building a 200+ character QUOTE, not just a long
+    source -- an earlier version of that test got this backwards), not
+    assumed to stay correct.
+
+    The `longest`-contiguous-block floor guards the coverage metric's one
+    real weakness: get_matching_blocks() finds a common SUBSEQUENCE, not
+    a single contiguous match, so a fabricated quote assembled from words
+    scattered across the source could otherwise accumulate high coverage
+    from many small, unrelated fragments. Requiring one long contiguous
+    run makes that construction much harder to pass by accident.
+
+    Length gate accepts EITHER _QUOTE_MIN_CHARS of prose OR
+    _BARE_NUMBER_MIN_DIGITS of digits -- see that constant's own comment
+    for why a short-as-text bare number can still be long/specific
+    enough to trust (found live: a bare XBRL value like "391035000000"
+    is 12 characters, under 15, but is exactly the kind of quote this
+    exists to accept, not reject)."""
+    quote_norm = _normalize_for_match(quote)
+    if not _quote_is_long_enough(quote_norm):
+        return False
+    source_norm = _normalize_for_match(source)
+    if quote_norm in source_norm:
+        return True
+    matcher = difflib.SequenceMatcher(None, source_norm, quote_norm, autojunk=False)
+    blocks = matcher.get_matching_blocks()
+    coverage = sum(b.size for b in blocks) / len(quote_norm)
+    longest = max((b.size for b in blocks), default=0)
+    return coverage >= _QUOTE_COVERAGE_THRESHOLD and longest >= min(_QUOTE_ANCHOR_CHARS, len(quote_norm))
+
+
+def _number_candidates(text: str, *, unit_source: str | None = None) -> list[tuple[str, float]]:
+    """Every (category, comparable_number) `text` could plausibly
+    support -- not just each number under its own immediately-adjacent
+    unit, but also each bare/raw number reinterpreted under any unit
+    word mentioned ANYWHERE in `unit_source` (defaulting to `text`
+    itself, which is byte-for-byte the original, single-argument
+    behavior this generalizes -- see below).
 
     SEC filing tables routinely state a unit once in a caption
     ("Remaining performance obligation consisted of the following (in
@@ -823,12 +1040,24 @@ def _source_number_candidates(source_text: str) -> list[tuple[str, float]]:
     exactly the simple, correctly-answered questions it should be most
     reliable on. This only ADDS candidate interpretations (a raw number
     can still also match as raw) -- it never removes a way for a
-    genuine mismatch to be caught."""
-    numbers = extract_numbers(source_text)
+    genuine mismatch to be caught.
+
+    `unit_source` (2026-09-10, originally named _source_number_candidates
+    with no such parameter -- see
+    docs/plans/2026-09-10-structured-claims-citation-verification.md) is
+    what lets the structured-claims verifier check a claim's short
+    `quote` (which usually won't itself restate a caption-only unit)
+    against its cited chunk's full text as the place the caption lives,
+    without requiring the model to have copied the caption into the
+    quote. The old prose-verification path (_iter_citation_claims below)
+    still calls this with a single argument, so unit_source defaults to
+    `text` and that path's behavior is completely unchanged."""
+    source = text if unit_source is None else unit_source
+    numbers = extract_numbers(text)
     candidates = [normalize(v, u) for v, u in numbers]
-    text_lower = source_text.lower()
+    source_lower = source.lower()
     for caption_unit in UNIT_MULTIPLIERS:
-        if caption_unit in text_lower:
+        if caption_unit in source_lower:
             candidates.extend(normalize(v, caption_unit) for v, u in numbers if u == "raw")
     return candidates
 
@@ -864,7 +1093,7 @@ def _iter_citation_claims(answer_text: str, all_results: list[dict]):
         if not claimed:
             continue
 
-        source_normalized = _source_number_candidates(all_results[n - 1]["text"])
+        source_normalized = _number_candidates(all_results[n - 1]["text"])
         for value, unit in claimed:
             category, norm = normalize(value, unit)
             tolerance = max(0.01 * abs(norm), 0.05)
@@ -1153,6 +1382,126 @@ def value_is_citation_verified(value: float, unit: str, answer_text: str, all_re
     return True if not matches else any(matches)
 
 
+def _verify_one_claim(claim: dict, all_results: list[dict]) -> "CitationWarning | None":
+    """Checks one submit_answer claim against its own cited source:
+    citation index in range, quote long enough to mean anything, quote
+    genuinely present in that source (_quote_matches), and the claimed
+    value actually attributable to that quote specifically (via
+    _number_candidates, using the FULL source chunk as unit_source so a
+    caption-only unit still resolves -- see that function's own
+    docstring). Returns None when all four pass. Checked in this order
+    deliberately: each later check assumes the earlier ones already
+    held (there's no source to check a value against until the index is
+    known valid; no point fuzzy-matching a quote too short to mean
+    anything)."""
+    n = claim["citation_index"]
+    value, unit, quote = claim["value"], claim["unit"], claim["quote"]
+    if not (1 <= n <= len(all_results)):
+        return CitationWarning(
+            check="citation_out_of_range",
+            citation_index=n,
+            value=value,
+            unit=unit,
+            message=f"[{n}] is not a valid citation index -- results are numbered 1-{len(all_results)}",
+        )
+    source_text = all_results[n - 1]["text"]
+    if not _quote_is_long_enough(_normalize_for_match(quote)):
+        return CitationWarning(
+            check="quote_too_short",
+            citation_index=n,
+            value=value,
+            unit=unit,
+            message=f"[{n}] claims {value} ({unit}) but its quote {quote!r} is too short to verify",
+        )
+    if not _quote_matches(quote, source_text):
+        return CitationWarning(
+            check="quote_not_found",
+            citation_index=n,
+            value=value,
+            unit=unit,
+            message=f"[{n}] claims {value} ({unit}) but the quoted text doesn't appear in source [{n}]",
+        )
+    category, norm = normalize(value, unit)
+    tolerance = max(0.01 * abs(norm), 0.05)
+    quote_candidates = _number_candidates(quote, unit_source=source_text)
+    if not any(c == category and abs(v - norm) <= tolerance for c, v in quote_candidates):
+        return CitationWarning(
+            check="value_not_in_quote",
+            citation_index=n,
+            value=value,
+            unit=unit,
+            message=f"[{n}] claims {value} ({unit}) but that value doesn't appear in the quoted text",
+        )
+    return None
+
+
+def verify_claims(claims: list[dict], all_results: list[dict], question: str, answer_text: str) -> list["CitationWarning"]:
+    """Structured-claims counterpart to collect_citation_warnings() above,
+    used when the model answers via submit_answer (SUBMIT_TOOL_SCHEMA)
+    instead of free-text prose with [n] markers. See
+    docs/plans/2026-09-10-structured-claims-citation-verification.md for
+    the full design.
+
+    Two passes: first, each claim is checked independently against its
+    own cited source (_verify_one_claim) -- citation index in range,
+    quote long enough, quote genuinely present in that source, and the
+    claimed value attributable to that specific quote. Second, a
+    COVERAGE cross-check scans `answer_text` for numbers and requires
+    each to match some claim's normalized (value, unit) within the same
+    1%-relative/0.05-floor tolerance grade_numeric() uses -- this is what
+    stops the model from writing an ungrounded number in prose while
+    conveniently leaving it out of `claims` to dodge the first pass.
+
+    A number that also appears in `question` is exempt from the coverage
+    check: it's the model repeating what the user asked, not a claim the
+    model is asserting (kills "3-year"-shaped noise and date/fiscal-year
+    echoes at the source, without needing a claims entry for them) --
+    see docs/plans's own accepted-tradeoff note on this. `_NON_CLAIM_PATTERN`
+    (dates, bare years, 10-K/10-Q, Note N, N-year/N-day) is stripped from
+    both `question` and `answer_text` before extraction, same noise
+    filter collect_citation_warnings() already relies on."""
+    warnings = [w for w in (_verify_one_claim(c, all_results) for c in claims) if w is not None]
+
+    claimed_normalized = [normalize(c["value"], c["unit"]) for c in claims]
+    question_numbers = extract_numbers(_NON_CLAIM_PATTERN.sub("", question))
+    # Strip [n]/[n, m, ...] citation markers before extracting --
+    # otherwise a bare digit INSIDE a marker (e.g. the "1" in "[1]", or
+    # each of 1/3/5 in a multi-source "[1, 3, 5]") is itself picked up as
+    # its own spurious uncovered claim. _ANY_CITATION_BRACKET (not
+    # _CITATION_MARKER) specifically to also catch the multi-index form
+    # -- see that constant's own comment.
+    answer_numbers = extract_numbers(_NON_CLAIM_PATTERN.sub("", _ANY_CITATION_BRACKET.sub("", answer_text)))
+
+    def _covered(category: str, norm: float, tolerance: float) -> bool:
+        if any(c == category and abs(v - norm) <= tolerance for c, v in claimed_normalized):
+            return True
+        for q_value, q_unit in question_numbers:
+            q_category, q_norm = normalize(q_value, q_unit)
+            if q_category == category and abs(q_norm - norm) <= tolerance:
+                return True
+        return False
+
+    seen_uncovered: set[tuple[str, float]] = set()
+    for value, unit in answer_numbers:
+        category, norm = normalize(value, unit)
+        if _covered(category, norm, max(0.01 * abs(norm), 0.05)):
+            continue
+        key = (category, norm)
+        if key in seen_uncovered:
+            continue
+        seen_uncovered.add(key)
+        warnings.append(
+            CitationWarning(
+                check="uncovered_number",
+                citation_index=None,
+                value=value,
+                unit=unit,
+                message=f"claims {value} ({unit}) but no claim in your submit_answer call covers it",
+            )
+        )
+    return warnings
+
+
 # Backends allowed to get the citation-verification retry (see
 # _should_retry_for_citations below). Gated to Gemini only, decided
 # 2026-08-25 after live-verifying both backends: this exact mechanism
@@ -1179,12 +1528,31 @@ def _should_retry_for_citations(citation_warnings: list[str], already_retried: b
     return bool(citation_warnings) and not already_retried and backend in _CITATION_RETRY_BACKENDS
 
 
+# Shared wording, extracted 2026-09-10 so the prose-retry message below
+# and the structured-claims retry message (_format_claim_retry_message,
+# added the same day for submit_answer) can't drift apart -- both target
+# the same two live failure modes documented on
+# _format_citation_retry_message below, and there's no reason a future
+# wording tweak to one should silently leave the other behind.
+_CITATION_RETRY_GUIDANCE = (
+    "Before answering again, check whether any of the search results ALREADY "
+    "shown earlier in this conversation actually support each flagged claim -- "
+    "the right source may already be there under a different citation number. "
+    "If you find proper support, restate the claim with the correct citation. "
+    "If, after checking, a value genuinely isn't supported by any result shown, "
+    "say so plainly and refuse that specific claim instead of guessing -- an "
+    "honest answer that the sources don't support it is a completely acceptable "
+    "outcome here. Do not invent, estimate, or approximate a number to replace "
+    "an unverified one."
+)
+
+
 def _format_citation_retry_message(answer: str, citation_warnings: list[str]) -> str:
     """Builds the corrective follow-up message for a one-time citation
     retry (see run_agent() and docs/plans/2026-08-24-
     citation-retry-loop-design.md). Revisits Week 5j's reverted attempt,
-    with wording that directly targets the two live failure modes that
-    caused that revert:
+    with wording (_CITATION_RETRY_GUIDANCE above) that directly targets
+    the two live failure modes that caused that revert:
 
     1. aapl-employees-fy25's retry gave up entirely instead of checking
        the 4 OTHER already-retrieved chunks for a valid citation -- so
@@ -1203,15 +1571,29 @@ def _format_citation_retry_message(answer: str, citation_warnings: list[str]) ->
         f"{warnings_block}\n\n"
         "Your previous answer was:\n"
         f"{answer}\n\n"
-        "Before answering again, check whether any of the search results ALREADY "
-        "shown earlier in this conversation actually support each flagged claim -- "
-        "the right source may already be there under a different citation number. "
-        "If you find proper support, restate the claim with the correct citation. "
-        "If, after checking, a value genuinely isn't supported by any result shown, "
-        "say so plainly and refuse that specific claim instead of guessing -- an "
-        "honest answer that the sources don't support it is a completely acceptable "
-        "outcome here. Do not invent, estimate, or approximate a number to replace "
-        "an unverified one."
+        f"{_CITATION_RETRY_GUIDANCE}"
+    )
+
+
+def _format_claim_retry_message(answer_text: str, warnings: list["CitationWarning"]) -> str:
+    """Structured-claims counterpart to _format_citation_retry_message
+    above, used for a submit_answer retry (2026-09-10) instead of a
+    prose one -- see
+    docs/plans/2026-09-10-structured-claims-citation-verification.md.
+    Reuses the exact same hard-won guidance via _CITATION_RETRY_GUIDANCE
+    so both retry flavors stay consistent by construction, not by
+    copy-paste discipline. Delivered as a submit_answer tool RESULT
+    (types.Part.from_function_response), not a plain follow-up turn --
+    see the loop's own comment for why a dangling function call followed
+    by a bare user turn is worth avoiding."""
+    warnings_block = "\n".join(f"- {w.message}" for w in warnings)
+    return (
+        "Your previous submit_answer call had at least one claim that doesn't hold up:\n"
+        f"{warnings_block}\n\n"
+        "Your previous answer_text was:\n"
+        f"{answer_text}\n\n"
+        f"{_CITATION_RETRY_GUIDANCE}\n\n"
+        "Call submit_answer again with the corrected answer_text and claims."
     )
 
 
@@ -1232,6 +1614,48 @@ def _format_refusal_message(warnings: list[str]) -> str:
     )
 
 
+# Backends allowed to FORCE a submit_answer call when the model replies
+# with plain text instead of any tool call (2026-09-10). A separate set
+# from _CITATION_RETRY_BACKENDS above -- currently identical membership,
+# but the two represent different policies (which backends get a
+# citation retry vs. which backends get forced tool choice) that could
+# diverge later, and conflating them would make a future change to one
+# silently change the other. Gemini only: confirmed via design research
+# that `types.FunctionCallingConfig(mode="ANY", ...)` is a genuine hard
+# constraint on Gemini, while Ollama has no tool_choice/tool_config
+# equivalent at all (neither its native /api/chat nor its OpenAI-
+# compatible endpoint support it -- Ollama issues #8421, #11171) --
+# `force_tool` is still accepted by Ollama's *_send* functions for
+# interface uniformity, it just has no effect there.
+_FORCED_SUBMIT_BACKENDS = {"gemini"}
+
+_FORCE_SUBMIT_MESSAGE = "Please provide your final answer now by calling submit_answer."
+
+
+def _partition_submit_call(tool_calls: list[dict]) -> tuple[dict | None, list[dict]]:
+    """Splits one turn's normalized tool_calls into (the submit_answer
+    call, if present, else None) and (every OTHER call, in order). Lets
+    the loop tell a pure submission from a mixed submit+search turn
+    without giving _dispatch_tool_call's return type a str|Terminal
+    union just to encode "this call ends the conversation" -- the loop
+    already knows which call that is from this partition alone.
+
+    At most one call is ever treated as the submission: if a turn somehow
+    includes more than one submit_answer call (no real-world reason to,
+    but not schema-forbidden), only the FIRST is returned as `submit`;
+    any additional ones land in `other`, where the loop's mixed-turn
+    handling will tell the model to resubmit once instead of silently
+    picking one arbitrarily."""
+    submit = None
+    other = []
+    for call in tool_calls:
+        if call["name"] == "submit_answer" and submit is None:
+            submit = call
+        else:
+            other.append(call)
+    return submit, other
+
+
 AgentResult = NamedTuple(
     "AgentResult",
     [
@@ -1239,6 +1663,7 @@ AgentResult = NamedTuple(
         ("results", list[dict]),
         ("citation_warnings", list[str]),  # unchanged shape/strings -- every existing caller's contract
         ("withheld_answer", str | None),  # the model's actual answer text iff the gate refused it, else None
+        ("citation_warning_details", list[dict]),  # [w._asdict() for w in warnings] -- see _finalize_answer
     ],
 )
 
@@ -1274,10 +1699,18 @@ def _finalize_answer(
     docstring) whenever it refuses, since this is the one place a real
     answer gets thrown away and, until now, nothing recorded that it
     happened. `backend`/`retried` are keyword-only so the two flags can't
-    be swapped positionally."""
+    be swapped positionally.
+
+    `citation_warning_details` (2026-09-10, structured-claims work) is
+    populated directly from `warnings` here -- NOT re-derived by a second
+    pass elsewhere -- so `eval_harness._citation_gate_evidence()` can stop
+    calling collect_citation_warnings() (the PROSE checker) on a refusal
+    that might have come from the STRUCTURED checker instead, which could
+    otherwise silently disagree with what actually refused it."""
     messages = [w.message for w in warnings]
+    details = [w._asdict() for w in warnings]
     if not warnings:
-        return AgentResult(answer, all_results, messages, None)
+        return AgentResult(answer, all_results, messages, None, details)
 
     log_event(
         "citation_gate_refused",
@@ -1288,7 +1721,7 @@ def _finalize_answer(
         warnings=messages,
         withheld_answer=answer,
     )
-    return AgentResult(_format_refusal_message(messages), all_results, messages, answer)
+    return AgentResult(_format_refusal_message(messages), all_results, messages, answer, details)
 
 
 def _format_citation_key(all_results: list[dict]) -> str:
@@ -1399,20 +1832,18 @@ def run_agent(question: str, backend: str | None = None, verbose: bool = False) 
     hardcoded `= "ollama"` default had, just with an extra layer of
     indirection that made it easy to miss.
 
-    `citation_checks` in the span output re-derives the per-check counts
-    from whichever text was actually checked (the withheld answer if the
-    gate refused, else the returned answer) via collect_citation_warnings
-    -- deliberately NOT parsed out of the warning strings themselves,
-    which would reintroduce exactly the wording-inference fragility this
-    whole change is trying to move away from. Re-deriving here (rather
-    than threading _finalize_answer's own already-computed dict back out
-    through AgentResult) is a deliberate, cheap tradeoff: it's one more
-    regex pass over already-short answer text, in exchange for not
-    growing AgentResult's public shape for an internal span-logging
-    detail. _count_citation_checks() is shared with _finalize_answer so
-    the two don't hand-roll the same accumulation loop independently.
-    The withheld answer text itself is never put in this span's output
-    -- it goes to _finalize_answer's log_event call only, which is
+    `citation_checks` in the span output reads the per-check counts
+    straight from `result.citation_warning_details` (AgentResult's 5th
+    field, added 2026-09-10) -- previously this re-derived them by
+    calling collect_citation_warnings() (the PROSE checker) a second
+    time on the withheld/returned text, which would silently disagree
+    with whatever ACTUALLY refused the answer once a structured-path
+    refusal could exist (collect_citation_warnings can't see a
+    quote_not_found/value_not_in_quote/etc. failure at all -- those only
+    ever come from verify_claims()). Reading the field _finalize_answer
+    already computed removes both that risk and the redundant regex
+    pass. The withheld answer text itself is never put in this span's
+    output -- it goes to _finalize_answer's log_event call only, which is
     local-JSONL-only by design (see tracing.log_event's docstring): the
     whole point of withholding it is that it isn't trustworthy, so it
     must not leave the machine via the Langfuse-forwarding path
@@ -1420,12 +1851,11 @@ def run_agent(question: str, backend: str | None = None, verbose: bool = False) 
     backend = backend or DEFAULT_BACKEND
     with traced_span("agent", "run_agent", input={"question": question, "backend": backend}) as span:
         result = _run_agent_impl(question, backend, verbose)
-        checked_text = result.withheld_answer if result.withheld_answer is not None else result.answer
         span.update(
             output={
                 "answer": result.answer,
                 "citation_warnings": result.citation_warnings,
-                "citation_checks": _count_citation_checks(collect_citation_warnings(checked_text, result.results)),
+                "citation_checks": dict(Counter(d["check"] for d in result.citation_warning_details)),
                 "result_count": len(result.results),
             }
         )
@@ -1441,48 +1871,139 @@ def _run_agent_impl(question: str, backend: str, verbose: bool = False) -> Agent
     AgentResult: the answer text, every chunk retrieved across all tool
     calls (in the same global [n] order the model was shown them in —
     this is what lets the printed citation key line up with the model's
-    citations), any citation-verification warnings from
-    collect_citation_warnings(), and (2026-09-10) the model's actual
-    withheld answer text whenever the hard gate refused. Week 7 hard
-    gate: every return site routes through _finalize_answer(), which
-    withholds the model's actual answer text in favor of a refusal
-    (_format_refusal_message()) whenever those warnings are non-empty --
-    so a non-empty `citation_warnings` means AgentResult.answer IS the
-    refusal, not the (unverifiable) original, which is preserved
-    separately as AgentResult.withheld_answer instead.
+    citations), any citation-verification warnings, and the model's
+    actual withheld answer text whenever the hard gate refused. Every
+    return site routes through _finalize_answer(), which withholds the
+    model's actual answer text in favor of a refusal whenever those
+    warnings are non-empty.
+
+    A final answer arrives one of two ways (2026-09-10, see
+    docs/plans/2026-09-10-structured-claims-citation-verification.md):
+
+    - `submit_answer` (SUBMIT_TOOL_SCHEMA), the preferred path: claims
+      are structured data (value/unit/citation_index/quote), verified by
+      verify_claims() -- fuzzy quote grounding, value attribution, and a
+      coverage cross-check -- instead of regex-parsed out of prose.
+      Offered as a 4th tool alongside the other 3 from turn 1, under AUTO
+      mode, for BOTH backends (not gated by backend): Gemini's own
+      forcing mode can itself occasionally still return text, and a
+      forced follow-up can fail or exhaust the budget, so the prose
+      fallback below can never be fully deleted regardless of backend --
+      once that's true, gating Ollama out of the structured path the
+      model might spontaneously use anyway buys nothing. Confirmed live
+      (tests/manual/verify_submit_answer.py) that BOTH backends call it
+      correctly and spontaneously in practice.
+    - Plain text, the fallback: verified by the original,
+      completely-unchanged prose pipeline (collect_citation_warnings()).
+      For Ollama this is the ONLY path, since it has no forcing
+      mechanism at all (confirmed: neither its native nor OpenAI-
+      compatible API supports tool_choice). For Gemini, a text reply
+      instead triggers ONE forced ANY+submit_answer-only follow-up turn
+      first (_FORCED_SUBMIT_BACKENDS) before ever falling back to prose
+      -- so Gemini only reaches the prose path if forcing itself didn't
+      produce a clean submission.
 
     Known simplification: no deduplication if two tool calls happen to
     surface the same chunk (e.g. two related queries against the same
     company). Fine for now — a duplicate citation is cosmetic, not a
     correctness problem — but worth revisiting if it gets noisy.
 
-    One self-correction retry on an unverified citation, revisited
-    2026-08-24 against the swappable-backend layer (originally tried
-    and reverted in Week 5j -- see PROJECT_CONTEXT.md and
-    docs/plans/2026-08-24-citation-retry-loop-design.md).
-    Gated to Gemini only (see _CITATION_RETRY_BACKENDS) -- decided
-    2026-08-25 after live-verifying both backends showed no regression
-    on this particular run, but Ollama's documented history with this
-    exact mechanism (and its own run-to-run noise) wasn't outweighed by
-    one clean re-run."""
+    One self-correction retry on an unverified citation/claim, shared
+    across whichever path produced the answer (retried_for_citations
+    caps the whole conversation at one retry total, not one per path) --
+    revisited 2026-08-24 against the swappable-backend layer (originally
+    tried and reverted in Week 5j -- see PROJECT_CONTEXT.md and
+    docs/plans/2026-08-24-citation-retry-loop-design.md). Gated to
+    Gemini only (see _CITATION_RETRY_BACKENDS) -- decided 2026-08-25
+    after live-verifying both backends showed no regression on that
+    particular run, but Ollama's documented history with this exact
+    mechanism (and its own run-to-run noise) wasn't outweighed by one
+    clean re-run. The structured-claims retry (2026-09-10) reuses this
+    same gate and budget, just delivers its feedback as a submit_answer
+    tool RESULT instead of a plain follow-up turn -- keeps the chat
+    history well-formed (a dangling function call followed by a bare
+    user turn has historically 400'd on Gemini) and needs no new
+    plumbing, since it's exactly what send_tool_results already does."""
     start, send_tool_results, send_followup = BACKENDS[backend]
-    tool_schemas = [FACT_TOOL_SCHEMA, COMPARE_TOOL_SCHEMA, SEARCH_TOOL_SCHEMA]
+    tool_schemas = [FACT_TOOL_SCHEMA, COMPARE_TOOL_SCHEMA, SEARCH_TOOL_SCHEMA, SUBMIT_TOOL_SCHEMA]
     state, turn = start(question, SYSTEM_PROMPT, tool_schemas)
     all_results: list[dict] = []
     searched_tickers: set[str | None] = set()
     calls_made = 1
     retried_for_citations = False
-    # Preserved so a citation retry that consumes the last iteration
-    # budget can't discard an already-produced, merely-warned answer in
-    # favor of the generic timeout message below -- found in code
-    # review (2026-08-25): if the retry's own follow-up turn made a NEW
-    # tool call instead of just re-answering, the loop used to hit the
-    # iteration cap on that tool call and fall through to the timeout
-    # return, throwing away a perfectly usable prior answer.
+    forced_submit_attempted = False
+    # Pending-retry snapshots for the exhausted-budget fallback at the
+    # bottom -- at most one is ever set, since retried_for_citations caps
+    # the whole conversation at one retry regardless of which path fires
+    # it. pre_retry_submit_args (2026-09-10) caches the RAW submit_answer
+    # args rather than pre-computed warnings -- a pure function of
+    # (submit_args, all_results) can't go stale the way a cached warnings
+    # list could if all_results grows before the budget runs out, which
+    # is exactly how the OLD pre_retry_answer mechanism this replaces
+    # (for the structured path only) could pair stale warnings with a
+    # grown all_results (BACKLOG.md). pre_retry_answer itself is
+    # UNCHANGED -- it still exists for the untouched prose-fallback path.
+    pre_retry_submit_args: dict | None = None
     pre_retry_answer: tuple[str, list[CitationWarning]] | None = None
 
     while True:
+        submit, other = _partition_submit_call(turn.tool_calls)
+
+        # A pure submission, OR a mixed submit+search turn that arrived
+        # on the LAST allowed round trip: no budget left to dispatch the
+        # extra searches and get a real resubmission back, so verify what
+        # was actually submitted rather than discarding it below for the
+        # generic timeout message.
+        if submit is not None and (not other or calls_made >= MAX_TOOL_ITERATIONS):
+            args = submit["args"]
+            with traced_span("tool", "submit_answer", input=args) as span:
+                if validate_tool_args("submit_answer", SUBMIT_TOOL_SCHEMA, args):
+                    # Defensive, not expected in practice (Gemini/Ollama
+                    # both called this correctly on every live run tried
+                    # -- see tests/manual/verify_submit_answer.py) -- same
+                    # belt-and-suspenders boundary check every other tool
+                    # already gets. value/unit are sentinel-valued
+                    # (0.0/raw): this warning isn't about a specific
+                    # numeric claim.
+                    answer_text = args.get("answer_text") or ""
+                    warnings = [
+                        CitationWarning(
+                            check="no_structured_answer",
+                            citation_index=None,
+                            value=0.0,
+                            unit="raw",
+                            message="your submit_answer call didn't match the required schema (answer_text/claims)",
+                        )
+                    ]
+                else:
+                    answer_text = args["answer_text"]
+                    warnings = verify_claims(args["claims"], all_results, question, answer_text)
+                messages = [w.message for w in warnings]
+                span.update(output={"warning_count": len(warnings), "checks": [w.check for w in warnings]})
+                if _should_retry_for_citations(messages, retried_for_citations, backend) and calls_made < MAX_TOOL_ITERATIONS:
+                    retried_for_citations = True
+                    pre_retry_submit_args = args
+                    log_event("citation_retry", backend=backend, warnings=messages)
+                    if verbose:
+                        print(f"  [citation retry] {messages}")
+                    feedback = _format_claim_retry_message(answer_text, warnings)
+                    turn = send_tool_results(state, [{"name": "submit_answer", "content": feedback}])
+                    calls_made += 1
+                    continue
+                return _finalize_answer(answer_text, warnings, all_results, backend=backend, retried=retried_for_citations)
+
         if not turn.tool_calls:
+            if backend in _FORCED_SUBMIT_BACKENDS and not forced_submit_attempted and calls_made < MAX_TOOL_ITERATIONS:
+                forced_submit_attempted = True
+                if verbose:
+                    print("  [forcing submit_answer] model replied in text instead of calling a tool")
+                turn = send_followup(state, _FORCE_SUBMIT_MESSAGE, force_tool="submit_answer")
+                calls_made += 1
+                continue
+            # Prose fallback -- the original, completely unchanged
+            # pipeline. The only path for Ollama (never forced); for
+            # Gemini, only reached if forcing itself didn't produce a
+            # clean submission (documented as occasionally possible).
             answer = turn.text or ""
             warnings = collect_citation_warnings(answer, all_results)
             messages = [w.message for w in warnings]
@@ -1496,15 +2017,34 @@ def _run_agent_impl(question: str, backend: str, verbose: bool = False) -> Agent
                 calls_made += 1
                 continue
             return _finalize_answer(answer, warnings, all_results, backend=backend, retried=retried_for_citations)
+
         if calls_made >= MAX_TOOL_ITERATIONS:
             break
 
         results = [
             {"name": c["name"], "content": _dispatch_tool_call(c, question, all_results, searched_tickers, verbose)}
-            for c in turn.tool_calls
+            for c in other
         ]
+        if submit is not None:
+            # Mixed turn with budget still remaining: dispatch the
+            # searches, but the submission can't be trusted yet -- it
+            # can't be grounded in results the model hasn't read.
+            results.append(
+                {
+                    "name": "submit_answer",
+                    "content": (
+                        "You also requested new searches in this same turn; their results are included "
+                        "above. Read them, then call submit_answer again with your final answer."
+                    ),
+                }
+            )
         turn = send_tool_results(state, results)
         calls_made += 1
+
+    if pre_retry_submit_args is not None:
+        answer_text = pre_retry_submit_args["answer_text"]
+        warnings = verify_claims(pre_retry_submit_args["claims"], all_results, question, answer_text)
+        return _finalize_answer(answer_text, warnings, all_results, backend=backend, retried=retried_for_citations)
 
     if pre_retry_answer is not None:
         answer, warnings = pre_retry_answer
@@ -1529,13 +2069,13 @@ def main():
     parser.add_argument("--verbose", action="store_true", help="print each tool call as it happens")
     args = parser.parse_args()
 
-    answer, results, _, _ = run_agent(args.question, backend=args.backend, verbose=args.verbose)
+    result = run_agent(args.question, backend=args.backend, verbose=args.verbose)
 
     print(f"\nQ: {args.question}\n")
-    print(answer)
-    if results:
+    print(result.answer)
+    if result.results:
         print("\nSources:")
-        print(_format_citation_key(results))
+        print(_format_citation_key(result.results))
     # No separate "Citation warnings:" print block: since the Week 7
     # hard gate (_finalize_answer), non-empty citation_warnings always
     # means `answer` IS the refusal message, which already lists every

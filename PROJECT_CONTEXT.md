@@ -4474,6 +4474,174 @@ numbers instead of code-reading intuition — and the model-based-veto
 item can now be sized against "would need to overturn 4 wrong refusals
 in 45 questions," rather than being built blind.
 
+### Structured-claims citation verification replaces the prose heuristic (2026-09-10/11)
+
+Full design: `docs/plans/2026-09-10-structured-claims-citation-verification.md`.
+Review: `docs/reviews/2026-09-10-structured-claims-citation-verification.md`.
+
+The measurement campaign above found the prose-parsing citation
+heuristic was wrong 100% of the time it fired (4/4 false positives, 0
+true positives), with every miss traced to a specific regex/parsing
+limitation. Rather than patch those bugs one at a time, this session
+replaced the whole mechanism: instead of regex-parsing `[n]` markers out
+of free-text prose to reconstruct claim-to-source attribution, the model
+now emits its claims directly as structured data via a new
+`submit_answer` tool, whose parameter schema (`SUBMIT_TOOL_SCHEMA`)
+requires a `claims` array — one entry per numeric fact, each with its
+value, unit, citation index, and a verbatim supporting quote.
+
+**What changed, mechanically:**
+
+1. **`agent.py`: `SUBMIT_TOOL_SCHEMA` + `verify_claims()`.** The new
+   4th tool is offered to both backends from turn 1 under AUTO mode
+   (same as every other tool); if the model replies with text instead
+   of calling any tool, Gemini gets one forced `ANY` + `allowed_function_names=["submit_answer"]`
+   follow-up turn (`_FORCED_SUBMIT_BACKENDS = {"gemini"}`) — Ollama has
+   no such mechanism and falls through to the untouched prose fallback,
+   same as it always has. `verify_claims()` checks each claim three
+   ways: quote grounding (`_quote_matches` — fuzzy match via
+   `difflib.SequenceMatcher`, coverage-based not `.ratio()`-based, with
+   `autojunk=False` and a longest-contiguous-block floor against a
+   fabricated quote assembled from scattered real words), value
+   attribution (`_number_candidates`, generalized from the old
+   `_source_number_candidates` to take a separate `unit_source` so a
+   caption-only unit — e.g. a table's `"(in billions)"` header — still
+   resolves), and a coverage cross-check that every number in
+   `answer_text` maps to some claim (exempting numbers echoed from the
+   user's own question). All three reuse `CitationWarning` with 5 new
+   `check` values, so `analyze_citation_gate.py` needed **zero code
+   changes** to classify the new failure modes.
+2. **The old prose pipeline is completely untouched, kept as a
+   universal fallback.** `collect_citation_warnings`,
+   `_iter_citation_claims`, `_iter_uncited_claims`, `_SENTENCE_BREAK` —
+   none of it changed, none of its ~37 existing tests needed to change.
+   It's still the only path for Ollama, and Gemini's own occasional
+   fallback when forcing doesn't produce a clean submission.
+3. **`llm_backends.py`: `force_tool` plumbing.** Verified directly
+   against the installed SDK before implementing (not assumed from
+   docs): `Chat.send_message(config=...)` *replaces* the chat's config
+   wholesale, so a forced turn has to re-supply the whole config, not
+   just `tool_config` — `_gemini_start` now returns `{"chat", "config"}`
+   instead of a bare chat object, and `_forced_config()` builds the
+   forced turn by copying the base config with only `tool_config`
+   overridden. `_to_gemini_tool`'s `additionalProperties` strip was
+   also made recursive (it only stripped the top level before), needed
+   because `claims.items.additionalProperties` would otherwise reach
+   Gemini unstripped and reproduce a `400 INVALID_ARGUMENT` this
+   project has hit before.
+4. **`_run_agent_impl`'s loop restructured around `_partition_submit_call()`**,
+   with one ordering fix verified as a real bug against the prior code
+   before implementing: the terminal-submission check now runs *before*
+   the `calls_made >= MAX_TOOL_ITERATIONS` cutoff, so a `submit_answer`
+   call arriving on the last allowed round trip is verified instead of
+   silently discarded for the generic timeout message. A mixed
+   submit+search turn dispatches the searches and tells the model to
+   resubmit once it's read them, rather than trusting an answer
+   grounded in results it hasn't seen yet.
+5. **`pre_retry_answer`'s staleness bug (BACKLOG) is closed structurally
+   for this path, not patched.** The retry fallback now caches the raw
+   `submit_args` instead of pre-computed warnings and re-verifies
+   against the *current* `all_results` at the exhausted-budget site — a
+   pure function of `(submit_args, all_results)` can't go stale the way
+   a cached warnings list could if `all_results` grew mid-retry. The
+   old `pre_retry_answer` mechanism is untouched, still covering the
+   prose-fallback path.
+6. **`AgentResult` gained a 5th field, `citation_warning_details`**,
+   populated directly from the `CitationWarning`s `_finalize_answer`
+   already holds. `eval_harness._citation_gate_evidence()` now consumes
+   it directly instead of re-deriving via a second `collect_citation_warnings()`
+   call against `withheld_answer` — closing a subtle correctness gap
+   where that re-derivation would have silently disagreed with what
+   actually refused a structured-path answer. Two call sites
+   (`agent.main()`, `eval_harness.run_eval()`) switched from 4-tuple
+   unpacking to attribute access.
+
+**Two decisions confirmed with the user before implementation** (via
+`AskUserQuestion`): keep hard-gating rather than downgrade to warn-only
+on the prose fallback; defer the model-based-veto BACKLOG item until
+this redesign's own numbers exist, since walking through the 4 measured
+false positives showed all 4 die structurally under the new design.
+
+**Three live bugs found and fixed during implementation/smoke-testing**
+(before either formal review pass — see the review doc for what those
+two passes found):
+
+- A bare XBRL-number quote (e.g. `"391035000000"`, 12 characters) was
+  wrongly rejected as `quote_too_short` — `_QUOTE_MIN_CHARS=15` was
+  calibrated for prose, not bare digit strings. Fixed with a
+  `_BARE_NUMBER_MIN_DIGITS=6` alternate length gate (digit count, not
+  character count, for a bare number).
+- The system prompt's first wording of the new rule 9 named "computed
+  value" examples in a way that contradicted rule 3 (a tool's own
+  computed output, e.g. `yoy_growth: true`, is already a directly-stated
+  value, not something to re-derive) — this caused a live regression
+  where the model avoided the `yoy_growth` flag entirely and exhausted
+  its tool budget trying to combine raw numbers by hand instead. Fixed
+  by clarifying rule 9 applies only to a number the model worked out
+  itself against rule 3's instruction not to; re-verified live on the
+  exact question that had failed.
+- (Found after both review passes, via the actual measurement run, not
+  either pass itself) A comma-separated multi-source citation bracket
+  like `[1, 3, 5]` or `[1, 17]` survived `verify_claims()`'s marker-
+  stripping untouched, so its bare digits were extracted as spurious
+  `uncovered_number` claims — the same bracket-format bug BACKLOG
+  already tracked for the old prose fallback, turning out to also hit
+  this new coverage check. Fixed with a separate `_ANY_CITATION_BRACKET`
+  pattern scoped to that one check (`_CITATION_MARKER` itself couldn't
+  just be widened — the prose pipeline reads its single capture group
+  as one index and depends on that shape).
+
+**The re-measurement, and what it found** (same 41-question baseline +
+4-question stress set as the prior measurement, same
+`eval_harness.py --backend gemini` invocation; final reports
+`20260911T073808Z.json` baseline, `20260911T065857Z.json` stress —
+an interim baseline run before the multi-bracket fix, `20260911T071800Z.json`,
+is superseded and kept only as the fix's own before/after evidence):
+
+- **Baseline: 33/41 passed (up from 36/41 pre-redesign, but on a
+  materially different, harder-graded set of failures — see below),
+  0/41 gate fires.** `analyze_citation_gate.py` reports the false
+  positive rate as `n/a (gate never fired)` — not "0%", because the
+  gate genuinely never triggered across all 29 numeric/comparison rows.
+- **Combined with the 4 stress questions: 0/45 gate fires, 0 false
+  positives, 0 true positives.** Down from the pre-redesign measurement's
+  6/45 gate fires, **all 6 wrong**.
+- **All three of the plan's named acceptance-test targets confirmed**:
+  `nvda-revenue-fy26-us-gaap` (the capitalized-abbreviation
+  sentence-break repro) now passes cleanly via the structured path;
+  `crm-buyback-and-liquidity-q1fy27` (the `[1, 5]`-bracket repro) now
+  passes cleanly; `aapl-3yr-avg-operating-margin-fy2023-fy2025` (the
+  `"3-year"`-noise repro) resolves as a true negative — correctly
+  grounded, not refused.
+- **1 false-negative candidate remains** (`aapl-rd-pct-gross-profit-fy2025`,
+  in the stress set) — not a gate defect: the model correctly cited
+  both raw inputs (gross profit, R&D expense) but declined to compute
+  and state the percentage itself, so there was never a claim for the
+  eval's expected value to match against. `gate_withheld_would_have_passed`
+  is `None` — the gate never fired on this row either; it's a
+  model-behavior/grading-tolerance gap, not something `verify_claims`
+  could have caught differently.
+- **Remaining raw-pass-rate gap from 36/41 is unrelated to the gate**:
+  the interim run (before the bracket-bug fix) showed the gate could
+  still fire on a genuinely correct answer in specific shapes now
+  narrowed to 3 BACKLOG items (a redundant duplicate self-citation for
+  an already-correctly-cited value, a non-reproduced prose-quote
+  mismatch against a dense filing table, and a self-computed ratio
+  missing its own claim despite rule 9) — none recurred in the final
+  post-fix run. The other new failures in the final run (budget
+  exhaustion on hard multi-entity questions, a 5-company ranking
+  question) are confirmed pre-existing model tool-choice limitations,
+  not citation-gate regressions — `gate_withheld_would_have_passed` is
+  `None` on every one of them.
+
+**Verified**: full suite green throughout (557 → 558 tests, the +1 being
+the bare-XBRL-quote end-to-end regression test added during the first
+review pass); two-pass review completed with 3 real findings, all fixed
+(see review doc); live re-measurement is the acceptance test called for
+in the plan, run twice (once before, once after the multi-bracket fix
+found via the first run's own results) rather than assumed correct from
+the design alone.
+
 ## Next steps
 
 See `BACKLOG.md` for the live task backlog. This section used to hold

@@ -185,7 +185,14 @@ def _ollama_start(question: str, system_prompt: str, tool_schemas: list[dict]) -
     return state, _ollama_message_to_turn(message)
 
 
-def _ollama_send(state: dict, results: list[dict]) -> ModelTurn:
+def _ollama_send(state: dict, results: list[dict], *, force_tool: str | None = None) -> ModelTurn:
+    """`force_tool` is accepted for interface uniformity with the Gemini
+    side (agent.py calls both through the same BACKENDS 3-callable
+    protocol, so it shouldn't need a backend-specific branch just to know
+    whether forcing is possible) but has NO effect here -- confirmed
+    2026-09-10 that neither Ollama's native /api/chat nor its
+    OpenAI-compatible endpoint support a tool_choice/tool_config
+    equivalent at all (Ollama issues #8421, #11171)."""
     for r in results:
         state["messages"].append({"role": "tool", "content": r["content"]})
     message = ollama_call(state)
@@ -193,13 +200,14 @@ def _ollama_send(state: dict, results: list[dict]) -> ModelTurn:
     return _ollama_message_to_turn(message)
 
 
-def _ollama_send_followup(state: dict, text: str) -> ModelTurn:
+def _ollama_send_followup(state: dict, text: str, *, force_tool: str | None = None) -> ModelTurn:
     """Sends a plain corrective/follow-up message, as opposed to a tool
     result -- needed for the citation-verification retry (agent.py's
     run_agent()), which fires only after the model has already stopped
     calling tools and produced a final answer, so there's no tool call
     to attach a result to. Symmetric with _ollama_send, just a "user"
-    role message instead of a "tool" one."""
+    role message instead of a "tool" one. See _ollama_send's docstring
+    for why `force_tool` is accepted but ignored."""
     state["messages"].append({"role": "user", "content": text})
     message = ollama_call(state)
     state["messages"].append(message)
@@ -229,6 +237,33 @@ def _get_gemini_client() -> genai.Client:
     return _gemini_client
 
 
+def _strip_additional_properties(value):
+    """Recursively removes "additionalProperties" keys from a JSON-schema
+    dict, at any nesting depth -- descends into "properties" (each
+    property's own sub-schema) and "items" (an array's item schema),
+    the only two places JSON Schema nests another schema.
+
+    Added 2026-09-10 (see
+    docs/plans/2026-09-10-structured-claims-citation-verification.md)
+    when `submit_answer`'s `claims` array needed `additionalProperties:
+    false` on its ITEM schema, one level deeper than any of the 3
+    existing tools ever needed -- the original strip below was a single
+    top-level dict comprehension, so that nested key would have reached
+    Gemini's SDK unstripped and reproduced the exact 400 INVALID_ARGUMENT
+    this function's docstring already describes fixing once, just one
+    level deeper. Confirmed live against the installed SDK before this
+    fix existed, not assumed."""
+    if isinstance(value, dict):
+        return {
+            k: _strip_additional_properties(v)
+            for k, v in value.items()
+            if k != "additionalProperties"
+        }
+    if isinstance(value, list):
+        return [_strip_additional_properties(v) for v in value]
+    return value
+
+
 def _to_gemini_tool(schema: dict) -> types.FunctionDeclaration:
     """agent.py's tool schemas are plain, lowercase JSON-schema dicts
     (OpenAI/Ollama wire-format style) -- Gemini's SDK accepts most of
@@ -236,30 +271,40 @@ def _to_gemini_tool(schema: dict) -> types.FunctionDeclaration:
     spike), so this just unwraps the {"function": {...}} envelope rather
     than re-describing each tool a second time.
 
-    "additionalProperties" is the one exception, stripped here before
-    handing the dict to Gemini's SDK: Gemini's Schema type (a stricter
-    OpenAPI 3.0 subset) doesn't support that keyword at all -- unlike
-    Ollama, which tolerates it fine -- and passing it through made
-    EVERY tool-calling request on this backend fail with a live 400
-    INVALID_ARGUMENT ("Unknown name additional_properties"), found via a
-    live Gemini spot-check eval run immediately after the 2026-09-09
-    schema-validator redesign added `additionalProperties: false` to
-    every *_TOOL_SCHEMA. Ollama's own wire format and
-    agent.py's/mcp_server.py's runtime `validate_tool_args()` both still
-    see the real, unmodified dict -- this only narrows what's advertised
-    to Gemini's stricter dialect, not what's enforced at the boundary."""
+    "additionalProperties" is the one exception, stripped here (via
+    _strip_additional_properties(), recursively -- see that function's
+    own docstring) before handing the dict to Gemini's SDK: Gemini's
+    Schema type (a stricter OpenAPI 3.0 subset) doesn't support that
+    keyword at all -- unlike Ollama, which tolerates it fine -- and
+    passing it through made EVERY tool-calling request on this backend
+    fail with a live 400 INVALID_ARGUMENT ("Unknown name
+    additional_properties"), found via a live Gemini spot-check eval run
+    immediately after the 2026-09-09 schema-validator redesign added
+    `additionalProperties: false` to every *_TOOL_SCHEMA. Ollama's own
+    wire format and agent.py's/mcp_server.py's runtime
+    `validate_tool_args()` both still see the real, unmodified dict --
+    this only narrows what's advertised to Gemini's stricter dialect,
+    not what's enforced at the boundary."""
     fn = schema["function"]
-    parameters = {k: v for k, v in fn["parameters"].items() if k != "additionalProperties"}
+    parameters = _strip_additional_properties(fn["parameters"])
     return types.FunctionDeclaration(name=fn["name"], description=fn["description"], parameters=parameters)
 
 
-def _send_with_retry(chat, message):
+def _send_with_retry(chat, message, config=None):
     """Retries on transient errors -- free-tier rate limits (429) and
     plain server overload (503, "experiencing high demand"), both found
-    live during the original spike -- with a short linear backoff."""
+    live during the original spike -- with a short linear backoff.
+
+    `config` (2026-09-10, added for the forced-tool-choice turn -- see
+    _forced_config()) is always passed straight through, including when
+    it's None: the real SDK's own Chat.send_message signature already
+    defaults `config=None` and treats that identically to the caller
+    omitting it entirely (`method_config = config if config else
+    self._config`, confirmed by reading the installed SDK's source), so
+    there's no behavior difference to guard here -- just less branching."""
     for attempt in range(4):
         try:
-            return chat.send_message(message)
+            return chat.send_message(message, config=config)
         except (genai_errors.ClientError, genai_errors.ServerError) as e:
             code = getattr(e, "code", None)
             if code not in (429, 503):
@@ -300,30 +345,64 @@ def _gemini_response_to_turn(resp) -> ModelTurn:
     return ModelTurn(tool_calls=tool_calls, text=resp.text if not tool_calls else None)
 
 
-def _gemini_start(question: str, system_prompt: str, tool_schemas: list[dict]) -> tuple[object, ModelTurn]:
+def _forced_config(base_config: "types.GenerateContentConfig", force_tool: str | None):
+    """Returns `base_config` unchanged when `force_tool` is None (the
+    common case -- AUTO mode, free tool choice, exactly today's
+    behavior). When given, returns a NEW config with `tool_config` set to
+    force exactly that one tool (`mode="ANY"` + `allowed_function_names`
+    -- confirmed against the installed SDK to be a hard constraint, not a
+    bias: "With mode set to ANY, model will predict a function call from
+    the set of function names provided").
+
+    Built from `base_config.model_copy(update=...)` rather than
+    constructing a bare `GenerateContentConfig(tool_config=...)`, because
+    `Chat.send_message(config=...)` REPLACES the chat's config wholesale
+    rather than merging (`method_config = config if config else
+    self._config`, verified 2026-09-10 by reading google/genai/chats.py's
+    actual source, not assumed from docs) -- a bare forced config would
+    silently drop `tools`/`system_instruction`/`temperature` on that one
+    turn. `model_copy` also leaves `base_config` itself untouched, so the
+    SAME base config can be reused on a later un-forced turn."""
+    if force_tool is None:
+        return base_config
+    return base_config.model_copy(
+        update={
+            "tool_config": types.ToolConfig(
+                function_calling_config=types.FunctionCallingConfig(mode="ANY", allowed_function_names=[force_tool])
+            )
+        }
+    )
+
+
+def _gemini_start(question: str, system_prompt: str, tool_schemas: list[dict]) -> tuple[dict, ModelTurn]:
     client = _get_gemini_client()
     tools = types.Tool(function_declarations=[_to_gemini_tool(s) for s in tool_schemas])
-    chat = client.chats.create(
-        model=GEMINI_MODEL_NAME,
-        config=types.GenerateContentConfig(tools=[tools], system_instruction=system_prompt, temperature=0.1),
-    )
+    config = types.GenerateContentConfig(tools=[tools], system_instruction=system_prompt, temperature=0.1)
+    chat = client.chats.create(model=GEMINI_MODEL_NAME, config=config)
     resp = _send_with_retry(chat, question)
-    return chat, _gemini_response_to_turn(resp)
+    # state carries `config` alongside `chat` (2026-09-10) -- previously
+    # just the bare chat object, which threw the config away entirely.
+    # A forced-tool-choice turn (see _forced_config above) needs it back:
+    # send_message(config=...) replaces the chat's config wholesale, so
+    # re-supplying the WHOLE config (not just tool_config) is mandatory,
+    # not optional. agent.py still treats this as an opaque `state`
+    # object, same invariant as before.
+    return {"chat": chat, "config": config}, _gemini_response_to_turn(resp)
 
 
-def _gemini_send(state: object, results: list[dict]) -> ModelTurn:
+def _gemini_send(state: dict, results: list[dict], *, force_tool: str | None = None) -> ModelTurn:
     parts = [types.Part.from_function_response(name=r["name"], response={"result": r["content"]}) for r in results]
-    resp = _send_with_retry(state, parts)
+    resp = _send_with_retry(state["chat"], parts, config=_forced_config(state["config"], force_tool))
     return _gemini_response_to_turn(resp)
 
 
-def _gemini_send_followup(state: object, text: str) -> ModelTurn:
+def _gemini_send_followup(state: dict, text: str, *, force_tool: str | None = None) -> ModelTurn:
     """Gemini counterpart to _ollama_send_followup, above -- see that
     function's docstring for why this is needed. chat.send_message
     already accepts a plain string (the same call _gemini_start makes
     for the original question), so this reuses _send_with_retry's
     429/503 backoff directly rather than adding a second copy."""
-    resp = _send_with_retry(state, text)
+    resp = _send_with_retry(state["chat"], text, config=_forced_config(state["config"], force_tool))
     return _gemini_response_to_turn(resp)
 
 

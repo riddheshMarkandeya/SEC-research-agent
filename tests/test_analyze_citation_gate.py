@@ -171,6 +171,41 @@ def test_summarize_counts_and_rates_across_a_mixed_batch():
     assert summary["false_negative_candidate_ids"] == ["fn1"]
 
 
+def test_summarize_handles_structured_claims_check_values_with_no_code_changes():
+    # 2026-09-10: agent.py's structured-claims verifier (verify_claims())
+    # introduced 5 new CitationWarning `check` values (citation_out_of_range,
+    # quote_too_short, quote_not_found, value_not_in_quote, uncovered_number)
+    # that this analyzer was never updated for -- by design, since it only
+    # ever reads `check` generically as a string key, never enumerates the
+    # old two-value vocabulary. This is the confirming test for that design
+    # claim, not a change to analyze_citation_gate.py itself.
+    rows = [
+        _row(
+            id="fp1",
+            passed=False,
+            has_citation=False,
+            citation_warnings=["w"],
+            withheld_answer="a",
+            gate_withheld_would_have_passed=True,
+            citation_warning_details=[{"check": "quote_not_found"}],
+        ),
+        _row(
+            id="fp2",
+            passed=False,
+            has_citation=False,
+            citation_warnings=["w"],
+            withheld_answer="a",
+            gate_withheld_would_have_passed=True,
+            citation_warning_details=[{"check": "value_not_in_quote"}],
+        ),
+    ]
+
+    summary = summarize(rows)
+
+    assert summary["false_positive"] == 2
+    assert summary["false_positive_by_check"] == {"quote_not_found": 1, "value_not_in_quote": 1}
+
+
 def test_summarize_false_positive_rate_is_none_when_gate_never_fired():
     rows = [_row(id="pass1", passed=True, has_citation=True, citation_warnings=[])]
     summary = summarize(rows)

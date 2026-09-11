@@ -10,12 +10,17 @@ from types import SimpleNamespace
 import pytest
 import requests
 
-from google.genai import errors as genai_errors
+from google.genai import errors as genai_errors, types
 
 from llm_backends import (
     complete,
     ollama_call,
+    _gemini_send,
+    _gemini_send_followup,
+    _gemini_start,
     _ollama_message_to_turn,
+    _ollama_send,
+    _ollama_send_followup,
     _gemini_response_to_turn,
     _get_gemini_client,
     _send_with_retry,
@@ -134,6 +139,52 @@ def test_to_gemini_tool_preserves_everything_else():
     assert tool.description == "desc"
     assert tool.parameters.required == ["query"]
     assert set(tool.parameters.properties) == {"query"}
+
+
+def _nested_array_schema():
+    # Shaped like the planned submit_answer tool: an array-of-objects
+    # property whose ITEM schema also carries additionalProperties, one
+    # level deeper than any of the 3 existing tools ever needed. Added
+    # 2026-09-10 -- see docs/plans/2026-09-10-structured-claims-citation-verification.md.
+    return {
+        "type": "function",
+        "function": {
+            "name": "submit_answer",
+            "description": "desc",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "claims": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {"value": {"type": "number"}},
+                            "required": ["value"],
+                            "additionalProperties": False,
+                        },
+                    },
+                },
+                "required": ["claims"],
+                "additionalProperties": False,
+            },
+        },
+    }
+
+
+def test_to_gemini_tool_strips_additional_properties_recursively():
+    # Regression test for a bug found in design review (2026-09-10),
+    # before it ever shipped: the original strip was a single top-level
+    # dict comprehension (`{k: v for k, v in fn["parameters"].items() if
+    # k != "additionalProperties"}`), so a NESTED additionalProperties
+    # (inside an array property's item schema) reached Gemini's SDK
+    # unstripped -- confirmed live against the installed SDK to still
+    # attach `additional_properties=False` to the nested Schema object,
+    # which reproduces the exact 400 INVALID_ARGUMENT
+    # ("Unknown name additional_properties") the top-level strip was
+    # built to fix in the first place, just one level deeper.
+    tool = _to_gemini_tool(_nested_array_schema())
+    assert tool.parameters.additional_properties is None
+    assert tool.parameters.properties["claims"].items.additional_properties is None
 
 
 # ---------------------------------------------------------------------------
@@ -388,8 +439,14 @@ def _fake_gemini_error(code):
 class _FakeChat:
     def __init__(self, responses):
         self._responses = iter(responses)
+        # Records every config _send_with_retry actually passed through,
+        # in order -- added 2026-09-10 so tests can assert on it directly
+        # instead of only on the response, for the forced-tool-config work
+        # (see docs/plans/2026-09-10-structured-claims-citation-verification.md).
+        self.configs_received = []
 
-    def send_message(self, message):
+    def send_message(self, message, config=None):
+        self.configs_received.append(config)
         item = next(self._responses)
         if isinstance(item, Exception):
             raise item
@@ -464,6 +521,142 @@ def test_send_with_retry_succeeds_first_try_without_sleeping(monkeypatch):
     assert result == "ok"
     assert sleeps == []
     assert log_calls == []
+
+
+def test_send_with_retry_passes_config_through_when_given(monkeypatch):
+    # 2026-09-10: _send_with_retry gained an optional `config` param so a
+    # forced-tool-choice turn (see _gemini_send/_gemini_send_followup
+    # below) can override the chat's default AUTO-mode config. Passing
+    # `config=` explicitly is safe even when it's None -- the real SDK's
+    # own Chat.send_message signature already defaults `config=None` and
+    # treats it identically to omitting it (`method_config = config if
+    # config else self._config`, verified against the installed SDK).
+    monkeypatch.setattr("llm_backends.log_event", lambda *a, **k: None)
+    chat = _FakeChat(["ok"])
+    fake_config = object()
+
+    result = _send_with_retry(chat, "question", config=fake_config)
+
+    assert result == "ok"
+    assert chat.configs_received == [fake_config]
+
+
+def test_send_with_retry_defaults_config_to_none(monkeypatch):
+    monkeypatch.setattr("llm_backends.log_event", lambda *a, **k: None)
+    chat = _FakeChat(["ok"])
+
+    _send_with_retry(chat, "question")
+
+    assert chat.configs_received == [None]
+
+
+# ---------------------------------------------------------------------------
+# Gemini state shape + forced tool choice (2026-09-10, see
+# docs/plans/2026-09-10-citation-gate-measurement-instrumentation.md and
+# docs/plans/2026-09-10-structured-claims-citation-verification.md).
+# _gemini_start's state must carry its own `config` alongside the `chat`
+# object (previously just the bare chat) because a forced turn needs to
+# re-supply the WHOLE GenerateContentConfig, not just tool_config --
+# Chat.send_message(config=...) replaces the chat's config wholesale
+# rather than merging (confirmed by reading google/genai/chats.py's
+# actual source: `method_config = config if config else self._config`).
+# ---------------------------------------------------------------------------
+def test_gemini_start_state_carries_chat_and_config(monkeypatch):
+    fake_response = SimpleNamespace(candidates=[SimpleNamespace(content=SimpleNamespace(parts=[]))], text="ok")
+    fake_chat = _FakeChat([fake_response])
+    captured_create_kwargs = {}
+
+    def fake_create(**kwargs):
+        captured_create_kwargs.update(kwargs)
+        return fake_chat
+
+    monkeypatch.setattr(
+        "llm_backends._get_gemini_client",
+        lambda: SimpleNamespace(chats=SimpleNamespace(create=fake_create)),
+    )
+
+    state, turn = _gemini_start("What was Apple's revenue?", "system prompt", [])
+
+    assert state["chat"] is fake_chat
+    assert state["config"] is captured_create_kwargs["config"]
+    assert state["config"].system_instruction == "system prompt"
+    assert state["config"].temperature == 0.1
+
+
+def test_gemini_send_does_not_force_when_force_tool_is_none():
+    chat = _FakeChat([SimpleNamespace(candidates=[], text=None)])
+    base_config = types.GenerateContentConfig(tools=[], system_instruction="sys", temperature=0.1)
+    state = {"chat": chat, "config": base_config}
+
+    try:
+        _gemini_send(state, [{"name": "search_filings", "content": "..."}])
+    except RuntimeError:
+        pass  # empty candidates -- irrelevant to this test, only the config passed matters
+
+    assert chat.configs_received == [base_config]
+
+
+def test_gemini_send_forces_tool_choice_while_preserving_base_config():
+    chat = _FakeChat([SimpleNamespace(candidates=[], text=None)])
+    base_config = types.GenerateContentConfig(tools=["fake-tools"], system_instruction="sys", temperature=0.1)
+    state = {"chat": chat, "config": base_config}
+
+    try:
+        _gemini_send(state, [{"name": "search_filings", "content": "..."}], force_tool="submit_answer")
+    except RuntimeError:
+        pass
+
+    assert len(chat.configs_received) == 1
+    forced = chat.configs_received[0]
+    assert forced is not base_config  # a NEW config, base_config itself untouched
+    assert forced.tools == ["fake-tools"]
+    assert forced.system_instruction == "sys"
+    assert forced.temperature == 0.1
+    assert forced.tool_config.function_calling_config.mode == types.FunctionCallingConfigMode.ANY
+    assert forced.tool_config.function_calling_config.allowed_function_names == ["submit_answer"]
+    # base_config itself must be untouched -- model_copy(), not mutation.
+    assert base_config.tool_config is None
+
+
+def test_gemini_send_followup_forces_tool_choice_while_preserving_base_config():
+    chat = _FakeChat([SimpleNamespace(candidates=[], text=None)])
+    base_config = types.GenerateContentConfig(tools=["fake-tools"], system_instruction="sys", temperature=0.1)
+    state = {"chat": chat, "config": base_config}
+
+    try:
+        _gemini_send_followup(state, "please resubmit", force_tool="submit_answer")
+    except RuntimeError:
+        pass
+
+    forced = chat.configs_received[0]
+    assert forced.tool_config.function_calling_config.allowed_function_names == ["submit_answer"]
+    assert forced.tools == ["fake-tools"]
+
+
+# ---------------------------------------------------------------------------
+# Ollama's *_send* functions accept force_tool for interface uniformity
+# with Gemini's (agent.py calls both through the same BACKENDS protocol)
+# but it has zero effect -- Ollama has no tool_choice/tool_config
+# equivalent at all (confirmed: neither its native /api/chat nor its
+# OpenAI-compatible endpoint support tool_choice; see
+# docs/plans/2026-09-10-structured-claims-citation-verification.md).
+# ---------------------------------------------------------------------------
+def test_ollama_send_accepts_and_ignores_force_tool(monkeypatch):
+    monkeypatch.setattr("llm_backends.requests.post", lambda *a, **k: _FakeOllamaResponse())
+    state = {"messages": [], "tool_schemas": []}
+
+    turn = _ollama_send(state, [{"name": "search_filings", "content": "..."}], force_tool="submit_answer")
+
+    assert turn.text == "ok"
+
+
+def test_ollama_send_followup_accepts_and_ignores_force_tool(monkeypatch):
+    monkeypatch.setattr("llm_backends.requests.post", lambda *a, **k: _FakeOllamaResponse())
+    state = {"messages": [], "tool_schemas": []}
+
+    turn = _ollama_send_followup(state, "please resubmit", force_tool="submit_answer")
+
+    assert turn.text == "ok"
 
 
 # ---------------------------------------------------------------------------

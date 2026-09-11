@@ -54,7 +54,7 @@ import re
 from datetime import datetime, timezone
 from pathlib import Path
 
-from agent import collect_citation_warnings, run_agent, value_is_citation_verified
+from agent import run_agent, value_is_citation_verified
 from config import DEFAULT_BACKEND, GEMINI_MODEL_NAME, OLLAMA_MODEL_NAME
 
 # OLLAMA_MODEL_NAME/GEMINI_MODEL_NAME record which specific model actually
@@ -269,7 +269,9 @@ def _empty_citation_gate_evidence() -> dict:
     }
 
 
-def _citation_gate_evidence(q: dict, retrieved: list[dict], withheld_answer: str | None) -> dict:
+def _citation_gate_evidence(
+    q: dict, retrieved: list[dict], withheld_answer: str | None, citation_warning_details: list[dict]
+) -> dict:
     """The 4 additive report fields the citation-gate FP/FN measurement
     work needs (see
     docs/plans/2026-09-10-citation-gate-measurement-instrumentation.md).
@@ -287,10 +289,18 @@ def _citation_gate_evidence(q: dict, retrieved: list[dict], withheld_answer: str
     _grade()'s real verdict) the real verdict would have used, so "would
     have passed" means exactly what it always has, including the
     citation-verification check against the real retrieved chunks.
-    `citation_warning_details` re-derives the structured breakdown via
-    collect_citation_warnings() on the withheld text rather than
-    threading a 5th field through AgentResult -- a pure function of two
-    values already in hand here."""
+
+    `citation_warning_details` (2026-09-10) is passed straight through
+    from `AgentResult.citation_warning_details` (the caller already has
+    it) rather than re-derived by calling collect_citation_warnings() --
+    the PROSE checker -- on the withheld text a second time. That
+    re-derivation used to silently disagree with whatever ACTUALLY
+    refused the answer once a structured-path refusal could exist:
+    collect_citation_warnings() can't see a quote_not_found/
+    value_not_in_quote/etc. failure at all, since those only ever come
+    from verify_claims(). Passing the real field through instead of
+    re-deriving is what keeps analyze_citation_gate.py's
+    false_positive_by_check breakdown accurate for both checkers."""
     if withheld_answer is None or q["type"] not in ("numeric", "comparison"):
         return _empty_citation_gate_evidence()
 
@@ -300,7 +310,7 @@ def _citation_gate_evidence(q: dict, retrieved: list[dict], withheld_answer: str
         "withheld_answer": withheld_answer,
         "gate_withheld_would_have_passed": would_pass,
         "gate_withheld_detail": would_detail,
-        "citation_warning_details": [w._asdict() for w in collect_citation_warnings(withheld_answer, retrieved)],
+        "citation_warning_details": citation_warning_details,
     }
 
 
@@ -336,7 +346,8 @@ def run_eval(
     for q in questions:
         print(f"[{q['id']}] {q['question']}")
         try:
-            answer_text, retrieved, citation_warnings, withheld_answer = run_agent(q["question"], backend=backend)
+            result = run_agent(q["question"], backend=backend)
+            answer_text, retrieved, citation_warnings = result.answer, result.results, result.citation_warnings
             # Excludes hard-gated refusals: agent.py's _format_refusal_message()
             # echoes each warning's own "[n] claims ..." text verbatim, which
             # still matches CITATION_PATTERN, so a refusal would otherwise get
@@ -346,7 +357,9 @@ def run_eval(
             has_citation = not citation_warnings and bool(CITATION_PATTERN.search(answer_text))
 
             passed, detail = _grade(q, answer_text, citation_warnings, retrieved, judge_backend)
-            gate_fields = _citation_gate_evidence(q, retrieved, withheld_answer)
+            gate_fields = _citation_gate_evidence(
+                q, retrieved, result.withheld_answer, result.citation_warning_details
+            )
         except Exception as e:
             # Broad on purpose (found in code review, 2026-09-06): a
             # network error, exhausted retries, or an unexpected bug in

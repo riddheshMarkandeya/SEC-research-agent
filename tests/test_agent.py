@@ -19,16 +19,23 @@ from agent import (
     FACT_TOOL_SCHEMA,
     RATIO_DEFINITIONS,
     SEARCH_TOOL_SCHEMA,
+    SUBMIT_TOOL_SCHEMA,
     AgentResult,
     CitationWarning,
+    _CITATION_RETRY_GUIDANCE,
     call_compare_financial_metric,
     call_get_financial_fact,
     collect_citation_warnings,
     _comparison_as_results,
+    _normalize_for_match,
+    _number_candidates,
+    _partition_submit_call,
+    _quote_matches,
     _dispatch_tool_call,
     _finalize_answer,
     _format_citation_key,
     _format_citation_retry_message,
+    _format_claim_retry_message,
     _format_fact_value,
     _format_no_comparison_message,
     _format_no_fact_message,
@@ -40,6 +47,7 @@ from agent import (
     run_agent,
     value_is_citation_verified,
     verify_citations,
+    verify_claims,
 )
 from llm_backends import ModelTurn
 
@@ -872,6 +880,68 @@ def test_validate_tool_args_skip_properties_still_allows_the_property_itself(mon
     )
     assert rejected is False
     assert calls == []
+
+
+# ---------------------------------------------------------------------------
+# SUBMIT_TOOL_SCHEMA (2026-09-10) -- the structured-claims final-answer
+# tool, see docs/plans/2026-09-10-structured-claims-citation-verification.md.
+# Same {"type":"function","function":{...}} envelope every existing tool
+# uses, so validate_tool_args() (exercised above) is reusable verbatim --
+# these tests exercise ITS acceptance/rejection of submit_answer's actual
+# shape, not validate_tool_args itself again.
+# ---------------------------------------------------------------------------
+def _valid_claim(**overrides):
+    claim = {"value": 100.0, "unit": "raw", "citation_index": 1, "quote": "the value was 100"}
+    claim.update(overrides)
+    return claim
+
+
+def test_submit_tool_schema_accepts_a_valid_payload():
+    args = {"answer_text": "The value was 100 [1].", "claims": [_valid_claim()]}
+    assert validate_tool_args("submit_answer", SUBMIT_TOOL_SCHEMA, args) is False
+
+
+def test_submit_tool_schema_accepts_empty_claims():
+    # A refusal ("the sources don't support this") is a valid answer with
+    # zero numeric claims -- claims: [] must stay legal, no minItems.
+    args = {"answer_text": "I can't confirm this from the sources provided.", "claims": []}
+    assert validate_tool_args("submit_answer", SUBMIT_TOOL_SCHEMA, args) is False
+
+
+def test_submit_tool_schema_rejects_missing_answer_text():
+    args = {"claims": []}
+    assert validate_tool_args("submit_answer", SUBMIT_TOOL_SCHEMA, args) is True
+
+
+def test_submit_tool_schema_rejects_claim_missing_quote():
+    claim = _valid_claim()
+    del claim["quote"]
+    args = {"answer_text": "text", "claims": [claim]}
+    assert validate_tool_args("submit_answer", SUBMIT_TOOL_SCHEMA, args) is True
+
+
+def test_submit_tool_schema_rejects_invented_claim_key():
+    args = {"answer_text": "text", "claims": [_valid_claim(confidence=0.9)]}
+    assert validate_tool_args("submit_answer", SUBMIT_TOOL_SCHEMA, args) is True
+
+
+def test_submit_tool_schema_rejects_unknown_unit():
+    args = {"answer_text": "text", "claims": [_valid_claim(unit="dollars")]}
+    assert validate_tool_args("submit_answer", SUBMIT_TOOL_SCHEMA, args) is True
+
+
+def test_submit_tool_schema_rejects_non_integer_citation_index():
+    args = {"answer_text": "text", "claims": [_valid_claim(citation_index="1")]}
+    assert validate_tool_args("submit_answer", SUBMIT_TOOL_SCHEMA, args) is True
+
+
+def test_submit_tool_schema_excluded_from_mcp_server_tool_schemas():
+    # mcp_server.py exposes the individual tools over MCP, not the LLM
+    # agent loop -- submit_answer is a final-answer mechanism internal to
+    # agent.py's own loop and must never be offered there.
+    import mcp_server
+
+    assert SUBMIT_TOOL_SCHEMA not in mcp_server._TOOL_SCHEMAS
 
 
 # ---------------------------------------------------------------------------
@@ -1859,16 +1929,28 @@ def test_run_agent_citation_retry_exhausting_budget_returns_pre_retry_answer_not
     # since warnings are still non-empty -- so the assertion checks the
     # pre-retry answer's warning made it into the refusal, not that the
     # raw pre-retry answer text comes back unchanged.
-    monkeypatch.setattr("agent.MAX_TOOL_ITERATIONS", 2)
+    #
+    # Still exercises the UNCHANGED pre_retry_answer/prose-fallback
+    # mechanism (2026-09-10): a text reply on Gemini is always given one
+    # forced submit_answer attempt first now, simulated here as ALSO
+    # returning text (forcing doesn't always produce a clean submission --
+    # see the design doc), before the scenario proceeds exactly as it did
+    # before that mechanism existed. MAX_TOOL_ITERATIONS bumped by 1 (2 ->
+    # 3) to make room for that extra forced round trip without changing
+    # what the test is actually regression-testing.
+    monkeypatch.setattr("agent.MAX_TOOL_ITERATIONS", 3)
 
     final_answer_turn = ModelTurn(tool_calls=[], text="Apple's revenue was $100 billion [1].")
+    forced_attempt_still_text = ModelTurn(tool_calls=[], text="Apple's revenue was $100 billion [1].")
     followup_makes_new_tool_call = ModelTurn(tool_calls=[{"name": "search_filings", "args": {}}], text=None)
 
     def fake_start(question, system_prompt, tool_schemas):
         return {}, final_answer_turn
 
-    def fake_send_followup(state, text):
-        return followup_makes_new_tool_call
+    followups = iter([forced_attempt_still_text, followup_makes_new_tool_call])
+
+    def fake_send_followup(state, text, force_tool=None):
+        return next(followups)
 
     monkeypatch.setattr("agent.BACKENDS", {"gemini": (fake_start, None, fake_send_followup)})
     monkeypatch.setattr(
@@ -1886,7 +1968,7 @@ def test_run_agent_citation_retry_exhausting_budget_returns_pre_retry_answer_not
     log_calls = []
     monkeypatch.setattr("agent.log_event", lambda category, **fields: log_calls.append((category, fields)))
 
-    answer, all_results, warnings, withheld_answer = run_agent("What was Apple's revenue?", backend="gemini")
+    answer, all_results, warnings, withheld_answer, _ = run_agent("What was Apple's revenue?", backend="gemini")
 
     assert answer != (
         "I wasn't able to finish answering within the allotted number of searches. "
@@ -1931,7 +2013,7 @@ def test_run_agent_citation_retry_not_attempted_for_ollama_backend(monkeypatch):
         ],
     )
 
-    answer, all_results, warnings, withheld_answer = run_agent("What was Apple's revenue?", backend="ollama")
+    answer, all_results, warnings, withheld_answer, _ = run_agent("What was Apple's revenue?", backend="ollama")
 
     assert "Apple's revenue was $100 billion [1]." not in answer
     assert "[1] claims 100.0 ... doesn't appear" in answer
@@ -1962,7 +2044,7 @@ def test_run_agent_refuses_when_ollama_answer_has_unverified_citation(monkeypatc
         ],
     )
 
-    answer, all_results, warnings, withheld_answer = run_agent("What was Apple's revenue?", backend="ollama")
+    answer, all_results, warnings, withheld_answer, _ = run_agent("What was Apple's revenue?", backend="ollama")
 
     assert answer == _format_refusal_message(["[1] claims 100.0 ... doesn't appear"])
     assert warnings == ["[1] claims 100.0 ... doesn't appear"]
@@ -1985,7 +2067,7 @@ def test_run_agent_refuses_a_bare_uncited_claim_end_to_end(monkeypatch):
 
     monkeypatch.setattr("agent.BACKENDS", {"ollama": (fake_start, None, None)})
 
-    answer, all_results, warnings, withheld_answer = run_agent(
+    answer, all_results, warnings, withheld_answer, _ = run_agent(
         "What is Microsoft's cash to assets ratio?", backend="ollama"
     )
 
@@ -2011,7 +2093,7 @@ def test_run_agent_returns_generic_timeout_message_unchanged_when_iterations_exh
 
     monkeypatch.setattr("agent.BACKENDS", {"ollama": (fake_start, None, None)})
 
-    answer, all_results, warnings, withheld_answer = run_agent("What was Apple's revenue?", backend="ollama")
+    answer, all_results, warnings, withheld_answer, _ = run_agent("What was Apple's revenue?", backend="ollama")
 
     assert answer == (
         "I wasn't able to finish answering within the allotted number of searches. "
@@ -2026,14 +2108,22 @@ def test_run_agent_refuses_when_gemini_retry_still_leaves_unverified_citation(mo
     # produces a second final answer, but it's still unverified -- since
     # a retry was already spent, the loop must not retry again and must
     # gate on the second answer's warnings instead of returning it.
+    #
+    # A text reply on Gemini is always given one forced submit_answer
+    # attempt first now (2026-09-10) -- simulated here as also returning
+    # text, so the scenario proceeds through the prose fallback exactly
+    # as before that mechanism existed.
     first_answer_turn = ModelTurn(tool_calls=[], text="Apple's revenue was $100 billion [1].")
+    forced_attempt_still_text = ModelTurn(tool_calls=[], text="Apple's revenue was $100 billion [1].")
     second_answer_turn = ModelTurn(tool_calls=[], text="Apple's revenue was $105 billion [1].")
 
     def fake_start(question, system_prompt, tool_schemas):
         return {}, first_answer_turn
 
-    def fake_send_followup(state, text):
-        return second_answer_turn
+    followups = iter([forced_attempt_still_text, second_answer_turn])
+
+    def fake_send_followup(state, text, force_tool=None):
+        return next(followups)
 
     monkeypatch.setattr(
         "agent.collect_citation_warnings",
@@ -2049,7 +2139,7 @@ def test_run_agent_refuses_when_gemini_retry_still_leaves_unverified_citation(mo
     )
     monkeypatch.setattr("agent.BACKENDS", {"gemini": (fake_start, None, fake_send_followup)})
 
-    answer, all_results, warnings, withheld_answer = run_agent("What was Apple's revenue?", backend="gemini")
+    answer, all_results, warnings, withheld_answer, _ = run_agent("What was Apple's revenue?", backend="gemini")
 
     assert answer == _format_refusal_message(["[1] claims from: Apple's revenue was $105 billion [1]."])
     assert warnings == ["[1] claims from: Apple's revenue was $105 billion [1]."]
@@ -2065,11 +2155,280 @@ def test_run_agent_returns_answer_unchanged_when_no_citation_warnings(monkeypatc
     monkeypatch.setattr("agent.BACKENDS", {"ollama": (fake_start, None, None)})
     monkeypatch.setattr("agent.collect_citation_warnings", lambda answer, all_results: [])
 
-    answer, all_results, warnings, withheld_answer = run_agent("What was Apple's revenue?", backend="ollama")
+    answer, all_results, warnings, withheld_answer, _ = run_agent("What was Apple's revenue?", backend="ollama")
 
     assert answer == "Apple's revenue was $100 billion [1]."
     assert warnings == []
     assert withheld_answer is None
+
+
+# ---------------------------------------------------------------------------
+# run_agent() -- submit_answer loop control (2026-09-10). See
+# docs/plans/2026-09-10-structured-claims-citation-verification.md. All
+# via the same scripted fake-backend harness used above (agent.BACKENDS
+# monkeypatched) -- run_agent()'s actual model-facing behavior is
+# exercised live by tests/manual/verify_submit_answer.py, not here; this
+# is deterministic loop CONTROL FLOW given a scripted sequence of turns.
+# ---------------------------------------------------------------------------
+def _submit_turn(answer_text="The value was 100.", claims=None):
+    claims = [{"value": 100.0, "unit": "raw", "citation_index": 1, "quote": "the reported value was 100"}] if claims is None else claims
+    return ModelTurn(tool_calls=[{"name": "submit_answer", "args": {"answer_text": answer_text, "claims": claims}}], text=None)
+
+
+def test_run_agent_spontaneous_submit_answer_with_valid_claims_passes(monkeypatch):
+    def fake_start(question, system_prompt, tool_schemas):
+        return {}, _submit_turn()
+
+    monkeypatch.setattr("agent.BACKENDS", {"gemini": (fake_start, None, None)})
+    monkeypatch.setattr(
+        "agent.verify_claims", lambda claims, all_results, question, answer_text: []
+    )
+
+    answer, all_results, warnings, withheld_answer, _ = run_agent("What was the value?", backend="gemini")
+
+    assert answer == "The value was 100."
+    assert warnings == []
+    assert withheld_answer is None
+
+
+def test_run_agent_submit_answer_bad_claims_retries_on_gemini_then_succeeds(monkeypatch):
+    first_submit = _submit_turn(answer_text="The value was 100.")
+    corrected_submit = _submit_turn(answer_text="The value was 100, corrected.")
+
+    def fake_start(question, system_prompt, tool_schemas):
+        return {}, first_submit
+
+    sent_results = []
+
+    def fake_send_tool_results(state, results):
+        sent_results.append(results)
+        return corrected_submit
+
+    monkeypatch.setattr("agent.BACKENDS", {"gemini": (fake_start, fake_send_tool_results, None)})
+
+    verify_calls = iter(
+        [
+            [
+                CitationWarning(
+                    check="quote_not_found", citation_index=1, value=100.0, unit="raw", message="[1] quote not found"
+                )
+            ],
+            [],
+        ]
+    )
+    monkeypatch.setattr("agent.verify_claims", lambda claims, all_results, question, answer_text: next(verify_calls))
+
+    answer, all_results, warnings, withheld_answer, _ = run_agent("What was the value?", backend="gemini")
+
+    assert answer == "The value was 100, corrected."
+    assert warnings == []
+    # The retry's corrective feedback was delivered as a submit_answer
+    # TOOL RESULT (send_tool_results), not a plain follow-up turn -- keeps
+    # the chat history well-formed (see the loop's own docstring on this).
+    assert sent_results == [[{"name": "submit_answer", "content": sent_results[0][0]["content"]}]]
+    assert "[1] quote not found" in sent_results[0][0]["content"]
+
+
+def test_run_agent_submit_answer_bad_claims_refuses_immediately_on_ollama(monkeypatch):
+    # No retry for Ollama (_CITATION_RETRY_BACKENDS is gemini-only,
+    # unchanged) -- a bad structured submission refuses on the first try.
+    def fake_start(question, system_prompt, tool_schemas):
+        return {}, _submit_turn()
+
+    monkeypatch.setattr("agent.BACKENDS", {"ollama": (fake_start, None, None)})
+    monkeypatch.setattr(
+        "agent.verify_claims",
+        lambda claims, all_results, question, answer_text: [
+            CitationWarning(check="quote_not_found", citation_index=1, value=100.0, unit="raw", message="[1] quote not found")
+        ],
+    )
+
+    answer, all_results, warnings, withheld_answer, _ = run_agent("What was the value?", backend="ollama")
+
+    assert "refusing this answer" in answer
+    assert warnings == ["[1] quote not found"]
+    assert withheld_answer == "The value was 100."
+
+
+def test_run_agent_mixed_submit_and_search_turn_requests_resubmission(monkeypatch):
+    mixed_turn = ModelTurn(
+        tool_calls=[
+            {"name": "submit_answer", "args": {"answer_text": "x", "claims": []}},
+            {"name": "search_filings", "args": {"query": "revenue"}},
+        ],
+        text=None,
+    )
+    final_submit = _submit_turn(answer_text="The value was 100, now grounded.")
+
+    def fake_start(question, system_prompt, tool_schemas):
+        return {}, mixed_turn
+
+    sent_results = []
+
+    def fake_send_tool_results(state, results):
+        sent_results.append(results)
+        return final_submit
+
+    monkeypatch.setattr("agent.BACKENDS", {"gemini": (fake_start, fake_send_tool_results, None)})
+    monkeypatch.setattr("agent.verify_claims", lambda claims, all_results, question, answer_text: [])
+    monkeypatch.setattr(
+        "agent._dispatch_tool_call", lambda call, question, all_results, searched_tickers, verbose: "search results here"
+    )
+
+    answer, all_results, warnings, withheld_answer, _ = run_agent("What was the value?", backend="gemini")
+
+    assert answer == "The value was 100, now grounded."
+    # Both the search result AND a resubmission request went back in the
+    # same turn -- the model can't have grounded claims in results it
+    # hasn't read yet.
+    names_sent = [r["name"] for r in sent_results[0]]
+    assert names_sent == ["search_filings", "submit_answer"]
+    assert "resubmit" in sent_results[0][1]["content"].lower() or "again" in sent_results[0][1]["content"].lower()
+
+
+def test_run_agent_mixed_submit_and_search_on_last_turn_salvages_the_submission(monkeypatch):
+    # Regression test for the ordering edge case: a mixed submit+search
+    # turn landing on the VERY LAST allowed round trip has no budget left
+    # to dispatch the searches and get a clean resubmission back -- the
+    # submission must still be verified, not discarded for the generic
+    # timeout message.
+    monkeypatch.setattr("agent.MAX_TOOL_ITERATIONS", 1)
+    mixed_turn = ModelTurn(
+        tool_calls=[
+            {"name": "submit_answer", "args": {"answer_text": "The value was 100.", "claims": []}},
+            {"name": "search_filings", "args": {"query": "revenue"}},
+        ],
+        text=None,
+    )
+
+    def fake_start(question, system_prompt, tool_schemas):
+        return {}, mixed_turn
+
+    monkeypatch.setattr("agent.BACKENDS", {"gemini": (fake_start, None, None)})
+    monkeypatch.setattr("agent.verify_claims", lambda claims, all_results, question, answer_text: [])
+
+    answer, all_results, warnings, withheld_answer, _ = run_agent("What was the value?", backend="gemini")
+
+    assert answer == "The value was 100."
+    assert answer != (
+        "I wasn't able to finish answering within the allotted number of searches. "
+        "Try asking a more specific or narrower question."
+    )
+
+
+def test_run_agent_text_reply_on_gemini_forces_submit_answer(monkeypatch):
+    text_turn = ModelTurn(tool_calls=[], text="Apple's revenue was $100 billion [1].")
+    forced_submit = _submit_turn(answer_text="Apple's revenue was $100 billion [1].")
+
+    def fake_start(question, system_prompt, tool_schemas):
+        return {}, text_turn
+
+    forced_calls = []
+
+    def fake_send_followup(state, text, force_tool=None):
+        forced_calls.append((text, force_tool))
+        return forced_submit
+
+    monkeypatch.setattr("agent.BACKENDS", {"gemini": (fake_start, None, fake_send_followup)})
+    monkeypatch.setattr("agent.verify_claims", lambda claims, all_results, question, answer_text: [])
+
+    answer, all_results, warnings, withheld_answer, _ = run_agent("What was Apple's revenue?", backend="gemini")
+
+    assert answer == "Apple's revenue was $100 billion [1]."
+    assert len(forced_calls) == 1
+    assert forced_calls[0][1] == "submit_answer"  # force_tool was actually passed
+
+
+def test_run_agent_text_reply_on_ollama_never_attempts_forcing(monkeypatch):
+    # Companion sanity check to the forcing test above: Ollama has no
+    # forcing mechanism at all (_FORCED_SUBMIT_BACKENDS is gemini-only) --
+    # send_followup must never be called; a text reply goes straight to
+    # the prose fallback.
+    text_turn = ModelTurn(tool_calls=[], text="Apple's revenue was $100 billion [1].")
+
+    def fake_start(question, system_prompt, tool_schemas):
+        return {}, text_turn
+
+    def fake_send_followup(state, text, force_tool=None):
+        raise AssertionError("send_followup should never be called for the ollama backend")
+
+    monkeypatch.setattr("agent.BACKENDS", {"ollama": (fake_start, None, fake_send_followup)})
+    monkeypatch.setattr("agent.collect_citation_warnings", lambda answer, all_results: [])
+
+    answer, all_results, warnings, withheld_answer, _ = run_agent("What was Apple's revenue?", backend="ollama")
+
+    assert answer == "Apple's revenue was $100 billion [1]."
+
+
+def test_run_agent_malformed_submit_answer_args_produces_no_structured_answer_warning(monkeypatch):
+    # Defensive boundary check (same belt-and-suspenders every other tool
+    # gets via validate_tool_args) -- not expected in practice (both
+    # backends called this correctly on every live run tried), but a
+    # schema-invalid submit_answer call must still be handled, not crash.
+    malformed_turn = ModelTurn(
+        tool_calls=[{"name": "submit_answer", "args": {"answer_text": "The value was 100.", "claims": "not-a-list"}}],
+        text=None,
+    )
+
+    def fake_start(question, system_prompt, tool_schemas):
+        return {}, malformed_turn
+
+    monkeypatch.setattr("agent.BACKENDS", {"ollama": (fake_start, None, None)})
+
+    answer, all_results, warnings, withheld_answer, _ = run_agent("What was the value?", backend="ollama")
+
+    assert len(warnings) == 1
+    assert "schema" in warnings[0].lower()
+    assert withheld_answer == "The value was 100."
+
+
+def test_run_agent_submit_answer_retry_exhausting_budget_reverifies_against_current_all_results(monkeypatch):
+    # This is the actual proof that the pre_retry_answer staleness bug
+    # (BACKLOG.md) is closed structurally for the submit_answer path, not
+    # just described as closed: caches the RAW submit_args (not
+    # pre-computed warnings) and re-runs verify_claims against whatever
+    # all_results actually is by the time the budget runs out -- here,
+    # grown by one more search dispatched AFTER the retry fired.
+    monkeypatch.setattr("agent.MAX_TOOL_ITERATIONS", 3)
+    first_submit = _submit_turn(answer_text="The value was 100.")
+    retry_makes_new_search = ModelTurn(tool_calls=[{"name": "search_filings", "args": {"query": "more"}}], text=None)
+    another_search_turn = ModelTurn(tool_calls=[{"name": "search_filings", "args": {"query": "even more"}}], text=None)
+
+    def fake_start(question, system_prompt, tool_schemas):
+        return {}, first_submit
+
+    responses = iter([retry_makes_new_search, another_search_turn])
+
+    def fake_send_tool_results(state, results):
+        return next(responses)
+
+    monkeypatch.setattr("agent.BACKENDS", {"gemini": (fake_start, fake_send_tool_results, None)})
+    monkeypatch.setattr(
+        "agent._dispatch_tool_call",
+        lambda call, question, all_results, searched_tickers, verbose: all_results.append({"text": "extra"}) or "search result",
+    )
+
+    verify_calls = []
+
+    def fake_verify_claims(claims, all_results, question, answer_text):
+        verify_calls.append(len(all_results))
+        return (
+            []
+            if len(all_results) > 0
+            else [CitationWarning(check="quote_not_found", citation_index=1, value=100.0, unit="raw", message="bad")]
+        )
+
+    monkeypatch.setattr("agent.verify_claims", fake_verify_claims)
+
+    answer, all_results, warnings, withheld_answer, _ = run_agent("What was the value?", backend="gemini")
+
+    # Called once at retry-decision time (0 results, fails) and once more
+    # at the exhausted-budget fallback (1 result by then, passes) --
+    # proving the re-check sees the CURRENT all_results, not a stale
+    # snapshot from when the retry fired.
+    assert verify_calls == [0, 1]
+    assert warnings == []
+    assert answer == "The value was 100."
 
 
 def test_run_agent_backend_default_follows_config(monkeypatch):
@@ -2088,7 +2447,7 @@ def test_run_agent_backend_default_follows_config(monkeypatch):
     monkeypatch.setattr("agent.BACKENDS", {"totally-custom-backend": (fake_start, None, None)})
     monkeypatch.setattr("agent.collect_citation_warnings", lambda answer, all_results: [])
 
-    answer, all_results, warnings, withheld_answer = run_agent("What was Apple's revenue?")
+    answer, all_results, warnings, withheld_answer, _ = run_agent("What was Apple's revenue?")
 
     assert answer == "Apple's revenue was $100 billion [1]."
 
@@ -2130,7 +2489,7 @@ def test_run_agent_does_not_send_withheld_answer_to_the_span(monkeypatch):
 
     monkeypatch.setattr("agent.traced_span", fake_traced_span)
 
-    answer, all_results, warnings, withheld_answer = run_agent("What was Apple's revenue?", backend="ollama")
+    answer, all_results, warnings, withheld_answer, _ = run_agent("What was Apple's revenue?", backend="ollama")
 
     assert withheld_answer == "Apple's revenue was $100 billion [1]."
     assert len(captured_outputs) == 1
@@ -2141,7 +2500,7 @@ def test_run_agent_does_not_send_withheld_answer_to_the_span(monkeypatch):
 
 def test_finalize_answer_passes_through_when_no_warnings():
     result = _finalize_answer("the answer", [], [], backend="ollama", retried=False)
-    assert result == AgentResult("the answer", [], [], None)
+    assert result == AgentResult("the answer", [], [], None, [])
 
 
 def test_finalize_answer_refuses_when_warnings_present():
@@ -2158,6 +2517,7 @@ def test_finalize_answer_refuses_when_warnings_present():
     assert result.answer == _format_refusal_message(["[1] claims 100.0 ... doesn't appear"])
     assert result.results == ["result"]
     assert result.citation_warnings == ["[1] claims 100.0 ... doesn't appear"]
+    assert result.citation_warning_details == [warnings[0]._asdict()]
 
 
 # ---------------------------------------------------------------------------
@@ -2182,6 +2542,38 @@ def test_finalize_answer_withheld_answer_is_none_when_passing():
     result = _finalize_answer("the model's answer", [], [], backend="gemini", retried=False)
     assert result.withheld_answer is None
     assert result.answer == "the model's answer"
+
+
+# ---------------------------------------------------------------------------
+# _finalize_answer -- citation_warning_details, AgentResult's 5th field
+# (2026-09-10, see
+# docs/plans/2026-09-10-structured-claims-citation-verification.md).
+# Populated directly from the CitationWarnings _finalize_answer already
+# holds, NOT re-derived by a second pass -- this is what lets
+# eval_harness._citation_gate_evidence() stop calling
+# collect_citation_warnings() (the PROSE checker) on a structured-path
+# refusal, which could otherwise silently disagree with what actually
+# refused it.
+# ---------------------------------------------------------------------------
+def test_finalize_answer_citation_warning_details_empty_when_passing():
+    result = _finalize_answer("the answer", [], [], backend="ollama", retried=False)
+    assert result.citation_warning_details == []
+
+
+def test_finalize_answer_citation_warning_details_matches_the_actual_warnings():
+    # A structured-path check value (quote_not_found) that the OLD prose
+    # checker (collect_citation_warnings) could never produce -- proves
+    # this field comes from the warnings _finalize_answer was actually
+    # given, not from re-deriving via the prose pipeline.
+    warnings = [
+        CitationWarning(
+            check="quote_not_found", citation_index=2, value=42.0, unit="million", message="[2] quote not found"
+        )
+    ]
+    result = _finalize_answer("the answer", warnings, [], backend="gemini", retried=False)
+    assert result.citation_warning_details == [
+        {"check": "quote_not_found", "citation_index": 2, "value": 42.0, "unit": "million", "message": "[2] quote not found"}
+    ]
 
 
 def test_finalize_answer_logs_citation_gate_refused_with_check_counts(monkeypatch):
@@ -2273,3 +2665,383 @@ def test_format_citation_retry_message_never_uses_final_attempt_deadline_pressur
     lowered = message.lower()
     assert "final attempt" not in lowered
     assert "last chance" not in lowered
+
+
+# ---------------------------------------------------------------------------
+# _normalize_for_match / _quote_matches (2026-09-10) -- fuzzy quote
+# grounding for the structured-claims verifier. See
+# docs/plans/2026-09-10-structured-claims-citation-verification.md for the
+# full design reasoning (coverage vs. ratio, why autojunk=False is
+# mandatory, the anchor-block floor).
+# ---------------------------------------------------------------------------
+def test_quote_matches_exact_modulo_whitespace():
+    source = "Total revenue for fiscal year 2025 was  $416,161   million\naccording to the filing."
+    quote = "Total revenue for fiscal year 2025 was $416,161 million"
+    assert _quote_matches(quote, source) is True
+
+
+def test_quote_matches_nfkc_curly_quote_and_en_dash_normalization():
+    source = "The Company's remaining performance obligation \u2014 approximately $72.4 billion \u2014 is expected to be recognized."
+    quote = "The Company's remaining performance obligation - approximately $72.4 billion"
+    assert _quote_matches(quote, source) is True
+
+
+def test_quote_matches_realistic_paraphrase_above_threshold():
+    # A near-verbatim quote with one cosmetic word swap someone copying
+    # by hand (or a model lightly restating) might introduce -- still
+    # ~95% character-coverage against the source.
+    source = "Net income for the three months ended June 27, 2026 was $23,434 million, compared to $21,448 million in the prior year period."
+    quote = "Net income for the three months ended June 27 2026 was $23434 million"
+    assert _quote_matches(quote, source) is True
+
+
+def test_quote_matches_rejects_unrelated_text():
+    source = "The Company's remaining performance obligation was approximately $72.4 billion as of January 31, 2026."
+    quote = "Research and development expenses increased due to higher headcount and stock-based compensation."
+    assert _quote_matches(quote, source) is False
+
+
+def test_quote_matches_rejects_short_quotes():
+    # A 2-character quote would otherwise match almost any source
+    # trivially -- tells the checker nothing.
+    source = "Total revenue for fiscal year 2025 was $416,161 million according to the filing."
+    assert _quote_matches("$5", source) is False
+
+
+def test_quote_matches_autojunk_false_regression():
+    # SequenceMatcher's autojunk heuristic is keyed off len(b) -- the
+    # SECOND positional argument -- not len(a); in _quote_matches's call
+    # (SequenceMatcher(None, source_norm, quote_norm, ...)) that means
+    # the QUOTE's length is what has to reach 200+ characters to trigger
+    # it, not the source's (an earlier version of this test padded the
+    # SOURCE to 200+ chars while leaving a ~90-char quote, which never
+    # actually exercised autojunk at all -- both settings gave identical
+    # results; found in code review 2026-09-10). Once triggered, autojunk
+    # marks any character occurring in more than ~1% of the quote as
+    # "popular junk" and excludes it from the initial anchor search --
+    # devastating for prose, where common letters/short words legitimately
+    # repeat many times over 200+ characters. This quote/source pair has
+    # several small word-level differences (rose/increased,
+    # likewise/also, stayed/remained, business/company) spread across a
+    # 280+ character quote built from short repeated clauses ("for the
+    # period", "compared to the prior period") -- with autojunk enabled
+    # those repeated words become "popular" and get excluded as anchors,
+    # collapsing coverage to ~0.65 (below the 0.90 threshold, i.e. a
+    # false rejection); with autojunk=False coverage is ~0.93 (correctly
+    # accepted). Confirmed by direct calculation before writing this
+    # assertion, not by guessing at plausible numbers.
+    quote = (
+        "The company reported that total revenues for the period increased compared to the prior period "
+        "and that total expenses for the period also increased compared to the prior period while total "
+        "assets for the period remained roughly flat compared to the prior period overall for the company"
+    )
+    source = (
+        "Filing note: the company reported that total revenues for the period rose compared to the prior period "
+        "and that total expenses for the period likewise increased compared to the prior period while total "
+        "assets for the period stayed roughly flat compared to the prior period overall for the business"
+    )
+    assert len(_normalize_for_match(quote)) >= 200
+    assert _quote_matches(quote, source) is True
+
+
+def test_normalize_for_match_collapses_whitespace_and_case():
+    assert _normalize_for_match("Total  Revenue\nWas\t$5") == "total revenue was $5"
+
+
+# ---------------------------------------------------------------------------
+# _number_candidates (2026-09-10) -- generalizes what used to be
+# _source_number_candidates(source_text) into a two-argument form:
+# _number_candidates(text, *, unit_source=None) additionally reinterprets
+# bare numbers in `text` under a unit word found in `unit_source` (a
+# SEPARATE, typically longer text), defaulting unit_source to `text`
+# itself when omitted -- which is exactly the old function's behavior,
+# byte-for-byte, so the old prose-verification path (_iter_citation_claims)
+# is completely unaffected by this change. See
+# docs/plans/2026-09-10-structured-claims-citation-verification.md.
+# ---------------------------------------------------------------------------
+def test_number_candidates_finds_bare_number_under_its_own_unit():
+    candidates = _number_candidates("Revenue was $5 billion.")
+    assert ("scale", 5e9) in candidates
+
+
+def test_number_candidates_unit_source_defaults_to_text_itself():
+    # Byte-identical to the old _source_number_candidates(text) behavior
+    # this generalizes -- found live on crm-rpo-fy26 (BACKLOG history):
+    # a table states its unit once in a caption ("...consisted of the
+    # following (in billions):") and leaves cell values bare ("$72.4").
+    text = (
+        "Remaining performance obligation consisted of the following (in billions):\n"
+        "As of January 31, 2026 | $35.1 | $37.3 | $72.4"
+    )
+    candidates = _number_candidates(text)
+    assert ("scale", 72.4e9) in candidates  # bare $72.4 reinterpreted under the "(in billions)" caption
+    assert ("scale", 72.4) in candidates  # still also present as its own literal raw value
+
+
+def test_number_candidates_reinterprets_under_a_separate_unit_source():
+    # New capability: a claim's QUOTE ("$72.4") often won't itself carry
+    # the unit word -- that's stated once in the chunk's caption, not
+    # repeated per cell. Passing the whole chunk as unit_source lets a
+    # short quote still resolve under it -- this is what lets Check C
+    # (value attribution) verify a claim's quote against its cited
+    # chunk's caption without requiring the quote to restate the unit.
+    quote = "$72.4"
+    chunk = "Remaining performance obligation consisted of the following (in billions): $35.1, $37.3, $72.4"
+    candidates = _number_candidates(quote, unit_source=chunk)
+    assert ("scale", 72.4e9) in candidates
+
+
+def test_number_candidates_does_not_reinterpret_without_a_matching_caption_word():
+    candidates = _number_candidates("$5", unit_source="no unit words here at all")
+    assert candidates == [("scale", 5.0)]
+
+
+# ---------------------------------------------------------------------------
+# verify_claims (2026-09-10) -- the structured-claims counterpart to
+# verify_citations()/collect_citation_warnings() above, used for a
+# submit_answer tool call instead of prose. Combines three checks (quote
+# grounding via _quote_matches, value attribution via _number_candidates,
+# and a coverage cross-check against answer_text) into the same
+# CitationWarning vocabulary, with 5 new `check` values:
+# citation_out_of_range, quote_too_short, quote_not_found,
+# value_not_in_quote, uncovered_number. See
+# docs/plans/2026-09-10-structured-claims-citation-verification.md.
+# ---------------------------------------------------------------------------
+def _valid_submitted_claim(**overrides):
+    claim = {
+        "value": 100.0,
+        "unit": "raw",
+        "citation_index": 1,
+        "quote": "the reported value for the period was exactly 100",
+    }
+    claim.update(overrides)
+    return claim
+
+
+def test_verify_claims_empty_claims_and_answer_passes():
+    assert verify_claims([], [], "What was the value?", "I can't confirm this from the sources.") == []
+
+
+def test_verify_claims_valid_claim_passes():
+    results = [_fake_result(text="the reported value for the period was exactly 100 raw units")]
+    claims = [_valid_submitted_claim()]
+    answer_text = "The value was 100 [1]."
+    assert verify_claims(claims, results, "What was the value?", answer_text) == []
+
+
+def test_verify_claims_out_of_range_citation_index():
+    claims = [_valid_submitted_claim(citation_index=5)]
+    warnings = verify_claims(claims, [_fake_result()], "q", "The value was 100 [5].")
+    assert len(warnings) == 1
+    assert warnings[0].check == "citation_out_of_range"
+    assert warnings[0].citation_index == 5
+
+
+def test_verify_claims_quote_too_short():
+    results = [_fake_result(text="the reported value for the period was exactly 100")]
+    claims = [_valid_submitted_claim(quote="100")]
+    warnings = verify_claims(claims, results, "q", "The value was 100 [1].")
+    assert len(warnings) == 1
+    assert warnings[0].check == "quote_too_short"
+
+
+def test_verify_claims_quote_not_found():
+    results = [_fake_result(text="Research and development expenses increased due to higher headcount.")]
+    claims = [_valid_submitted_claim(quote="the reported value for the period was exactly 100")]
+    warnings = verify_claims(claims, results, "q", "The value was 100 [1].")
+    assert len(warnings) == 1
+    assert warnings[0].check == "quote_not_found"
+
+
+def test_verify_claims_value_not_in_quote():
+    # Reproduces the same-sentence wrong-period substitution system-prompt
+    # rule 5 exists to prevent: the quote genuinely appears in the source
+    # (so quote_not_found doesn't fire), but the CLAIMED value belongs to
+    # a different number stated elsewhere in that same source chunk.
+    results = [_fake_result(text="Revenue was $100 million in Q1 and $200 million in Q2.")]
+    claims = [_valid_submitted_claim(value=200.0, unit="million", quote="Revenue was $100 million in Q1")]
+    warnings = verify_claims(claims, results, "q", "Revenue was $200 million [1].")
+    assert len(warnings) == 1
+    assert warnings[0].check == "value_not_in_quote"
+
+
+def test_verify_claims_caption_unit_case_still_passes():
+    # The documented live crm-rpo-fy26 fix must keep working under the
+    # new checker: a bare "$72.4" quote, with the unit stated only in the
+    # chunk's own caption, not repeated in the quote itself.
+    source_text = (
+        "Remaining performance obligation consisted of the following (in billions):\n"
+        "As of January 31, 2026 | $35.1 | $37.3 | $72.4"
+    )
+    results = [_fake_result(text=source_text)]
+    claims = [_valid_submitted_claim(value=72.4, unit="billion", quote="As of January 31, 2026 | $35.1 | $37.3 | $72.4")]
+    answer_text = "The total remaining performance obligation was approximately $72.4 billion [1]."
+    assert verify_claims(claims, results, "q", answer_text) == []
+
+
+def test_verify_claims_uncovered_number_in_answer_text():
+    results = [_fake_result(text="the reported value for the period was exactly 100 raw units")]
+    claims = [_valid_submitted_claim()]
+    answer_text = "The value was 100 [1], roughly double last year's 50."
+    warnings = verify_claims(claims, results, "q", answer_text)
+    assert len(warnings) == 1
+    assert warnings[0].check == "uncovered_number"
+    assert warnings[0].value == 50.0
+
+
+def test_verify_claims_multi_index_citation_bracket_digits_not_treated_as_uncovered_numbers():
+    # Real false positive found live 2026-09-11 (41-question baseline
+    # re-run after the structured-claims redesign): _CITATION_MARKER
+    # (r"\[(\d+)\]") only strips a SINGLE-index bracket like "[1]" before
+    # the coverage check runs extract_numbers() on answer_text -- a
+    # multi-source bracket like "[1, 3, 5]" (crm-revenue-q1fy27's real
+    # answer) or "[1, 17]" (msft-net-income-fy2025-indirect's) survives
+    # untouched, so the bare digits 1/3/5 (or 1/17) inside it get
+    # extracted as their own spurious uncovered-number claims and refuse
+    # an otherwise fully-grounded answer. This is the SAME marker-format
+    # gap BACKLOG.md already tracks for the old prose fallback path
+    # (_CITATION_MARKER doesn't recognize "[1, 5]" as a marker at all)
+    # -- it turns out to also hit the NEW structured-claims coverage
+    # check, not just the fallback path as originally expected.
+    results = [_fake_result(text="Revenue was $11,133 million, up 13 percent year-over-year.")]
+    claims = [
+        _valid_submitted_claim(value=11133.0, unit="million", quote="Revenue was $11,133 million"),
+        _valid_submitted_claim(value=13.0, unit="percent", quote="up 13 percent year-over-year"),
+    ]
+    answer_text = "Revenue was $11,133 million, an increase of 13 percent year-over-year [1, 3, 5]."
+    warnings = verify_claims(claims, results, "q", answer_text)
+    uncovered = [w for w in warnings if w.check == "uncovered_number"]
+    assert uncovered == [], uncovered
+
+
+def test_verify_claims_question_echo_exempts_a_number_from_coverage():
+    # A number the model is merely repeating from the user's OWN question
+    # is not a claim it's asserting -- kills "3-year"-shaped noise (and
+    # date/fiscal-year echoes) at the source, without a claims entry.
+    results = [_fake_result(text="operating margin data")]
+    claims = []
+    question = "What was Apple's 3-year average operating margin from fiscal year 2023 through fiscal year 2025?"
+    answer_text = "I can't confirm a 3-year average from the sources provided."
+    assert verify_claims(claims, results, question, answer_text) == []
+
+
+def test_verify_claims_non_claim_noise_in_answer_text_is_not_flagged():
+    results = [_fake_result(text="Apple filed its 10-K covering the period.")]
+    claims = []
+    answer_text = "Apple filed its 10-K on June 27, 2026, covering fiscal year 2026, as discussed in Note 1."
+    assert verify_claims(claims, results, "q", answer_text) == []
+
+
+def test_verify_claims_does_not_duplicate_the_same_uncovered_number_twice():
+    results = [_fake_result()]
+    claims = []
+    answer_text = "Total costs were $30 million. Total costs were $30 million again."
+    warnings = verify_claims(claims, results, "q", answer_text)
+    assert len(warnings) == 1
+
+
+# ---------------------------------------------------------------------------
+# _format_claim_retry_message (2026-09-10) -- structured-claims retry
+# wording, sharing _CITATION_RETRY_GUIDANCE with the old prose retry
+# message so the two can't drift apart. See
+# docs/plans/2026-09-10-structured-claims-citation-verification.md.
+# ---------------------------------------------------------------------------
+def test_format_claim_retry_message_includes_each_warning():
+    warnings = [
+        CitationWarning(check="quote_not_found", citation_index=1, value=100.0, unit="raw", message="[1] quote missing"),
+        CitationWarning(check="value_not_in_quote", citation_index=2, value=42.0, unit="raw", message="[2] value missing"),
+    ]
+    message = _format_claim_retry_message("the answer", warnings)
+    assert "[1] quote missing" in message
+    assert "[2] value missing" in message
+
+
+def test_format_claim_retry_message_includes_the_previous_answer():
+    message = _format_claim_retry_message("Apple's revenue was $100 billion.", [])
+    assert "Apple's revenue was $100 billion." in message
+
+
+def test_format_claim_retry_message_shares_guidance_with_prose_retry_message():
+    # Both messages must share the exact same corrective guidance text --
+    # extracted specifically so they can't drift apart independently.
+    prose = _format_citation_retry_message("answer", ["warning"])
+    claim = _format_claim_retry_message("answer", [])
+    assert _CITATION_RETRY_GUIDANCE in prose
+    assert _CITATION_RETRY_GUIDANCE in claim
+
+
+def test_format_claim_retry_message_tells_model_to_call_submit_answer_again():
+    message = _format_claim_retry_message("answer", [])
+    assert "submit_answer" in message
+
+
+# ---------------------------------------------------------------------------
+# _partition_submit_call (2026-09-10) -- splits a turn's tool_calls into
+# the submit_answer call (if any) and every other call, so the loop can
+# tell a pure submission from a mixed submit+search turn without a
+# str|Terminal union return type on _dispatch_tool_call. See
+# docs/plans/2026-09-10-structured-claims-citation-verification.md.
+# ---------------------------------------------------------------------------
+def test_partition_submit_call_pure_submission():
+    submit_call = {"name": "submit_answer", "args": {"answer_text": "x", "claims": []}}
+    submit, other = _partition_submit_call([submit_call])
+    assert submit is submit_call
+    assert other == []
+
+
+def test_partition_submit_call_no_submission():
+    search_call = {"name": "search_filings", "args": {"query": "revenue"}}
+    submit, other = _partition_submit_call([search_call])
+    assert submit is None
+    assert other == [search_call]
+
+
+def test_partition_submit_call_mixed_turn():
+    submit_call = {"name": "submit_answer", "args": {"answer_text": "x", "claims": []}}
+    search_call = {"name": "search_filings", "args": {"query": "revenue"}}
+    submit, other = _partition_submit_call([submit_call, search_call])
+    assert submit is submit_call
+    assert other == [search_call]
+
+
+def test_partition_submit_call_empty():
+    assert _partition_submit_call([]) == (None, [])
+
+
+def test_quote_matches_accepts_a_long_bare_xbrl_number_quote():
+    # Regression test for a real false-positive refusal found live
+    # (2026-09-10, running the newly-wired agent loop end to end): the
+    # model quoted JUST an XBRL fact's bare number, with no surrounding
+    # "revenue = ... USD" context -- "391035000000" is only 12
+    # NORMALIZED CHARACTERS, under _QUOTE_MIN_CHARS (15), so it was
+    # wrongly rejected as "too short to verify" despite being an exact,
+    # unambiguous match. A quote's DIGIT count, not character count, is
+    # what makes a bare number specific enough to trust -- a 12-digit
+    # XBRL value is astronomically unlikely to match by coincidence even
+    # though it's shorter (as text) than a genuinely vague quote like
+    # "$5" needs to be to mean anything.
+    source = "revenue = 391035000000 USD (structured XBRL data, not filing prose)"
+    assert _quote_matches("391035000000", source) is True
+
+
+def test_quote_matches_still_rejects_a_short_bare_number():
+    # Contrast with the fix above: a SHORT bare number ("$5", 1 digit)
+    # must still be rejected -- the digit-count exception is deliberately
+    # scoped to numbers long enough to be specific, not every number.
+    source = "Total revenue for fiscal year 2025 was $416,161 million according to the filing."
+    assert _quote_matches("$5", source) is False
+
+
+def test_verify_claims_accepts_a_long_bare_xbrl_number_quote_end_to_end():
+    # verify_claims()/_verify_one_claim() had their OWN separate
+    # too-short pre-check (agent.py, before ever calling _quote_matches)
+    # that was never updated when _BARE_NUMBER_MIN_DIGITS was added to
+    # _quote_matches -- so the exact live false positive
+    # test_quote_matches_accepts_a_long_bare_xbrl_number_quote regression-
+    # tests at the _quote_matches level was still reproducible one layer
+    # up, through the actual verify_claims() entry point every caller
+    # uses. Found in code review 2026-09-10.
+    results = [_fake_result(text="revenue = 391035000000 USD (structured XBRL data, not filing prose)")]
+    claims = [_valid_submitted_claim(value=391035000000.0, unit="raw", quote="391035000000")]
+    answer_text = "The value was 391035000000 [1]."
+    assert verify_claims(claims, results, "q", answer_text) == []

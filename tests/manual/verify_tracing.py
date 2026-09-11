@@ -123,7 +123,7 @@ def main():
 
     print(f"[run_agent] asking a real question (backend=gemini), marker={marker!r}")
     question = f"What was Apple's revenue for fiscal year 2025? ({marker})"
-    answer, results, warnings, withheld_answer = run_agent(question, backend="gemini")
+    answer, results, warnings, withheld_answer, _ = run_agent(question, backend="gemini")
     print(f"  answer: {answer[:120]}...")
     tracing.flush()
 
