@@ -40,7 +40,15 @@ OLLAMA_MODEL_NAME = os.getenv("OLLAMA_MODEL_NAME", "qwen2.5:7b-instruct")
 
 # Which LLM backend agent.py/eval_harness.py use when --backend isn't
 # passed explicitly (llm_backends.py's BACKENDS dict has the full list).
-DEFAULT_BACKEND = os.getenv("DEFAULT_BACKEND", "ollama")
+# Gemini since 2026-09-10 (see
+# docs/plans/2026-09-10-citation-gate-measurement-instrumentation.md):
+# qwen2.5:7b-instruct's documented capability ceiling (PROJECT_CONTEXT.md)
+# made it the wrong default for developing against as the agent's tool
+# surface grows, and gemini-flash-lite-latest's free tier (30 RPM/1500 RPD)
+# covers this project's eval volume many times over. Ollama remains fully
+# supported (still the only backend that needs no API key at all) --
+# demoted from default, not removed; pass --backend ollama explicitly.
+DEFAULT_BACKEND = os.getenv("DEFAULT_BACKEND", "gemini")
 
 # Gemini (free tier, api key from aistudio.google.com) -- llm_backends.py.
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")

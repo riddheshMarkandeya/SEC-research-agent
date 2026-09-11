@@ -331,3 +331,54 @@ BACKENDS: dict[str, tuple[Callable, Callable, Callable]] = {
     "ollama": (_ollama_start, _ollama_send, _ollama_send_followup),
     "gemini": (_gemini_start, _gemini_send, _gemini_send_followup),
 }
+
+
+def complete(backend: str, system_prompt: str, user_prompt: str, temperature: float = 0.0) -> str:
+    """One-shot, tool-free completion -- added 2026-09-10 for
+    eval_harness.py's grade_judged() to honor --judge-backend (see
+    docs/plans/2026-09-10-citation-gate-measurement-instrumentation.md).
+
+    Deliberately NOT threaded through the BACKENDS 3-callable
+    tool-calling protocol above: this function's only caller never calls
+    tools and never takes a second turn, and specifically needs
+    temperature 0.0 for grading determinism -- _gemini_start hardcodes
+    0.1 for generation, and widening that protocol's signature (and
+    every one of its 6 implementations) just to carry a temperature only
+    this caller wants would be a bigger, riskier change than this
+    function.
+
+    Ollama branch reuses ollama_call() directly, so its existing
+    retry/backoff/logging apply unchanged. Gemini branch creates a
+    single-turn chat with NO tools= (unlike _gemini_start) and reuses
+    _send_with_retry()'s existing 429/503 backoff rather than switching
+    to client.models.generate_content, which would require making that
+    retry helper accept an arbitrary callable instead of a chat object.
+    Response normalization goes through _gemini_response_to_turn() too
+    (found missing in code review, 2026-09-10) rather than reading
+    `resp.text` directly -- that function is what guards the empty-
+    candidates/safety-filtered case (with its own log_event) that a bare
+    `resp.text` access would otherwise handle silently and
+    inconsistently with every other Gemini call site. tool_calls will
+    always be `[]` here (no tools were ever offered), so its `text`
+    field is exactly `resp.text`."""
+    if backend == "ollama":
+        state = {
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            "tool_schemas": [],
+            "temperature": temperature,
+        }
+        message = ollama_call(state)
+        return (message.get("content") or "").strip()
+    if backend == "gemini":
+        client = _get_gemini_client()
+        chat = client.chats.create(
+            model=GEMINI_MODEL_NAME,
+            config=types.GenerateContentConfig(system_instruction=system_prompt, temperature=temperature),
+        )
+        resp = _send_with_retry(chat, user_prompt)
+        turn = _gemini_response_to_turn(resp)
+        return (turn.text or "").strip()
+    raise ValueError(f"Unknown backend: {backend!r}")

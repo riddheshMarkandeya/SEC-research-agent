@@ -4282,6 +4282,198 @@ fix doesn't break real MCP `compare_financial_metric` calls, which
 matched ground truth for all 5 companies) and `tests/manual/verify_retrieval.py`
 live (16/16 checks passed, plausible results).
 
+### Citation-gate FP/FN measurement instrumentation; Ollama demoted to secondary backend (2026-09-10)
+
+Full design: `docs/plans/2026-09-10-citation-gate-measurement-instrumentation.md`.
+Review: `docs/reviews/2026-09-10-citation-gate-measurement-instrumentation.md`.
+
+The uncited-claim heuristic added 2026-09-09 (`_iter_uncited_claims`,
+`_SENTENCE_BREAK`, the marker-attachment rule) took five review rounds to
+stabilize and carries 51 of `tests/test_agent.py`'s 150 tests. The user
+asked whether there's a better way; the honest answer (confirmed by
+looking at how Gemini's own `groundingSupports`, Vertex's Check Grounding
+API, and RAGAS's faithfulness metric all solve this — none of them
+reconstruct claim-to-source attribution from prose the way this project
+does) is yes: model-emitted structured claims. But rewriting a hard gate
+on the strength of an argument, without measuring how often the *current*
+gate is actually wrong, would be replacing one unverified belief with
+another. This session built the measurement apparatus instead, and ran it.
+
+**What changed, mechanically:**
+
+1. **`agent.py`: `CitationWarning` + `collect_citation_warnings()`.**
+   `verify_citations()`'s two independent checks (`_iter_citation_claims`
+   — "does the cited chunk contain this number?" — and
+   `_iter_uncited_claims` — "does this number have any citation at all?")
+   now tag each warning with `check` (`"cited_claim_unsupported"` /
+   `"uncited_claim"`) and `citation_index` at construction, instead of
+   leaving callers to infer it from wording. `verify_citations()` is now
+   a one-line `.message` projection of this — every warning string stays
+   byte-identical, since `_format_refusal_message`/
+   `_format_citation_retry_message` interpolate them into prompt text and
+   changing that text would perturb the very model behavior this
+   campaign is trying to measure.
+
+2. **`agent.py`: `AgentResult` NamedTuple + `withheld_answer`.**
+   `run_agent()` returns `(answer, results, citation_warnings,
+   withheld_answer)` — the 4th field is the model's actual answer text
+   whenever `_finalize_answer()`'s hard gate refused it, `None`
+   otherwise. Until now that text was thrown away the moment it was
+   rejected, so there was no way to ask "was the gate even right to
+   refuse this?" after the fact. `_finalize_answer()` also now fires a
+   `citation_gate_refused` log event (local JSONL only, per-check
+   counts, the withheld text) — the live/manual-run counterpart to the
+   eval-report evidence below. The withheld text never reaches a
+   Langfuse-forwarded span; only `log_event`, which is local-only by
+   design.
+
+3. **`eval_harness.py`: 4 additive report fields.** `withheld_answer`,
+   `gate_withheld_would_have_passed`, `gate_withheld_detail`,
+   `citation_warning_details` — populated only when the gate refused a
+   numeric/comparison row, by re-running the *existing*
+   `grade_numeric`/`grade_comparison` against the withheld text.
+   `_grade()`'s own short-circuit (hard-gated refusal → FAIL) is
+   completely unchanged; this is purely additive evidence for later
+   analysis, not a change to what "passed" means.
+
+4. **New `analyze_citation_gate.py`.** Reads one or more eval report
+   JSON files and classifies each numeric/comparison row: `false_positive`
+   (gate refused something that would have passed), `true_positive`
+   (gate refused something that wouldn't have), `false_negative_candidate`
+   (gate passed something a human grader still failed, with a citation
+   present), or `not_gate_attributable`. Judged rows are excluded (no
+   ground truth to re-grade against); a pre-2026-09-10 report is
+   `unknown_pre_instrumentation` (missing the new keys entirely) and
+   excluded from every rate rather than silently miscounted. This had to
+   live in `eval_harness.py`'s report, not a `trace_logs/traces.jsonl`
+   reader — logs have no ground truth, so "would this have passed" can
+   only be answered where the expected value already lives.
+
+   **Known asymmetry, deliberately surfaced, not hidden**:
+   `value_is_citation_verified()` treats "no citation at all" as
+   verified, so a correct-but-uncited value counts as "would have
+   passed" here too — `false_positive_by_check` breaks the rate down by
+   which check fired specifically so this doesn't collapse into one
+   number. Flagged as its own `[design, Med, Standard]` BACKLOG item
+   rather than silently baked into the measurement.
+
+5. **`llm_backends.py`: `complete()`.** A one-shot, tool-free completion
+   helper, separate from the `BACKENDS` 3-callable tool-calling protocol
+   — added because `eval_harness.py`'s `grade_judged()` called Ollama
+   directly, unconditionally, regardless of `--backend`, which meant
+   `--backend gemini` still required a live local Ollama server for 12
+   of 41 judged questions. `grade_judged()` now takes a `backend`
+   parameter; `run_eval()`/`save_report()` gained `judge_backend`
+   (defaults to the answer backend, not `DEFAULT_BACKEND`, so
+   `--backend ollama` — the no-API-key path this project deliberately
+   keeps — never silently needs a Gemini key). Verified live end-to-end:
+   `eval_harness.py --ids aapl-ai-risk --backend gemini --judge-backend
+   gemini` completed with both `answer_model` and `judge_model` recorded
+   as `gemini-flash-lite-latest` in the saved report.
+
+6. **`config.DEFAULT_BACKEND` flipped to `"gemini"`.** Decision made
+   explicitly with the user during planning, not by drift: this changes
+   `PROJECT_CONTEXT.md`'s original "no paid APIs required" framing (a
+   free-tier Gemini key is now the default path), traded for developing
+   against a model whose documented capability ceiling
+   (`qwen2.5:7b-instruct`, see the many prior sessions' findings) was
+   becoming the wrong default as the agent's tool surface grows.
+   **Ollama is demoted, not removed** — `llm_backends.py`'s dual-backend
+   architecture, `_CITATION_RETRY_BACKENDS` gate, and all ~26
+   Ollama-touching tests are untouched; `--backend ollama
+   --judge-backend ollama` still runs with zero API key. The three
+   previously-hardcoded `backend: str = "ollama"` defaults
+   (`run_agent`, `_run_agent_impl`, `run_eval`) now resolve
+   `config.DEFAULT_BACKEND` at call time rather than at
+   function-definition time — a literal `= DEFAULT_BACKEND` parameter
+   default would have frozen in whatever the config value was at import
+   time and been untestable via monkeypatch, which is exactly the bug
+   the old hardcoded `"ollama"` default had, just with extra
+   indirection. Free-tier headroom: `gemini-flash-lite-latest` is 30
+   RPM / 1500 RPD; the 41-question baseline run below made roughly 165
+   agent calls plus 12 judge calls, comfortably inside one day's quota.
+
+7. **`eval/citation_stress_questions.jsonl`** — 4 new questions,
+   deliberately designed to stress specific failure shapes, run
+   separately from the 41-question baseline (via the existing
+   `--questions` flag) so questions built to sometimes fail don't
+   contaminate the headline pass rate. Every ground-truth value sourced
+   from real `xbrl_facts.get_metric()` calls or reused from an
+   already-verified existing question — none invented. Each question
+   was live-verified individually before being committed, per this
+   project's live-code TDD carve-out; one (`nvda-revenue-fy26-us-gaap`)
+   needed two reword iterations before it reliably reproduced its
+   target shape in a single standard `[n]` marker (see below).
+
+**The measurement run and what it found** (`eval_harness.py --backend
+gemini` for the 41-question baseline, report `20260910T212525Z.json`;
+`eval_harness.py --questions eval/citation_stress_questions.jsonl
+--backend gemini` for the stress set, report `20260910T211730Z.json`;
+`DEFAULT_BACKEND=gemini` means `_CITATION_RETRY_BACKENDS` is active, so
+this measures the gate *after* its one-shot corrective retry, not
+first-pass — the pre-retry picture is recoverable per-run from
+`trace_logs/traces.jsonl`'s `citation_retry` events, not read here):
+
+- **Baseline: 36/41 passed.** Of the 29 numeric/comparison rows (12
+  judged rows excluded — no ground truth to re-grade against), the gate
+  fired twice, and **both firings were false positives** — 0 true
+  positives, 0 false-negative candidates.
+- **Combined with the 4 stress questions: 4/4 gate firings were false
+  positives.** `false_positive_rate = 100%` across every refusal
+  measured this session. Zero cases of the gate correctly catching a bad
+  answer, and zero cases of it wrongly passing one.
+- **Every false positive traces to an identified, now-documented root
+  cause**, not noise:
+  - `nvda-revenue-fy26-us-gaap` — the deliberately-targeted
+    capitalized-abbreviation sentence-break bug (`U.S. GAAP` between a
+    claim and its marker). Confirmed exactly as predicted from the
+    regex alone: `"NVIDIA's total revenue for fiscal year 2026 was
+    $215,938 million, presented in accordance with U.S. GAAP [3]."`
+    refused; `analyze_citation_gate.py` correctly labels it
+    `false_positive`/`uncited_claim` — this is the instrumentation's own
+    self-validating acceptance test.
+  - `aapl-rd-pct-gross-profit-fy2025` — the self-computed-ratio-with-
+    no-tool shape, reproducing the exact flakiness pattern already
+    documented for `msft-cash-to-assets-fy2025` (2026-08-25): across
+    repeated live runs this question landed as a `true_positive`
+    (`cited_claim_unsupported`, model cited both raw legs but not the
+    derived percentage) in one run and a `false_positive`
+    (`uncited_claim`, no marker at all) in the next, with the identical
+    question and code. Confirms this specific shape's non-determinism is
+    a property of the model's phrasing choice, not something this
+    session's changes affected.
+  - `aapl-3yr-avg-operating-margin-fy2023-fy2025` — a new noise source:
+    `"3-year"` in the question's own echoed wording parses as a bare
+    `claims 3.0 (raw)` claim (`_NON_CLAIM_PATTERN` has no ordinal/count-
+    phrase exclusion, the same shape as the existing `10-K`/`10-Q`
+    carve-out), which shares `[1]`'s backward window with the genuinely
+    correct, genuinely-cited 31.1% figure and drags it into a refusal.
+  - `crm-buyback-and-liquidity-q1fy27` — a new, higher-priority finding:
+    `_CITATION_MARKER`'s `\[(\d+)\]` regex does not recognize a
+    comma-separated bracket like `[1, 5]` as a citation marker at all.
+    Confirmed independently in two runs now (this one, and an earlier
+    `nvda-revenue-fy26-us-gaap` wording variant that produced
+    `[1, 2, 3]`) — a real, recurring Gemini formatting choice for citing
+    multiple sources for one fact, not a one-off. The system prompt only
+    specifies the `[1][2]` adjacent-bracket format for the cross-company
+    case (rule 8); single-company multi-source format is unspecified, so
+    this is a checker gap, not purely a prompting fix.
+- All 4 findings, plus a `Note N` footnote-reference noise variant found
+  while iterating on the `U.S. GAAP` question's wording, are filed in
+  `BACKLOG.md` under the 2026-09-10 plan section with their exact repro
+  text.
+
+**What this means for the next phase**: a 100% false-positive rate
+across every refusal this session measured is a strong signal (small
+sample — 4 refusal events — so a wider run would sharpen it, not
+overturn the direction) that the current heuristic's false positives are
+not edge cases needing a patch each, they're close to being *the entire
+observed failure mode*. That's the case for the structured-claims
+`submit_answer` phase already parked in `BACKLOG.md`, now backed by
+numbers instead of code-reading intuition — and the model-based-veto
+item can now be sized against "would need to overturn 4 wrong refusals
+in 45 questions," rather than being built blind.
+
 ## Next steps
 
 See `BACKLOG.md` for the live task backlog. This section used to hold

@@ -7,11 +7,20 @@ test_eval_harness.py's mocked grade_judged() test.
 
 from types import SimpleNamespace
 
+import pytest
 import requests
 
 from google.genai import errors as genai_errors
 
-from llm_backends import ollama_call, _ollama_message_to_turn, _gemini_response_to_turn, _get_gemini_client, _send_with_retry, _to_gemini_tool
+from llm_backends import (
+    complete,
+    ollama_call,
+    _ollama_message_to_turn,
+    _gemini_response_to_turn,
+    _get_gemini_client,
+    _send_with_retry,
+    _to_gemini_tool,
+)
 
 
 def test_ollama_message_to_turn_with_tool_calls():
@@ -455,3 +464,75 @@ def test_send_with_retry_succeeds_first_try_without_sleeping(monkeypatch):
     assert result == "ok"
     assert sleeps == []
     assert log_calls == []
+
+
+# ---------------------------------------------------------------------------
+# complete() -- one-shot, tool-free completion added 2026-09-10 for
+# eval_harness.py's grade_judged() to honor --judge-backend. Deliberately
+# separate from the BACKENDS 3-callable tool-calling protocol: its only
+# caller never calls tools, never takes a second turn, and needs
+# temperature 0.0, which the tool-calling path hardcodes to 0.1 (see
+# _gemini_start above). Only the Ollama branch is unit-tested here (pure
+# control flow via a mocked ollama_call, same principle as every other
+# test in this file); the Gemini branch is live-only, verified via
+# tests/manual/ instead per CLAUDE.md's TDD carve-out for live-only code.
+# ---------------------------------------------------------------------------
+def test_complete_ollama_passes_temperature_and_no_tool_schemas(monkeypatch):
+    captured_state = {}
+
+    def fake_ollama_call(state):
+        captured_state.update(state)
+        return {"role": "assistant", "content": "PASS\nLooks right."}
+
+    monkeypatch.setattr("llm_backends.ollama_call", fake_ollama_call)
+
+    result = complete("ollama", "system prompt", "user prompt")
+
+    assert result == "PASS\nLooks right."
+    assert captured_state["tool_schemas"] == []
+    assert captured_state["temperature"] == 0.0
+    assert captured_state["messages"] == [
+        {"role": "system", "content": "system prompt"},
+        {"role": "user", "content": "user prompt"},
+    ]
+
+
+def test_complete_ollama_honors_a_non_default_temperature(monkeypatch):
+    captured_state = {}
+
+    def fake_ollama_call(state):
+        captured_state.update(state)
+        return {"role": "assistant", "content": "ok"}
+
+    monkeypatch.setattr("llm_backends.ollama_call", fake_ollama_call)
+
+    complete("ollama", "system prompt", "user prompt", temperature=0.1)
+
+    assert captured_state["temperature"] == 0.1
+
+
+def test_complete_raises_on_unknown_backend():
+    with pytest.raises(ValueError):
+        complete("unknown-backend", "system prompt", "user prompt")
+
+
+def test_complete_gemini_raises_on_empty_candidates(monkeypatch):
+    # complete()'s Gemini branch must go through _gemini_response_to_turn()
+    # rather than reading resp.text directly (found in code review,
+    # 2026-09-10) -- this is what makes a safety-filtered/empty response
+    # raise the same informative RuntimeError (with the same log_event)
+    # every other Gemini call site already gets, instead of silently
+    # returning "".
+    fake_chat = _FakeChat([SimpleNamespace(candidates=[], text=None)])
+    monkeypatch.setattr(
+        "llm_backends._get_gemini_client",
+        lambda: SimpleNamespace(chats=SimpleNamespace(create=lambda **kwargs: fake_chat)),
+    )
+    log_calls = []
+    monkeypatch.setattr("llm_backends.log_event", lambda category, **fields: log_calls.append((category, fields)))
+
+    with pytest.raises(RuntimeError):
+        complete("gemini", "system prompt", "user prompt")
+
+    assert log_calls and log_calls[0][0] == "llm_response_malformed"
+    assert log_calls[0][1]["backend"] == "gemini"

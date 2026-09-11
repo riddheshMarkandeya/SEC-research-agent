@@ -250,8 +250,10 @@ def test_grade_does_not_short_circuit_judged_questions_with_citation_warnings(mo
     # expect a refusal as the CORRECT answer -- grade_judged must still
     # run and decide based on its own criteria, not be pre-empted.
     monkeypatch.setattr(
-        "eval_harness.ollama_call",
-        lambda state: {"content": "PASS\nCorrectly refused, no such data exists."},
+        "eval_harness.complete",
+        lambda backend, system_prompt, user_prompt, temperature=0.0: (
+            "PASS\nCorrectly refused, no such data exists."
+        ),
     )
     q = {
         "type": "judged",
@@ -271,15 +273,19 @@ def test_grade_raises_on_unknown_type():
 
 
 # ---------------------------------------------------------------------------
-# grade_judged — mocked ollama_call (llm_backends.py's retry/backoff-wrapped
-# Ollama call, found in code review 2026-09-06 to have previously bypassed it
-# entirely via a raw requests.post with no retry), testing only the
-# response-parsing logic and that it's wired up correctly.
+# grade_judged — mocked llm_backends.complete() (2026-09-10: routes through
+# this rather than calling Ollama directly, so --judge-backend can be
+# honored -- see
+# docs/plans/2026-09-10-citation-gate-measurement-instrumentation.md).
+# complete() itself still reuses each backend's existing retry/backoff/
+# log_event machinery (found missing in code review 2026-09-06, when a
+# raw requests.post here bypassed it entirely) -- these tests only cover
+# the response-parsing logic and that grade_judged is wired up correctly.
 # ---------------------------------------------------------------------------
 def test_grade_judged_parses_pass(monkeypatch):
     monkeypatch.setattr(
-        "eval_harness.ollama_call",
-        lambda state: {"content": "PASS\nThe answer clearly satisfies the criteria."},
+        "eval_harness.complete",
+        lambda backend, system_prompt, user_prompt, temperature=0.0: "PASS\nThe answer clearly satisfies the criteria.",
     )
     passed, reason = grade_judged("Q?", "some answer", "some criteria")
     assert passed is True
@@ -288,8 +294,8 @@ def test_grade_judged_parses_pass(monkeypatch):
 
 def test_grade_judged_parses_fail(monkeypatch):
     monkeypatch.setattr(
-        "eval_harness.ollama_call",
-        lambda state: {"content": "FAIL\nThe answer does not mention the required risk."},
+        "eval_harness.complete",
+        lambda backend, system_prompt, user_prompt, temperature=0.0: "FAIL\nThe answer does not mention the required risk.",
     )
     passed, reason = grade_judged("Q?", "some answer", "some criteria")
     assert passed is False
@@ -297,22 +303,44 @@ def test_grade_judged_parses_fail(monkeypatch):
 
 
 def test_grade_judged_lowercase_pass_still_counts(monkeypatch):
-    monkeypatch.setattr("eval_harness.ollama_call", lambda state: {"content": "pass\nfine."})
+    monkeypatch.setattr("eval_harness.complete", lambda backend, system_prompt, user_prompt, temperature=0.0: "pass\nfine.")
     passed, _ = grade_judged("Q?", "some answer", "some criteria")
     assert passed is True
 
 
-def test_grade_judged_calls_ollama_call_with_temperature_0_and_no_tools(monkeypatch):
+def test_grade_judged_calls_complete_with_temperature_0(monkeypatch):
     # grade_judged wants stricter, more deterministic grading than
-    # generation's default temperature 0.1, and never needs tool-calling.
-    states = []
+    # generation's default temperature 0.1, and never needs tool-calling
+    # (complete() itself never passes tool_schemas -- see llm_backends.py).
+    calls = []
+
+    def fake_complete(backend, system_prompt, user_prompt, temperature=0.0):
+        calls.append({"backend": backend, "temperature": temperature})
+        return "PASS\nfine."
+
+    monkeypatch.setattr("eval_harness.complete", fake_complete)
+    grade_judged("Q?", "some answer", "some criteria")
+    assert calls[0]["temperature"] == 0.0
+
+
+def test_grade_judged_routes_to_the_requested_backend(monkeypatch):
+    calls = []
     monkeypatch.setattr(
-        "eval_harness.ollama_call",
-        lambda state: states.append(state) or {"content": "PASS\nfine."},
+        "eval_harness.complete",
+        lambda backend, system_prompt, user_prompt, temperature=0.0: calls.append(backend) or "PASS\nfine.",
+    )
+    grade_judged("Q?", "some answer", "some criteria", backend="gemini")
+    assert calls == ["gemini"]
+
+
+def test_grade_judged_defaults_to_ollama_backend(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        "eval_harness.complete",
+        lambda backend, system_prompt, user_prompt, temperature=0.0: calls.append(backend) or "PASS\nfine.",
     )
     grade_judged("Q?", "some answer", "some criteria")
-    assert states[0]["temperature"] == 0.0
-    assert states[0]["tool_schemas"] == []
+    assert calls == ["ollama"]
 
 
 # ---------------------------------------------------------------------------
@@ -349,17 +377,30 @@ def test_save_report_records_the_actual_answering_model_per_backend(monkeypatch,
     assert gemini_report["answer_model"] == "fake-gemini-model"
 
 
-def test_save_report_records_judge_model_as_ollama_regardless_of_backend(monkeypatch, tmp_path):
-    # grade_judged() always calls Ollama directly (see its own docstring/
-    # PROJECT_CONTEXT.md) regardless of --backend -- the report should
-    # say so explicitly rather than leaving it implicit and easy to miss.
+def test_save_report_records_the_judge_backends_model(monkeypatch, tmp_path):
+    # Until 2026-09-10 grade_judged() always called Ollama directly
+    # regardless of --backend, so judge_model was hardcoded to
+    # OLLAMA_MODEL_NAME. It's now whichever backend actually judged --
+    # this is an intentional behavior change (see
+    # docs/plans/2026-09-10-citation-gate-measurement-instrumentation.md),
+    # not a regression of the test this replaces.
+    monkeypatch.setattr(eval_harness, "RESULTS_DIR", tmp_path)
+    monkeypatch.setattr(eval_harness, "OLLAMA_MODEL_NAME", "fake-ollama-model")
+    monkeypatch.setattr(eval_harness, "GEMINI_MODEL_NAME", "fake-gemini-model")
+
+    with save_report([], backend="gemini", judge_backend="ollama").open(encoding="utf-8") as f:
+        report = json.load(f)
+    assert report["answer_model"] == "fake-gemini-model"
+    assert report["judge_model"] == "fake-ollama-model"
+
+
+def test_save_report_judge_backend_defaults_to_answer_backend(monkeypatch, tmp_path):
     monkeypatch.setattr(eval_harness, "RESULTS_DIR", tmp_path)
     monkeypatch.setattr(eval_harness, "OLLAMA_MODEL_NAME", "fake-ollama-model")
 
-    with save_report([], backend="gemini").open(encoding="utf-8") as f:
-        gemini_report = json.load(f)
-
-    assert gemini_report["judge_model"] == "fake-ollama-model"
+    with save_report([], backend="ollama").open(encoding="utf-8") as f:
+        report = json.load(f)
+    assert report["judge_model"] == "fake-ollama-model"
 
 
 # ---------------------------------------------------------------------------
@@ -390,7 +431,7 @@ def test_run_eval_isolates_one_questions_exception_from_the_rest(monkeypatch, tm
     def fake_run_agent(question, backend):
         if question == "Q2?":
             raise RuntimeError("Ollama exhausted retries")
-        return f"The answer is {question[1]}.", [], []
+        return f"The answer is {question[1]}.", [], [], None
 
     monkeypatch.setattr(eval_harness, "run_agent", fake_run_agent)
     flush_calls = []
@@ -407,3 +448,115 @@ def test_run_eval_isolates_one_questions_exception_from_the_rest(monkeypatch, tm
     # Still flushes and returns a full (partial-failure) report rather
     # than losing everything to the one exception.
     assert flush_calls == [1]
+    # The 4 gate-evidence fields (2026-09-10) must exist even on an
+    # exception row -- schema consistency matters here because
+    # analyze_citation_gate.py reads every row in a report uniformly.
+    for r in results:
+        assert r["withheld_answer"] is None
+        assert r["gate_withheld_would_have_passed"] is None
+        assert r["gate_withheld_detail"] is None
+        assert r["citation_warning_details"] == []
+
+
+# ---------------------------------------------------------------------------
+# run_eval -- citation-gate evidence fields (2026-09-10, added for the
+# FP/FN gate-measurement work, see
+# docs/plans/2026-09-10-citation-gate-measurement-instrumentation.md).
+# _grade()'s short-circuit still scores a hard-gated numeric/comparison
+# question as FAIL (unchanged, user-facing verdict) -- these fields are
+# purely additive evidence for later analysis: what the model actually
+# said before being refused, and whether that text would have passed the
+# existing grader if the gate hadn't fired.
+# ---------------------------------------------------------------------------
+def _write_one_numeric_question(tmp_path, expected_value=100, expected_unit="raw"):
+    questions_path = tmp_path / "questions.jsonl"
+    questions_path.write_text(
+        json.dumps(
+            {"id": "q1", "question": "Q1?", "type": "numeric", "expected_value": expected_value, "expected_unit": expected_unit}
+        ),
+        encoding="utf-8",
+    )
+    return questions_path
+
+
+def test_run_eval_records_gate_withheld_would_have_passed_true_for_a_correct_but_refused_answer(
+    monkeypatch, tmp_path
+):
+    questions_path = _write_one_numeric_question(tmp_path)
+    retrieved = [{"text": "value = 100 raw"}]
+
+    def fake_run_agent(question, backend):
+        return (
+            "I can't confirm this answer against the sources I retrieved...",
+            retrieved,
+            ["claims 100.0 (raw) but no citation marker appears anywhere near it to trace the claim to a source"],
+            "The value was 100.",
+        )
+
+    monkeypatch.setattr(eval_harness, "run_agent", fake_run_agent)
+
+    results = run_eval(questions_path)
+
+    assert results[0]["passed"] is False  # user-facing verdict unchanged -- still a hard-gated refusal
+    assert results[0]["withheld_answer"] == "The value was 100."
+    assert results[0]["gate_withheld_would_have_passed"] is True
+    assert "100" in results[0]["gate_withheld_detail"]
+    assert results[0]["citation_warning_details"][0]["check"] == "uncited_claim"
+
+
+def test_run_eval_records_gate_withheld_would_have_passed_false_for_a_wrong_value(monkeypatch, tmp_path):
+    questions_path = _write_one_numeric_question(tmp_path)
+    retrieved = [{"text": "value = 100 raw"}]
+
+    def fake_run_agent(question, backend):
+        return (
+            "I can't confirm this answer against the sources I retrieved...",
+            retrieved,
+            ["claims 999.0 (raw) but no citation marker appears anywhere near it to trace the claim to a source"],
+            "The value was 999.",
+        )
+
+    monkeypatch.setattr(eval_harness, "run_agent", fake_run_agent)
+
+    results = run_eval(questions_path)
+
+    assert results[0]["passed"] is False
+    assert results[0]["withheld_answer"] == "The value was 999."
+    assert results[0]["gate_withheld_would_have_passed"] is False
+
+
+def test_run_eval_gate_fields_are_empty_when_the_gate_never_fired(monkeypatch, tmp_path):
+    questions_path = _write_one_numeric_question(tmp_path)
+
+    def fake_run_agent(question, backend):
+        return "The value was 100 [1].", [{"text": "value = 100 raw"}], [], None
+
+    monkeypatch.setattr(eval_harness, "run_agent", fake_run_agent)
+
+    results = run_eval(questions_path)
+
+    assert results[0]["passed"] is True
+    assert results[0]["withheld_answer"] is None
+    assert results[0]["gate_withheld_would_have_passed"] is None
+    assert results[0]["gate_withheld_detail"] is None
+    assert results[0]["citation_warning_details"] == []
+
+
+def test_run_eval_backend_default_follows_config(monkeypatch, tmp_path):
+    # 2026-09-10: run_eval()'s backend default used to be a literal
+    # "ollama" bound at function-definition time, ignoring
+    # config.DEFAULT_BACKEND entirely -- same fix as run_agent()'s
+    # matching test in tests/test_agent.py.
+    questions_path = _write_one_numeric_question(tmp_path)
+    backends_seen = []
+
+    def fake_run_agent(question, backend):
+        backends_seen.append(backend)
+        return "The value was 100 [1].", [{"text": "value = 100 raw"}], [], None
+
+    monkeypatch.setattr(eval_harness, "run_agent", fake_run_agent)
+    monkeypatch.setattr(eval_harness, "DEFAULT_BACKEND", "totally-custom-backend")
+
+    run_eval(questions_path)
+
+    assert backends_seen == ["totally-custom-backend"]

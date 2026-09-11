@@ -28,6 +28,8 @@ Usage:
 
 import argparse
 import re
+from collections import Counter
+from typing import NamedTuple
 
 import jsonschema
 
@@ -993,6 +995,98 @@ def _iter_uncited_claims(answer_text: str):
             yield value, unit
 
 
+CitationWarning = NamedTuple(
+    "CitationWarning",
+    [
+        ("check", str),  # "cited_claim_unsupported" | "uncited_claim"
+        ("citation_index", int | None),  # the [n] this warning is about, or None for the uncited check
+        ("value", float),
+        ("unit", str),
+        ("message", str),  # the exact string verify_citations() has always returned for this warning
+    ],
+)
+
+
+def collect_citation_warnings(answer_text: str, all_results: list[dict]) -> list["CitationWarning"]:
+    """Structured counterpart to verify_citations() below -- same two
+    checks, same dedup, same warning text, but tagged with WHICH check
+    produced each one and what citation index (if any) it's about.
+    verify_citations() is now a one-line `.message` projection of this.
+
+    Added for the citation-gate FP/FN measurement work (see
+    docs/plans/2026-09-10-citation-gate-measurement-instrumentation.md):
+    that work needs to break false positives down by which of the two
+    checks fired, and inferring that from a warning string's wording
+    would be exactly the kind of fragility the rest of this file's
+    comments warn against. Tag at construction instead.
+
+    `message` MUST stay byte-identical to what this function used to
+    return as a bare string -- _format_refusal_message() and
+    _format_citation_retry_message() interpolate these into prompt text
+    sent back to the model, so changing the wording would change model
+    behavior and perturb the very population the measurement work is
+    trying to observe."""
+    # Two dedup sets, deliberately not one -- found in code review, in
+    # two rounds: a single value+unit-only key (fixing the cross-loop
+    # duplicate below) ALSO collapsed two genuinely different,
+    # independently-broken citations that happen to share a value --
+    # "$99 million [1]. ... $99 million [2]." with neither source
+    # containing 99 -- into one warning, silently dropping that [2] is
+    # ALSO broken. `seen_citation_keys` keeps citation-claims' own dedup
+    # precise (index + value, so different citation indices stay
+    # distinct); `seen_values` is value+unit only, populated by
+    # citation-claims and checked by the uncited-claims loop below, for
+    # the DIFFERENT problem that loop exists to solve: with two
+    # sentences like "Total costs were $30 million. Total revenue was
+    # $50 million [1]." (source backs only $50M), _iter_citation_claims's
+    # flat backward window (no sentence-boundary awareness, unlike
+    # _iter_uncited_claims) still attributes the unrelated "$30 million"
+    # to [1] and flags it as misattributed, while _iter_uncited_claims
+    # separately (and also correctly, by ITS OWN sentence-aware
+    # definition) finds no marker actually reachable from "30" and would
+    # flag it as uncited too -- the same claim occurrence producing two
+    # different, redundant messages. citation-claims (more specific/
+    # actionable) runs first and wins the wording in that case.
+    warnings: list[CitationWarning] = []
+    seen_citation_keys: set[tuple[str, str]] = set()
+    seen_values: set[str] = set()
+    for n, value, unit, verified in _iter_citation_claims(answer_text, all_results):
+        if verified:
+            continue
+        citation_key = (str(n), f"{value}{unit}")
+        if citation_key in seen_citation_keys:
+            continue
+        seen_citation_keys.add(citation_key)
+        seen_values.add(f"{value}{unit}")
+        warnings.append(
+            CitationWarning(
+                check="cited_claim_unsupported",
+                citation_index=n,
+                value=value,
+                unit=unit,
+                message=f"[{n}] claims {value} ({unit}) but that value doesn't appear in the cited source",
+            )
+        )
+    for value, unit in _iter_uncited_claims(answer_text):
+        value_key = f"{value}{unit}"
+        if value_key in seen_values:
+            continue
+        seen_values.add(value_key)
+        warnings.append(
+            CitationWarning(
+                check="uncited_claim",
+                citation_index=None,
+                value=value,
+                unit=unit,
+                message=(
+                    f"claims {value} ({unit}) but no citation marker appears anywhere "
+                    "near it to trace the claim to a source"
+                ),
+            )
+        )
+    return warnings
+
+
 def verify_citations(answer_text: str, all_results: list[dict]) -> list[str]:
     """Cheap, deterministic check for one specific silent-misgrounding
     pattern: a numeric claim attributed to a citation whose own cited
@@ -1017,49 +1111,11 @@ def verify_citations(answer_text: str, all_results: list[dict]) -> list[str]:
     real, observed case (msft-cash-to-assets-fy2025) this closes.
 
     Returns a list of human-readable warning strings (deduplicated),
-    empty if nothing looks unverified."""
-    # Two dedup sets, deliberately not one -- found in code review, in
-    # two rounds: a single value+unit-only key (fixing the cross-loop
-    # duplicate below) ALSO collapsed two genuinely different,
-    # independently-broken citations that happen to share a value --
-    # "$99 million [1]. ... $99 million [2]." with neither source
-    # containing 99 -- into one warning, silently dropping that [2] is
-    # ALSO broken. `seen_citation_keys` keeps citation-claims' own dedup
-    # precise (index + value, so different citation indices stay
-    # distinct); `seen_values` is value+unit only, populated by
-    # citation-claims and checked by the uncited-claims loop below, for
-    # the DIFFERENT problem that loop exists to solve: with two
-    # sentences like "Total costs were $30 million. Total revenue was
-    # $50 million [1]." (source backs only $50M), _iter_citation_claims's
-    # flat backward window (no sentence-boundary awareness, unlike
-    # _iter_uncited_claims) still attributes the unrelated "$30 million"
-    # to [1] and flags it as misattributed, while _iter_uncited_claims
-    # separately (and also correctly, by ITS OWN sentence-aware
-    # definition) finds no marker actually reachable from "30" and would
-    # flag it as uncited too -- the same claim occurrence producing two
-    # different, redundant messages. citation-claims (more specific/
-    # actionable) runs first and wins the wording in that case.
-    warnings: list[str] = []
-    seen_citation_keys: set[tuple[str, str]] = set()
-    seen_values: set[str] = set()
-    for n, value, unit, verified in _iter_citation_claims(answer_text, all_results):
-        if verified:
-            continue
-        citation_key = (str(n), f"{value}{unit}")
-        if citation_key in seen_citation_keys:
-            continue
-        seen_citation_keys.add(citation_key)
-        seen_values.add(f"{value}{unit}")
-        warnings.append(f"[{n}] claims {value} ({unit}) but that value doesn't appear in the cited source")
-    for value, unit in _iter_uncited_claims(answer_text):
-        value_key = f"{value}{unit}"
-        if value_key in seen_values:
-            continue
-        seen_values.add(value_key)
-        warnings.append(
-            f"claims {value} ({unit}) but no citation marker appears anywhere near it to trace the claim to a source"
-        )
-    return warnings
+    empty if nothing looks unverified. Thin wrapper around
+    collect_citation_warnings() -- see that function for the actual
+    logic; this one exists because most callers only need the message,
+    not which check produced it."""
+    return [w.message for w in collect_citation_warnings(answer_text, all_results)]
 
 
 def value_is_citation_verified(value: float, unit: str, answer_text: str, all_results: list[dict]) -> bool:
@@ -1176,20 +1232,63 @@ def _format_refusal_message(warnings: list[str]) -> str:
     )
 
 
+AgentResult = NamedTuple(
+    "AgentResult",
+    [
+        ("answer", str),  # what a real caller may show a user (the refusal text if the gate fired)
+        ("results", list[dict]),
+        ("citation_warnings", list[str]),  # unchanged shape/strings -- every existing caller's contract
+        ("withheld_answer", str | None),  # the model's actual answer text iff the gate refused it, else None
+    ],
+)
+
+
+def _count_citation_checks(warnings: list["CitationWarning"]) -> dict[str, int]:
+    """How many warnings each check (`CitationWarning.check`) produced --
+    shared by _finalize_answer's log event and run_agent's span output
+    below so the two don't independently hand-roll the same accumulation
+    loop (found in code review, 2026-09-10)."""
+    return dict(Counter(w.check for w in warnings))
+
+
 def _finalize_answer(
-    answer: str, warnings: list[str], all_results: list[dict]
-) -> tuple[str, list[dict], list[str]]:
+    answer: str, warnings: list["CitationWarning"], all_results: list[dict], *, backend: str, retried: bool
+) -> AgentResult:
     """Single choke point for every run_agent() return site: withholds
     `answer` in favor of a refusal (see _format_refusal_message) whenever
     citation warnings remain, so the hard gate can't be bypassed by a
-    return site that forgets to check. `warnings` is still returned
-    either way, even though the refusal text already embeds them
-    inline -- callers other than main() (e.g. eval_harness.py's _grade())
-    use the raw list directly rather than re-parsing it out of the
-    answer text."""
-    if warnings:
-        return _format_refusal_message(warnings), all_results, warnings
-    return answer, all_results, warnings
+    return site that forgets to check. `citation_warnings` is still
+    returned either way, even though the refusal text already embeds
+    them inline -- callers other than main() (e.g. eval_harness.py's
+    _grade()) use the raw list directly rather than re-parsing it out of
+    the answer text.
+
+    Added 2026-09-10 for the citation-gate FP/FN measurement work (see
+    docs/plans/2026-09-10-citation-gate-measurement-instrumentation.md):
+    `withheld_answer` preserves what the model actually said whenever the
+    gate refuses, since re-grading that text against ground truth is the
+    only way to tell a correct-but-wrongly-refused answer (a false
+    positive) from a genuinely bad one. Nothing before this could recover
+    that text once refused. Also fires a `citation_gate_refused` log
+    event (local JSONL only, never Langfuse -- see log_event's own
+    docstring) whenever it refuses, since this is the one place a real
+    answer gets thrown away and, until now, nothing recorded that it
+    happened. `backend`/`retried` are keyword-only so the two flags can't
+    be swapped positionally."""
+    messages = [w.message for w in warnings]
+    if not warnings:
+        return AgentResult(answer, all_results, messages, None)
+
+    log_event(
+        "citation_gate_refused",
+        backend=backend,
+        retried=retried,
+        n_results=len(all_results),
+        checks=_count_citation_checks(warnings),
+        warnings=messages,
+        withheld_answer=answer,
+    )
+    return AgentResult(_format_refusal_message(messages), all_results, messages, answer)
 
 
 def _format_citation_key(all_results: list[dict]) -> str:
@@ -1282,33 +1381,75 @@ def _dispatch_tool_call(
         return _format_results_block(results, start_index)
 
 
-def run_agent(question: str, backend: str = "ollama", verbose: bool = False) -> tuple[str, list[dict], list[str]]:
+def run_agent(question: str, backend: str | None = None, verbose: bool = False) -> AgentResult:
     """Thin traced wrapper around _run_agent_impl() -- a single choke
     point for the top-level span (Langfuse when configured, always the
     local JSONL log) regardless of which of _run_agent_impl's several
     internal return paths fires (see its own docstring). Adds no
-    behavior change to the returned value for any existing caller/test."""
+    behavior change to the returned answer/results/citation_warnings for
+    any existing caller/test; the 4th field (AgentResult.withheld_answer)
+    is new (2026-09-10, see _finalize_answer's docstring).
+
+    `backend=None` resolves to config.DEFAULT_BACKEND -- resolved HERE,
+    inside the function body, rather than as a literal `= DEFAULT_BACKEND`
+    parameter default (2026-09-10): a parameter default is evaluated once
+    at module-import time, so a literal default would freeze in whatever
+    DEFAULT_BACKEND happened to be when agent.py was first imported and
+    silently ignore any later change to it -- the exact bug the previous
+    hardcoded `= "ollama"` default had, just with an extra layer of
+    indirection that made it easy to miss.
+
+    `citation_checks` in the span output re-derives the per-check counts
+    from whichever text was actually checked (the withheld answer if the
+    gate refused, else the returned answer) via collect_citation_warnings
+    -- deliberately NOT parsed out of the warning strings themselves,
+    which would reintroduce exactly the wording-inference fragility this
+    whole change is trying to move away from. Re-deriving here (rather
+    than threading _finalize_answer's own already-computed dict back out
+    through AgentResult) is a deliberate, cheap tradeoff: it's one more
+    regex pass over already-short answer text, in exchange for not
+    growing AgentResult's public shape for an internal span-logging
+    detail. _count_citation_checks() is shared with _finalize_answer so
+    the two don't hand-roll the same accumulation loop independently.
+    The withheld answer text itself is never put in this span's output
+    -- it goes to _finalize_answer's log_event call only, which is
+    local-JSONL-only by design (see tracing.log_event's docstring): the
+    whole point of withholding it is that it isn't trustworthy, so it
+    must not leave the machine via the Langfuse-forwarding path
+    traced_span() offers."""
+    backend = backend or DEFAULT_BACKEND
     with traced_span("agent", "run_agent", input={"question": question, "backend": backend}) as span:
-        answer, all_results, warnings = _run_agent_impl(question, backend, verbose)
-        span.update(output={"answer": answer, "citation_warnings": warnings, "result_count": len(all_results)})
-        return answer, all_results, warnings
+        result = _run_agent_impl(question, backend, verbose)
+        checked_text = result.withheld_answer if result.withheld_answer is not None else result.answer
+        span.update(
+            output={
+                "answer": result.answer,
+                "citation_warnings": result.citation_warnings,
+                "citation_checks": _count_citation_checks(collect_citation_warnings(checked_text, result.results)),
+                "result_count": len(result.results),
+            }
+        )
+        return result
 
 
-def _run_agent_impl(question: str, backend: str = "ollama", verbose: bool = False) -> tuple[str, list[dict], list[str]]:
+def _run_agent_impl(question: str, backend: str, verbose: bool = False) -> AgentResult:
     """Run the tool-calling loop until the model produces a final answer
     (no more tool calls) or MAX_TOOL_ITERATIONS is hit. `backend`
     selects which LLM answers (see llm_backends.BACKENDS) -- the loop
     itself, and every tool-dispatch branch inside _dispatch_tool_call,
-    is identical regardless of which one is chosen. Returns the answer
-    text, every chunk retrieved across all tool calls (in the same
-    global [n] order the model was shown them in — this is what lets
-    the printed citation key line up with the model's citations), and
-    any citation-verification warnings from verify_citations(). Week 7
-    hard gate: every return site routes through _finalize_answer(),
-    which withholds the model's actual answer text in favor of a
-    refusal (_format_refusal_message()) whenever those warnings are
-    non-empty -- so a non-empty `warnings` list means the returned
-    answer text IS the refusal, not the (unverifiable) original.
+    is identical regardless of which one is chosen. Returns an
+    AgentResult: the answer text, every chunk retrieved across all tool
+    calls (in the same global [n] order the model was shown them in —
+    this is what lets the printed citation key line up with the model's
+    citations), any citation-verification warnings from
+    collect_citation_warnings(), and (2026-09-10) the model's actual
+    withheld answer text whenever the hard gate refused. Week 7 hard
+    gate: every return site routes through _finalize_answer(), which
+    withholds the model's actual answer text in favor of a refusal
+    (_format_refusal_message()) whenever those warnings are non-empty --
+    so a non-empty `citation_warnings` means AgentResult.answer IS the
+    refusal, not the (unverifiable) original, which is preserved
+    separately as AgentResult.withheld_answer instead.
 
     Known simplification: no deduplication if two tool calls happen to
     surface the same chunk (e.g. two related queries against the same
@@ -1338,22 +1479,23 @@ def _run_agent_impl(question: str, backend: str = "ollama", verbose: bool = Fals
     # tool call instead of just re-answering, the loop used to hit the
     # iteration cap on that tool call and fall through to the timeout
     # return, throwing away a perfectly usable prior answer.
-    pre_retry_answer: tuple[str, list[str]] | None = None
+    pre_retry_answer: tuple[str, list[CitationWarning]] | None = None
 
     while True:
         if not turn.tool_calls:
             answer = turn.text or ""
-            warnings = verify_citations(answer, all_results)
-            if _should_retry_for_citations(warnings, retried_for_citations, backend) and calls_made < MAX_TOOL_ITERATIONS:
+            warnings = collect_citation_warnings(answer, all_results)
+            messages = [w.message for w in warnings]
+            if _should_retry_for_citations(messages, retried_for_citations, backend) and calls_made < MAX_TOOL_ITERATIONS:
                 retried_for_citations = True
                 pre_retry_answer = (answer, warnings)
-                log_event("citation_retry", backend=backend, warnings=warnings)
+                log_event("citation_retry", backend=backend, warnings=messages)
                 if verbose:
-                    print(f"  [citation retry] {warnings}")
-                turn = send_followup(state, _format_citation_retry_message(answer, warnings))
+                    print(f"  [citation retry] {messages}")
+                turn = send_followup(state, _format_citation_retry_message(answer, messages))
                 calls_made += 1
                 continue
-            return _finalize_answer(answer, warnings, all_results)
+            return _finalize_answer(answer, warnings, all_results, backend=backend, retried=retried_for_citations)
         if calls_made >= MAX_TOOL_ITERATIONS:
             break
 
@@ -1366,13 +1508,15 @@ def _run_agent_impl(question: str, backend: str = "ollama", verbose: bool = Fals
 
     if pre_retry_answer is not None:
         answer, warnings = pre_retry_answer
-        return _finalize_answer(answer, warnings, all_results)
+        return _finalize_answer(answer, warnings, all_results, backend=backend, retried=retried_for_citations)
 
     return _finalize_answer(
         "I wasn't able to finish answering within the allotted number of searches. "
         "Try asking a more specific or narrower question.",
         [],
         all_results,
+        backend=backend,
+        retried=retried_for_citations,
     )
 
 
@@ -1385,7 +1529,7 @@ def main():
     parser.add_argument("--verbose", action="store_true", help="print each tool call as it happens")
     args = parser.parse_args()
 
-    answer, results, _ = run_agent(args.question, backend=args.backend, verbose=args.verbose)
+    answer, results, _, _ = run_agent(args.question, backend=args.backend, verbose=args.verbose)
 
     print(f"\nQ: {args.question}\n")
     print(answer)

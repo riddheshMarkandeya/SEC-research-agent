@@ -12,13 +12,18 @@ live model, so a few targeted regression tests below drive it through
 monkeypatched BACKENDS entries instead.
 """
 
+from contextlib import contextmanager
+
 from agent import (
     COMPARE_TOOL_SCHEMA,
     FACT_TOOL_SCHEMA,
     RATIO_DEFINITIONS,
     SEARCH_TOOL_SCHEMA,
+    AgentResult,
+    CitationWarning,
     call_compare_financial_metric,
     call_get_financial_fact,
+    collect_citation_warnings,
     _comparison_as_results,
     _dispatch_tool_call,
     _finalize_answer,
@@ -565,6 +570,56 @@ def test_format_refusal_message_renders_an_uncited_only_warning_list():
     assert "24.3" in message
     assert "no citation" in message
     assert "refusing this answer" in message
+
+
+# ---------------------------------------------------------------------------
+# collect_citation_warnings (2026-09-10) -- the structured counterpart to
+# verify_citations(), added so callers (the FP/FN gate-measurement work,
+# see docs/plans/2026-09-10-citation-gate-measurement-instrumentation.md)
+# can tell WHICH of the two independent checks produced a given warning
+# without parsing its wording. verify_citations() itself must stay a
+# byte-identical string-list wrapper around this -- its warnings are
+# interpolated into _format_refusal_message/_format_citation_retry_message
+# prompt text, so changing that text would perturb model behavior mid-
+# measurement.
+# ---------------------------------------------------------------------------
+def test_collect_citation_warnings_tags_the_cited_claim_check():
+    results = [_fake_result(text="tax rate = 20 percent")]
+    answer = "The tax rate was 16.28% [1]."
+    warnings = collect_citation_warnings(answer, results)
+    assert len(warnings) == 1
+    assert warnings[0].check == "cited_claim_unsupported"
+    assert warnings[0].citation_index == 1
+    assert warnings[0].value == 16.28
+    assert warnings[0].unit == "percent"
+
+
+def test_collect_citation_warnings_tags_the_uncited_claim_check():
+    answer = "The ratio was approximately 24.3%."
+    warnings = collect_citation_warnings(answer, [])
+    assert len(warnings) == 1
+    assert warnings[0].check == "uncited_claim"
+    assert warnings[0].citation_index is None
+    assert warnings[0].value == 24.3
+    assert warnings[0].unit == "percent"
+
+
+def test_collect_citation_warnings_message_matches_verify_citations_string():
+    results = [_fake_result(text="tax rate = 20 percent")]
+    answer = "The tax rate was 16.28% [1]. The ratio was approximately 24.3%."
+    structured = collect_citation_warnings(answer, results)
+    assert [w.message for w in structured] == verify_citations(answer, results)
+
+
+def test_verify_citations_output_is_unchanged_by_the_structured_split():
+    # Runs across every existing fixture used above (both checks firing
+    # together) to confirm the refactor didn't alter a single warning
+    # string, not just the two cases spelled out individually above.
+    results = [_fake_result(text="revenue = 109417000000.0 USD")]
+    answer = "The year-over-year revenue growth was approximately 16.27%. [1] [2]"
+    assert [w.message for w in collect_citation_warnings(answer, [results[0], results[0]])] == verify_citations(
+        answer, [results[0], results[0]]
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1816,11 +1871,22 @@ def test_run_agent_citation_retry_exhausting_budget_returns_pre_retry_answer_not
         return followup_makes_new_tool_call
 
     monkeypatch.setattr("agent.BACKENDS", {"gemini": (fake_start, None, fake_send_followup)})
-    monkeypatch.setattr("agent.verify_citations", lambda answer, all_results: ["[1] claims 100.0 ... doesn't appear"])
+    monkeypatch.setattr(
+        "agent.collect_citation_warnings",
+        lambda answer, all_results: [
+            CitationWarning(
+                check="cited_claim_unsupported",
+                citation_index=1,
+                value=100.0,
+                unit="raw",
+                message="[1] claims 100.0 ... doesn't appear",
+            )
+        ],
+    )
     log_calls = []
     monkeypatch.setattr("agent.log_event", lambda category, **fields: log_calls.append((category, fields)))
 
-    answer, all_results, warnings = run_agent("What was Apple's revenue?", backend="gemini")
+    answer, all_results, warnings, withheld_answer = run_agent("What was Apple's revenue?", backend="gemini")
 
     assert answer != (
         "I wasn't able to finish answering within the allotted number of searches. "
@@ -1830,7 +1896,7 @@ def test_run_agent_citation_retry_exhausting_budget_returns_pre_retry_answer_not
     assert warnings == ["[1] claims 100.0 ... doesn't appear"]
     # Local-only debug event (Week 7 follow-up): the self-correction
     # retry decision is logged, not just printed under --verbose.
-    assert log_calls == [("citation_retry", {"backend": "gemini", "warnings": ["[1] claims 100.0 ... doesn't appear"]})]
+    assert ("citation_retry", {"backend": "gemini", "warnings": ["[1] claims 100.0 ... doesn't appear"]}) in log_calls
 
 
 def test_run_agent_citation_retry_not_attempted_for_ollama_backend(monkeypatch):
@@ -1852,9 +1918,20 @@ def test_run_agent_citation_retry_not_attempted_for_ollama_backend(monkeypatch):
         raise AssertionError("send_followup should never be called for the ollama backend")
 
     monkeypatch.setattr("agent.BACKENDS", {"ollama": (fake_start, None, fake_send_followup)})
-    monkeypatch.setattr("agent.verify_citations", lambda answer, all_results: ["[1] claims 100.0 ... doesn't appear"])
+    monkeypatch.setattr(
+        "agent.collect_citation_warnings",
+        lambda answer, all_results: [
+            CitationWarning(
+                check="cited_claim_unsupported",
+                citation_index=1,
+                value=100.0,
+                unit="raw",
+                message="[1] claims 100.0 ... doesn't appear",
+            )
+        ],
+    )
 
-    answer, all_results, warnings = run_agent("What was Apple's revenue?", backend="ollama")
+    answer, all_results, warnings, withheld_answer = run_agent("What was Apple's revenue?", backend="ollama")
 
     assert "Apple's revenue was $100 billion [1]." not in answer
     assert "[1] claims 100.0 ... doesn't appear" in answer
@@ -1872,12 +1949,24 @@ def test_run_agent_refuses_when_ollama_answer_has_unverified_citation(monkeypatc
         return {}, final_answer_turn
 
     monkeypatch.setattr("agent.BACKENDS", {"ollama": (fake_start, None, None)})
-    monkeypatch.setattr("agent.verify_citations", lambda answer, all_results: ["[1] claims 100.0 ... doesn't appear"])
+    monkeypatch.setattr(
+        "agent.collect_citation_warnings",
+        lambda answer, all_results: [
+            CitationWarning(
+                check="cited_claim_unsupported",
+                citation_index=1,
+                value=100.0,
+                unit="raw",
+                message="[1] claims 100.0 ... doesn't appear",
+            )
+        ],
+    )
 
-    answer, all_results, warnings = run_agent("What was Apple's revenue?", backend="ollama")
+    answer, all_results, warnings, withheld_answer = run_agent("What was Apple's revenue?", backend="ollama")
 
     assert answer == _format_refusal_message(["[1] claims 100.0 ... doesn't appear"])
     assert warnings == ["[1] claims 100.0 ... doesn't appear"]
+    assert withheld_answer == "Apple's revenue was $100 billion [1]."
 
 
 def test_run_agent_refuses_a_bare_uncited_claim_end_to_end(monkeypatch):
@@ -1896,12 +1985,15 @@ def test_run_agent_refuses_a_bare_uncited_claim_end_to_end(monkeypatch):
 
     monkeypatch.setattr("agent.BACKENDS", {"ollama": (fake_start, None, None)})
 
-    answer, all_results, warnings = run_agent("What is Microsoft's cash to assets ratio?", backend="ollama")
+    answer, all_results, warnings, withheld_answer = run_agent(
+        "What is Microsoft's cash to assets ratio?", backend="ollama"
+    )
 
     assert "refusing this answer" in answer
     assert len(warnings) == 1
     assert "4.0" in warnings[0]
     assert "no citation" in warnings[0]
+    assert withheld_answer == "Microsoft's cash to assets ratio was approximately 4.0%."
 
 
 def test_run_agent_returns_generic_timeout_message_unchanged_when_iterations_exhausted(monkeypatch):
@@ -1919,13 +2011,14 @@ def test_run_agent_returns_generic_timeout_message_unchanged_when_iterations_exh
 
     monkeypatch.setattr("agent.BACKENDS", {"ollama": (fake_start, None, None)})
 
-    answer, all_results, warnings = run_agent("What was Apple's revenue?", backend="ollama")
+    answer, all_results, warnings, withheld_answer = run_agent("What was Apple's revenue?", backend="ollama")
 
     assert answer == (
         "I wasn't able to finish answering within the allotted number of searches. "
         "Try asking a more specific or narrower question."
     )
     assert warnings == []
+    assert withheld_answer is None
 
 
 def test_run_agent_refuses_when_gemini_retry_still_leaves_unverified_citation(monkeypatch):
@@ -1942,13 +2035,25 @@ def test_run_agent_refuses_when_gemini_retry_still_leaves_unverified_citation(mo
     def fake_send_followup(state, text):
         return second_answer_turn
 
+    monkeypatch.setattr(
+        "agent.collect_citation_warnings",
+        lambda answer, all_results: [
+            CitationWarning(
+                check="cited_claim_unsupported",
+                citation_index=1,
+                value=105.0,
+                unit="billion",
+                message=f"[1] claims from: {answer}",
+            )
+        ],
+    )
     monkeypatch.setattr("agent.BACKENDS", {"gemini": (fake_start, None, fake_send_followup)})
-    monkeypatch.setattr("agent.verify_citations", lambda answer, all_results: [f"[1] claims from: {answer}"])
 
-    answer, all_results, warnings = run_agent("What was Apple's revenue?", backend="gemini")
+    answer, all_results, warnings, withheld_answer = run_agent("What was Apple's revenue?", backend="gemini")
 
     assert answer == _format_refusal_message(["[1] claims from: Apple's revenue was $105 billion [1]."])
     assert warnings == ["[1] claims from: Apple's revenue was $105 billion [1]."]
+    assert withheld_answer == "Apple's revenue was $105 billion [1]."
 
 
 def test_run_agent_returns_answer_unchanged_when_no_citation_warnings(monkeypatch):
@@ -1958,24 +2063,156 @@ def test_run_agent_returns_answer_unchanged_when_no_citation_warnings(monkeypatc
         return {}, final_answer_turn
 
     monkeypatch.setattr("agent.BACKENDS", {"ollama": (fake_start, None, None)})
-    monkeypatch.setattr("agent.verify_citations", lambda answer, all_results: [])
+    monkeypatch.setattr("agent.collect_citation_warnings", lambda answer, all_results: [])
 
-    answer, all_results, warnings = run_agent("What was Apple's revenue?", backend="ollama")
+    answer, all_results, warnings, withheld_answer = run_agent("What was Apple's revenue?", backend="ollama")
 
     assert answer == "Apple's revenue was $100 billion [1]."
     assert warnings == []
+    assert withheld_answer is None
+
+
+def test_run_agent_backend_default_follows_config(monkeypatch):
+    # 2026-09-10: run_agent()'s backend default used to be a literal
+    # "ollama" bound at function-definition time, ignoring
+    # config.DEFAULT_BACKEND entirely. A caller that omits `backend`
+    # must resolve to whatever DEFAULT_BACKEND currently is -- a
+    # monkeypatched BACKENDS dict keyed only on a made-up backend name
+    # proves it: the old hardcoded "ollama" default would KeyError here.
+    final_answer_turn = ModelTurn(tool_calls=[], text="Apple's revenue was $100 billion [1].")
+
+    def fake_start(question, system_prompt, tool_schemas):
+        return {}, final_answer_turn
+
+    monkeypatch.setattr("agent.DEFAULT_BACKEND", "totally-custom-backend")
+    monkeypatch.setattr("agent.BACKENDS", {"totally-custom-backend": (fake_start, None, None)})
+    monkeypatch.setattr("agent.collect_citation_warnings", lambda answer, all_results: [])
+
+    answer, all_results, warnings, withheld_answer = run_agent("What was Apple's revenue?")
+
+    assert answer == "Apple's revenue was $100 billion [1]."
+
+
+def test_run_agent_does_not_send_withheld_answer_to_the_span(monkeypatch):
+    # traced_span() dual-writes to Langfuse when configured; the withheld
+    # answer is exactly the text the hard gate decided NOT to trust, so
+    # it must never leave the machine via that path -- log_event() (local
+    # JSONL only, see tracing.py) is the only place it's allowed to go
+    # (see _finalize_answer's own tests above).
+    final_answer_turn = ModelTurn(tool_calls=[], text="Apple's revenue was $100 billion [1].")
+
+    def fake_start(question, system_prompt, tool_schemas):
+        return {}, final_answer_turn
+
+    monkeypatch.setattr("agent.BACKENDS", {"ollama": (fake_start, None, None)})
+    monkeypatch.setattr(
+        "agent.collect_citation_warnings",
+        lambda answer, all_results: [
+            CitationWarning(
+                check="cited_claim_unsupported",
+                citation_index=1,
+                value=100.0,
+                unit="raw",
+                message="[1] claims 100.0 ... doesn't appear",
+            )
+        ],
+    )
+
+    captured_outputs = []
+
+    class _FakeSpan:
+        def update(self, **kwargs):
+            captured_outputs.append(kwargs)
+
+    @contextmanager
+    def fake_traced_span(as_type, name, input=None):
+        yield _FakeSpan()
+
+    monkeypatch.setattr("agent.traced_span", fake_traced_span)
+
+    answer, all_results, warnings, withheld_answer = run_agent("What was Apple's revenue?", backend="ollama")
+
+    assert withheld_answer == "Apple's revenue was $100 billion [1]."
+    assert len(captured_outputs) == 1
+    output = captured_outputs[0]["output"]
+    assert "Apple's revenue was $100 billion [1]." not in str(output)
+    assert output["citation_checks"] == {"cited_claim_unsupported": 1}
 
 
 def test_finalize_answer_passes_through_when_no_warnings():
-    assert _finalize_answer("the answer", [], []) == ("the answer", [], [])
+    result = _finalize_answer("the answer", [], [], backend="ollama", retried=False)
+    assert result == AgentResult("the answer", [], [], None)
 
 
 def test_finalize_answer_refuses_when_warnings_present():
-    warnings = ["[1] claims 100.0 ... doesn't appear"]
-    answer, all_results, returned_warnings = _finalize_answer("the answer", warnings, ["result"])
-    assert answer == _format_refusal_message(warnings)
-    assert all_results == ["result"]
-    assert returned_warnings == warnings
+    warnings = [
+        CitationWarning(
+            check="cited_claim_unsupported",
+            citation_index=1,
+            value=100.0,
+            unit="raw",
+            message="[1] claims 100.0 ... doesn't appear",
+        )
+    ]
+    result = _finalize_answer("the answer", warnings, ["result"], backend="ollama", retried=False)
+    assert result.answer == _format_refusal_message(["[1] claims 100.0 ... doesn't appear"])
+    assert result.results == ["result"]
+    assert result.citation_warnings == ["[1] claims 100.0 ... doesn't appear"]
+
+
+# ---------------------------------------------------------------------------
+# _finalize_answer -- withheld answer + citation_gate_refused logging
+# (2026-09-10, added for the FP/FN gate-measurement work). The withheld
+# answer preserves what the model actually said so it can later be
+# re-graded against ground truth; nothing before this could recover it
+# once the hard gate refused.
+# ---------------------------------------------------------------------------
+def test_finalize_answer_returns_the_withheld_answer_when_refusing():
+    warnings = [
+        CitationWarning(
+            check="uncited_claim", citation_index=None, value=4.0, unit="percent", message="claims 4.0 (percent)..."
+        )
+    ]
+    result = _finalize_answer("the model's answer", warnings, [], backend="gemini", retried=True)
+    assert result.withheld_answer == "the model's answer"
+    assert result.answer != "the model's answer"  # the refusal text, not the raw answer
+
+
+def test_finalize_answer_withheld_answer_is_none_when_passing():
+    result = _finalize_answer("the model's answer", [], [], backend="gemini", retried=False)
+    assert result.withheld_answer is None
+    assert result.answer == "the model's answer"
+
+
+def test_finalize_answer_logs_citation_gate_refused_with_check_counts(monkeypatch):
+    log_calls = []
+    monkeypatch.setattr("agent.log_event", lambda category, **fields: log_calls.append((category, fields)))
+    warnings = [
+        CitationWarning(
+            check="cited_claim_unsupported", citation_index=1, value=100.0, unit="raw", message="[1] claims 100.0..."
+        ),
+        CitationWarning(
+            check="uncited_claim", citation_index=None, value=4.0, unit="percent", message="claims 4.0 (percent)..."
+        ),
+    ]
+    _finalize_answer("the model's answer", warnings, ["result"], backend="gemini", retried=True)
+
+    assert len(log_calls) == 1
+    category, fields = log_calls[0]
+    assert category == "citation_gate_refused"
+    assert fields["backend"] == "gemini"
+    assert fields["retried"] is True
+    assert fields["n_results"] == 1
+    assert fields["checks"] == {"cited_claim_unsupported": 1, "uncited_claim": 1}
+    assert fields["warnings"] == ["[1] claims 100.0...", "claims 4.0 (percent)..."]
+    assert fields["withheld_answer"] == "the model's answer"
+
+
+def test_finalize_answer_does_not_log_when_passing(monkeypatch):
+    log_calls = []
+    monkeypatch.setattr("agent.log_event", lambda category, **fields: log_calls.append((category, fields)))
+    _finalize_answer("the model's answer", [], [], backend="gemini", retried=False)
+    assert log_calls == []
 
 
 def test_format_refusal_message_includes_each_warning():

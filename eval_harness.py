@@ -54,15 +54,15 @@ import re
 from datetime import datetime, timezone
 from pathlib import Path
 
-from agent import run_agent, value_is_citation_verified
+from agent import collect_citation_warnings, run_agent, value_is_citation_verified
 from config import DEFAULT_BACKEND, GEMINI_MODEL_NAME, OLLAMA_MODEL_NAME
 
-# OLLAMA_MODEL_NAME is used directly by save_report() to record which
-# judge model produced a report (grade_judged() always calls Ollama,
-# regardless of --backend); GEMINI_MODEL_NAME records which answer model
-# ran. ollama_call is grade_judged()'s retry/backoff-wrapped Ollama call,
-# shared with agent.py's generation path (see llm_backends.py).
-from llm_backends import BACKENDS, ollama_call
+# OLLAMA_MODEL_NAME/GEMINI_MODEL_NAME record which specific model actually
+# answered/judged a report (see save_report()'s own docstring). Before
+# 2026-09-10, grade_judged() always called Ollama directly regardless of
+# --backend; complete() is llm_backends.py's one-shot, tool-free
+# completion helper that now lets it honor --judge-backend instead.
+from llm_backends import BACKENDS, complete
 from tracing import flush
 from numeric_utils import extract_numbers, normalize
 
@@ -147,30 +147,25 @@ Be strict: the criteria must be clearly satisfied by the answer text, not just p
 Respond with exactly two lines: the first line is either PASS or FAIL, the second line is a one-sentence reason."""
 
 
-def grade_judged(question: str, answer_text: str, criteria: str) -> tuple[bool, str]:
-    """Routes through llm_backends.ollama_call() rather than a raw
-    requests.post -- found in code review (2026-09-06) previously
-    bypassing that function's retry/backoff and log_event logging
-    entirely, reintroducing the exact "Ollama not accepting connections
-    yet" failure the generation path was already hardened against.
-    temperature=0.0 (stricter/more deterministic than generation's 0.1)
-    and no tool_schemas -- grading never calls tools."""
+def grade_judged(question: str, answer_text: str, criteria: str, backend: str = "ollama") -> tuple[bool, str]:
+    """Routes through llm_backends.complete() -- until 2026-09-10 this
+    always called Ollama directly regardless of --backend; `backend` (see
+    docs/plans/2026-09-10-citation-gate-measurement-instrumentation.md)
+    lets --judge-backend pick which one actually grades. complete() still
+    carries the same temperature=0.0 (stricter/more deterministic than
+    generation's 0.1) and no tool_schemas -- grading never calls tools --
+    this function always wanted; it just no longer hardcodes Ollama to
+    get them. complete() itself reuses each backend's existing
+    retry/backoff/log_event machinery (ollama_call/_send_with_retry),
+    so that guarantee (found in code review 2026-09-06, when a raw
+    requests.post here bypassed it entirely) still holds."""
     user_prompt = (
         f"Question asked: {question}\n\n"
         f"Grading criteria: {criteria}\n\n"
         f"AI assistant's answer:\n{answer_text}\n\n"
         f"Does the answer satisfy the grading criteria?"
     )
-    state = {
-        "messages": [
-            {"role": "system", "content": JUDGE_SYSTEM_PROMPT},
-            {"role": "user", "content": user_prompt},
-        ],
-        "tool_schemas": [],
-        "temperature": 0.0,
-    }
-    message = ollama_call(state)
-    verdict_text = (message.get("content") or "").strip()
+    verdict_text = complete(backend, JUDGE_SYSTEM_PROMPT, user_prompt, temperature=0.0)
 
     first_line = verdict_text.splitlines()[0].strip().upper() if verdict_text else ""
     passed = first_line.startswith("PASS")
@@ -211,7 +206,23 @@ def _select_questions(questions: list[dict], ids: list[str] | None, include_skip
     return [q for q in questions if not q.get("skip")]
 
 
-def _grade(q: dict, answer_text: str, citation_warnings: list[str], retrieved: list[dict]) -> tuple[bool, str]:
+def _grade_by_type(q: dict, answer_text: str, retrieved: list[dict]) -> tuple[bool, str]:
+    """Numeric/comparison type dispatch shared between _grade() below
+    (the real pass/fail verdict) and _citation_gate_evidence() (the
+    "would this have passed" check on the withheld text) -- factored out
+    in code review (2026-09-10): both independently branched on
+    q["type"] with the same two calls, which would have needed updating
+    in two places in sync for a signature change or a third gradeable
+    type. Caller is responsible for confirming q["type"] is one of these
+    two first."""
+    if q["type"] == "numeric":
+        return grade_numeric(answer_text, q["expected_value"], q["expected_unit"], retrieved)
+    return grade_comparison(answer_text, q["expected"], retrieved)
+
+
+def _grade(
+    q: dict, answer_text: str, citation_warnings: list[str], retrieved: list[dict], judge_backend: str = "ollama"
+) -> tuple[bool, str]:
     """Dispatches to the right grading strategy for question type
     q["type"], kept separate from run_eval()'s live agent loop so it's
     testable without network/Ollama calls (same rationale as
@@ -229,21 +240,95 @@ def _grade(q: dict, answer_text: str, citation_warnings: list[str], retrieved: l
     some are written to expect a refusal (e.g.
     nvda-rd-expense-q4fy26-refusal), and grade_judged() already
     evaluates the actual answer text against its own criteria, which is
-    the correct way to check whether refusing was the right call."""
+    the correct way to check whether refusing was the right call.
+
+    `judge_backend` (2026-09-10) is passed straight through to
+    grade_judged() -- see run_eval()'s docstring for why it isn't just
+    reused from `backend`."""
     if citation_warnings and q["type"] in ("numeric", "comparison"):
         return False, "agent refused to answer (hard-gated on unverified citation(s)) -- no value to grade"
-    if q["type"] == "numeric":
-        return grade_numeric(answer_text, q["expected_value"], q["expected_unit"], retrieved)
-    if q["type"] == "comparison":
-        return grade_comparison(answer_text, q["expected"], retrieved)
+    if q["type"] in ("numeric", "comparison"):
+        return _grade_by_type(q, answer_text, retrieved)
     if q["type"] == "judged":
-        return grade_judged(q["question"], answer_text, q["criteria"])
+        return grade_judged(q["question"], answer_text, q["criteria"], judge_backend)
     raise ValueError(f"Unknown question type: {q['type']!r} in question {q['id']!r}")
 
 
+def _empty_citation_gate_evidence() -> dict:
+    """A fresh dict on every call -- deliberately NOT a module-level
+    constant. `citation_warning_details` is a list; a shared constant
+    would hand every row in a batch the SAME list object via a shallow
+    `dict(...)`/`**` copy (found in code review, 2026-09-10) -- harmless
+    today since nothing mutates it in place, but a silent
+    corrupt-every-other-row trap waiting for the next edit that does."""
+    return {
+        "withheld_answer": None,
+        "gate_withheld_would_have_passed": None,
+        "gate_withheld_detail": None,
+        "citation_warning_details": [],
+    }
+
+
+def _citation_gate_evidence(q: dict, retrieved: list[dict], withheld_answer: str | None) -> dict:
+    """The 4 additive report fields the citation-gate FP/FN measurement
+    work needs (see
+    docs/plans/2026-09-10-citation-gate-measurement-instrumentation.md).
+    `_grade()`'s own short-circuit still scores a hard-gated numeric/
+    comparison question as FAIL -- that user-facing verdict is untouched
+    here. This is purely additional evidence: what the model actually
+    said before the hard gate withheld it, and whether that text would
+    have passed the existing grader if the gate hadn't fired.
+
+    Only populated when the gate actually refused a numeric/comparison
+    question -- a judged question has no ground-truth number to re-grade
+    against, and a passing row has nothing withheld to re-grade in the
+    first place. `gate_withheld_would_have_passed` re-runs the SAME
+    grade_numeric()/grade_comparison() (via _grade_by_type(), shared with
+    _grade()'s real verdict) the real verdict would have used, so "would
+    have passed" means exactly what it always has, including the
+    citation-verification check against the real retrieved chunks.
+    `citation_warning_details` re-derives the structured breakdown via
+    collect_citation_warnings() on the withheld text rather than
+    threading a 5th field through AgentResult -- a pure function of two
+    values already in hand here."""
+    if withheld_answer is None or q["type"] not in ("numeric", "comparison"):
+        return _empty_citation_gate_evidence()
+
+    would_pass, would_detail = _grade_by_type(q, withheld_answer, retrieved)
+
+    return {
+        "withheld_answer": withheld_answer,
+        "gate_withheld_would_have_passed": would_pass,
+        "gate_withheld_detail": would_detail,
+        "citation_warning_details": [w._asdict() for w in collect_citation_warnings(withheld_answer, retrieved)],
+    }
+
+
 def run_eval(
-    questions_path: Path, ids: list[str] | None = None, include_skipped: bool = False, backend: str = "ollama"
+    questions_path: Path,
+    ids: list[str] | None = None,
+    include_skipped: bool = False,
+    backend: str | None = None,
+    judge_backend: str | None = None,
 ) -> list[dict]:
+    """`backend=None` resolves to config.DEFAULT_BACKEND, resolved HERE
+    rather than via a literal `= DEFAULT_BACKEND` parameter default
+    (2026-09-10) -- a parameter default is bound once at module-import
+    time and would silently freeze in whatever DEFAULT_BACKEND was at
+    that moment, ignoring any later change (same reasoning as
+    agent.run_agent()'s matching fix).
+
+    `judge_backend` then defaults to `backend` itself, NOT
+    config.DEFAULT_BACKEND directly (2026-09-10, see
+    docs/plans/2026-09-10-citation-gate-measurement-instrumentation.md):
+    --backend ollama is the no-API-key path this project deliberately
+    keeps runnable, and defaulting the judge to DEFAULT_BACKEND instead
+    would make it silently require a Gemini key for every judged question
+    even when the caller explicitly asked for the no-key backend.
+    --judge-backend still overrides this either way, e.g. to grade a
+    Gemini run's judged questions with Ollama as a cross-model check."""
+    backend = backend or DEFAULT_BACKEND
+    judge_backend = judge_backend or backend
     questions = load_questions(questions_path)
     questions = _select_questions(questions, ids, include_skipped)
     results = []
@@ -251,7 +336,7 @@ def run_eval(
     for q in questions:
         print(f"[{q['id']}] {q['question']}")
         try:
-            answer_text, retrieved, citation_warnings = run_agent(q["question"], backend=backend)
+            answer_text, retrieved, citation_warnings, withheld_answer = run_agent(q["question"], backend=backend)
             # Excludes hard-gated refusals: agent.py's _format_refusal_message()
             # echoes each warning's own "[n] claims ..." text verbatim, which
             # still matches CITATION_PATTERN, so a refusal would otherwise get
@@ -260,7 +345,8 @@ def run_eval(
             # this stat. Found in code review (2026-08-26).
             has_citation = not citation_warnings and bool(CITATION_PATTERN.search(answer_text))
 
-            passed, detail = _grade(q, answer_text, citation_warnings, retrieved)
+            passed, detail = _grade(q, answer_text, citation_warnings, retrieved, judge_backend)
+            gate_fields = _citation_gate_evidence(q, retrieved, withheld_answer)
         except Exception as e:
             # Broad on purpose (found in code review, 2026-09-06): a
             # network error, exhausted retries, or an unexpected bug in
@@ -282,6 +368,7 @@ def run_eval(
                     "citation_warnings": [],
                     "answer": None,
                     "n_chunks_retrieved": 0,
+                    **_empty_citation_gate_evidence(),
                 }
             )
             continue
@@ -305,6 +392,7 @@ def run_eval(
                 "citation_warnings": citation_warnings,
                 "answer": answer_text,
                 "n_chunks_retrieved": len(retrieved),
+                **gate_fields,
             }
         )
 
@@ -330,22 +418,33 @@ def print_summary(results: list[dict]) -> None:
         print(f"  [{mark}] {r['id']} ({r['type']}){cite}{unverified_flag}")
 
 
-def save_report(results: list[dict], backend: str) -> Path:
+def _model_name_for(backend: str) -> str:
+    return OLLAMA_MODEL_NAME if backend == "ollama" else GEMINI_MODEL_NAME
+
+
+def save_report(results: list[dict], backend: str, judge_backend: str | None = None) -> Path:
     """`backend` ("ollama"/"gemini") alone doesn't say which specific
     model answered -- OLLAMA_MODEL_NAME/GEMINI_MODEL_NAME are both
     configurable via .env and can change over time, which would make an
     old report ambiguous about what actually produced it. `answer_model`
-    records whichever one actually ran; `judge_model` is always
-    OLLAMA_MODEL_NAME regardless of `backend`, since grade_judged() calls
-    Ollama directly rather than going through llm_backends.BACKENDS (see
-    that function's own docstring)."""
+    records whichever one actually ran. `judge_model` used to be
+    hardcoded to OLLAMA_MODEL_NAME (grade_judged() called Ollama
+    directly, regardless of `backend`); as of 2026-09-10 it records
+    whichever backend actually judged -- `judge_backend` defaults to
+    `backend` itself, same reasoning as run_eval()'s own default (see
+    that function's docstring)."""
+    judge_backend = judge_backend or backend
     RESULTS_DIR.mkdir(exist_ok=True)
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     out_path = RESULTS_DIR / f"{timestamp}.json"
-    answer_model = OLLAMA_MODEL_NAME if backend == "ollama" else GEMINI_MODEL_NAME
     with out_path.open("w", encoding="utf-8") as f:
         json.dump(
-            {"backend": backend, "answer_model": answer_model, "judge_model": OLLAMA_MODEL_NAME, "results": results},
+            {
+                "backend": backend,
+                "answer_model": _model_name_for(backend),
+                "judge_model": _model_name_for(judge_backend),
+                "results": results,
+            },
             f,
             indent=2,
         )
@@ -369,13 +468,28 @@ def main():
     parser.add_argument(
         "--backend", choices=list(BACKENDS), default=DEFAULT_BACKEND, help="which LLM backend to use"
     )
+    parser.add_argument(
+        "--judge-backend",
+        choices=list(BACKENDS),
+        default=None,
+        help="which LLM backend grades judged-type questions (default: same as --backend)",
+    )
     args = parser.parse_args()
 
     ids = [i.strip() for i in args.ids.split(",")] if args.ids else None
-    results = run_eval(args.questions, ids=ids, include_skipped=args.include_skipped, backend=args.backend)
+    results = run_eval(
+        args.questions,
+        ids=ids,
+        include_skipped=args.include_skipped,
+        backend=args.backend,
+        judge_backend=args.judge_backend,
+    )
     print_summary(results)
-    out_path = save_report(results, backend=args.backend)
+    out_path = save_report(results, backend=args.backend, judge_backend=args.judge_backend)
     print(f"\nFull report saved to {out_path}")
+    # A print, not an import -- analyze_citation_gate.py stays a
+    # standalone reader of the report file, not coupled to this module.
+    print(f"Citation-gate FP/FN breakdown: python analyze_citation_gate.py {out_path}")
 
 
 if __name__ == "__main__":
