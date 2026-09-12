@@ -4812,6 +4812,129 @@ dispatch, plus a handful of related coverage). Two-pass layered review
 completed — one real bug found and fixed (see
 `docs/reviews/2026-09-11-calculate-tool-and-stress-questions.md`).
 
+### Negative-number support in `numeric_utils.NUMBER_PATTERN` (2026-09-11)
+
+Found doing a codebase-wide review (requested by the user, comparing other
+modules' hand-rolled complexity to the citation-verification subsystem's):
+`NUMBER_PATTERN` — the shared regex behind both `eval_harness.grade_numeric()`
+and every citation-verification path in `agent.py` — dropped sign entirely.
+Confirmed live: `extract_numbers("Net loss of $(1,234) million")` returned
+`[(1234.0, "raw")]`, positive. Not hypothetical: already reachable through
+this codebase's OWN generated citation text, not just filing prose — a
+negative XBRL fact (a net loss, a negative YoY growth from
+`formulas.get_yoy_growth`) rendered via `agent._format_fact_value` uses
+plain `str()`, producing `"-1234000000.0 million"`, which `extract_numbers()`
+already turned back into `1234000000.0`. A sign-flipped claim ("grew 5.2%"
+cited against a source that says "declined 5.2%") was indistinguishable
+from a correct one everywhere in this codebase. Zero test coverage existed
+for it — it hadn't surfaced yet (unlike every other citation-code bug,
+found via a live eval failure) purely because all 5 covered companies are
+profitable megacaps whose filings rarely exercise this in a spot the eval
+suite happens to probe.
+
+Researched existing solutions before hand-rolling a fix (per this project's
+prior-art-first workflow): `quantulum3` handles a leading `-`/`+` sign but
+has no accounting-parentheses support at all, and is the wrong shape
+anyway (general physical-unit extraction with ML-based disambiguation,
+not this project's finance-specific `normalize()` category model).
+`finparse` (a small, real PyPI package, confirmed via its own README) does
+handle `"($1,234,567.89)" -> -1234567.89`, but it's a single-value parser
+(`parse(whole_string)`, not a find-all-candidates-in-a-paragraph
+extractor) with no unit-word concept and no span positions — pulling in a
+whole dependency to borrow ~3 lines of "strip `$`/commas, check wrapping
+parens, negate" logic (the same idiom every finance-parsing writeup
+converges on independently) fails this project's own dependency bar.
+Conclusion: no existing library cleanly displaces the hand-rolled
+extractor here, because the actual requirement (interoperate with
+`normalize()`'s categories and `extract_numbers_with_spans()`'s position
+tracking) is narrower than what any general library targets.
+
+Before designing the fix, grepped the real `./chunks/*/*.jsonl` corpus
+(not guessed) to confirm what SEC filings actually do: the real format is
+a bare parenthesized number with the unit stated separately in the table
+caption — `(433)`, `$(1,122)`, `(2.5)%`, `(237)%`, all found live in
+AAPL/CRM chunks — never a unit word glued inside the parens. This also
+surfaced a real collision risk before shipping: bare year references in
+parens are common boilerplate (`(2013)`, a COSO framework citation
+appearing 8 times in AAPL's corpus alone, from every 10-K's internal-
+controls section; `(2025)`-style exhibit-index references) — a naive
+"any `(NUM)` is negative" rule would have turned these into spurious
+`-2013`/`-2025` candidates.
+
+Fix, in `numeric_utils.py` only: extended `NUMBER_PATTERN` with named
+groups for an optional wrapping `(`/`)` pair and a bare leading `-`
+(gated by `(?<!\d)` so it can't attach to a hyphen glued to a *preceding*
+digit — traced by hand against `"2024-01-25"` and `"10-15 percent"` to
+confirm neither regresses into a spurious negative), plus a bare-year
+guard (`re.fullmatch(r"(?:19|20)\d{2}", digits)`, comma-less/decimal-less
+only, so a real comma-grouped dollar figure — SEC tables always
+comma-group >= 1000 — is never caught by it). `normalize()` needed no
+change at all (its multiplication is already sign-transparent), and
+neither did `agent.py`/`eval_harness.py` — every downstream tolerance
+comparison already uses `abs(v - norm) <= tolerance`, so the whole
+citation-verification chain started respecting sign automatically the
+moment the shared extractor got it right.
+
+**Two-pass layered review caught a real bug in the fix itself, not just
+style nits** — worth recording in detail since round 2 found something
+round 1 missed entirely. Pass 1 (`/code-review`) flagged that a naive
+"any `(NUM)` is negative" rule also misreads common 1-2 digit footnote/
+reference markers ("Mark whether the Registrant (1) has filed... and (2)
+has been..." — literally every 10-K's cover page) as negative — confirmed
+live. First fix: suppress the sign flip whenever the digits were short
+(<=2), comma-less, and not immediately followed by a unit/percent. Pass 2
+(a fresh subagent with no memory of the implementation, per this
+project's standard architecture-review step) then found that FIX was
+itself a worse regression than the bug it closed: grepping the real
+corpus at scale showed **554 occurrences** across all 5 companies of a
+short, comma-less negative dollar value as its own table cell (e.g. a
+comprehensive-income statement's small translation-adjustment line items,
+`"| (73) | (86) | (87) |"`) — the digit-count-alone guard was silently
+flipping all of them back to positive, since it couldn't tell a real
+short table value from a short footnote marker. Root cause, found by
+comparing both real shapes side by side: a footnote marker is always
+GLUED to a preceding word (`"Registrant (1)"`, `"securities (1)"`, just a
+space between); a real table-cell value always starts fresh — right
+after a `"|"` delimiter, a newline, another number, or a currency symbol,
+never directly after a letter. Final guard requires all three: short,
+not unit/percent-adjacent, AND the nearest non-whitespace character
+before the `"("` is alphabetic — verified this correctly separates every
+one of the 554 real negative-value occurrences from every real
+footnote-marker occurrence found, with a live full-corpus scan (0/554
+still wrongly positive) rather than just re-running the original test
+set. A third, much narrower residual was raised (a real dollar charge
+stated as an exact, comma-less 4-digit 19xx/20xx figure, e.g. "Impairment
+charge (2010)", would still read as a positive year) but left as an
+accepted, documented limitation — no real occurrence of that shape was
+found in the corpus, unlike the footnote-marker case, and it's genuinely
+ambiguous with no available disambiguating signal even to a human reading
+the isolated text.
+
+**Verified**: full TDD throughout both rounds (14 new `numeric_utils.py`
+tests, each written and confirmed red before its corresponding
+implementation step, covering the real corpus shapes plus regression
+guards — ISO dates, hyphenated ranges, bare years in parens, footnote
+markers both in prose and glued to table labels, and the two corrected
+554-occurrence table-cell shapes), plus one new end-to-end
+`test_agent.py` test proving a claim of `-1234.0` citing a source
+containing `"(1,234)"` now passes `_verify_one_claim`, not just that
+`extract_numbers()` in isolation returns the right sign. Full suite green
+throughout (584 → 599 tests). Re-ran the exact live repros from this
+session's investigation after the fix landed — all three now round-trip
+correctly (`"$(1,234) million"` -> `-1234.0`, `"declined by -5.2 percent"`
+-> `-5.2`, the generated `"net_income = -1234000000.0 million"` citation
+text -> `-1234000000.0`).
+
+Of the review's other 4 findings: the citation-verification subsystem's
+general complexity is already covered by two existing `BACKLOG.md`
+entries (`_QUOTE_ANCHOR_CHARS`, the 5x-duplicated normalize/tolerance
+pattern) — no new tracking needed. The retrieval rescue heuristic
+(`retrieval._rescue_demoted_table_chunk`) and the XBRL period-duration
+windows (`xbrl_facts._pick_entry`/`_duration_days`) are both already
+thoroughly self-documented in their own code with no live failure or
+concrete fix to attach — also no new tracking. `_dispatch_tool_call`'s
+growing if-chain is filed to `BACKLOG.md` as a small watch-item.
+
 ## Next steps
 
 See `BACKLOG.md` for the live task backlog. This section used to hold

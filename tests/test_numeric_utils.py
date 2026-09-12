@@ -50,6 +50,135 @@ def test_extract_numbers_ignores_digit_glued_to_letter():
 
 
 # ---------------------------------------------------------------------------
+# Negative numbers -- found missing entirely during a hand-rolled-
+# complexity review (2026-09-11): NUMBER_PATTERN silently dropped sign on
+# every negative value, real and already-reachable through this
+# codebase's OWN generated citation text (a negative XBRL fact --net
+# loss, negative YoY growth-- rendered via agent.py's _format_fact_value
+# uses plain str(), producing "-1234000000.0 million", which used to
+# round-trip back to a POSITIVE 1234000000.0). Design grounded in the
+# real ./chunks/*/*.jsonl corpus, not guessed: the accounting-parens
+# convention ("(433)", "$(1,122)", "(2.5)%", "(237)%") is the format SEC
+# filings actually use, confirmed live by grep before writing this fix.
+# ---------------------------------------------------------------------------
+def test_extract_numbers_plain_parenthesized_negative():
+    assert extract_numbers("Provision for income taxes | (433) |") == [(-433.0, "raw")]
+
+
+def test_extract_numbers_dollar_sign_outside_parens():
+    # Real corpus format: "$(1,122)" -- the "$" sits OUTSIDE the
+    # parenthesized negative, not inside it.
+    assert extract_numbers("compensation expense | $(1,122) |") == [(-1122.0, "raw")]
+
+
+def test_extract_numbers_negative_percent_with_decimal():
+    assert extract_numbers("segment margin was (2.5)%") == [(-2.5, "percent")]
+
+
+def test_extract_numbers_negative_percent_integer():
+    assert extract_numbers("revenue growth of (237)%") == [(-237.0, "percent")]
+
+
+def test_extract_numbers_plain_leading_minus_sign():
+    # Covers the tool's own generated negative-computation text (e.g.
+    # _format_computed_number's output for a negative percent_change),
+    # not just filing-prose accounting parens.
+    assert extract_numbers("declined by -5.2 percent") == [(-5.2, "percent")]
+
+
+def test_extract_numbers_iso_date_stays_positive_not_misread_as_negative():
+    # Regression guard: a bare "-" gated wrong could misread the second
+    # half of a hyphen-joined ISO date as a negative number sitting right
+    # after the first. Every part must stay positive, unchanged from
+    # today's (already-passing) behavior.
+    assert extract_numbers("reported on 2024-01-25") == [(2024.0, "raw"), (1.0, "raw"), (25.0, "raw")]
+
+
+def test_extract_numbers_hyphenated_range_stays_positive():
+    # Regression guard: a "10-15" range must not have its second number
+    # misread as negative just because a bare hyphen separates the two.
+    assert extract_numbers("operating margin grew 10-15 percent") == [(10.0, "raw"), (15.0, "percent")]
+
+
+def test_extract_numbers_short_negative_table_cell_still_flips_sign():
+    # Found in architecture review (2026-09-11), confirmed live against
+    # the real corpus at scale (554 occurrences across all 5 companies'
+    # chunks): a short (1-2 digit), comma-less negative value is the
+    # NORMAL shape for a table cell whose unit is stated once in the
+    # table's caption, not per-cell -- e.g. a comprehensive-income
+    # statement's small translation-adjustment line items. An earlier
+    # version of the footnote-marker guard below (gated on digit count
+    # alone, with no positional signal) wrongly swallowed ALL of these,
+    # a regression worse than the false positive it was fixing.
+    assert extract_numbers("Cumulative translation, net of tax | 449 | (73) | (86) | (87) |") == [
+        (449.0, "raw"),
+        (-73.0, "raw"),
+        (-86.0, "raw"),
+        (-87.0, "raw"),
+    ]
+
+
+def test_extract_numbers_short_negative_glued_to_line_item_label_still_flips_sign():
+    # Same real shape, one more corpus example: a P&L line item ending in
+    # a bare "(1)" that IS a real negative one-unit value, not a
+    # footnote-reference digit -- distinguished from the footnote-marker
+    # case (below) by NOT being glued to a preceding word: it starts its
+    # own table cell right after a "|" delimiter.
+    assert extract_numbers("amounts included in net income | (1) | 30 | 404") == [
+        (-1.0, "raw"),
+        (30.0, "raw"),
+        (404.0, "raw"),
+    ]
+
+
+def test_extract_numbers_footnote_marker_in_parens_stays_positive():
+    # Found in code review (2026-09-11), confirmed live against real
+    # corpus text: a bare 1-2 digit parenthesized reference marker is
+    # extremely common filing boilerplate ("Mark whether the Registrant
+    # (1) has filed... and (2) has been..." appears on literally every
+    # 10-K's cover page in this project's own corpus) -- a naive
+    # "any (NUM) is negative" rule would misread these as -1/-2, which
+    # could then falsely "verify" an unrelated small-negative-value claim
+    # against a source that never actually stated one.
+    assert extract_numbers("Mark whether the Registrant (1) has filed") == [(1.0, "raw")]
+
+
+def test_extract_numbers_footnote_marker_glued_to_table_label_stays_positive():
+    # Real corpus shape: a footnote marker attached to a row LABEL, with
+    # the actual value in a separate cell -- the marker itself must not
+    # be misread as a negative value sitting right next to the real one.
+    assert extract_numbers("Total debt securities (1) $ 433") == [(1.0, "raw"), (433.0, "raw")]
+
+
+def test_extract_numbers_single_digit_negative_percent_still_flips_sign():
+    # The footnote-marker guard above must NOT swallow a genuine
+    # single-digit negative percentage -- real corpus shape ("(4)%",
+    # confirmed live in AAPL chunk data). A footnote marker is never
+    # immediately followed by "%", so this is a safe, evidence-based way
+    # to tell the two apart.
+    assert extract_numbers("accessories declined (4)%") == [(-4.0, "percent")]
+
+
+def test_extract_numbers_bare_year_in_parens_stays_positive():
+    # Regression guard found live in the real corpus: "(2013)" is common
+    # boilerplate (COSO framework citations in every 10-K's internal-
+    # controls section; exhibit-index references), not an accounting
+    # negative -- confirmed via grep against ./chunks/*/*.jsonl before
+    # writing this guard, not assumed. A naive "any (NUM) is negative"
+    # rule would have turned these into spurious -2013 candidates.
+    assert extract_numbers("Internal Control - Integrated Framework (2013) issued by") == [(2013.0, "raw")]
+
+
+def test_extract_numbers_with_spans_paren_negative_span_is_digits_only():
+    # Span precedent (matches the existing "$" exclusion): the reported
+    # span covers just the digit substring, not the wrapping parens.
+    text = "loss of (433) thousand"
+    [(value, unit, start, end)] = extract_numbers_with_spans(text)
+    assert (value, unit) == (-433.0, "thousand")
+    assert text[start:end] == "433"
+
+
+# ---------------------------------------------------------------------------
 # extract_numbers_with_spans -- position-aware sibling of extract_numbers,
 # added for agent.py's uncited-numeric-claim detection (verify_citations()),
 # which needs to measure a claim's distance from the nearest [n] citation

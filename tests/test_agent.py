@@ -3209,6 +3209,21 @@ def test_verify_claims_caption_unit_case_still_passes():
     assert verify_claims(claims, results, "q", answer_text) == []
 
 
+def test_verify_claims_accepts_a_parenthesized_negative_source_value():
+    # End-to-end proof that numeric_utils.py's negative-number fix
+    # (2026-09-11, found during a hand-rolled-complexity review) actually
+    # closes the citation-verification gap, not just that extract_numbers()
+    # in isolation returns the right sign: a claim of a NEGATIVE value,
+    # citing a source that states it in the real accounting-parens
+    # convention ("(1,234)"), must now verify cleanly -- this used to be
+    # impossible (the claimed -1234.0 could never match the +1234.0
+    # NUMBER_PATTERN incorrectly extracted from "(1,234)").
+    results = [_fake_result(text="Net loss | (1,234) |")]
+    claims = [_valid_submitted_claim(value=-1234.0, unit="raw", quote="Net loss | (1,234) |")]
+    answer_text = "The company reported a net loss of $(1,234) [1]."
+    assert verify_claims(claims, results, "q", answer_text) == []
+
+
 def test_verify_claims_uncovered_number_in_answer_text():
     results = [_fake_result(text="the reported value for the period was exactly 100 raw units")]
     claims = [_valid_submitted_claim()]

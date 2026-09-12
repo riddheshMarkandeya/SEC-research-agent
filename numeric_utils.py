@@ -38,12 +38,122 @@ import re
 # is always preceded by whitespace, "$", or start-of-string, never a
 # letter, so this doesn't affect genuine matches. Found via
 # verify_citations() flagging "Q3" as a spurious claimed value of 3.
+#
+# Negative-number support (2026-09-11, found missing entirely during a
+# hand-rolled-complexity review): two signals, `sign` (a bare leading
+# "-") and `open_paren`/`close_paren` (the accounting convention of
+# wrapping a negative in parentheses, e.g. "$(1,234)"). Design grounded
+# in the real ./chunks/*/*.jsonl corpus, not guessed -- grepped it before
+# writing this: the actual format SEC filings use is a bare parenthesized
+# number with the unit stated separately in a table caption ("(433)",
+# "$(1,122)", "(2.5)%", "(237)%"), never a unit word glued INSIDE the
+# parens -- so `close_paren` only needs to sit directly after the digit
+# group, with `unit`/`pct` still free to match afterward (handles both
+# "(433)" and "(433) thousand").
+#
+# `sign` is gated by `(?<!\d)` (checked immediately before it, not just
+# before the digit group) so a hyphen glued directly to a PRECEDING digit
+# is never read as this number's sign -- traced by hand against two real
+# shapes: a hyphen-joined ISO date ("2024-01-25") and a hyphenated range
+# ("10-15 percent"). Without this, the second half of either would
+# misread as negative (a failed match attempt at the hyphen's own
+# position just makes finditer retry starting one character later,
+# landing past the digit instead of using it as a sign -- same retry
+# mechanics as the existing letter-glued lookbehind above).
+#
+# The parenthesized case ALSO needs two carve-outs, both found live
+# against the real corpus (one during the original design, one flagged by
+# code review and confirmed the same way before fixing it):
+#
+# 1. Bare years (`_BARE_YEAR_STRING`): "(2013)"/"(2025)"-style bare year
+#    references are common boilerplate (COSO framework citations in every
+#    10-K's internal-controls section; exhibit-index references) -- a
+#    naive "any (NUM) is negative" rule would turn these into spurious
+#    negative-year candidates. Matches only a comma-less, decimal-less
+#    4-digit 19xx/20xx string, since a real dollar figure in that range is
+#    always comma-grouped in SEC tables (>= 1000 always gets a thousands
+#    separator) -- so this can't accidentally suppress a genuine negative
+#    dollar amount. (Residual, accepted limitation: a real charge stated
+#    as an exact, comma-less 4-digit 19xx/20xx figure -- e.g. "Impairment
+#    charge (2010)" meaning -$2010 -- would also be read as positive.
+#    Genuinely ambiguous with no available disambiguating signal even to
+#    a human reading the isolated text, and unlike the footnote-marker
+#    case below, no real occurrence of this shape was found in the actual
+#    corpus -- not fixed further, per this project's practice of fixing
+#    what's evidenced rather than chasing every hypothetical.)
+# 2. Bare reference markers (`_looks_like_reference_number`): found in
+#    code review, confirmed live against real corpus text -- a bare 1-2
+#    digit parenthesized number is common filing boilerplate having
+#    nothing to do with a negative value ("Mark whether the Registrant
+#    (1) has filed... and (2) has been..." appears on literally every
+#    10-K's cover page in this project's corpus; footnote markers glued
+#    to a table row's own LABEL, e.g. "Total debt securities (1)", are
+#    the same shape).
+#
+#    An earlier version of this guard fired on digit-count alone (<=2
+#    digits, no comma/decimal, no adjacent unit/percent) -- a second
+#    architecture-review pass caught, and live corpus grepping then
+#    CONFIRMED AT SCALE (554 occurrences across the whole corpus, not a
+#    one-off), that this was wrong: a short comma-less negative value is
+#    the NORMAL shape for a table cell whose unit is stated once in the
+#    table's own caption, not per-cell (e.g. a comprehensive-income
+#    statement's small translation-adjustment line items, "| (73) | (86)
+#    | (87) |"). Gating on digit count alone suppressed far more real
+#    negatives than it correctly excluded markers -- a regression worse
+#    than the false positive it was meant to fix.
+#
+#    The actual distinguishing signal, found by comparing both real
+#    shapes side by side: a footnote/reference marker is always GLUED to
+#    a preceding WORD ("Registrant (1)", "securities (1)", nothing but a
+#    space between the two); a real table-cell value always starts fresh
+#    -- right after a "|" delimiter, a newline, another number, or a
+#    currency symbol, never directly after a letter. So the guard now
+#    requires ALL THREE: short (<=2 digits, no comma/decimal), NOT
+#    immediately followed by a unit word or "%" (a real percent this
+#    small does occur, "(4)%", and is never a marker -- a marker is never
+#    followed by "%"), AND the nearest non-whitespace character before
+#    the "(" is alphabetic. All three together correctly separate every
+#    real occurrence of both shapes found in the corpus.
 NUMBER_PATTERN = re.compile(
-    r"\$?\s*(?<!\w)(\d+(?:,\d{3})*(?:\.\d+)?)\s*(billion|million|thousand|percent)?\s*(%)?",
+    r"(?P<open_paren>\()?\s*(?<!\d)(?P<sign>-)?\$?\s*(?<!\w)(?P<digits>\d+(?:,\d{3})*(?:\.\d+)?)"
+    r"(?P<close_paren>\))?\s*(?P<unit>billion|million|thousand|percent)?\s*(?P<pct>%)?",
     re.IGNORECASE,
 )
 
 UNIT_MULTIPLIERS = {"thousand": 1e3, "million": 1e6, "billion": 1e9}
+
+_BARE_YEAR_STRING = re.compile(r"(?:19|20)\d{2}")
+
+
+def _looks_like_reference_number(text: str, open_paren_pos: int, digits: str, followed_by_unit_or_pct: bool) -> bool:
+    """See NUMBER_PATTERN's own comment (carve-out 2) for the real-corpus
+    evidence behind all three conditions here. `open_paren_pos` is
+    `match.start("open_paren")` -- only meaningful when the caller has
+    already confirmed the parens wrap the number."""
+    if len(digits) > 2 or "." in digits or followed_by_unit_or_pct:
+        return False
+    preceding = text[:open_paren_pos].rstrip()
+    return bool(preceding) and preceding[-1].isalpha()
+
+
+def _is_negative(text: str, match: re.Match, digits: str, unit_word: str | None, percent_sign: str | None) -> bool:
+    """Whether one NUMBER_PATTERN match represents a negative value --
+    pulled out of extract_numbers_with_spans()'s loop (found in
+    architecture review, 2026-09-11) so the base sign/paren rule and both
+    carve-outs (bare year, reference number -- see NUMBER_PATTERN's own
+    comment for the real-corpus evidence behind each) live in one
+    obviously-named place instead of a dense inline conditional."""
+    if match.group("sign"):
+        return True
+    wrapped_in_parens = bool(match.group("open_paren")) and bool(match.group("close_paren"))
+    if not wrapped_in_parens:
+        return False
+    if _BARE_YEAR_STRING.fullmatch(digits) is not None:
+        return False
+    followed_by_unit_or_pct = bool(unit_word) or bool(percent_sign)
+    if _looks_like_reference_number(text, match.start("open_paren"), digits, followed_by_unit_or_pct):
+        return False
+    return True
 
 
 def extract_numbers_with_spans(text: str) -> list[tuple[float, str, int, int]]:
@@ -57,18 +167,22 @@ def extract_numbers_with_spans(text: str) -> list[tuple[float, str, int, int]]:
     so never needed this."""
     candidates = []
     for match in NUMBER_PATTERN.finditer(text):
-        raw_value, unit_word, percent_sign = match.groups()
+        digits = match.group("digits")
+        unit_word = match.group("unit")
+        percent_sign = match.group("pct")
         try:
-            value = float(raw_value.replace(",", ""))
+            value = float(digits.replace(",", ""))
         except ValueError:
             continue
+        if _is_negative(text, match, digits, unit_word, percent_sign):
+            value = -value
         if percent_sign or (unit_word and unit_word.lower() == "percent"):
             unit = "percent"
         elif unit_word:
             unit = unit_word.lower()
         else:
             unit = "raw"
-        candidates.append((value, unit, match.start(1), match.end(1)))
+        candidates.append((value, unit, match.start("digits"), match.end("digits")))
     return candidates
 
 

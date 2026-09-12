@@ -39,6 +39,23 @@ reference:
 
 ## Backlog
 
+### From the 2026-09-11 hand-rolled-complexity review
+
+Full evidence: `PROJECT_CONTEXT.md`'s 2026-09-11 negative-number-fix
+section. That review's other findings needed no new tracking here: the
+citation-verification subsystem's general complexity is already covered
+by the `_QUOTE_ANCHOR_CHARS`/normalize-duplication entries below, and the
+retrieval-rescue and XBRL-period-duration findings had no live failure or
+concrete fix to attach, on top of already being thoroughly documented in
+their own code.
+
+- [ ] **[refactor, Low, Trivial]** `agent._dispatch_tool_call`'s tool
+  branches are an inline if-chain (4 today: `get_financial_fact`/
+  `compare_financial_metric`/`calculate`/`search_filings`) that will keep
+  growing linearly with each new tool, each hand-repeating the same
+  span/call/format/mutate shape. Not worth a registry-based dispatch
+  table at 4 tools; revisit if a 5th/6th tool is added.
+
 ### From the 2026-09-10 citation-gate-measurement-instrumentation plan
 
 Full evidence/reasoning: `docs/plans/2026-09-10-citation-gate-measurement-instrumentation.md`.
