@@ -77,15 +77,51 @@ handling and the bare-year vs. reference-number carve-outs are each
 internally sound, independently traced/re-run with no interaction bug
 between them.
 
+## Round 3 — found live, by the first real eval run after landing (2026-09-12)
+
+Not from either review pass — from actually running the full 41-question
+`eval_harness.py --backend gemini` baseline once the Gemini daily quota
+reset, per the pending `BACKLOG.md` item. `aapl-msft-employee-comparison`
+(previously a clean pass) newly hard-gate-refused: `"claims -166000.0
+(raw) but no claim in your submit_answer call covers it"`. The model's
+own answer disclosed its computation exactly as system-prompt rule 9
+asks ("...57,000 more full-time employees than Apple (computed as
+223,000 - 166,000 = 57,000)"), using a literal, SPACED `"-"` as the
+subtraction operator — not a sign. `(?<!\d)`'s guard against a hyphen
+glued to a *preceding* digit (added in the original design, see the
+ISO-date/hyphenated-range reasoning above) didn't cover this: the
+character immediately before this hyphen is a space, not a digit, so the
+guard passed and `166,000` was misread as `-166000.0`.
+
+Root cause: a regex-only fixed-width lookbehind can't skip variable
+whitespace to check what's on the OTHER side of that space. Fixed at the
+Python level (same technique already used for the reference-number
+carve-out's "preceded by a letter" check): `_preceded_by_number()` looks
+backward past whitespace and confirms the nearest real character isn't a
+digit — a genuine negation is preceded by a word, punctuation, an opening
+paren, or nothing; a subtraction's minuend is a number. Verified against
+the exact live failure (`extract_numbers` on the real withheld answer
+text, before and after) and end-to-end by re-running the exact eval
+question live post-fix (`aapl-msft-employee-comparison` now passes
+cleanly, 0 citation warnings). The other newly-gated question from the
+same eval run, `nvda-gross-margin-fy26`, failed on `quote_not_found` —
+unrelated to this fix (`_quote_matches` never calls into
+`numeric_utils.py`) and matches this exact question's pre-existing,
+already-documented non-deterministic flakiness in `BACKLOG.md`; not
+touched here.
+
 ## Review-loop status
 
-Two rounds completed. Round 1's own fix was found wrong by round 2 and
-corrected — re-verified against the full real corpus (not just the
-existing test set) before accepting the correction as complete. Round
-2's two minor findings were both fixed the same pass. No third round
-run: per CLAUDE.md's cap, two rounds with a real, verified fix each round
-is the designed loop, not evidence of an unstable design — the second
-round's finding was caught precisely because the review process ran a
-second, independent pass rather than because the first pass was
-careless. Full suite green throughout (584 -> 599 tests, +15 new). No
-further review round planned before landing.
+Three rounds, each catching something the previous one couldn't: round 1
+(`/code-review`) found the footnote-marker false positive; round 2 (a
+fresh architecture subagent) found round 1's own fix was a worse
+regression at scale (554 real occurrences); round 3 (the first live full
+eval run) found a shape neither static review exercised — a model
+choosing "-" as its own notation for subtraction inside a disclosure
+sentence, something only a live model-generated answer could surface.
+Each was a distinct, newly-found issue with a clean, verified fix, not
+the same issue recurring — per CLAUDE.md's cap, that's the loop working
+as designed, not a signal to stop and escalate. Full suite green
+throughout (584 -> 600 tests, +16 new). No further round planned before
+landing; the next real signal will be the full 41-question baseline
+re-run with this fix included.

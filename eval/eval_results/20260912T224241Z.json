@@ -1,0 +1,26 @@
+{
+  "backend": "gemini",
+  "answer_model": "gemini-flash-lite-latest",
+  "judge_model": "gemini-flash-lite-latest",
+  "results": [
+    {
+      "id": "aapl-msft-employee-comparison",
+      "ticker": [
+        "AAPL",
+        "MSFT"
+      ],
+      "question": "Compare the number of full-time employees at Apple (as of September 27, 2025) and Microsoft (as of June 30, 2026).",
+      "type": "comparison",
+      "passed": true,
+      "detail": "found matching values for all 2 entities",
+      "has_citation": true,
+      "citation_warnings": [],
+      "answer": "As of September 27, 2025, Apple had approximately 166,000 full-time equivalent employees [1]. As of June 30, 2026, Microsoft employed approximately 223,000 people on a full-time basis [9]. This represents a difference of 57,000 employees (computed as 223,000 \u2212 166,000 = 57,000), with Microsoft having approximately 34.3% more full-time employees than Apple (computed as 57,000 \u00f7 166,000 = 34.3%).",
+      "n_chunks_retrieved": 13,
+      "withheld_answer": null,
+      "gate_withheld_would_have_passed": null,
+      "gate_withheld_detail": null,
+      "citation_warning_details": []
+    }
+  ]
+}

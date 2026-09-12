@@ -4925,6 +4925,24 @@ correctly (`"$(1,234) million"` -> `-1234.0`, `"declined by -5.2 percent"`
 -> `-5.2`, the generated `"net_income = -1234000000.0 million"` citation
 text -> `-1234000000.0`).
 
+**Addendum, same day**: the first live full 41-question `eval_harness.py
+--backend gemini` run after landing this fix (run once the Gemini daily
+quota reset — see `BACKLOG.md`'s pending item) found a third real bug,
+this time from actual model output rather than either review pass:
+`aapl-msft-employee-comparison` newly hard-gate-refused because the
+model's own rule-9 computation disclosure ("...57,000 more full-time
+employees than Apple (computed as 223,000 - 166,000 = 57,000)") used a
+**spaced** `"-"` as a subtraction operator, which `(?<!\d)`'s glued-hyphen
+guard didn't cover (the character immediately before that hyphen is a
+space, not a digit). Fixed the same way as the reference-number carve-out
+— a Python-level backward scan past whitespace (`_preceded_by_number()`)
+confirming the nearest real character isn't a digit, since a genuine
+negation is never preceded by another number's own digits. Verified
+against the live failure and end-to-end by re-running the exact question
+(clean pass, 0 warnings, post-fix). Full detail:
+`docs/reviews/2026-09-11-negative-number-support.md`'s "Round 3" section.
+Full suite green (600 tests).
+
 Of the review's other 4 findings: the citation-verification subsystem's
 general complexity is already covered by two existing `BACKLOG.md`
 entries (`_QUOTE_ANCHOR_CHARS`, the 5x-duplicated normalize/tolerance

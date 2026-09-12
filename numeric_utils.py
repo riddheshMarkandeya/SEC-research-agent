@@ -61,6 +61,22 @@ import re
 # landing past the digit instead of using it as a sign -- same retry
 # mechanics as the existing letter-glued lookbehind above).
 #
+# That regex-level guard alone isn't enough, found live 2026-09-12 (the
+# first real eval run after shipping this): a SPACED hyphen used as a
+# subtraction operator ("223,000 - 166,000") has whitespace, not a digit,
+# immediately before it, so `(?<!\d)` passes and the second operand was
+# misread as negative -- this broke an otherwise-fully-correct answer's
+# citation verification the very first time a model wrote its own
+# computed-value disclosure using "-" for subtraction (system prompt rule
+# 9 asks the model to show its `calculate` work inline; the model is free
+# to choose "-" over the word "subtract"). No regex-only fix exists here
+# (Python's `re` lookbehind can't skip variable-width whitespace), so
+# `_is_negative()` below re-checks this at the Python level: after the
+# regex says `sign` matched, look backward past any whitespace and
+# confirm the nearest real character still isn't a digit (see
+# `_preceded_by_number()`) -- a genuine negation is preceded by a word,
+# punctuation, or nothing at all; a subtraction's minuend is a number.
+#
 # The parenthesized case ALSO needs two carve-outs, both found live
 # against the real corpus (one during the original design, one flagged by
 # code review and confirmed the same way before fixing it):
@@ -136,6 +152,17 @@ def _looks_like_reference_number(text: str, open_paren_pos: int, digits: str, fo
     return bool(preceding) and preceding[-1].isalpha()
 
 
+def _preceded_by_number(text: str, pos: int) -> bool:
+    """True if the nearest non-whitespace character before position `pos`
+    is a digit -- see NUMBER_PATTERN's own comment for why this is what
+    tells a spaced subtraction operator ("223,000 - 166,000") apart from
+    a genuine negative sign: a real negation is preceded by a word,
+    punctuation, an opening paren, or nothing at all, never by another
+    number's own digits."""
+    before = text[:pos].rstrip()
+    return bool(before) and before[-1].isdigit()
+
+
 def _is_negative(text: str, match: re.Match, digits: str, unit_word: str | None, percent_sign: str | None) -> bool:
     """Whether one NUMBER_PATTERN match represents a negative value --
     pulled out of extract_numbers_with_spans()'s loop (found in
@@ -144,7 +171,7 @@ def _is_negative(text: str, match: re.Match, digits: str, unit_word: str | None,
     comment for the real-corpus evidence behind each) live in one
     obviously-named place instead of a dense inline conditional."""
     if match.group("sign"):
-        return True
+        return not _preceded_by_number(text, match.start("sign"))
     wrapped_in_parens = bool(match.group("open_paren")) and bool(match.group("close_paren"))
     if not wrapped_in_parens:
         return False

@@ -86,6 +86,23 @@ def test_extract_numbers_plain_leading_minus_sign():
     assert extract_numbers("declined by -5.2 percent") == [(-5.2, "percent")]
 
 
+def test_extract_numbers_spaced_subtraction_expression_stays_positive():
+    # Found live (2026-09-12, first full eval run after shipping negative-
+    # number support): a model's own disclosure prose for a computed
+    # value, e.g. "(computed as 223,000 - 166,000 = 57,000)", uses a
+    # SPACED hyphen as a subtraction operator, not a sign -- the earlier
+    # `(?<!\d)` guard only blocked a hyphen glued directly to a preceding
+    # digit (no space), so this slipped through and misread 166,000 as
+    # -166000.0, which then made an otherwise-correct, fully-cited answer
+    # ("aapl-msft-employee-comparison") fail citation verification
+    # (spurious "-166000.0" claim not covered by any real claim).
+    assert extract_numbers("computed as 223,000 - 166,000 = 57,000") == [
+        (223000.0, "raw"),
+        (166000.0, "raw"),
+        (57000.0, "raw"),
+    ]
+
+
 def test_extract_numbers_iso_date_stays_positive_not_misread_as_negative():
     # Regression guard: a bare "-" gated wrong could misread the second
     # half of a hyphen-joined ISO date as a negative number sitting right
