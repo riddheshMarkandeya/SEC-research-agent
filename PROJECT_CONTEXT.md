@@ -4960,8 +4960,12 @@ confirmed pre-existing model non-determinism, one of the three
 `BACKLOG.md`.
 
 Full detail (all 4 rounds): `docs/reviews/2026-09-11-negative-number-support.md`.
-Full suite green throughout (601 tests). Full 41-question baseline
-re-run once more with both fixes in place for the final before/after.
+Full suite green throughout (601 tests). A third full 41-question run
+attempted the same day (both fixes in place, aiming for one all-clean
+baseline) hit the Gemini free-tier daily quota again partway through
+(20/41 rows `RESOURCE_EXHAUSTED` in `eval/eval_results/20260912T234239Z.json`)
+— that report is invalid, not used for anything above; tracked in
+`BACKLOG.md`'s "In progress" section, re-run once the quota resets.
 
 Of the review's other 4 findings: the citation-verification subsystem's
 general complexity is already covered by two existing `BACKLOG.md`
