@@ -1,0 +1,23 @@
+{
+  "backend": "gemini",
+  "answer_model": "gemini-flash-lite-latest",
+  "judge_model": "gemini-flash-lite-latest",
+  "results": [
+    {
+      "id": "aapl-rd-pct-gross-profit-fy2025",
+      "ticker": "AAPL",
+      "question": "What percentage of Apple's fiscal year 2025 gross profit was spent on research and development?",
+      "type": "numeric",
+      "passed": true,
+      "detail": "found matching value: 17.7 (percent)",
+      "has_citation": true,
+      "citation_warnings": [],
+      "answer": "In fiscal year 2025, Apple generated $195,201 million in gross profit [1] and spent $34,550 million on research and development [2]. This represents 17.7% of Apple's gross profit spent on research and development (computed as $34,550 million \u00f7 $195,201 million = 17.7%) [3].",
+      "n_chunks_retrieved": 3,
+      "withheld_answer": null,
+      "gate_withheld_would_have_passed": null,
+      "gate_withheld_detail": null,
+      "citation_warning_details": []
+    }
+  ]
+}

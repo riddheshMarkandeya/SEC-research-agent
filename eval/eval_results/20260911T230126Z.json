@@ -1,0 +1,55 @@
+{
+  "backend": "gemini",
+  "answer_model": "gemini-flash-lite-latest",
+  "judge_model": "gemini-flash-lite-latest",
+  "results": [
+    {
+      "id": "aapl-iphone-net-sales-q3fy2026",
+      "ticker": "AAPL",
+      "question": "What were Apple's iPhone net sales for the three months ended June 27, 2026?",
+      "type": "numeric",
+      "passed": true,
+      "detail": "found matching value: 54252.0 (million)",
+      "has_citation": true,
+      "citation_warnings": [],
+      "answer": "For the three months ended June 27, 2026, Apple's iPhone net sales were $54,252 million [1].",
+      "n_chunks_retrieved": 5,
+      "withheld_answer": null,
+      "gate_withheld_would_have_passed": null,
+      "gate_withheld_detail": null,
+      "citation_warning_details": []
+    },
+    {
+      "id": "msft-us-revenue-q3fy2026",
+      "ticker": "MSFT",
+      "question": "What was Microsoft's revenue in the United States for the three months ended March 31, 2026?",
+      "type": "numeric",
+      "passed": true,
+      "detail": "found matching value: 42336.0 (million)",
+      "has_citation": true,
+      "citation_warnings": [],
+      "answer": "For the three months ended March 31, 2026, Microsoft's revenue in the United States was $42,336 million (or approximately $42.34 billion) [1].",
+      "n_chunks_retrieved": 5,
+      "withheld_answer": null,
+      "gate_withheld_would_have_passed": null,
+      "gate_withheld_detail": null,
+      "citation_warning_details": []
+    },
+    {
+      "id": "nvda-revenue-yoy-growth-q1fy27",
+      "ticker": "NVDA",
+      "question": "According to NVIDIA's quarterly filing commentary, what was the year-over-year percentage growth in total revenue for the quarter ended April 26, 2026?",
+      "type": "numeric",
+      "passed": false,
+      "detail": "no value matching 85 percent found in answer",
+      "has_citation": false,
+      "citation_warnings": [],
+      "answer": "I wasn't able to finish answering within the allotted number of searches. Try asking a more specific or narrower question.",
+      "n_chunks_retrieved": 21,
+      "withheld_answer": null,
+      "gate_withheld_would_have_passed": null,
+      "gate_withheld_detail": null,
+      "citation_warning_details": []
+    }
+  ]
+}

@@ -1,0 +1,131 @@
+{
+  "backend": "gemini",
+  "answer_model": "gemini-flash-lite-latest",
+  "judge_model": "gemini-flash-lite-latest",
+  "results": [
+    {
+      "id": "aapl-rd-pct-gross-profit-fy2025",
+      "ticker": "AAPL",
+      "question": "What percentage of Apple's fiscal year 2025 gross profit was spent on research and development?",
+      "type": "numeric",
+      "passed": true,
+      "detail": "found matching value: 17.7 (percent)",
+      "has_citation": true,
+      "citation_warnings": [],
+      "answer": "In fiscal year 2025, Apple's gross profit was $195,201,000,000 [1] and its research and development expense was $34,550,000,000 [2]. The percentage of gross profit spent on research and development was computed as $34,550,000,000 \u00f7 $195,201,000,000 = 17.7% [3].",
+      "n_chunks_retrieved": 3,
+      "withheld_answer": null,
+      "gate_withheld_would_have_passed": null,
+      "gate_withheld_detail": null,
+      "citation_warning_details": []
+    },
+    {
+      "id": "msft-three-segments-revenue-q3fy2026",
+      "ticker": [
+        "MSFT"
+      ],
+      "question": "What was Microsoft's revenue for each of its three reportable segments \u2014 Productivity and Business Processes, Intelligent Cloud, and More Personal Computing \u2014 for the three months ended March 31, 2026?",
+      "type": "comparison",
+      "passed": false,
+      "detail": "agent refused to answer (hard-gated on unverified citation(s)) -- no value to grade",
+      "has_citation": false,
+      "citation_warnings": [
+        "[6] claims 35013 (million) but the quoted text doesn't appear in source [6]",
+        "[6] claims 34681 (million) but the quoted text doesn't appear in source [6]",
+        "[6] claims 13192 (million) but the quoted text doesn't appear in source [6]"
+      ],
+      "answer": "I can't confirm this answer against the sources I retrieved -- the following claim(s) don't hold up under citation verification:\n- [6] claims 35013 (million) but the quoted text doesn't appear in source [6]\n- [6] claims 34681 (million) but the quoted text doesn't appear in source [6]\n- [6] claims 13192 (million) but the quoted text doesn't appear in source [6]\n\nRather than give you a number I can't verify, I'm refusing this answer.",
+      "n_chunks_retrieved": 15,
+      "withheld_answer": "For the three months ended March 31, 2026, Microsoft's revenue for each of its three reportable segments was as follows:\n- Productivity and Business Processes: $35,013 million [6]\n- Intelligent Cloud: $34,681 million [6]\n- More Personal Computing: $13,192 million [6]",
+      "gate_withheld_would_have_passed": true,
+      "gate_withheld_detail": "found matching values for all 3 entities",
+      "citation_warning_details": [
+        {
+          "check": "quote_not_found",
+          "citation_index": 6,
+          "value": 35013,
+          "unit": "million",
+          "message": "[6] claims 35013 (million) but the quoted text doesn't appear in source [6]"
+        },
+        {
+          "check": "quote_not_found",
+          "citation_index": 6,
+          "value": 34681,
+          "unit": "million",
+          "message": "[6] claims 34681 (million) but the quoted text doesn't appear in source [6]"
+        },
+        {
+          "check": "quote_not_found",
+          "citation_index": 6,
+          "value": 13192,
+          "unit": "million",
+          "message": "[6] claims 13192 (million) but the quoted text doesn't appear in source [6]"
+        }
+      ]
+    },
+    {
+      "id": "nvda-revenue-fy26-us-gaap",
+      "ticker": "NVDA",
+      "question": "In one short sentence, state NVIDIA's total revenue for fiscal year 2026 and note that it is presented under U.S. GAAP. Cite a single source.",
+      "type": "numeric",
+      "passed": true,
+      "detail": "found matching value: 215938.0 (million)",
+      "has_citation": true,
+      "citation_warnings": [],
+      "answer": "NVIDIA's total revenue for fiscal year 2026 was $215,938 million, presented in conformity with U.S. GAAP [3].",
+      "n_chunks_retrieved": 6,
+      "withheld_answer": null,
+      "gate_withheld_would_have_passed": null,
+      "gate_withheld_detail": null,
+      "citation_warning_details": []
+    },
+    {
+      "id": "nvda-revenue-two-quarter-comparison",
+      "ticker": "NVDA",
+      "question": "Compare NVIDIA's total revenue for the quarter ended April 26, 2026 to the quarter ended April 27, 2025.",
+      "type": "comparison",
+      "passed": true,
+      "detail": "found matching values for all 2 entities",
+      "has_citation": true,
+      "citation_warnings": [],
+      "answer": "For the quarter ended April 26, 2026, NVIDIA's total revenue was $81,615 million [2]. For the prior-year quarter ended April 27, 2025, NVIDIA's total revenue was $44,062 million [3]. This represents a year-over-year revenue growth of 85.2% [1] (computed as ($81,615 million - $44,062 million) / $44,062 million = 85.2% [4]).",
+      "n_chunks_retrieved": 4,
+      "withheld_answer": null,
+      "gate_withheld_would_have_passed": null,
+      "gate_withheld_detail": null,
+      "citation_warning_details": []
+    },
+    {
+      "id": "aapl-iphone-net-sales-q3fy2026",
+      "ticker": "AAPL",
+      "question": "What were Apple's iPhone net sales for the three months ended June 27, 2026?",
+      "type": "numeric",
+      "passed": true,
+      "detail": "found matching value: 54252.0 (million)",
+      "has_citation": true,
+      "citation_warnings": [],
+      "answer": "For the three months ended June 27, 2026, Apple's iPhone net sales were $54,252 million (or $54.252 billion) [1].",
+      "n_chunks_retrieved": 5,
+      "withheld_answer": null,
+      "gate_withheld_would_have_passed": null,
+      "gate_withheld_detail": null,
+      "citation_warning_details": []
+    },
+    {
+      "id": "msft-us-revenue-q3fy2026",
+      "ticker": "MSFT",
+      "question": "What was Microsoft's revenue in the United States for the three months ended March 31, 2026?",
+      "type": "numeric",
+      "passed": true,
+      "detail": "found matching value: 42336.0 (million)",
+      "has_citation": true,
+      "citation_warnings": [],
+      "answer": "For the three months ended March 31, 2026, Microsoft's revenue in the United States was $42,336 million (or approximately $42.34 billion) [1].",
+      "n_chunks_retrieved": 5,
+      "withheld_answer": null,
+      "gate_withheld_would_have_passed": null,
+      "gate_withheld_detail": null,
+      "citation_warning_details": []
+    }
+  ]
+}

@@ -1,0 +1,23 @@
+{
+  "backend": "gemini",
+  "answer_model": "gemini-flash-lite-latest",
+  "judge_model": "gemini-flash-lite-latest",
+  "results": [
+    {
+      "id": "msft-cash-to-assets-fy2025",
+      "ticker": "MSFT",
+      "question": "What percentage of Microsoft's total assets was held as cash and cash equivalents at the end of fiscal year 2025?",
+      "type": "numeric",
+      "passed": false,
+      "detail": "no value matching 4.9 percent found in answer",
+      "has_citation": false,
+      "citation_warnings": [],
+      "answer": "I wasn't able to finish answering within the allotted number of searches. Try asking a more specific or narrower question.",
+      "n_chunks_retrieved": 20,
+      "withheld_answer": null,
+      "gate_withheld_would_have_passed": null,
+      "gate_withheld_detail": null,
+      "citation_warning_details": []
+    }
+  ]
+}

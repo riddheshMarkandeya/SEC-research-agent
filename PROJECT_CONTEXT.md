@@ -4642,6 +4642,176 @@ in the plan, run twice (once before, once after the multi-bracket fix
 found via the first run's own results) rather than assumed correct from
 the design alone.
 
+### A verifiable `calculate` tool, plus new citation-gate stress questions (2026-09-11)
+
+Full design: `docs/plans/2026-09-11-calculate-tool-and-stress-questions.md`.
+
+The user asked for two things: more eval questions to stress the
+structured-claims verifier, and a decision on whether the old prose-based
+fallback checker's 2 known bugs were worth fixing. The second was a quick
+call — deprioritize both to lowest, since the last measurement found 0/45
+gate fires ever took that path (Ollama, its only regular user, is already a
+demoted secondary backend). The first led somewhere bigger: designing new
+stress questions surfaced a real, previously-unnoticed problem in the
+structured-claims work committed the day before.
+
+**The problem, precisely**: system-prompt rule 9 told the model that a
+hand-computed value (a ratio the formula registry doesn't cover) should be
+verified by quoting the raw inputs it came from — but `_verify_one_claim`'s
+value-attribution check always requires the claimed VALUE ITSELF to appear
+as a number inside the quote. Confirmed directly against the code: quoting
+two raw inputs never produces a number candidate equal to their ratio, so
+any claim following rule 9's own guidance for a computed value was
+*guaranteed* to fail with `value_not_in_quote`. This explained all 3
+self-computed-ratio refusals observed in testing to date
+(`aapl-rd-pct-gross-profit-fy2025`, `msft-cash-to-assets-fy2025`, and the
+earlier NVIDIA `yoy_growth` regression) — not three unrelated flukes, one
+structural gap.
+
+**Prior art, researched before designing a fix** (per this project's
+workflow, not assumed): RAGAS faithfulness, Anthropic's Citations API, and
+Google's Grounding API are all confirmed (via search) to be span/quote-
+grounding only — none of them have any notion of a verifiably-derived
+number; adopting a more generic attribution framework would not have
+solved this. The actual established solution, from financial numerical-
+reasoning research (FinQA, ConvFinQA, TAT-QA): the model emits an explicit
+**program** — an operation over **operands** that trace back to real
+extracted data — and a verifier mechanically re-executes it. Separately,
+PAL/Toolformer found LLMs are unreliable at real arithmetic even when they
+pick the right operation, so the calculation itself should run in code, not
+the model's head. This project's own tool-calling loop already had the
+right shape for this: `get_financial_fact`'s `yoy_growth: true` flag
+already computes a derived percentage server-side and hands back a normal
+citable result — a `calculate` tool generalizes that one existing
+precedent to ad hoc arithmetic.
+
+**Two design forks, both resolved with the user via `AskUserQuestion`
+before implementing:**
+1. A `calculate` **tool** (PAL/Toolformer-style — the model calls it,
+   real code does the math, the result becomes a normal citable
+   `all_results` entry) vs. a **"compute claim" schema extension** (a
+   FinQA-style program embedded directly in `submit_answer`, re-executed
+   by `verify_claims`). Chose the tool: it reuses the entire existing
+   claim-verification pipeline unchanged (zero new `CitationWarning`
+   types, zero `verify_claims` changes) and, unlike the schema-extension
+   option, *prevents* wrong arithmetic by construction rather than just
+   catching it after the fact.
+2. Keep the formula registry (`RATIO_DEFINITIONS`) as-is for named ratios,
+   `calculate` only as the fallback for arithmetic it doesn't cover — not
+   a replacement. The registry's reviewed formulas and already-solved
+   cross-company semantics are worth more than a model picking operands
+   ad hoc for something already correctly defined.
+3. A third question came from the user mid-plan-review: the tool's own
+   grounding/arithmetic guarantees only prove the number is *right*, not
+   that the reader-facing `answer_text` *discloses* it was computed rather
+   than stated directly by the filing. Resolved as prompt-level guidance
+   only, no new hard gate — a transparency concern, not a correctness one
+   (correctness is already guaranteed by the tool), and a code-enforced
+   check would mean reintroducing `answer_text` pattern-matching for what
+   `calculate`'s own returned text already makes trivial to comply with.
+
+**What changed, mechanically** (`agent.py`):
+
+1. **`CALCULATE_TOOL_SCHEMA`** — a 5th tool. `operation` (add, subtract,
+   multiply, divide, percent_of, percent_change) over two operands, each
+   with its own `citation_index`/`unit`. Dispatched through the existing
+   `_dispatch_tool_call` exactly like `get_financial_fact` — an ordinary
+   intermediate tool call, not routed through `submit_answer`'s
+   `_partition_submit_call` machinery.
+2. **`call_calculate()`** provides two independent guarantees. Operand
+   grounding: each operand must actually appear in its cited source,
+   checked by reusing `_number_candidates()` — the same primitive
+   `_verify_one_claim` already trusts for a submit_answer claim — so
+   grounding a calculate operand and grounding a claim are checked
+   identically. Arithmetic correctness: the operation runs in real Python
+   (add/subtract require matching `normalize()` categories — mixing a
+   percent and a scale value is rejected outright, not silently computed
+   nonsense; divide-by-zero guarded explicitly; rounding matches
+   `formulas.py`'s own convention). Returns `(result, None)` on success,
+   `(None, message)` on failure — richer than `call_get_financial_fact`'s
+   bare `dict | None`, since calculate has several distinct, specifically-
+   actionable failure reasons (bad citation index, an ungrounded operand,
+   a category mismatch, divide by zero).
+3. **`_calculation_as_result()`** wraps a result in the same
+   `{text, metadata}` shape every other tool output uses, with `text`
+   rendering the full expression ("34550.0 million percent_of 195201.0
+   million = 17.7 percent (computed value, not directly stated in any
+   filing; operands from results [1] and [2])") — proven end-to-end, not
+   just asserted, by a test that constructs a `submit_answer` claim citing
+   the new result and confirms it passes `_verify_one_claim` unchanged.
+4. **System prompt**: added the `calculate` bullet, reworded rule 9 to
+   point at `calculate` instead of the disproven "quote the inputs"
+   guidance, and added the disclosure rule (state the computation inline,
+   don't present it as a filed fact).
+5. **Deliberately excluded from `mcp_server._TOOL_SCHEMAS`**, same
+   reasoning as `submit_answer`: citation indices are only meaningful
+   within one `_run_agent_impl` run's own `all_results`.
+
+**Live verification** (`tests/manual/verify_calculate.py`, new): both
+motivating questions passed cleanly on the first real run, no prompt
+iteration needed this time. `aapl-rd-pct-gross-profit-fy2025`: *"...This
+represents 17.7% of Apple's gross profit spent on research and development
+(computed as $34,550 million ÷ $195,201 million = 17.7%) [3]."*
+`msft-cash-to-assets-fy2025`: *"...which is 4.9% (computed as
+$30,242,000,000 ÷ $619,003,000,000 = 4.9%) [3]."* Both confirmed via the
+real `eval_harness.py` pipeline too, not just the manual script. Traced the
+grading code by hand beforehand to confirm no `eval_harness.py` changes
+were needed: `grade_numeric()` filters by `normalize()` category first, so
+the extra numbers in a disclosure sentence don't create ambiguity, and
+`value_is_citation_verified()`'s existing "any occurrence verifies"
+leniency (predates this change) already handles a citation marker sitting
+right after the disclosed value.
+
+**Bonus finding, live**: on `aapl-rd-pct-gross-profit-fy2025`'s first run,
+the model's first `calculate` call mislabeled an already-raw XBRL value's
+unit as `"billion"` (a further, wrong ×10⁹) — `_ground_operand` correctly
+rejected it, and the model self-corrected on retry with the right units,
+producing the correct answer. Real, live confirmation the operand-grounding
+guarantee actually catches a wrong-unit call, not just in tests.
+
+**New eval questions** (`eval/citation_stress_questions.jsonl`), each
+live-verified individually before being added: `aapl-iphone-net-sales-
+q3fy2026` and `msft-us-revenue-q3fy2026`, both targeting the *other* new-
+verifier failure mode already flagged in `BACKLOG.md` — a table row with 4
+nearby numbers (3-month/9-month × current/prior year) for the same metric,
+sourced from a bare pipe-table row with no natural-language sentence
+stating the value at all. Both passed cleanly on the first live run,
+stressing same-chunk multi-period value attribution and table-only quote
+grounding at once. A third planned stress question (two nearby PERCENTAGES
+in one sentence — NVIDIA's "up 85% from a year ago and up 20%
+sequentially," testing whether the verifier could accept the wrong one) was
+tried with two different phrasings and dropped per this project's 2-strikes
+debugging rule: both hit the model's own tool-choice budget exhaustion via
+different specific paths (not a wording nit), a pre-existing, unrelated
+limitation already tracked in `BACKLOG.md`.
+
+**A second real finding, unrelated to `calculate`, surfaced while re-running
+the stress set**: `msft-three-segments-revenue-q3fy2026` (one of the
+original 4 stress questions, untouched by this session's changes) refused
+with a genuine false positive — all three segment-revenue claims correct,
+all three failing `quote_not_found` against the same source. Diagnosed
+exactly by temporarily monkeypatching `verify_claims` to print the actual
+quote/source pairs (not normally logged): the model quoted a short segment
+label joined by its own newline to the value on the next table row (e.g.
+`"Intelligent Cloud\nRevenue $34,681"`), but the source has several blank
+pipe-delimited cells between the two lines, splitting the match into two
+separate runs — neither long enough alone to clear `_quote_matches`'s
+30-character contiguous-anchor floor, even though every character of the
+quote genuinely appears in the source. The existing one-shot Gemini retry
+recovers about half the time (a repeat run of the identical question
+refused outright when the retry failed the same way). Filed to
+`BACKLOG.md` with the exact mechanism, not fixed now — loosening the
+anchor floor needs its own careful thought to avoid reopening the
+fabricated-quote hole it exists to close, not a quick unplanned patch
+alongside unrelated work.
+
+**Verified**: full suite green throughout (558 → 584 tests, +26 new: 6
+schema-acceptance, 13 `call_calculate`/`_calculation_as_result` including
+the scientific-notation regression the first review pass found, 2
+dispatch, plus a handful of related coverage). Two-pass layered review
+completed — one real bug found and fixed (see
+`docs/reviews/2026-09-11-calculate-tool-and-stress-questions.md`).
+
 ## Next steps
 
 See `BACKLOG.md` for the live task backlog. This section used to hold
