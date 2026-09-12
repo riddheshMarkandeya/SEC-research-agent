@@ -110,18 +110,51 @@ unrelated to this fix (`_quote_matches` never calls into
 already-documented non-deterministic flakiness in `BACKLOG.md`; not
 touched here.
 
+## Round 4 — found in the SAME live run as round 3 (2026-09-12)
+
+The re-run that confirmed round 3's fix also surfaced a fourth, distinct
+gap: `aapl-msft-tax-rate-comparison` hard-gate-refused with `"claims 2.1
+(percent) but no claim in your submit_answer call covers it"`. The
+model's disclosure this time was `"...17.9% − 20% = −2.1%"` — using the
+proper Unicode MINUS SIGN (U+2212, "−"), not the ASCII hyphen-minus round
+3 fixed. Confirmed `unicodedata.normalize("NFKC", "−")` does NOT
+fold it to ASCII `"-"` (they aren't compatibility-equivalent characters),
+so this codebase's existing NFKC-based quote normalization
+(`agent._normalize_for_match`, built for a different, already-documented
+Gemini quirk — re-rendering a straight `"-"` as an em dash inside
+QUOTES) could never have caught this either; it needed its own fix here.
+
+Fixed by adding U+2212 alongside ASCII `"-"` in the `sign` group's own
+character class. This reopened round 3's exact problem one level up: the
+FIRST unicode minus in `"17.9% − 20%"` is also a spaced subtraction, not
+a negation, but `_preceded_by_number()`'s digit-only check missed it
+(the minuend ends in `"%"`, not a bare digit). Extended that check to
+also recognize `"%"` and any of `NUMBER_PATTERN`'s own unit words as a
+valid "end of an already-complete number," not just a digit — verified
+both the subtraction (`"20%"` stays positive) and the negation (`"−2.1%"`
+stays negative) resolve correctly in the same sentence. Also traced the
+3 other newly-gated questions from the same run
+(`aapl-cash-equivalents-q3fy2026`, `msft-cash-to-assets-fy2025`,
+`crm-buyback-and-liquidity-q1fy27`) before assuming they were unrelated:
+all three failed on `quote_not_found`, a check that never calls into
+`numeric_utils.py` at all, and a fresh live trace of the same underlying
+fact for `aapl-cash-equivalents-q3fy2026` passed cleanly with zero
+warnings on retry -- confirming pre-existing model-output non-
+determinism (one, `msft-cash-to-assets-fy2025`, already documented as
+such in `BACKLOG.md`), not a fifth regression.
+
 ## Review-loop status
 
-Three rounds, each catching something the previous one couldn't: round 1
+Four rounds, each catching something the previous one couldn't: round 1
 (`/code-review`) found the footnote-marker false positive; round 2 (a
 fresh architecture subagent) found round 1's own fix was a worse
-regression at scale (554 real occurrences); round 3 (the first live full
-eval run) found a shape neither static review exercised — a model
-choosing "-" as its own notation for subtraction inside a disclosure
-sentence, something only a live model-generated answer could surface.
-Each was a distinct, newly-found issue with a clean, verified fix, not
-the same issue recurring — per CLAUDE.md's cap, that's the loop working
-as designed, not a signal to stop and escalate. Full suite green
-throughout (584 -> 600 tests, +16 new). No further round planned before
-landing; the next real signal will be the full 41-question baseline
-re-run with this fix included.
+regression at scale (554 real occurrences); rounds 3 and 4 (the first
+live full eval runs) found two shapes neither static review nor the
+corpus grep could have exercised — a model freely choosing its own
+arithmetic notation ("-" or "−") inside a disclosure sentence, something
+only a live model-generated answer surfaces. Each was a distinct,
+newly-found issue with a clean, verified fix, not the same issue
+recurring — per CLAUDE.md's cap, that's the loop working as designed.
+Full suite green throughout (584 -> 601 tests, +17 new). Re-ran the full
+41-question baseline once more after round 4's fix for the final,
+now-clean before/after.

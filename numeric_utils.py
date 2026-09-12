@@ -77,6 +77,15 @@ import re
 # `_preceded_by_number()`) -- a genuine negation is preceded by a word,
 # punctuation, or nothing at all; a subtraction's minuend is a number.
 #
+# `sign` also matches U+2212 (the proper Unicode MINUS SIGN), not just
+# ASCII hyphen-minus -- found the same live run, same root cause (a
+# model's own rule-9 disclosure prose, this time "17.9% - 20% = -2.1%"
+# rendered with the real minus-sign glyph). Confirmed
+# `unicodedata.normalize("NFKC", ...)` does NOT fold U+2212 to ASCII "-"
+# (they aren't compatibility-equivalent characters), so this codebase's
+# existing NFKC-based quote normalization (agent._normalize_for_match)
+# could never have caught this either -- it needed its own fix here.
+#
 # The parenthesized case ALSO needs two carve-outs, both found live
 # against the real corpus (one during the original design, one flagged by
 # code review and confirmed the same way before fixing it):
@@ -131,7 +140,7 @@ import re
 #    the "(" is alphabetic. All three together correctly separate every
 #    real occurrence of both shapes found in the corpus.
 NUMBER_PATTERN = re.compile(
-    r"(?P<open_paren>\()?\s*(?<!\d)(?P<sign>-)?\$?\s*(?<!\w)(?P<digits>\d+(?:,\d{3})*(?:\.\d+)?)"
+    r"(?P<open_paren>\()?\s*(?<!\d)(?P<sign>[-−])?\$?\s*(?<!\w)(?P<digits>\d+(?:,\d{3})*(?:\.\d+)?)"
     r"(?P<close_paren>\))?\s*(?P<unit>billion|million|thousand|percent)?\s*(?P<pct>%)?",
     re.IGNORECASE,
 )
@@ -152,15 +161,31 @@ def _looks_like_reference_number(text: str, open_paren_pos: int, digits: str, fo
     return bool(preceding) and preceding[-1].isalpha()
 
 
+# The full set of a rendered number's possible trailing characters --
+# a bare digit ("223,000"), "%" ("17.9%"), or one of NUMBER_PATTERN's own
+# unit words ("20 million") -- used by _preceded_by_number() below to
+# recognize "17.9% − 20%" as a subtraction (the minuend ends in "%", not
+# a digit) as well as "223,000 - 166,000" (ends in a bare digit). Kept in
+# sync with NUMBER_PATTERN's own `unit` alternation, not re-derived from
+# UNIT_MULTIPLIERS, since "percent" isn't a scale multiplier but IS a
+# valid trailing word here.
+_NUMBER_ENDING_WORDS = ("billion", "million", "thousand", "percent")
+
+
 def _preceded_by_number(text: str, pos: int) -> bool:
-    """True if the nearest non-whitespace character before position `pos`
-    is a digit -- see NUMBER_PATTERN's own comment for why this is what
-    tells a spaced subtraction operator ("223,000 - 166,000") apart from
-    a genuine negative sign: a real negation is preceded by a word,
-    punctuation, an opening paren, or nothing at all, never by another
-    number's own digits."""
+    """True if the text immediately before position `pos` (skipping
+    whitespace) looks like the end of an already-complete rendered
+    number -- see NUMBER_PATTERN's own comment for why this is what tells
+    a spaced subtraction operator ("223,000 - 166,000", "17.9% − 20%")
+    apart from a genuine negative sign: a real negation is preceded by a
+    word, punctuation, an opening paren, or nothing at all, never by
+    another number's own trailing digit/percent-sign/unit-word."""
     before = text[:pos].rstrip()
-    return bool(before) and before[-1].isdigit()
+    if not before:
+        return False
+    if before[-1].isdigit() or before[-1] == "%":
+        return True
+    return before.lower().endswith(_NUMBER_ENDING_WORDS)
 
 
 def _is_negative(text: str, match: re.Match, digits: str, unit_word: str | None, percent_sign: str | None) -> bool:

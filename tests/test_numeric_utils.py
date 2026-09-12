@@ -86,6 +86,25 @@ def test_extract_numbers_plain_leading_minus_sign():
     assert extract_numbers("declined by -5.2 percent") == [(-5.2, "percent")]
 
 
+def test_extract_numbers_unicode_minus_sign_recognized():
+    # Found live (2026-09-12, the fixed run's own eval baseline): Gemini's
+    # own rule-9 disclosure prose used the proper Unicode MINUS SIGN
+    # (U+2212, "−"), not the ASCII hyphen-minus this project's regex
+    # otherwise handles -- confirmed unicodedata.normalize("NFKC", ...)
+    # does NOT fold U+2212 to ASCII "-" (they aren't compatibility
+    # equivalents), so the existing NFKC-based quote normalization
+    # elsewhere in this codebase (agent._normalize_for_match) could never
+    # have caught this either. Without this, "17.9% − 20% = −2.1%"
+    # extracted the final value as positive 2.1, not -2.1, which caused a
+    # real "uncovered_number" false-positive gate refusal on
+    # aapl-msft-tax-rate-comparison.
+    assert extract_numbers("computed as 17.9% − 20% = −2.1%") == [
+        (17.9, "percent"),
+        (20.0, "percent"),
+        (-2.1, "percent"),
+    ]
+
+
 def test_extract_numbers_spaced_subtraction_expression_stays_positive():
     # Found live (2026-09-12, first full eval run after shipping negative-
     # number support): a model's own disclosure prose for a computed

@@ -4939,9 +4939,29 @@ space, not a digit). Fixed the same way as the reference-number carve-out
 confirming the nearest real character isn't a digit, since a genuine
 negation is never preceded by another number's own digits. Verified
 against the live failure and end-to-end by re-running the exact question
-(clean pass, 0 warnings, post-fix). Full detail:
-`docs/reviews/2026-09-11-negative-number-support.md`'s "Round 3" section.
-Full suite green (600 tests).
+(clean pass, 0 warnings, post-fix).
+
+The re-run that confirmed round 3's fix surfaced a **fourth** gap the
+same way: `aapl-msft-tax-rate-comparison` hard-gate-refused because the
+model's disclosure used the proper Unicode MINUS SIGN (U+2212, "−"), not
+ASCII "-" — confirmed `unicodedata.normalize("NFKC", ...)` does NOT fold
+U+2212 to ASCII "-", so the existing NFKC-based quote normalization
+elsewhere in this codebase couldn't have caught this either. Fixed by
+adding U+2212 to the `sign` group's character class, which reopened round
+3's problem one level up (a spaced U+2212 subtraction, "17.9% − 20%",
+where the minuend ends in "%" not a bare digit) — `_preceded_by_number()`
+now also recognizes "%" and any unit word as "end of an already-complete
+number." Traced the other 3 newly-gated questions from the same run
+before assuming they were unrelated: all failed on `quote_not_found` (a
+check that never calls into `numeric_utils.py`), and a fresh live retrace
+of `aapl-cash-equivalents-q3fy2026` passed cleanly with zero warnings —
+confirmed pre-existing model non-determinism, one of the three
+(`msft-cash-to-assets-fy2025`) already documented as such in
+`BACKLOG.md`.
+
+Full detail (all 4 rounds): `docs/reviews/2026-09-11-negative-number-support.md`.
+Full suite green throughout (601 tests). Full 41-question baseline
+re-run once more with both fixes in place for the final before/after.
 
 Of the review's other 4 findings: the citation-verification subsystem's
 general complexity is already covered by two existing `BACKLOG.md`

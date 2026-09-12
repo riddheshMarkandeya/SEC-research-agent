@@ -1,0 +1,85 @@
+{
+  "backend": "gemini",
+  "answer_model": "gemini-flash-lite-latest",
+  "judge_model": "gemini-flash-lite-latest",
+  "results": [
+    {
+      "id": "aapl-cash-equivalents-q3fy2026",
+      "ticker": "AAPL",
+      "question": "What was Apple's cash and cash equivalents as of June 27, 2026, according to its balance sheet?",
+      "type": "numeric",
+      "passed": false,
+      "detail": "agent refused to answer (hard-gated on unverified citation(s)) -- no value to grade",
+      "has_citation": false,
+      "citation_warnings": [
+        "[1] claims 39544000000 (raw) but the quoted text doesn't appear in source [1]"
+      ],
+      "answer": "I can't confirm this answer against the sources I retrieved -- the following claim(s) don't hold up under citation verification:\n- [1] claims 39544000000 (raw) but the quoted text doesn't appear in source [1]\n\nRather than give you a number I can't verify, I'm refusing this answer.",
+      "n_chunks_retrieved": 1,
+      "withheld_answer": "As of June 27, 2026, Apple's cash and cash equivalents was $39,544,000,000 [1].",
+      "gate_withheld_would_have_passed": true,
+      "gate_withheld_detail": "found matching value: 39544000000.0 (raw)",
+      "citation_warning_details": [
+        {
+          "check": "quote_not_found",
+          "citation_index": 1,
+          "value": 39544000000,
+          "unit": "raw",
+          "message": "[1] claims 39544000000 (raw) but the quoted text doesn't appear in source [1]"
+        }
+      ]
+    },
+    {
+      "id": "msft-cash-to-assets-fy2025",
+      "ticker": "MSFT",
+      "question": "What percentage of Microsoft's total assets was held as cash and cash equivalents at the end of fiscal year 2025?",
+      "type": "numeric",
+      "passed": false,
+      "detail": "no value matching 4.9 percent found in answer",
+      "has_citation": false,
+      "citation_warnings": [],
+      "answer": "I wasn't able to finish answering within the allotted number of searches. Try asking a more specific or narrower question.",
+      "n_chunks_retrieved": 15,
+      "withheld_answer": null,
+      "gate_withheld_would_have_passed": null,
+      "gate_withheld_detail": null,
+      "citation_warning_details": []
+    },
+    {
+      "id": "crm-buyback-and-liquidity-q1fy27",
+      "ticker": [
+        "CRM"
+      ],
+      "question": "As of April 30, 2026, how much remaining authorization did Salesforce have under its Share Repurchase Program, and what was its total cash, cash equivalents and marketable securities balance?",
+      "type": "comparison",
+      "passed": false,
+      "detail": "agent refused to answer (hard-gated on unverified citation(s)) -- no value to grade",
+      "has_citation": false,
+      "citation_warnings": [
+        "[15] claims 8935 (million) but the quoted text doesn't appear in source [15]",
+        "[15] claims 2902 (million) but the quoted text doesn't appear in source [15]"
+      ],
+      "answer": "I can't confirm this answer against the sources I retrieved -- the following claim(s) don't hold up under citation verification:\n- [15] claims 8935 (million) but the quoted text doesn't appear in source [15]\n- [15] claims 2902 (million) but the quoted text doesn't appear in source [15]\n\nRather than give you a number I can't verify, I'm refusing this answer.",
+      "n_chunks_retrieved": 17,
+      "withheld_answer": "As of April 30, 2026, Salesforce had remaining authorization to purchase $22.9 billion of its common stock under the Share Repurchase Program [2]. As of the same date, Salesforce had cash and cash equivalents of $8,935 million ($8.935 billion) [15] and marketable securities of $2,902 million ($2.902 billion) [15], resulting in a total cash, cash equivalents, and marketable securities balance of $11.837 billion (computed as $8,935 million + $2,902 million = $11,837 million) [15, 17] (also reported as approximately $11.8 billion [8]).",
+      "gate_withheld_would_have_passed": true,
+      "gate_withheld_detail": "found matching values for all 2 entities",
+      "citation_warning_details": [
+        {
+          "check": "quote_not_found",
+          "citation_index": 15,
+          "value": 8935,
+          "unit": "million",
+          "message": "[15] claims 8935 (million) but the quoted text doesn't appear in source [15]"
+        },
+        {
+          "check": "quote_not_found",
+          "citation_index": 15,
+          "value": 2902,
+          "unit": "million",
+          "message": "[15] claims 2902 (million) but the quoted text doesn't appear in source [15]"
+        }
+      ]
+    }
+  ]
+}
