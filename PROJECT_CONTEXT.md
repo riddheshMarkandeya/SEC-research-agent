@@ -38,8 +38,15 @@ companies, grounded in their SEC filings, with:
 TDD, SE principles, debugging discipline, documentation, independent
 review — each scoped by change size so trivial fixes aren't bogged down
 by process meant for substantial features). Agreed with the user
-2026-08-24. This section keeps the narrative/historical detail behind
-the one rule that predates and motivated it:
+2026-08-24. As of 2026-09-12 that workflow is split across two files:
+`~/.claude/CLAUDE.md` holds the generic, cross-project version of all of
+the above (plus a new UI implementation/design section, not yet used by
+this project — it has no UI today) — this project's own `CLAUDE.md` now
+only layers project-specific additions on top (the concrete live-code
+TDD categories, this project's documentation file names, spot-check-eval
+practice, Gemini quota awareness, regression-note-keeping). This section
+keeps the narrative/historical detail behind the one rule that predates
+and motivated it:
 
 **Tests are written alongside new code, not after — and nothing gets
 committed with a failing test suite.** This started from Week 4 onward
@@ -4976,6 +4983,197 @@ windows (`xbrl_facts._pick_entry`/`_duration_days`) are both already
 thoroughly self-documented in their own code with no live failure or
 concrete fix to attach — also no new tracking. `_dispatch_tool_call`'s
 growing if-chain is filed to `BACKLOG.md` as a small watch-item.
+
+### Structure-aware table quote grounding replaces `_quote_matches`'s anchor floor for table sources (2026-09-12)
+
+Picked up the `_QUOTE_ANCHOR_CHARS` item this session, planned to be the
+straightforward "scale-aware anchor floor" fix the `BACKLOG.md` entry
+proposed. Investigation before writing any code showed that framing was
+wrong and the fix needed a full re-plan (`docs/plans/2026-09-12-structure-
+aware-table-quote-grounding.md`).
+
+Reconstructed the real failure against the actual MSFT chunk
+(`chunks/MSFT/0001193125-26-191507_chunks.jsonl`, table 40/47's segment
+table): the model's quote `"Intelligent Cloud\nRevenue $34,681"` is
+completely faithful, but the source's `| Intelligent Cloud |  |  |  |  |`
+label row's empty cells normalize to filler text (`"| | | | | | "`)
+between the label and the value, splitting the fuzzy match into 3 blocks
+(18/8/7 chars) — coverage 1.000, but `longest=18 < 30`. Whether a claim
+passed depended purely on segment-label LENGTH:
+`"Productivity and Business Processes"` (36 chars) already cleared the
+floor; `"Intelligent Cloud"` (18) and `"More Personal Computing"` (24)
+didn't.
+
+**The proposed "loosen the floor" fix was tried, measured, and rejected**
+before being adopted. A locality-based relaxation (accept a split match
+when the gaps between blocks hold only table punctuation) passed the real
+case and 6 hand-built fabrication attacks — then failed end-to-end: since
+a markdown row break (`"...|\n|..."`) and an empty cell (`"| |"`)
+normalize to the IDENTICAL string, the same relaxation let a quote splice
+one row's value onto an unrelated adjacent row's label. Verified through
+the real `_verify_one_claim`: `quote="$50,780 Intelligent Cloud Revenue
+$34,681"` — patched, this returned no warning at all, attributing
+Productivity & Business Processes' own nine-month FY2025 operating income
+($50,780M) to Intelligent Cloud.
+
+Chasing that further surfaced a bigger problem: **the existing flat
+anchor floor was already accepting equivalent misattributions today**,
+whenever a label was long enough to clear it alone —
+`"2025 Productivity and Business Processes Revenue $35,013"` (wrong
+fiscal period; $35,013 is FY2026's), a 10x-inflated
+`"...Revenue $135,013"`, and a nine-month figure
+(`"...Revenue $102,149"`) all passed `_quote_matches` unmodified, purely
+because `"Productivity and Business Processes"` alone is 36 normalized
+characters. The anchor floor was never really a label/value-alignment
+defense — it was a length heuristic that rejected honest short labels and
+accepted misattributions under long ones. Root cause: verifying a table
+cell needs three coordinates (row-group, row-label, column) and a flat
+coverage/anchor-length metric over normalized text carries none of them.
+
+**Fix**: a new module, `table_grounding.py`, split out for the same
+reason `numeric_utils.py` was (independently testable, and
+`table_grounding` is imported BY `agent.py`, so it can't import back —
+would be circular). It parses `<TABLE>...</TABLE>` blocks (already
+spliced into chunk text by `chunk_documents.reconstruct_document`) into
+rows classified as label/data/header/separator/blank, locates a claimed
+value in a specific grid cell, and checks that a quote's own words are
+explained ONLY by that cell's row-label, its governing group-label (the
+nearest preceding label-only row), and its own column's period header —
+not the whole row, not sibling columns, not other rows. Wired into
+`agent._verify_one_claim` via `_quote_grounded_in_source`: if the claimed
+value is located in a table cell, the structural check is AUTHORITATIVE
+(no fallback to `_quote_matches` even on structural rejection — a
+deliberate choice, since falling back would silently reopen the
+pre-existing long-label holes above); if the value isn't in any cell, it
+falls through to `_quote_matches` unchanged (prose values, or chunks with
+no table, are untouched).
+
+One real implementation subtlety, found empirically rather than assumed:
+mapping a data row's column to the right header token needed a
+column-index correction. `chunk_documents.clean_row()` drops every empty
+cell from a row before `table_to_markdown()` pads all rows in a table
+back to equal width — a header row (`"2026 | 2025 | 2026 | 2025 |  |"`,
+no cell for the label column) loses a leading blank cell that data rows
+(`"Revenue | $35,013 | ... |"`) never had, so the header row's real
+content is left-shifted by one relative to data, with the lost width
+padded back on the END instead of the start. `_period_header_index`
+recovers the actual shift per table (by comparing each row's own
+trailing-empty-cell count, not hardcoding 1) rather than assuming a fixed
+offset — confirmed correct against both real fixtures used
+(MSFT's 5-column segment table, AAPL's 6-column geographic table, whose
+unit caption — `"(dollars in millions)"` — lives in the PROSE sentence
+*before* the table, not inside it, confirming `locate_value` needed the
+same caption-unit reinterpretation trick `agent._number_candidates`
+already uses, searched over the full chunk text, not just the table's own
+cells).
+
+**A second real bug was found in this fix's own two-pass review, not
+just the adversarial pre-implementation investigation**: an early version
+of `quote_is_grounded` required a cell's rendered text (e.g. `"$34,681"`)
+to appear as a literal token in the quote — stricter than `_quote_matches`
+ever was, since that one's character-level coverage ratio freely tolerated
+a model restating a value without its exact comma/dollar-sign/decimal
+formatting. Caught via a direct probe (`"$34681"`, `"34681"`,
+`"$34,681.00"` all wrongly rejected against a cell literally reading
+`"$34,681"`). Fixed by comparing quote-embedded numbers BY VALUE (reusing
+the same caption-unit-aware candidate logic used to locate the cell in
+the first place) rather than as a literal string, while label words
+(row-label/group-label/period-header) stay a literal word-level multiset
+check — this is what still rejects a row-spliced quote (a foreign row's
+label isn't in the allowed vocabulary) and a wrong-column quote (a
+sibling column's own period-header token isn't either).
+
+**Verified**: full TDD for `table_grounding.py` (17 new tests in
+`tests/test_table_grounding.py`, all written and confirmed red before
+their implementation, against REAL filing text extracted via
+`chunk_documents.table_to_markdown()` from `data/MSFT/*_tables.json` and
+`data/AAPL/*_tables.json`, not synthetic strings), plus 4 new end-to-end
+`_verify_one_claim`/`verify_claims` tests in `tests/test_agent.py`
+against the real MSFT chunk text — including one that pins the pre-
+existing anchor-path false accept is now overridden (asserts
+`_quote_matches` alone still returns `True` on the wrong-period quote,
+then asserts `verify_claims` correctly refuses it end-to-end). Full suite
+green throughout (601 → 619). Re-ran the full pre-implementation attack
+matrix (real bug × 2 short labels, all 4 metric rows, 7 fabrication
+attacks including the row-splice bypass, the two pre-existing
+misattributions) directly against the wired `agent._verify_one_claim` —
+every case resolved as designed except one, which is the documented,
+deliberately out-of-scope "wrong period stated only in answer prose, not
+the quote" residual (see `BACKLOG.md`).
+
+**Two-pass layered review, both passes finding real, fixed issues — not
+just style nits.** Self correctness/CLAUDE.md-compliance pass (before the
+architecture pass returned) found that the FIRST working version of
+`quote_is_grounded` required a cell's own rendered text (`"$34,681"`) to
+appear as a literal token in the quote — stricter than `_quote_matches`
+ever was, since its character-level coverage ratio freely tolerated a
+model restating a value without exact comma/dollar-sign/decimal
+formatting. Confirmed directly: `"$34681"`, `"34681"`, and
+`"$34,681.00"` were all wrongly rejected against a cell literally reading
+`"$34,681"`. Fixed by comparing quote-embedded numbers BY VALUE (reusing
+the same caption-unit-aware candidate logic used to locate the cell)
+rather than as a literal string, while row/group/period-header LABEL
+words stay a literal word-level multiset check.
+
+A fresh subagent architecture review (no memory of the implementation)
+then found the design fit the codebase well (compared favorably to
+`numeric_utils.py`'s own split-out precedent) and negligible performance
+concern, but one real robustness gap: `_period_header_index`'s
+column-shift correction was computed ONCE per table block from an
+arbitrary cached "sample" data row, reused for every other row in the
+block. A newly-disclosed segment with no prior-year comparative (a
+plausible real SEC-filing shape — the row reports only one period, so
+`clean_row()` strips the missing trailing columns before padding) as that
+sample row would silently poison the period-header mapping for every
+OTHER row in the same block, returning a wrong-but-in-bounds column
+instead of `None`. Fixed by computing the shift fresh from whichever row
+actually owns the cell being checked — simpler than the code it replaced,
+not just safer, since no separate sampling pass is needed when the
+current row is already in scope. Added a regression test pinning this
+exact shape (a sparse first row, a fully-populated second row, asserting
+the second row's period header is unaffected by the first's raggedness).
+Two smaller findings were addressed by adding tests that document
+existing, already-safe behavior explicitly rather than leaving it
+implicit: a data row with no group-label row above it at all (the
+underlying case chunking-truncation would produce, though `chunk_blocks()`
+in fact never splits a `<TABLE>` block mid-table, so that specific trigger
+can't occur — the structural code path is real regardless), and
+`quote_is_grounded` accepting a content-free quote (just a period header
+and a bare value, naming no label at all) — inert today only because
+`locate_value` has already narrowed to the one cell matching the claim's
+own value before this ever runs. One review claim was NOT acted on: it
+asserted the required Gemini live spot-check had already passed cleanly
+against a specific report file — independently re-verified false by
+reading that exact file directly, which shows a `RESOURCE_EXHAUSTED`
+failure with zero rows evaluated, not a clean pass (see below). Findings
+and both fixes recorded in
+`docs/reviews/2026-09-12-structure-aware-table-quote-grounding.md`. Full
+suite green throughout (619 → 622, three new tests from the review pass).
+
+**Live spot-check (required by this file's own rule for any
+`_verify_one_claim` change) is still outstanding, not satisfied.**
+Attempted via `eval_harness.py --backend gemini --questions
+eval/citation_stress_questions.jsonl --ids
+msft-three-segments-revenue-q3fy2026`: hit `RESOURCE_EXHAUSTED`
+immediately (`eval/eval_results/20260913T043333Z.json`, invalid, kept for
+the audit trail only) — the Gemini free-tier daily quota was already
+exhausted, the same constraint tracked in `BACKLOG.md`'s in-progress
+41-question baseline item, now recurring a day later than expected. Ran
+the identical question through the local Ollama backend as a
+supplementary (explicitly not equivalent) check while Gemini stayed
+blocked: inconclusive, not a pass or fail
+(`eval/eval_results/20260913T043919Z.json`) — the model's answer carried
+no `[n]` citation marker at all, so `_verify_one_claim`/`table_grounding.py`
+were never invoked, consistent with Ollama's known unreliability at the
+structured-claims protocol (see this file's 2026-09-10 "Ollama demoted to
+secondary backend" section) rather than telling us anything about the fix
+itself. Filed to `BACKLOG.md` as its own pending item, separate from the
+41-question baseline: needs `eval_harness.py --backend gemini
+--questions eval/citation_stress_questions.jsonl --ids
+msft-three-segments-revenue-q3fy2026` re-run once quota allows — the full
+unit/integration suite and an extensive adversarial probe against the
+real MSFT chunk (see above) already give strong confidence, so this
+remaining step is confirmatory, not exploratory.
 
 ## Next steps
 

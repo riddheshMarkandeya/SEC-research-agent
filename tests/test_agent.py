@@ -3286,6 +3286,117 @@ def test_verify_claims_does_not_duplicate_the_same_uncovered_number_twice():
 
 
 # ---------------------------------------------------------------------------
+# table_grounding.py integration (2026-09-12) -- _verify_one_claim now
+# checks a claim's value/quote against parsed table structure (row
+# group/row label/column) whenever the value can be located in a table
+# cell, instead of _quote_matches's flat coverage/anchor-floor check.
+# See docs/plans/2026-09-12-structure-aware-table-quote-grounding.md for
+# the full investigation: that flat check's 30-char contiguous-block
+# floor rejected a genuine, correctly-reformatted quote purely because a
+# segment label was short ("Intelligent Cloud", 18 normalized chars,
+# under the floor; "Productivity and Business Processes", 36 chars,
+# wasn't) -- and, worse, the SAME flat check already accepted real
+# misattributions (wrong fiscal period, an inflated value) whenever the
+# label happened to be long enough to clear the anchor on its own.
+# Fixture is the real MSFT segment table (0001193125-26-191507, Q3
+# FY2026 10-Q), reproduced verbatim, not paraphrased -- also used in
+# tests/test_table_grounding.py.
+# ---------------------------------------------------------------------------
+_MSFT_SEGMENT_TABLE_TEXT = """Segment revenue, cost of revenue, operating expenses, and operating income were as follows during the periods presented:
+
+<TABLE>
+| (In millions) | Three Months EndedMarch 31, | Nine Months EndedMarch 31, |  |  |
+| --- | --- | --- | --- | --- |
+| 2026 | 2025 | 2026 | 2025 |  |
+| Productivity and Business Processes |  |  |  |  |
+| Revenue | $35,013 | $29,944 | $102,149 | $87,698 |
+| Cost of revenue | 6,197 | 5,517 | 18,028 | 16,380 |
+| Operating expenses | 7,843 | 7,048 | 22,142 | 20,538 |
+| Operating income | $20,973 | $17,379 | $61,979 | $50,780 |
+| Intelligent Cloud |  |  |  |  |
+| Revenue | $34,681 | $26,751 | $98,485 | $76,387 |
+| Cost of revenue | 15,120 | 10,307 | 41,000 | 28,326 |
+| Operating expenses | 5,808 | 5,349 | 16,468 | 15,612 |
+| Operating income | $13,753 | $11,095 | $41,017 | $32,449 |
+| More Personal Computing |  |  |  |  |
+| Revenue | $13,192 | $13,371 | $41,198 | $41,198 |
+| Cost of revenue | 5,511 | 6,095 | 17,821 | 19,111 |
+| Operating expenses | 4,009 | 3,750 | 11,739 | 11,111 |
+| Operating income | $3,672 | $3,526 | $11,638 | $10,976 |
+| Total |  |  |  |  |
+| Revenue | $82,886 | $70,066 | $241,832 | $205,283 |
+| Cost of revenue | 26,828 | 21,919 | 76,849 | 63,817 |
+| Operating expenses | 17,660 | 16,147 | 50,349 | 47,261 |
+| Operating income | $38,398 | $32,000 | $114,634 | $94,205 |
+</TABLE>"""
+
+
+def test_verify_claims_accepts_a_reformatted_quote_under_a_short_segment_label():
+    # The real reported bug: whether this claim passed used to depend
+    # only on segment-label LENGTH, not on whether the quote was
+    # genuinely faithful to the source.
+    results = [_fake_result(text=_MSFT_SEGMENT_TABLE_TEXT)]
+    claims = [_valid_submitted_claim(value=34681.0, unit="million", quote="Intelligent Cloud\nRevenue $34,681")]
+    answer_text = "Microsoft's Intelligent Cloud segment revenue was $34,681 million [1]."
+    assert verify_claims(claims, results, "q", answer_text) == []
+
+
+def test_verify_claims_still_rejects_a_value_spliced_across_a_row_boundary():
+    # Guards the hole an adversarial review found in an earlier candidate
+    # fix (relaxing the flat anchor floor via gap-content locality): a
+    # markdown row break and an empty table cell normalize to the
+    # identical string, so that fix let a quote splice one row's value
+    # onto an unrelated adjacent row's label. $50,780 is Productivity &
+    # Business Processes' own nine-month FY2025 operating income --
+    # attributing it to Intelligent Cloud must still refuse.
+    results = [_fake_result(text=_MSFT_SEGMENT_TABLE_TEXT)]
+    claims = [_valid_submitted_claim(
+        value=50780.0, unit="million",
+        quote="$50,780 Intelligent Cloud Revenue $34,681",
+    )]
+    answer_text = "Intelligent Cloud's nine-month operating income was $50,780 million [1]."
+    warnings = verify_claims(claims, results, "q", answer_text)
+    assert len(warnings) == 1
+    assert warnings[0].check == "quote_not_found"
+
+
+def test_verify_claims_table_grounding_overrides_the_anchor_path_false_accept():
+    # This exact quote passes the OLD flat _quote_matches check on its
+    # own (confirmed directly against _quote_matches while investigating
+    # this fix): "Productivity and Business Processes" alone is 36
+    # normalized characters, clearing the 30-char anchor floor with no
+    # need for the "2025"/"$35,013" pairing to make any sense. $35,013 is
+    # that segment's THREE-MONTH FY2026 revenue, not FY2025's -- table
+    # grounding is authoritative here specifically so this kind of
+    # pre-existing false accept can't survive alongside the false-negative
+    # fix.
+    results = [_fake_result(text=_MSFT_SEGMENT_TABLE_TEXT)]
+    assert _quote_matches(
+        "2025 Productivity and Business Processes Revenue $35,013",
+        _MSFT_SEGMENT_TABLE_TEXT,
+    ) is True
+    claims = [_valid_submitted_claim(
+        value=35013.0, unit="million",
+        quote="2025 Productivity and Business Processes Revenue $35,013",
+    )]
+    answer_text = "Productivity and Business Processes revenue was $35,013 million [1]."
+    warnings = verify_claims(claims, results, "q", answer_text)
+    assert len(warnings) == 1
+    assert warnings[0].check == "quote_not_found"
+
+
+def test_verify_claims_falls_back_to_quote_matches_for_a_value_only_in_prose():
+    # A chunk can hold both a table and prose; a value stated only in
+    # the prose portion must still verify via the ordinary flat-text
+    # path, not be treated as an ungrounded table claim.
+    text = "Total headcount was 228,000 employees, as discussed below.\n\n" + _MSFT_SEGMENT_TABLE_TEXT
+    results = [_fake_result(text=text)]
+    claims = [_valid_submitted_claim(value=228000.0, unit="raw", quote="Total headcount was 228,000 employees")]
+    answer_text = "Total headcount was 228,000 [1]."
+    assert verify_claims(claims, results, "q", answer_text) == []
+
+
+# ---------------------------------------------------------------------------
 # _format_claim_retry_message (2026-09-10) -- structured-claims retry
 # wording, sharing _CITATION_RETRY_GUIDANCE with the old prose retry
 # message so the two can't drift apart. See

@@ -1,0 +1,25 @@
+{
+  "backend": "ollama",
+  "answer_model": "qwen2.5:7b-instruct",
+  "judge_model": "qwen2.5:7b-instruct",
+  "results": [
+    {
+      "id": "msft-three-segments-revenue-q3fy2026",
+      "ticker": [
+        "MSFT"
+      ],
+      "question": "What was Microsoft's revenue for each of its three reportable segments \u2014 Productivity and Business Processes, Intelligent Cloud, and More Personal Computing \u2014 for the three months ended March 31, 2026?",
+      "type": "comparison",
+      "passed": false,
+      "detail": "missing or wrong value(s) for: MSFT-PBP (35013 million), MSFT-IC (34681 million), MSFT-MPC (13192 million)",
+      "has_citation": false,
+      "citation_warnings": [],
+      "answer": "Microsoft did not provide specific revenue figures for its Productivity and Business Processes, Intelligent Cloud, and More Personal Computing segments for the three months ended March 31, 2026.",
+      "n_chunks_retrieved": 5,
+      "withheld_answer": null,
+      "gate_withheld_would_have_passed": null,
+      "gate_withheld_detail": null,
+      "citation_warning_details": []
+    }
+  ]
+}

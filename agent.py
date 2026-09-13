@@ -29,7 +29,6 @@ Usage:
 import argparse
 import difflib
 import re
-import unicodedata
 from collections import Counter
 from typing import NamedTuple
 
@@ -45,8 +44,9 @@ from formulas import (
     get_yoy_growth,
 )
 from llm_backends import BACKENDS
-from numeric_utils import UNIT_MULTIPLIERS, extract_numbers, extract_numbers_with_spans, normalize
+from numeric_utils import UNIT_MULTIPLIERS, extract_numbers, extract_numbers_with_spans, normalize, normalize_for_match
 from retrieval import hybrid_search
+from table_grounding import extract_table_blocks, locate_value, quote_is_grounded
 from tracing import flush, log_event, record_unmet_metric_request, traced_span
 from xbrl_facts import DEFAULT_METRIC_TAGS, get_metric, get_metric_all_companies, is_metric_tagged
 
@@ -1205,19 +1205,16 @@ _QUOTE_ANCHOR_CHARS = 30  # a real quote's whole span usually appears as one lon
 _BARE_NUMBER_MIN_DIGITS = 6
 
 
-def _normalize_for_match(text: str) -> str:
-    """Collapses cosmetic differences that would otherwise defeat quote
-    matching without weakening what's actually being verified: NFKC
-    normalization folds curly quotes/en-dashes/other Unicode
-    compatibility variants Gemini routinely re-renders (e.g. a straight
-    "-" restated as an em dash) into one canonical form; casefold() is a
-    stronger case-insensitive comparison than .lower() for non-ASCII
-    text; collapsing whitespace runs handles a quote that wraps
-    differently than the source (a mid-sentence line break, doubled
-    spaces from table formatting)."""
-    text = unicodedata.normalize("NFKC", text)
-    text = text.casefold()
-    return " ".join(text.split())
+# Moved to numeric_utils.normalize_for_match (2026-09-12) so
+# table_grounding.py can share the exact same implementation without a
+# circular import (table_grounding is imported BY agent.py, so it can't
+# import back from agent.py -- the same reason numeric_utils.py itself
+# was split out of eval_harness.py). Kept as an alias, not re-exported
+# under a new name, since every existing call site and test in this
+# module refers to it as `_normalize_for_match`. See
+# numeric_utils.normalize_for_match's own docstring for the corrected
+# NFKC-dash-folding claim this one used to make incorrectly.
+_normalize_for_match = normalize_for_match
 
 
 def _quote_is_long_enough(quote_norm: str) -> bool:
@@ -1652,11 +1649,56 @@ def value_is_citation_verified(value: float, unit: str, answer_text: str, all_re
     return True if not matches else any(matches)
 
 
+def _quote_grounded_in_source(value: float, unit: str, quote: str, source_text: str) -> bool:
+    """Whether `quote` genuinely supports a claimed (value, unit) against
+    `source_text` -- table-aware where possible, falling back to the
+    flat-text _quote_matches() otherwise.
+
+    If the claimed value can be located in a parsed table cell in
+    `source_text`, that structural check is AUTHORITATIVE: it decides
+    the outcome, with no fallback to _quote_matches() even if the
+    structural check fails. This was a deliberate 2026-09-12 decision,
+    not a default -- _quote_matches's flat coverage/anchor-floor check
+    was found to accept several real misattributions on this exact
+    table shape whenever a segment label happened to be long enough
+    (wrong fiscal period, a 10x-inflated value, a nine-month figure
+    misquoted as a quarterly one -- see
+    docs/plans/2026-09-12-structure-aware-table-quote-grounding.md for
+    the measured evidence), so letting it rescue a structural rejection
+    would silently reopen exactly the holes this change closes.
+
+    KNOWN LIMITATION, confirmed live 2026-09-13 (see
+    docs/plans/2026-09-13-table-grounding-region-scoped-matching.md): a
+    genuinely faithful, byte-for-byte quote of a whole table row with
+    multiple independently-claimed values (e.g. CRM's remaining-
+    performance-obligation row, Current/Noncurrent/Total in one row) is
+    wrongly refused here, because `quote_is_grounded()`'s allowed
+    vocabulary deliberately excludes sibling-column content -- correct
+    for blocking a cross-column fabrication, wrong for a genuine
+    multi-value disclosure. An unconditional "exact substring of the
+    whole source wins" shortcut was tried and reverted: it fixed this
+    case but reopened the row-splice/cross-segment-steal/wrong-period
+    attacks this whole function exists to block, since a spliced or
+    misattributed quote can ALSO be an exact contiguous substring of the
+    raw source (row boundaries are just newlines in the underlying
+    text). Being replaced by a region-scoped redesign of
+    `quote_is_grounded()` itself rather than patched here.
+
+    If the value isn't in any table cell (no table in this source, or a
+    genuinely prose-stated value), that's not evidence of anything --
+    it falls through to the ordinary flat-text check unchanged."""
+    cells = locate_value(extract_table_blocks(source_text), value, unit)
+    if cells:
+        return any(quote_is_grounded(quote, cell) for cell in cells)
+    return _quote_matches(quote, source_text)
+
+
 def _verify_one_claim(claim: dict, all_results: list[dict]) -> "CitationWarning | None":
     """Checks one submit_answer claim against its own cited source:
     citation index in range, quote long enough to mean anything, quote
-    genuinely present in that source (_quote_matches), and the claimed
-    value actually attributable to that quote specifically (via
+    genuinely present in that source (_quote_grounded_in_source -- see
+    its own docstring for the table-aware/flat-text split), and the
+    claimed value actually attributable to that quote specifically (via
     _number_candidates, using the FULL source chunk as unit_source so a
     caption-only unit still resolves -- see that function's own
     docstring). Returns None when all four pass. Checked in this order
@@ -1683,7 +1725,7 @@ def _verify_one_claim(claim: dict, all_results: list[dict]) -> "CitationWarning 
             unit=unit,
             message=f"[{n}] claims {value} ({unit}) but its quote {quote!r} is too short to verify",
         )
-    if not _quote_matches(quote, source_text):
+    if not _quote_grounded_in_source(value, unit, quote, source_text):
         return CitationWarning(
             check="quote_not_found",
             citation_index=n,

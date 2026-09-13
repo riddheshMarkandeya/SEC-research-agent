@@ -8,6 +8,7 @@ so agent.py importing back from eval_harness.py would be circular.
 """
 
 import re
+import unicodedata
 
 # Matches an optional "$", a number (with optional thousands-commas and
 # decimal point), and an optional trailing unit word or "%". Deliberately
@@ -252,3 +253,38 @@ def normalize(value: float, unit: str) -> tuple[str, float]:
     if unit == "percent":
         return "percent", value
     return "scale", value * UNIT_MULTIPLIERS.get(unit, 1.0)
+
+
+def normalize_for_match(text: str) -> str:
+    """Collapses cosmetic differences that would otherwise defeat quote
+    matching without weakening what's actually being verified: NFKC
+    normalization folds curly quotes and other Unicode compatibility
+    variants into one canonical form; casefold() is a stronger
+    case-insensitive comparison than .lower() for non-ASCII text;
+    collapsing whitespace runs handles a quote that wraps differently
+    than the source (a mid-sentence line break, doubled spaces from
+    table formatting).
+
+    Moved here from agent.py (2026-09-12, alongside adding
+    table_grounding.py, which also needs it and cannot import from
+    agent.py without a circular import -- the same reason this module
+    was split out of eval_harness.py to begin with, see the module
+    docstring above) -- agent._normalize_for_match is now a thin alias
+    for this function, not a second implementation.
+
+    NOTE: despite what an earlier version of this docstring (and this
+    module's own NUMBER_PATTERN comment on U+2212) implied, NFKC does
+    NOT fold true Unicode dashes to ASCII '-' -- measured directly: an
+    em dash (U+2014), en dash (U+2013), hyphen (U+2010), non-breaking
+    hyphen (U+2011, which does fold, but to U+2010, not ASCII '-'), and
+    minus sign (U+2212) all pass through NFKC unchanged. Only the
+    fullwidth hyphen-minus (U+FF0D) folds to ASCII '-'. The existing
+    curly-quote/en-dash regression test for this function
+    (test_quote_matches_nfkc_curly_quote_and_en_dash_normalization in
+    tests/test_agent.py) in fact passes via the coverage/anchor
+    fuzzy-match path, not via any dash folding -- confirmed by direct
+    measurement while investigating a 2026-09-12 table-grounding bug,
+    not assumed."""
+    text = unicodedata.normalize("NFKC", text)
+    text = text.casefold()
+    return " ".join(text.split())
