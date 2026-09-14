@@ -103,10 +103,10 @@ SYSTEM_PROMPT = f"""You are a financial research assistant answering questions a
 {chr(10).join(f"- {ticker}: {name}" for ticker, name in COMPANIES.items())}
 
 You have five tools:
-- `get_financial_fact` searches structured XBRL data for a small set of standard financial metrics: {", ".join(sorted(DEFAULT_METRIC_TAGS) + sorted(RATIO_DEFINITIONS))}. Prefer this tool FIRST whenever the question asks for one of these specific metrics for a specific fiscal year or fiscal quarter, for ONE company — it returns an exact, unambiguous reported value instead of relying on you to find the right sentence in a filing excerpt. This tool ONLY returns a company's consolidated, company-wide total — it has NO way to get one segment's or one product line's figure (e.g. Microsoft's "Intelligent Cloud" segment, NVIDIA's "Compute & Networking" segment). If a question asks about a specific segment or product line, do NOT call this tool at all, not even to try — go straight to `search_filings` instead. It only works for the metrics listed above and returns "not available" if the company doesn't tag it or the period wasn't recognized — fall back to `search_filings` when that happens, or for anything else this tool doesn't cover (risk factors, narrative discussion, any metric not in the list above). Only pass the arguments this tool actually defines — never invent an extra filter argument (e.g. there is no `segment` parameter); an unrecognized argument is rejected outright, so search_filings instead if you need something this tool doesn't support. To ask for year-over-year growth of one of the raw metrics (not the ratios) instead of its plain value, add `yoy_growth: true` — never compute a growth percentage yourself from two separate calls to this tool, always use this flag. To ask for a multi-year average (e.g. "3-year average operating margin"), pass `start_fiscal_year` and `end_fiscal_year` instead of `fiscal_year`/`fiscal_period`/`period_end_date` — never average multiple years yourself from separate calls, always use these.
+- `get_financial_fact` searches structured XBRL data for a small set of standard financial metrics: {", ".join(sorted(DEFAULT_METRIC_TAGS) + sorted(RATIO_DEFINITIONS))}. Prefer this tool FIRST whenever the question asks for one of these specific metrics for a specific fiscal year or fiscal quarter, for ONE company — it returns an exact, unambiguous reported value instead of relying on you to find the right sentence in a filing excerpt. This tool ONLY returns a company's consolidated, company-wide total — it has NO way to get one segment's or one product line's figure (e.g. Microsoft's "Intelligent Cloud" segment, NVIDIA's "Compute & Networking" segment). If a question asks about a specific segment or product line, do NOT call this tool at all, not even to try — go straight to `search_filings` instead. It only works for the metrics listed above and returns "not available" if the company doesn't tag it or the period wasn't recognized — fall back to `search_filings` when that happens, or for anything else this tool doesn't cover (risk factors, narrative discussion, any metric not in the list above). Only pass the arguments this tool actually defines — never invent an extra filter argument (e.g. there is no `segment` parameter); an unrecognized argument is rejected outright, so search_filings instead if you need something this tool doesn't support. To ask for year-over-year growth of one of the raw metrics (not the ratios) instead of its plain value, add `yoy_growth: true` — never compute a growth percentage yourself from two separate calls to this tool, always use this flag; the returned growth value IS the answer, so once you have it, do not also fetch the current and prior-year raw values afterward to re-derive or double-check it. To ask for a multi-year average (e.g. "3-year average operating margin"), pass `start_fiscal_year` and `end_fiscal_year` instead of `fiscal_year`/`fiscal_period`/`period_end_date` — never average multiple years yourself from separate calls, always use these; likewise, the returned average IS the answer, so do not also fetch each individual year's value afterward to show your work.
 - `compare_financial_metric` gets the SAME metric for ALL FIVE companies at once, for one period. Use this instead of calling `get_financial_fact` five times when a question asks you to compare or rank companies against each other (e.g. "which company had the highest gross margin", "compare revenue across all five companies") — one call instead of five. A company can be missing from the result if it doesn't tag that metric for that period; that's not an error, just note it's unavailable for that company. Note: {", ".join(_SINGLE_COMPANY_ONLY_RATIOS)} are NOT available on this tool (no cross-company version exists) — use `get_financial_fact` once per company for those instead.
 - `search_filings` searches these companies' 10-K/10-Q filings for anything else. Call it once per company if a question spans more than one, and call it again with a different query if your first search doesn't turn up what you need.
-- `calculate` performs ONE arithmetic operation (add, subtract, multiply, divide, percent_of, percent_change) over two numbers you've already seen in a result, and returns a new citable result with the computed value. Use this for ANY number you would otherwise have to work out yourself — never state a self-computed value directly, it will be refused, since there is nothing that states it for you to quote. Prefer a named ratio first when one exists (`get_financial_fact` with `yoy_growth: true`, or a registered ratio metric) — use `calculate` only for arithmetic those don't cover. When you cite its result in your final answer, state the computation inline (e.g. "computed as $34,550M ÷ $195,201M = 17.7%") rather than presenting it as though the filing stated it directly.
+- `calculate` performs ONE arithmetic operation (add, subtract, multiply, divide, percent_of, percent_change) over two numbers you've already seen in a result, and returns a new citable result with the computed value. Use this for ANY number you would otherwise have to work out yourself — never state a self-computed value directly, it will be refused, since there is nothing that states it for you to quote. Prefer a named ratio first when one exists (`get_financial_fact` with `yoy_growth: true`, or a registered ratio metric) — use `calculate` only for arithmetic those don't cover. Do NOT use it for a plain unit conversion (e.g. dividing by 1,000,000,000 to turn a raw dollar amount into billions) — the divisor is a bare constant with no citation to ground it against, so that call can never succeed; see rule 9 for how to restate a value in a different unit with no tool call at all. When you cite its result in your final answer, state the computation inline (e.g. "computed as $34,550M ÷ $195,201M = 17.7%") rather than presenting it as though the filing stated it directly.
 - `submit_answer` delivers your final answer -- this is the ONLY way to answer; never reply with plain text instead. See rule 9 below.
 
 Do not answer from prior knowledge about these companies; every answer must come from what a tool returns.
@@ -120,7 +120,7 @@ Rules:
 6. For a question spanning multiple companies, you must query EVERY company mentioned — with `search_filings` if `get_financial_fact` didn't cover it — before writing your final answer. A `get_financial_fact` call returning "not available" for one company is not a reason to stop; it means try `search_filings` for that same company next, and you must still go on to query every other company the question asks about. Do not conclude a company's data is unavailable unless you have actually searched for it.
 7. If `compare_financial_metric` returns fewer than all five companies, your final answer must explicitly name which companies were and weren't covered (e.g. "data was only available for AAPL and PLTR; the others hadn't filed a matching quarter yet") — do not phrase a conclusion as if it covers "all five companies" or similar when it only covers the ones that were actually returned.
 8. ONLY when a single sentence combines facts from two or more DIFFERENT companies (e.g. comparing NVIDIA and Salesforce), put each citation marker immediately after the specific fact it supports, not bundled together at the end — write "NVIDIA's revenue was $81.6 billion [1], while Salesforce's was $11.1 billion [2]." not "NVIDIA's revenue was $81.6 billion, while Salesforce's was $11.1 billion [1][2]." This rule does not add any new requirement to single-company answers or to a refusal under rule 2 — never search for extra facts just to have something to cite per-sentence; a plain, single citation at the end of a normal sentence is already correct and needs no change.
-9. Deliver your final answer ONLY by calling `submit_answer` -- never as plain text. Put the reader-facing answer in `answer_text` (citation markers there are for the reader, same as rules 1 and 8 above). For EVERY number in `answer_text`, add a matching entry to `claims`: the value, its unit, which numbered search result it comes from, and the exact supporting text copied verbatim from that result -- do not paraphrase or summarize the quote. A tool's own computed output (e.g. `get_financial_fact` with `yoy_growth: true`, `calculate`, or any ratio metric) is still a single, directly reported value -- quote that result's own text, the same as any other directly-stated number, per rule 3. If you need to combine, compare, or derive a number from values you've already seen (a difference, a ratio, a percentage change) despite rule 3 telling you not to work this out yourself -- call `calculate` FIRST and cite ITS result the same way as any other; never state a self-computed value directly, since there is nothing that states it for you to quote, and it will be refused. When `answer_text` includes a value derived via `calculate`, show the computation inline (e.g. "computed as $34,550M ÷ $195,201M = 17.7%") rather than presenting it as though the filing stated it directly. A number with no matching claim at all will be treated as ungrounded and the whole answer refused, so it is better to omit a number you can't support than to state it without a claim."""
+9. Deliver your final answer ONLY by calling `submit_answer` -- never as plain text. Put the reader-facing answer in `answer_text` (citation markers there are for the reader, same as rules 1 and 8 above). For EVERY number in `answer_text`, add a matching entry to `claims`: the value, its unit, which numbered search result it comes from, and the exact supporting text copied verbatim from that result -- do not paraphrase or summarize the quote. A tool's own computed output (e.g. `get_financial_fact` with `yoy_growth: true`, `calculate`, or any ratio metric) is still a single, directly reported value -- quote that result's own text, the same as any other directly-stated number, per rule 3. If you need to combine, compare, or derive a number from values you've already seen (a difference, a ratio, a percentage change) despite rule 3 telling you not to work this out yourself -- call `calculate` FIRST and cite ITS result the same way as any other; never state a self-computed value directly, since there is nothing that states it for you to quote, and it will be refused. When `answer_text` includes a value derived via `calculate`, show the computation inline (e.g. "computed as $34,550M ÷ $195,201M = 17.7%") rather than presenting it as though the filing stated it directly. Restating an already-cited value in a DIFFERENT UNIT (e.g. a raw dollar amount as billions) is NOT a derivation and needs no `calculate` call at all -- state it directly with the new unit, citing the same result with the same verbatim quote as before; keep enough significant figures that the restated value stays within about 1% of the source figure (e.g. state $4,475,446,000 as "$4.48 billion", not "$4.4 billion" or "$4 billion" -- too coarse a rounding will be treated as an unsupported value and the whole answer refused). A number with no matching claim at all will be treated as ungrounded and the whole answer refused, so it is better to omit a number you can't support than to state it without a claim."""
 
 SEARCH_TOOL_SCHEMA = {
     "type": "function",
@@ -197,12 +197,14 @@ FACT_TOOL_SCHEMA = {
                         "(e.g. 'revenue growth' questions). Only valid for the raw metrics, NOT for any ratio "
                         f"metric ({', '.join(sorted(RATIO_DEFINITIONS))}) -- returns null for that combination. "
                         "Compares the requested period to the SAME fiscal_period one year earlier automatically; "
-                        "never compute growth yourself from two separate calls."
+                        "never compute growth yourself from two separate calls. The returned value IS the "
+                        "answer -- do not also fetch the current and prior-period raw values afterward to "
+                        "re-derive or double-check it."
                     ),
                 },
                 "start_fiscal_year": {
                     "type": "integer",
-                    "description": "Only for a multi-year-average question (e.g. '3-year average operating margin from fiscal year 2023 through 2025'). Set together with end_fiscal_year, and leave fiscal_year/fiscal_period/period_end_date out -- averages `metric` across every fiscal year in the range (always full-year, FY). Never average multiple years yourself from separate calls, always use this.",
+                    "description": "Only for a multi-year-average question (e.g. '3-year average operating margin from fiscal year 2023 through 2025'). Set together with end_fiscal_year, and leave fiscal_year/fiscal_period/period_end_date out -- averages `metric` across every fiscal year in the range (always full-year, FY). Never average multiple years yourself from separate calls, always use this. The returned average IS the answer -- do not also fetch each individual year's value afterward to show your work.",
                 },
                 "end_fiscal_year": {
                     "type": "integer",
@@ -384,7 +386,14 @@ CALCULATE_TOOL_SCHEMA = {
             "via compare_financial_metric) -- use calculate only for arithmetic those don't "
             "cover. When you cite the result of a calculate call in your final answer, state the "
             "computation inline (e.g. 'computed as $34,550M / $195,201M = 17.7%') rather than "
-            "presenting it as if the filing stated it directly."
+            "presenting it as if the filing stated it directly. "
+            "Do NOT use this for a plain unit conversion (e.g. dividing a raw dollar amount by "
+            "1,000,000,000 to express it in billions) -- both operands must come from a result "
+            "you've already seen and cited, and a bare conversion constant like 1,000,000,000 has "
+            "no citation to ground it against, so that call can never succeed. Converting a value "
+            "you already have to a different unit needs no tool call at all: just state it "
+            "directly with the new unit (e.g. state $4,475,446,000 as '$4.48 billion'), citing the "
+            "same result with the same verbatim quote as before -- see system-prompt rule 9."
         ),
         "parameters": {
             "type": "object",
@@ -970,7 +979,39 @@ def _ground_operand(value: float, unit: str, citation_index: int, all_results: l
     failure. Reuses _number_candidates() (not _quote_matches -- there's
     no quoted substring here, just a bare operand value) and the same
     tolerance constant (max(0.01*abs(norm), 0.05)) used everywhere else
-    in this file."""
+    in this file.
+
+    On failure, distinguishes three real cases rather than returning one
+    generic message for all of them -- found live (2026-09-13 baseline,
+    aapl-revenue-growth-q3fy2026): a value labeled `unit_a: "billion"`
+    that was actually raw got the message "operand_a=109417000000 was
+    not found -- double check the value and citation index", which
+    blames the value and citation index, BOTH of which were correct; the
+    model's retry changed neither and failed identically twice.
+    - MISLABELED UNIT (correctable): the same bare value grounds under a
+      DIFFERENT unit than the one claimed, in the SAME cited result --
+      says so explicitly, naming the unit that actually matches, since
+      that is the one field the old message never mentioned.
+    - WRONG CITATION INDEX (correctable): the value grounds under its
+      OWN claimed unit in a DIFFERENT already-retrieved result -- says
+      so explicitly and names which result, rather than leaving this
+      indistinguishable from the terminal case below (an earlier version
+      of this function's message claimed "a different citation index
+      will not help" without ever having checked any other index --
+      found in review, before this was live-verified against a case that
+      would have made that claim false).
+    - GENUINELY UNGROUNDABLE (terminal, not correctable): the value
+      grounds under NO unit in the cited result, and does not appear
+      under its claimed unit in any OTHER retrieved result either --
+      most commonly a literal conversion constant (e.g. dividing by
+      1,000,000,000 to convert to billions), which by construction has
+      no citation to ground against. Only NOW says explicitly that
+      retrying won't help, since both alternatives above have actually
+      been checked, not assumed -- this is the ModelRetry-vs-ToolFailed
+      distinction (pydantic-ai's terminology) encoded in the message
+      text; see CALCULATE_TOOL_SCHEMA's own description and system-
+      prompt rule 9 for the actual fix (state a unit-converted value
+      directly, no calculate call needed at all)."""
     if not (1 <= citation_index <= len(all_results)):
         return (
             f"(operand {operand_name}: [{citation_index}] is not a valid citation index -- "
@@ -980,12 +1021,40 @@ def _ground_operand(value: float, unit: str, citation_index: int, all_results: l
     category, norm = normalize(value, unit)
     tolerance = max(0.01 * abs(norm), 0.05)
     candidates = _number_candidates(source_text)
-    if not any(c == category and abs(v - norm) <= tolerance for c, v in candidates):
-        return (
-            f"({operand_name}={value} ({unit}) was not found in result [{citation_index}] -- "
-            "double check the value and citation index, or omit this calculation)"
-        )
-    return None
+    if any(c == category and abs(v - norm) <= tolerance for c, v in candidates):
+        return None
+
+    for other_unit in _CLAIM_UNITS:
+        if other_unit == unit:
+            continue
+        other_category, other_norm = normalize(value, other_unit)
+        other_tolerance = max(0.01 * abs(other_norm), 0.05)
+        if any(c == other_category and abs(v - other_norm) <= other_tolerance for c, v in candidates):
+            return (
+                f"({operand_name}={value} is not a {unit} value in result [{citation_index}] -- "
+                f"that result's own number matches {value} interpreted as {other_unit} instead; "
+                f"double check {operand_name}'s UNIT specifically)"
+            )
+
+    for other_index, other_result in enumerate(all_results, start=1):
+        if other_index == citation_index:
+            continue
+        other_candidates = _number_candidates(other_result["text"])
+        if any(c == category and abs(v - norm) <= tolerance for c, v in other_candidates):
+            return (
+                f"({operand_name}={value} ({unit}) is not in result [{citation_index}] -- "
+                f"it matches result [{other_index}] instead; double check {operand_name}'s "
+                "CITATION INDEX specifically, not its value or unit)"
+            )
+
+    return (
+        f"({operand_name}={value} ({unit}) does not appear under ANY unit in result [{citation_index}], "
+        "nor under this same unit in any other result you've retrieved -- this is not a retryable mistake. "
+        "If this is a unit-conversion constant (e.g. dividing by 1,000,000,000 to convert to billions), do "
+        "not use calculate for that at all -- state the converted value directly instead, citing the same "
+        "source, per system-prompt rule 9. Otherwise, this operand simply isn't grounded in anything you've "
+        "retrieved.)"
+    )
 
 
 def call_calculate(args: dict, all_results: list[dict]) -> tuple[dict | None, str | None]:

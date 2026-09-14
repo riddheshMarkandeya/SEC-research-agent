@@ -5590,6 +5590,107 @@ borrowed. Patterns worth adopting, in priority order:
 
 </details>
 
+### Tool-turn-waste fix: stop re-deriving what a tool already gave (2026-09-14)
+
+A live 47-question eval baseline (2026-09-13, 31/47) found its largest
+failure cluster wasn't a citation-verification bug at all: **9 of 16
+failures ended in the canned "ran out of searches" timeout**, and
+tracing every one in `trace_logs/traces.jsonl` showed the agent usually
+already held the correct answer and burned its remaining turns
+re-deriving or mis-deriving it. See `docs/plans/2026-09-14-tool-turn-
+waste.md` for the full per-mechanism diagnosis; `docs/reviews/2026-09-
+14-tool-turn-waste.md` for both review passes.
+
+Two of the four mechanisms found were fixed via prompt/schema-
+description/error-message changes only, no change to the tool-calling
+loop:
+
+- **`calculate` used for a unit conversion it can never satisfy.**
+  `pltr-revenue-2025`/`crm-revenue-q1fy27` each tried converting an
+  already-cited raw dollar figure to billions via
+  `calculate(divide, operand_b: 1e9)` — four times each, always
+  rejected (the divisor is a literal constant with no citation to
+  ground it against), until the budget died. The call was also
+  unnecessary: `normalize()` already treats a value restated in a
+  different unit as the same quantity, so `verify_claims` passes a
+  claim like `4.48 billion` quoting a raw `4,475,446,000` source with
+  zero warnings. Fixed by telling the model so, in both
+  `CALCULATE_TOOL_SCHEMA`'s description and system-prompt rule 9
+  (with a precision caveat — the 1%-relative tolerance means a value
+  rounded too coarsely, e.g. "$4 billion", is refused as unsupported).
+- **Re-deriving a value a tool already returned whole.**
+  `aapl-3yr-avg-operating-margin` got `31.1` — the exact graded
+  answer — from one `start_fiscal_year`/`end_fiscal_year` call, then
+  spent four turns fetching the three per-year margins anyway;
+  `aapl-revenue-growth-q3fy2026` got `yoy_growth = 16.4` on turn 1,
+  then tried to re-derive it via `calculate` twice. Fixed with a rule-9
+  addition: when a tool already returns the exact quantity asked for,
+  that value IS the answer — submit it, don't fetch its components.
+
+A third mechanism (`_ground_operand`'s error message blaming the wrong
+field — `aapl-revenue-growth`'s two wasted `calculate` calls got
+"operand_a=109417000000 was not found... double check the value and
+citation index," which blamed the value and index, both of which were
+correct; the actual error was `unit_a: "billion"` on a raw value) was
+fixed by having `_ground_operand` compute which correction actually
+applies — mislabeled unit (same result, different unit matches), wrong
+citation index (different result, same unit matches), or genuinely
+ungroundable (neither matches anywhere retrieved) — instead of one
+generic message for all three. A fresh-subagent review caught a real
+gap in the first version of this fix before it shipped: the terminal-
+case message originally claimed "a different citation index will not
+help" without the function ever having checked any other result, which
+would have been false exactly when the model's real mistake was a
+citation-index slip. Fixed by adding that check before concluding
+terminal.
+
+**A fourth mechanism was attempted and reverted.** The model never used
+`compare_financial_metric` for 3+-company ranking questions, instead
+calling `get_financial_fact` per company — which cannot even retrieve
+the right answer, since CRM's FY2026 operating margin returns `None`
+via `fiscal_year=2026` (a separate real bug, filed to `BACKLOG.md`) but
+20.1 via `period_end_date`. Two different prompt wordings (a narrowed
+3+-company rule, then an added reassurance that anchor-based
+closest-period matching is correct even when the question states each
+company's own distinct date) were each tried live against real Gemini
+calls and failed identically, three attempts total. Per this project's
+"fails twice in the same way" rule, this was brought back for a
+decision rather than tried a fourth way; one more targeted attempt was
+authorized, also failed, and all Step 3 wording was reverted to its
+original text rather than shipping unproven prompt changes that could
+regress five currently-passing comparison questions for zero measured
+benefit. Filed to `BACKLOG.md` with the working hypothesis: the target
+question spells out each company's own distinct fiscal year/period-end
+date explicitly, which may read to the model as needing exact
+per-company lookups rather than the tool's anchor-and-closest-match
+approximation, regardless of wording.
+
+A fifth, structurally related idea (Mechanism 4: no turn budget slack
+for a legitimate final answer, since `MAX_TOOL_ITERATIONS=6` leaves
+zero spare turns and two correct-refusal questions died mid-search
+having already found everything they needed) was scoped out of this
+task deliberately — it needs a tool-calling-loop change, not a prompt
+change, and carries its own wrong-answer risk (a forced final submit on
+a ranking run missing CRM would confidently name the wrong company).
+Filed to `BACKLOG.md` as a Substantial-effort follow-up.
+
+**Verification**: full unit suite green throughout (631 → 634, two new
+`_ground_operand` tests plus the review-driven wrong-citation-index
+test). Live: a 7-question targeted spot-check
+(`eval/eval_results/20260914T232305Z.json`) passed 7/7 — all four
+Mechanism-1/2 targets plus three regression guards for questions that
+legitimately use `calculate`. A full 47-question re-run
+(`eval/eval_results/20260914T233319Z.json`) moved **31/47 → 36/47**.
+Mechanism-by-mechanism, both fixes are confirmed dead in their targeted
+form (zero `calculate` calls where there were four; both re-derivation
+questions passed on the first tool call); the 4 new failures in that run
+(two qualitative-answer citation-gate false positives, one refusal-
+phrasing/grading mismatch, one unrelated retrieval non-determinism) all
+independently trace to pre-existing, already-documented mechanisms this
+diff never touches, not to a regression — see the review file for the
+full per-question trace evidence. Per this project's quota-awareness
+rule, a second full baseline was not run to chase that non-determinism.
+
 ## Design principles to carry forward
 
 - **Citations are non-negotiable.** In finance, "trust me" isn't good enough.

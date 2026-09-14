@@ -1144,6 +1144,76 @@ def test_call_calculate_rejects_operand_a_not_grounded_names_it_specifically():
     assert "[1]" in error
 
 
+def test_call_calculate_operand_wrong_unit_names_the_correct_unit_not_the_value():
+    # Regression test for the 2026-09-13 baseline finding (aapl-revenue-
+    # growth-q3fy2026): a value mislabeled "billion" that's actually raw
+    # got a message blaming the value/citation index, both correct --
+    # the model's retry changed neither and failed identically twice.
+    # The fixed message must name the UNIT specifically as the problem.
+    all_results = [
+        _fake_result(text="Revenue was $109,417,000,000."),
+        _fake_result(text="Prior-year revenue was $94,036,000,000."),
+    ]
+    args = _valid_calculate_args(
+        operation="percent_change",
+        operand_a=109417000000,
+        unit_a="billion",
+        citation_index_a=1,
+        operand_b=94036000000,
+        unit_b="raw",
+        citation_index_b=2,
+    )
+    result, error = call_calculate(args, all_results)
+    assert result is None
+    assert "operand_a" in error
+    assert "billion" in error.lower()
+    assert "raw" in error.lower()
+    assert "unit" in error.lower()
+
+
+def test_call_calculate_operand_wrong_citation_index_names_the_correct_result():
+    # Regression guard for a review finding: an earlier version of the
+    # terminal message claimed "a different citation index will not
+    # help" without ever checking any OTHER already-retrieved result --
+    # if the value actually lives in a different result (a plausible
+    # citation-index transcription slip), that message would have been
+    # false and would have told the model not to bother trying the fix
+    # that actually works. operand_a (34550 million) is cited against
+    # [1], which doesn't contain it, but genuinely lives in [2].
+    all_results = [
+        _fake_result(text="Cost of revenue was $60,000 million."),
+        _fake_result(text="R&D expense was $34,550 million. Gross profit was $195,201 million."),
+    ]
+    args = _valid_calculate_args(citation_index_a=1)
+    result, error = call_calculate(args, all_results)
+    assert result is None
+    assert "operand_a" in error
+    assert "[2]" in error
+    assert "citation index" in error.lower()
+
+
+def test_call_calculate_operand_ungroundable_under_any_unit_says_not_retryable():
+    # A literal conversion constant (e.g. 1,000,000,000 to convert to
+    # billions) has no citation to ground against at all -- distinct
+    # from the mislabeled-unit case above, this is a genuinely terminal
+    # failure and the message must say so rather than invite a retry
+    # that cannot succeed.
+    all_results = [_fake_result(text="Revenue was $4,475,446,000.")]
+    args = _valid_calculate_args(
+        operation="divide",
+        operand_a=4475446000,
+        unit_a="raw",
+        citation_index_a=1,
+        operand_b=1000000000,
+        unit_b="raw",
+        citation_index_b=1,
+    )
+    result, error = call_calculate(args, all_results)
+    assert result is None
+    assert "operand_b" in error
+    assert "not a retryable mistake" in error.lower() or "not retryable" in error.lower()
+
+
 def test_call_calculate_rejects_mismatched_categories():
     all_results = [
         _fake_result(text="Growth was 20 percent."),
