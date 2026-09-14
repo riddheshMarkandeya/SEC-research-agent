@@ -88,3 +88,19 @@ outside the original TDD loop that produced the change. At minimum: a
 the change that introduced it, naming the real failure mode and the live
 run that found it) once fixed; a `BACKLOG.md` item, tagged per the usual
 convention, if not fixed in the same session.
+
+**An eval-discovered regression is exactly the "non-trivial,
+multi-location bug" case `~/.claude/CLAUDE.md`'s debugging-discipline
+rule already covers — don't patch it reactively.** When a live eval run
+(baseline or targeted spot-check) surfaces a regression, log it to
+`BACKLOG.md` with a priority tag first, then switch to plan mode to
+investigate the real root cause and design the fix, implement it, and
+re-run the same eval question(s) to confirm before considering it
+resolved — repeating the plan → implement → re-run cycle if the first
+fix doesn't fully close it. This codebase's own history (2026-09-13) is
+the concrete reason this is called out again at the project level, not
+left to the global rule alone: a citation-gate regression here can look
+fixed (the originally-failing question passes) while quietly reopening
+a different, worse gap, so "the eval question now passes" is never
+sufficient confirmation on its own — the plan-and-review cycle is what
+actually catches that, not the re-run by itself.

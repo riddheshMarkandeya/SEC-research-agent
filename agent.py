@@ -27,7 +27,6 @@ Usage:
 """
 
 import argparse
-import difflib
 import re
 from collections import Counter
 from typing import NamedTuple
@@ -44,7 +43,15 @@ from formulas import (
     get_yoy_growth,
 )
 from llm_backends import BACKENDS
-from numeric_utils import UNIT_MULTIPLIERS, extract_numbers, extract_numbers_with_spans, normalize, normalize_for_match
+from numeric_utils import (
+    QUOTE_COVERAGE_THRESHOLD,
+    UNIT_MULTIPLIERS,
+    extract_numbers,
+    extract_numbers_with_spans,
+    normalize,
+    normalize_for_match,
+    text_coverage,
+)
 from retrieval import hybrid_search
 from table_grounding import extract_table_blocks, locate_value, quote_is_grounded
 from tracing import flush, log_event, record_unmet_metric_request, traced_span
@@ -1189,7 +1196,11 @@ _NON_CLAIM_PATTERN = re.compile(
 # the full design reasoning behind every choice below.
 # ---------------------------------------------------------------------------
 _QUOTE_MIN_CHARS = 15  # a 2-character quote like "$5" would match almost any source trivially
-_QUOTE_COVERAGE_THRESHOLD = 0.90
+# Moved to numeric_utils.QUOTE_COVERAGE_THRESHOLD (2026-09-13), alongside
+# text_coverage(), so table_grounding.py's region-scoped check can share
+# the identical threshold. Kept as an alias, not a second constant, since
+# every existing call site in this module refers to it by this name.
+_QUOTE_COVERAGE_THRESHOLD = QUOTE_COVERAGE_THRESHOLD
 _QUOTE_ANCHOR_CHARS = 30  # a real quote's whole span usually appears as one long contiguous match
 # A bare-number quote (no surrounding prose -- e.g. quoting an XBRL fact's
 # raw value directly, "391035000000") needs a different length bar than
@@ -1273,17 +1284,19 @@ def _quote_matches(quote: str, source: str) -> bool:
     for why a short-as-text bare number can still be long/specific
     enough to trust (found live: a bare XBRL value like "391035000000"
     is 12 characters, under 15, but is exactly the kind of quote this
-    exists to accept, not reject)."""
+    exists to accept, not reject).
+
+    The actual coverage/anchor computation is numeric_utils.text_coverage
+    (extracted 2026-09-13 so table_grounding.py can share the identical
+    logic against a narrower region, without a circular import back to
+    this module) -- this function is now just that primitive plus the
+    length gate and this module's own anchor-floor threshold."""
     quote_norm = _normalize_for_match(quote)
     if not _quote_is_long_enough(quote_norm):
         return False
-    source_norm = _normalize_for_match(source)
-    if quote_norm in source_norm:
+    exact, coverage, longest = text_coverage(quote, source)
+    if exact:
         return True
-    matcher = difflib.SequenceMatcher(None, source_norm, quote_norm, autojunk=False)
-    blocks = matcher.get_matching_blocks()
-    coverage = sum(b.size for b in blocks) / len(quote_norm)
-    longest = max((b.size for b in blocks), default=0)
     return coverage >= _QUOTE_COVERAGE_THRESHOLD and longest >= min(_QUOTE_ANCHOR_CHARS, len(quote_norm))
 
 
@@ -1667,22 +1680,23 @@ def _quote_grounded_in_source(value: float, unit: str, quote: str, source_text: 
     the measured evidence), so letting it rescue a structural rejection
     would silently reopen exactly the holes this change closes.
 
-    KNOWN LIMITATION, confirmed live 2026-09-13 (see
-    docs/plans/2026-09-13-table-grounding-region-scoped-matching.md): a
-    genuinely faithful, byte-for-byte quote of a whole table row with
-    multiple independently-claimed values (e.g. CRM's remaining-
-    performance-obligation row, Current/Noncurrent/Total in one row) is
-    wrongly refused here, because `quote_is_grounded()`'s allowed
-    vocabulary deliberately excludes sibling-column content -- correct
-    for blocking a cross-column fabrication, wrong for a genuine
-    multi-value disclosure. An unconditional "exact substring of the
-    whole source wins" shortcut was tried and reverted: it fixed this
-    case but reopened the row-splice/cross-segment-steal/wrong-period
-    attacks this whole function exists to block, since a spliced or
-    misattributed quote can ALSO be an exact contiguous substring of the
-    raw source (row boundaries are just newlines in the underlying
-    text). Being replaced by a region-scoped redesign of
-    `quote_is_grounded()` itself rather than patched here.
+    `quote_is_grounded()` was redesigned 2026-09-13 (see
+    docs/plans/2026-09-13-table-grounding-region-scoped-matching.md)
+    after a live 47-question eval baseline found two real regressions in
+    the original word-vocabulary design: a genuinely faithful, byte-for-
+    byte quote of a whole table row with multiple independently-claimed
+    values (CRM's remaining-performance-obligation row, Current/
+    Noncurrent/Total in one row; NVIDIA's segment table, a multi-line
+    quote spanning caption/header rows plus one data row) was wrongly
+    refused, because the old design's allowed vocabulary excluded
+    sibling-column content entirely. The redesign matches against a
+    tightly-scoped per-cell region (the table's own leading caption/
+    header rows, plus the cell's own governing group label, plus the
+    cell's own data row -- see table_grounding.GroundedCell) instead of
+    a fixed word list, which fixes both real cases while still rejecting
+    the row-splice/cross-segment-steal attacks this module exists to
+    block (verified directly, not assumed -- see
+    tests/test_table_grounding.py).
 
     If the value isn't in any table cell (no table in this source, or a
     genuinely prose-stated value), that's not evidence of anything --

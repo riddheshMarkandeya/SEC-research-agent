@@ -1,23 +1,35 @@
 """
 Unit tests for table_grounding.py -- structure-aware quote verification
-for values that live in a markdown table, added 2026-09-12 to replace
-_quote_matches's flat-text anchor floor for table sources. See
-docs/plans/2026-09-12-structure-aware-table-quote-grounding.md for the
-full design and the measured evidence behind it: a flat coverage/anchor
-check depends only on label LENGTH (a false negative on short segment
-labels like "Intelligent Cloud"), and loosening it with source-side
-locality alone opens a real end-to-end bypass (a quote can splice a
-value from one table row onto an unrelated adjacent row's label, since
-a markdown row boundary and an empty cell normalize to the identical
-string). Verifying row-group/row-label/column alignment structurally,
-rather than tuning a string-similarity threshold, is the only fix that
-closes both problems at once.
+for values that live in a markdown table.
 
-Fixtures below are REAL filing text (not paraphrased), extracted via
-chunk_documents.table_to_markdown() from the actual data/*_tables.json
-files and confirmed to match the real chunk text in
-chunks/MSFT/0001193125-26-191507_chunks.jsonl -- captured this way
-during the investigation that produced this module, not typed from
+Two design generations are covered by this file's history:
+
+- 2026-09-12: replaced _quote_matches's flat coverage/anchor-floor check
+  (which depended only on segment-label LENGTH) with a per-cell
+  word-vocabulary allowlist (row label + group label + period header +
+  the cell's own value).
+- 2026-09-13: that word-vocabulary design was itself found to regress on
+  a live 47-question eval baseline -- a genuinely faithful, byte-for-byte
+  quote of an entire table row with MULTIPLE independently-claimed values
+  (CRM's Current/Noncurrent/Total in one row; NVIDIA's multi-line
+  caption+header+data quote) was wrongly refused, because the allowed
+  vocabulary excluded sibling-column content by design. Replaced with a
+  region-scoped redesign: match the quote (via numeric_utils.text_coverage,
+  the same primitive _quote_matches uses for prose) against a small
+  "permitted region" built from the cell's own VERBATIM source context
+  (the table's leading caption/header rows + its own governing group
+  label + its own data row), plus a separate check that every number the
+  quote states is a real value found somewhere in that region (needed
+  because pure coverage alone can be fooled by a wrong value whose digits
+  scatter-match against OTHER real numbers in the same region -- found
+  live re-verifying this exact redesign, see quote_is_grounded's own
+  docstring). See docs/plans/2026-09-12-structure-aware-table-quote-
+  grounding.md and docs/plans/2026-09-13-table-grounding-region-scoped-
+  matching.md for the full investigations.
+
+Fixtures below are REAL filing text (not paraphrased), extracted from
+the actual chunks/*/*.jsonl files this project indexes, confirmed
+against the real source during each investigation, not typed from
 memory.
 """
 
@@ -65,10 +77,7 @@ MSFT_SEGMENT_CHUNK = """Segment revenue, cost of revenue, operating expenses, an
 # Real AAPL geographic-segment table, FY2025 10-K (0000320193-25-000079).
 # No label-only group-header row at all -- every row is its own top-level
 # label ("Americas", "Europe", ...). Used to confirm grounding still works
-# when there's no group label to find, and as the real-world repro for the
-# "bridge across the markdown separator row" attack an adversarial review
-# found against a naive locality-based fix (a quote pulling FY2023's value
-# under a header token belonging to FY2025 must still be rejected).
+# when there's no group label to find.
 AAPL_SEGMENT_CHUNK = """The following table shows net sales by reportable segment for 2025, 2024 and 2023 (dollars in millions):
 
 <TABLE>
@@ -78,6 +87,47 @@ AAPL_SEGMENT_CHUNK = """The following table shows net sales by reportable segmen
 | Europe | 111,032 | 10% | 101,328 | 7% | 94,294 |
 | Greater China | 64,377 | (4)% | 66,952 | (8)% | 72,559 |
 | Total net sales | $416,161 | 6% | $391,035 | 2% | $383,285 |
+</TABLE>"""
+
+# Real CRM remaining-performance-obligation table, FY2026 Q3 10-Q
+# (0001108524-26-000060). No group label; ONE row holds THREE genuinely
+# different metrics (Current/Noncurrent/Total) for the same date -- the
+# real regression this redesign fixes: the model quotes this entire row
+# verbatim for each of the 3 independent claims, and a per-cell
+# vocabulary check that excludes sibling-column content wrongly refuses
+# all three.
+CRM_RPO_CHUNK = """Remaining performance obligation consisted of the following (in billions):
+
+<TABLE>
+| Current | Noncurrent | Total |  |
+| --- | --- | --- | --- |
+| As of January 31, 2026 (1) | $35.1 | $37.3 | $72.4 |
+| As of January 31, 2025 | $30.2 | $33.2 | $63.4 |
+</TABLE>"""
+
+# Real NVIDIA segment table, Q1 FY2027 10-Q (0001045810-26-000052). Two
+# single-cell rows BEFORE the first data row -- "(In millions)" (a
+# permanent, whole-table caption, parenthesized) and "Three Months Ended
+# Apr 26, 2026" (a resettable, per-period group label, NOT parenthesized)
+# -- confirms _classify_row's parenthesization signal, and that the
+# SECOND period's rows (under "Three Months Ended Apr 27, 2025") get that
+# period's own label, not the stale first one. The model's real quote
+# here spans the column-header row, the separator row, the caption row,
+# the period-label row, AND the data row, all verbatim.
+NVDA_SEGMENT_CHUNK = """The table below presents details of our reportable segments.
+
+<TABLE>
+| Compute & Networking | Graphics | Total |  |
+| --- | --- | --- | --- |
+| (In millions) |  |  |  |
+| Three Months Ended Apr 26, 2026 |  |  |  |
+| Revenue | $74,550 | $7,065 | $81,615 |
+| Other segment items (1) | 21,215 | 4,124 | 25,339 |
+| Operating income | $53,335 | $2,941 | $56,276 |
+| Three Months Ended Apr 27, 2025 |  |  |  |
+| Revenue | $39,589 | $4,473 | $44,062 |
+| Other segment items (1) | 17,535 | 2,833 | 20,368 |
+| Operating income | $22,054 | $1,640 | $23,694 |
 </TABLE>"""
 
 
@@ -98,25 +148,22 @@ def test_accepts_reformatted_quote_under_the_short_intelligent_cloud_label():
     assert quote_is_grounded("Intelligent Cloud\nRevenue $34,681", cell) is True
 
 
+def test_accepts_reformatted_quote_under_the_short_more_personal_computing_label():
+    cells = _cell(MSFT_SEGMENT_CHUNK, 13192.0, "million")
+    cell = next(c for c in cells if c.group_label == "More Personal Computing")
+    assert quote_is_grounded("More Personal Computing\nRevenue $13,192", cell) is True
+
+
 def test_accepts_a_cell_value_reformatted_without_commas_or_dollar_sign():
-    # Found in this fix's own review (2026-09-12): an earlier version
-    # required the cell's own rendered text to appear as a literal
-    # token, which is STRICTER than _quote_matches's old flat-text
-    # coverage check ever was (that one tolerated exactly this kind of
-    # digit-formatting variance via its coverage ratio) -- a model
-    # restating "$34,681" as "$34681", "34681", or "$34,681.00" must
-    # still ground, not newly refuse a genuinely correct answer.
+    # A model restating "$34,681" as "$34681", "34681", or "$34,681.00"
+    # must still ground -- _quote_matches's old flat coverage check
+    # already tolerated exactly this kind of digit-formatting variance,
+    # and text_coverage() (shared with this module) does too.
     cells = _cell(MSFT_SEGMENT_CHUNK, 34681.0, "million")
     cell = next(c for c in cells if c.group_label == "Intelligent Cloud")
     assert quote_is_grounded("Intelligent Cloud Revenue $34681", cell) is True
     assert quote_is_grounded("Intelligent Cloud Revenue 34681", cell) is True
     assert quote_is_grounded("Intelligent Cloud Revenue $34,681.00", cell) is True
-
-
-def test_accepts_reformatted_quote_under_the_short_more_personal_computing_label():
-    cells = _cell(MSFT_SEGMENT_CHUNK, 13192.0, "million")
-    cell = next(c for c in cells if c.group_label == "More Personal Computing")
-    assert quote_is_grounded("More Personal Computing\nRevenue $13,192", cell) is True
 
 
 # ---------------------------------------------------------------------------
@@ -149,16 +196,115 @@ def test_accepts_a_row_with_no_group_label_row_above_it():
     assert quote_is_grounded("Americas $178,353", cell) is True
 
 
+def test_accepts_a_data_row_whose_group_label_row_is_missing_from_the_block():
+    # Mirrors the AAPL case above but for a table shape that NORMALLY has
+    # group labels -- proving the "no group label seen yet" code path
+    # (group_label stays None until a label row is encountered) isn't
+    # just exercised by AAPL's own naturally-flat layout.
+    chunk = """Segment info.
+
+<TABLE>
+| (In millions) | Three Months EndedMarch 31, | Nine Months EndedMarch 31, |  |  |
+| --- | --- | --- | --- | --- |
+| 2026 | 2025 | 2026 | 2025 |  |
+| Revenue | $34,681 | $26,751 | $98,485 | $76,387 |
+</TABLE>"""
+    cells = locate_value(extract_table_blocks(chunk), 34681.0, "million")
+    cell = next(c for c in cells if c.row_label == "Revenue")
+    assert cell.group_label is None
+    assert quote_is_grounded("Revenue $34,681", cell) is True
+
+
+# ---------------------------------------------------------------------------
+# Accept: the two real regressions a live 47-question eval baseline found
+# in the original word-vocabulary design (2026-09-13). Both are genuinely
+# faithful, byte-for-byte quotes of a real table row/rows containing
+# MULTIPLE values -- the exact-substring path within the cell's own
+# narrow permitted_region is what accepts them, not a vocabulary rule.
+# ---------------------------------------------------------------------------
+def test_accepts_crm_full_row_verbatim_quote_grounding_all_three_claims():
+    quote = "| As of January 31, 2026 (1) | $35.1 | $37.3 | $72.4 |"
+    for value in (72.4, 35.1, 37.3):
+        cells = _cell(CRM_RPO_CHUNK, value, "billion")
+        assert any(quote_is_grounded(quote, cell) for cell in cells), f"{value} should ground"
+
+
+def test_accepts_nvidia_multiline_verbatim_quote_spanning_caption_and_header_rows():
+    quote = (
+        "| Compute & Networking | Graphics | Total |  |\n"
+        "| --- | --- | --- | --- |\n"
+        "| (In millions) |  |  |  |\n"
+        "| Three Months Ended Apr 26, 2026 |  |  |  |\n"
+        "| Revenue | $74,550 | $7,065 | $81,615 |"
+    )
+    for value in (74550.0, 7065.0):
+        cells = _cell(NVDA_SEGMENT_CHUNK, value, "million")
+        cell = next(c for c in cells if c.group_label == "Three Months Ended Apr 26, 2026")
+        assert quote_is_grounded(quote, cell) is True
+
+
+def test_nvidia_second_period_gets_its_own_group_label_not_the_first_periods():
+    # "(In millions)" (parenthesized -> permanent header, per _classify_row)
+    # and "Three Months Ended Apr 26, 2026" (not parenthesized -> a
+    # resettable group label) are BOTH single-cell rows before the first
+    # data row -- confirms the parenthesization signal correctly tells
+    # them apart, and that the second period's data rows get THEIR OWN
+    # label, not a stale first-period one.
+    cells = _cell(NVDA_SEGMENT_CHUNK, 39589.0, "million")
+    cell = next(c for c in cells if c.row_label == "Revenue")
+    assert cell.group_label == "Three Months Ended Apr 27, 2025"
+    assert quote_is_grounded("Three Months Ended Apr 27, 2025\nRevenue $39,589", cell) is True
+
+
+# ---------------------------------------------------------------------------
+# Accept (deliberate design tradeoff, not a bug): a quote naming a sibling
+# column's value from the SAME row. Confirmed already-inert on the real
+# table (period_header mapping was never reliable here to begin with, per
+# the removed _period_header_index's own findings) and consistent with
+# this module's other accepted multi-value-per-row cases above (CRM,
+# NVIDIA) -- the permitted region is scoped to the whole ROW, not one
+# column, by design. The actual defense against a wrong VALUE is
+# quote_is_grounded's number check (see the reject tests below), not
+# column-level exclusion.
+# ---------------------------------------------------------------------------
+def test_accepts_a_quote_naming_the_sibling_columns_value():
+    cells = _cell(MSFT_SEGMENT_CHUNK, 34681.0, "million")
+    cell = next(c for c in cells if c.group_label == "Intelligent Cloud")
+    assert quote_is_grounded("Intelligent Cloud\nRevenue $26,751", cell) is True
+
+
+def test_rejects_a_quote_cherry_picking_one_year_from_the_header_row():
+    # Distinct from the sibling-VALUE test above: this quote names a
+    # WRONG-COLUMN's own LABEL ("2023") without the correct one ("2025"),
+    # rather than just citing a bare sibling value with no label at all.
+    # Found live 2026-09-13 by an independent review of this exact
+    # redesign: an earlier version of this function let this through,
+    # since "2023" and "$178,353" are both genuinely present SOMEWHERE
+    # in the region (the whole point of including header rows wholesale)
+    # -- but the yesterday-committed design (before this redesign)
+    # correctly rejected this exact case, so accepting it was a real
+    # regression, not the same already-accepted tradeoff as citing a
+    # bare sibling value. quote_is_grounded's cherry-pick check (some but
+    # not all of a multi-column header row's own labels) is what closes
+    # this: "2023" is 1 of 4 distinct labels in AAPL's header row
+    # ("2025"/"Change"/"2024"/"2023"), so citing it alone is rejected.
+    cells = _cell(AAPL_SEGMENT_CHUNK, 178353.0, "million")
+    cell = next(c for c in cells if c.row_label == "Americas")
+    assert quote_is_grounded("2023 Americas $178,353", cell) is False
+
+
 # ---------------------------------------------------------------------------
 # Reject: value spliced across a row boundary. A markdown row break
 # ("...|\n|...") and an empty cell ("| |") normalize to the identical
 # string, so a naive locality-based fix (accept a split match when the
 # gap between fragments is only table punctuation) cannot tell "the label
 # and value genuinely on the same logical row" from "the tail of the row
-# above, glued onto the next row's label" -- confirmed live: patching that
-# fix into _verify_one_claim let a $50,780 (Productivity & Business
-# Processes' own 9-month FY2025 operating income) claim be "grounded" by a
-# quote that names Intelligent Cloud and its unrelated $34,681 revenue.
+# above, glued onto the next row's label" -- confirmed live: an
+# unconditional "exact substring of the whole source" shortcut (tried and
+# reverted 2026-09-13) let a $50,780 (Productivity & Business Processes'
+# own 9-month FY2025 operating income) claim be "grounded" by a quote
+# that names Intelligent Cloud and its unrelated $34,681 revenue. This is
+# the single most important regression test in this file.
 # ---------------------------------------------------------------------------
 def test_rejects_a_value_spliced_across_a_row_boundary():
     cells = _cell(MSFT_SEGMENT_CHUNK, 50780.0, "million")
@@ -169,9 +315,7 @@ def test_rejects_a_value_spliced_across_a_row_boundary():
 
 # ---------------------------------------------------------------------------
 # Reject: fabricated values never resolve to any cell in the first place,
-# so they can't be "grounded" by anything -- this is what actually
-# forecloses the value-insertion holes (a 10x digit insertion, an inserted
-# minus sign) that a flat coverage-ratio check's 10% slack let through.
+# so they can't be "grounded" by anything.
 # ---------------------------------------------------------------------------
 def test_locate_value_finds_nothing_for_a_fabricated_ten_x_value():
     assert locate_value(extract_table_blocks(MSFT_SEGMENT_CHUNK), 134681.0, "million") == []
@@ -191,45 +335,69 @@ def test_rejects_a_value_grounded_under_the_wrong_group_label():
     assert quote_is_grounded("Intelligent Cloud Revenue $35,013", cell) is False
 
 
-# ---------------------------------------------------------------------------
-# Reject: the quote states the adjacent prior-year sibling column's value,
-# not the claimed value's own column -- the claimed value is 34,681 (3mo
-# FY26), but the quote's number is 26,751 (3mo FY25, same row). Own-cell
-# text, not "any number in the row," is what must be present.
-# ---------------------------------------------------------------------------
-def test_rejects_a_quote_naming_the_sibling_columns_value():
+def test_rejects_cross_segment_steal_via_a_near_tolerance_duplicate_cell():
+    # Regression B (found live 2026-09-13, re-running the full eval
+    # baseline): Intelligent Cloud's real revenue ($34,681M) and
+    # Productivity & Business Processes' real revenue ($35,013M) are
+    # ~0.95% apart -- both within the standard 1%-relative tolerance of a
+    # $35,013M claim, so locate_value() returns BOTH cells, not just the
+    # correct one. A quote naming Intelligent Cloud's label with
+    # Productivity's real value must be rejected against the
+    # (wrong) Intelligent Cloud cell specifically -- checking this
+    # requires comparing against the CELL'S OWN content, not the
+    # claim's own asserted value (which would trivially always match).
+    cells = locate_value(extract_table_blocks(MSFT_SEGMENT_CHUNK), 35013.0, "million")
+    group_labels = {c.group_label for c in cells}
+    assert group_labels == {"Productivity and Business Processes", "Intelligent Cloud"}, (
+        "expected the 1%-relative tolerance to also catch Intelligent Cloud's $34,681M -- "
+        "if this stops being true the regression this test guards against can no longer be "
+        "exercised this way"
+    )
+    intelligent_cloud_cell = next(c for c in cells if c.group_label == "Intelligent Cloud")
+    assert intelligent_cloud_cell.cell_text == "$34,681"
+    assert quote_is_grounded("Intelligent Cloud Revenue $35,013", intelligent_cloud_cell) is False
+
+
+def test_rejects_a_value_not_actually_present_anywhere_in_the_region():
+    # Found live 2026-09-13, re-verifying this exact redesign before
+    # shipping it: pure text coverage alone can be fooled by a WRONG
+    # value whose digits happen to scatter-match (via
+    # difflib.SequenceMatcher finding non-contiguous fragments) against
+    # OTHER real numbers sprinkled through the same permitted region --
+    # measured "$35,013" scoring 94% coverage against Intelligent
+    # Cloud's own region (which contains no $35,013 at all) purely from
+    # shared digits with $34,681/$26,751/etc. quote_is_grounded's
+    # separate number-presence check (tight tolerance, not the loose
+    # 1%-relative one locate_value uses) is what catches this -- a value
+    # with no real match anywhere in the region, however its digits
+    # happen to overlap with ones that are, must be rejected even when
+    # overall text coverage alone would have passed.
     cells = _cell(MSFT_SEGMENT_CHUNK, 34681.0, "million")
     cell = next(c for c in cells if c.group_label == "Intelligent Cloud")
-    assert quote_is_grounded("Intelligent Cloud\nRevenue $26,751", cell) is False
+    assert quote_is_grounded("Intelligent Cloud Revenue $999,999", cell) is False
 
 
 # ---------------------------------------------------------------------------
-# Reject: wrong column header token. $35,013 is Productivity & Business
-# Processes' THREE-MONTH FY2026 revenue (column header "2026"); a quote
-# prefixing it with "2025" (the sibling column's header) must not verify,
-# even though "2025" genuinely appears elsewhere in the same table.
+# A bare period-year token ("2026") is one of TWO distinct year labels in
+# MSFT's own header row ("2026 | 2025 | 2026 | 2025"), so quote_is_grounded's
+# cherry-pick check now rejects citing it alone, without the sibling
+# ("2025") -- deliberately conservative: this rule can't tell "the model
+# happened to name the objectively correct period" from "the model named
+# the wrong one" (that would need reliable per-column mapping, already
+# shown unreliable for a genuinely-spanning header row -- see
+# _period_header_index's removal history), so it treats ANY single-token
+# citation from a multi-column row as unverifiable rather than risk
+# accepting a wrong one. This trades away the narrow, synthetic
+# "content-free quote" convenience an earlier version of this test
+# documented, in favor of closing the real misattribution this same
+# mechanism exists to catch (see test_rejects_a_quote_cherry_picking_
+# one_year_from_the_header_row and the two end-to-end regression tests
+# in tests/test_agent.py for the real cases that motivated this).
 # ---------------------------------------------------------------------------
-def test_rejects_a_quote_with_the_wrong_periods_header_token():
-    cells = _cell(MSFT_SEGMENT_CHUNK, 35013.0, "million")
-    cell = next(c for c in cells if c.group_label == "Productivity and Business Processes")
-    assert cell.period_header == "2026"
-    assert quote_is_grounded("2025 Productivity and Business Processes Revenue $35,013", cell) is False
-
-
-# ---------------------------------------------------------------------------
-# Reject: bridging the markdown "| --- |" separator row. Found by an
-# adversarial review of an earlier locality-based candidate fix: since '-'
-# was treated as filler, a quote could splice FY2023's value onto the
-# FY2025 header token across the separator row. This module never treats
-# the separator row as data or as a header at all, so the hole doesn't
-# exist to begin with -- but it's regression-tested directly since it's
-# real filing text, not a synthetic case.
-# ---------------------------------------------------------------------------
-def test_rejects_a_quote_bridging_the_separator_row_to_the_wrong_year():
-    cells = _cell(AAPL_SEGMENT_CHUNK, 178353.0, "million")
-    cell = next(c for c in cells if c.row_label == "Americas")
-    assert cell.period_header == "2025"
-    assert quote_is_grounded("2023 Americas $178,353", cell) is False
+def test_quote_is_grounded_rejects_a_bare_year_with_no_label_at_all():
+    cells = _cell(MSFT_SEGMENT_CHUNK, 34681.0, "million")
+    cell = next(c for c in cells if c.group_label == "Intelligent Cloud")
+    assert quote_is_grounded("2026 34681", cell) is False
 
 
 # ---------------------------------------------------------------------------
@@ -248,76 +416,28 @@ def test_locate_value_returns_empty_list_when_value_is_only_in_prose_not_the_tab
 
 
 # ---------------------------------------------------------------------------
-# _period_header_index: the column-shift correction must be computed per
-# ROW, not cached once per table from an arbitrary "sample" row. Found in
-# this fix's own architecture review (2026-09-12): an earlier version
-# cached the block's FIRST data row's own trailing-empty-cell count as a
-# block-wide constant. A newly-disclosed segment with no prior-year
-# comparative (a real, plausible SEC-filing shape -- the row reports only
-# ONE period, so clean_row strips the missing trailing columns entirely,
-# leaving that row shorter before table_to_markdown pads it back out)
-# would then poison the period-header mapping for EVERY OTHER row in the
-# same block, silently returning a wrong-but-in-bounds column instead of
-# None. Recomputing the shift from whichever row owns the cell being
-# checked closes this by construction.
+# Multiple <TABLE> blocks in one chunk -- a real gap an independent review
+# of this redesign found: no existing test exercised this at all. Confirms
+# each block's header_context/group_label/caption_units are recomputed
+# independently per block (no state leaking from one table into another's
+# permitted_region), using two real, distinct fixtures already in this
+# file rather than a synthetic one.
 # ---------------------------------------------------------------------------
-_SPARSE_FIRST_ROW_CHUNK = """Segment info, in millions.
+def test_two_table_blocks_in_one_chunk_do_not_leak_context_between_them():
+    chunk = MSFT_SEGMENT_CHUNK + "\n\n" + AAPL_SEGMENT_CHUNK
+    blocks = extract_table_blocks(chunk)
+    assert len(blocks) == 2
 
-<TABLE>
-| 2026 | 2025 | 2026 | 2025 |  |
-| New Segment (no prior-year comparative) | $500 |  |  |  |
-| Revenue | $34,681 | $26,751 | $98,485 | $76,387 |
-</TABLE>"""
+    msft_cells = locate_value(blocks, 34681.0, "million")
+    ic_cell = next(c for c in msft_cells if c.group_label == "Intelligent Cloud")
+    assert "Americas" not in ic_cell.permitted_region
+    assert "178,353" not in ic_cell.permitted_region
 
+    aapl_cells = locate_value(blocks, 178353.0, "million")
+    americas_cell = next(c for c in aapl_cells if c.row_label == "Americas")
+    assert "Intelligent Cloud" not in americas_cell.permitted_region
+    assert "34,681" not in americas_cell.permitted_region
 
-def test_period_header_is_computed_per_row_not_from_a_cached_sample_row():
-    cells = _cell(_SPARSE_FIRST_ROW_CHUNK, 34681.0, "million")
-    cell = next(c for c in cells if c.row_label == "Revenue")
-    # The FIRST data row ("New Segment...") has only 1 of 4 value columns
-    # filled, so table_to_markdown pads it out with 3 TRAILING empties --
-    # very different from the "Revenue" row's own 0. A block-wide shift
-    # cached from that first row would misattribute $34,681 (the 3-month
-    # FY2026 column) to "2025" instead of "2026".
-    assert cell.period_header == "2026"
-
-
-# ---------------------------------------------------------------------------
-# quote_is_grounded's accepted edge cases -- documented explicitly per the
-# architecture review (2026-09-12), not left implicit.
-# ---------------------------------------------------------------------------
-def test_quote_is_grounded_accepts_a_content_free_quote_of_just_header_and_value():
-    # quote_is_grounded alone doesn't REQUIRE the row/group label words to
-    # appear at all -- a quote of just the period header plus the bare
-    # value ("2026 34681", no "Intelligent Cloud"/"Revenue" at all) passes
-    # this function on its own. Not exploitable as a misattribution today:
-    # locate_value() has already narrowed to the ONE cell whose value
-    # matches the CLAIM within tolerance before this ever runs, so a
-    # content-free quote can't smuggle in a wrong cell -- it just doesn't
-    # (and structurally can't) make any claim this function would reject.
-    cells = _cell(MSFT_SEGMENT_CHUNK, 34681.0, "million")
-    cell = next(c for c in cells if c.group_label == "Intelligent Cloud")
-    assert quote_is_grounded("2026 34681", cell) is True
-
-
-def test_accepts_a_data_row_whose_group_label_row_is_missing_from_the_block():
-    # Mirrors test_accepts_a_row_with_no_group_label_row_above_it (AAPL)
-    # but for a table shape that NORMALLY has group labels -- proving the
-    # "no group label seen yet" code path (group_label stays None until a
-    # label row is encountered) isn't just exercised by AAPL's own
-    # naturally-flat layout. chunk_blocks() never actually splits a
-    # <TABLE> block mid-table (tables are always kept atomic), so this
-    # can't arise from chunking in practice -- but the underlying
-    # structural case (a data row with nothing but header rows above it)
-    # is real and worth pinning directly rather than only indirectly.
-    chunk = """Segment info.
-
-<TABLE>
-| (In millions) | Three Months EndedMarch 31, | Nine Months EndedMarch 31, |  |  |
-| --- | --- | --- | --- | --- |
-| 2026 | 2025 | 2026 | 2025 |  |
-| Revenue | $34,681 | $26,751 | $98,485 | $76,387 |
-</TABLE>"""
-    cells = locate_value(extract_table_blocks(chunk), 34681.0, "million")
-    cell = next(c for c in cells if c.row_label == "Revenue")
-    assert cell.group_label is None
-    assert quote_is_grounded("Revenue $34,681", cell) is True
+    # Each still grounds correctly against its OWN block.
+    assert quote_is_grounded("Intelligent Cloud\nRevenue $34,681", ic_cell) is True
+    assert quote_is_grounded("Americas $178,353", americas_cell) is True

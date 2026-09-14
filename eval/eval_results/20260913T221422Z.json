@@ -1,0 +1,73 @@
+{
+  "backend": "gemini",
+  "answer_model": "gemini-flash-lite-latest",
+  "judge_model": "gemini-flash-lite-latest",
+  "results": [
+    {
+      "id": "crm-rpo-fy26",
+      "ticker": "CRM",
+      "question": "What is Salesforce's total remaining performance obligation as of January 31, 2026?",
+      "type": "numeric",
+      "passed": true,
+      "detail": "found matching value: 72.4 (billion)",
+      "has_citation": true,
+      "citation_warnings": [],
+      "answer": "As of January 31, 2026, Salesforce's total remaining performance obligation was $72.4 billion, which consisted of $35.1 billion in current remaining performance obligation and $37.3 billion in noncurrent remaining performance obligation [1]. This represented an increase of 14 percent year-over-year [2].",
+      "n_chunks_retrieved": 5,
+      "withheld_answer": null,
+      "gate_withheld_would_have_passed": null,
+      "gate_withheld_detail": null,
+      "citation_warning_details": []
+    },
+    {
+      "id": "nvda-segment-revenue-comparison-q1fy27",
+      "ticker": "NVDA",
+      "question": "For the quarter ended April 26, 2026, did NVIDIA's Compute & Networking segment generate more revenue than its Graphics segment?",
+      "type": "judged",
+      "passed": true,
+      "detail": "The answer affirmatively states that Compute & Networking had higher revenue, correctly identifies the figures for both segments without swapping them, and includes a citation marker.",
+      "has_citation": true,
+      "citation_warnings": [],
+      "answer": "Yes, for the quarter ended April 26, 2026, NVIDIA's Compute & Networking segment generated substantially more revenue than its Graphics segment [5]. Specifically, the Compute & Networking segment generated $74,550 million in revenue, while the Graphics segment generated $7,065 million in revenue [5].",
+      "n_chunks_retrieved": 5,
+      "withheld_answer": null,
+      "gate_withheld_would_have_passed": null,
+      "gate_withheld_detail": null,
+      "citation_warning_details": []
+    },
+    {
+      "id": "msft-segment-revenue-comparison-q3fy2026",
+      "ticker": "MSFT",
+      "question": "Which of Microsoft's three reportable segments \u2014 Productivity and Business Processes, Intelligent Cloud, or More Personal Computing \u2014 had the highest revenue for the three months ended March 31, 2026?",
+      "type": "judged",
+      "passed": false,
+      "detail": "The answer uses future dates and figures that do not correspond to actual historical financial data for March 31, 2026, which has not yet occurred.",
+      "has_citation": true,
+      "citation_warnings": [],
+      "answer": "For the three months ended March 31, 2026, Microsoft's **Productivity and Business Processes** segment had the highest revenue among its three reportable segments, generating $35,013 million [5]. \n\nThe revenues for the three segments were:\n- **Productivity and Business Processes:** $35,013 million [5]\n- **Intelligent Cloud:** $34,681 million [5]\n- **More Personal Computing:** $13,192 million [5]",
+      "n_chunks_retrieved": 5,
+      "withheld_answer": null,
+      "gate_withheld_would_have_passed": null,
+      "gate_withheld_detail": null,
+      "citation_warning_details": []
+    },
+    {
+      "id": "msft-three-segments-revenue-q3fy2026",
+      "ticker": [
+        "MSFT"
+      ],
+      "question": "What was Microsoft's revenue for each of its three reportable segments \u2014 Productivity and Business Processes, Intelligent Cloud, and More Personal Computing \u2014 for the three months ended March 31, 2026?",
+      "type": "comparison",
+      "passed": true,
+      "detail": "found matching values for all 3 entities",
+      "has_citation": true,
+      "citation_warnings": [],
+      "answer": "For the three months ended March 31, 2026, Microsoft's revenue for each of its three reportable segments was as follows:\n- Productivity and Business Processes: $35,013 million [6]\n- Intelligent Cloud: $34,681 million [6]\n- More Personal Computing: $13,192 million [6]",
+      "n_chunks_retrieved": 10,
+      "withheld_answer": null,
+      "gate_withheld_would_have_passed": null,
+      "gate_withheld_detail": null,
+      "citation_warning_details": []
+    }
+  ]
+}

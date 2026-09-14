@@ -7,6 +7,7 @@ it (or vice versa) -- eval_harness.py already imports agent.run_agent,
 so agent.py importing back from eval_harness.py would be circular.
 """
 
+import difflib
 import re
 import unicodedata
 
@@ -255,6 +256,15 @@ def normalize(value: float, unit: str) -> tuple[str, float]:
     return "scale", value * UNIT_MULTIPLIERS.get(unit, 1.0)
 
 
+# Shared with agent._QUOTE_COVERAGE_THRESHOLD (an alias for this, not a
+# second constant) and table_grounding.py's region-coverage check --
+# moved here 2026-09-13 alongside text_coverage() for the same
+# circular-import reason. 0.90 is the fraction of a quote's own
+# (normalized) characters that must be found in the source/region for a
+# non-exact match to still count as genuine.
+QUOTE_COVERAGE_THRESHOLD = 0.90
+
+
 def normalize_for_match(text: str) -> str:
     """Collapses cosmetic differences that would otherwise defeat quote
     matching without weakening what's actually being verified: NFKC
@@ -288,3 +298,62 @@ def normalize_for_match(text: str) -> str:
     text = unicodedata.normalize("NFKC", text)
     text = text.casefold()
     return " ".join(text.split())
+
+
+def text_coverage(quote: str, source: str) -> tuple[bool, float, int]:
+    """Core fuzzy-containment primitive shared by agent._quote_matches
+    (whole-document prose matching) and table_grounding.quote_is_grounded
+    (matching against one cell's own small permitted region) -- extracted
+    2026-09-13 for the same reason normalize_for_match() was: both
+    modules need the identical SequenceMatcher-based logic, and
+    table_grounding.py cannot import it from agent.py (agent.py imports
+    table_grounding.py). Returns `(exact, coverage, longest)`:
+
+    - `exact`: True if `quote` (normalized) is an exact substring of
+      `source` (normalized) -- the fast path. When True, `coverage` is
+      1.0 and `longest` is the full normalized quote length; callers can
+      skip their own threshold check entirely.
+    - `coverage`: sum of matched-block lengths (via
+      difflib.SequenceMatcher) divided by the QUOTE's own normalized
+      length -- deliberately NOT `.ratio()`, which scores a short quote
+      against a much longer source near zero even on exact containment
+      (ratio is symmetric; "is the quote IN the source" is not: it only
+      cares how much of the QUOTE is covered, not how much of the source
+      is).
+    - `longest`: the single longest contiguous matched block's size --
+      callers that need an anchor floor (blocking a fabricated quote
+      assembled from scattered fragments of a LARGE document) apply
+      their own threshold against this; callers matching against an
+      already-narrow, single-purpose region (e.g. one table cell's own
+      row) may reasonably skip that requirement, since there's little
+      "other content" in a small region to scatter-assemble from in the
+      first place.
+
+    `autojunk=False` is mandatory, not a style choice: SequenceMatcher's
+    autojunk heuristic is keyed off len(b) -- here, the QUOTE (passed as
+    the third/`b` argument, source as the second/`a`), not the source.
+    Once a quote reaches 200+ normalized characters, autojunk treats any
+    character appearing in more than ~1% of IT as "popular" junk excluded
+    from the initial anchor search -- effectively every common letter in
+    ordinary prose -- and match quality collapses silently (no error,
+    just a wrong low score) whenever the quote also isn't a clean exact
+    substring of the source. Covered by a dedicated regression test in
+    tests/test_agent.py (which actually exercises this by building a
+    200+ character QUOTE, not just a long source).
+
+    Does NOT apply any length gate (e.g. a minimum quote length) --
+    that's caller-specific policy (agent._quote_is_long_enough has its
+    own bare-number-digit-count exception that doesn't belong in a
+    shared text-matching primitive), applied by the caller before or
+    after calling this."""
+    quote_norm = normalize_for_match(quote)
+    source_norm = normalize_for_match(source)
+    if quote_norm and quote_norm in source_norm:
+        return True, 1.0, len(quote_norm)
+    if not quote_norm:
+        return False, 0.0, 0
+    matcher = difflib.SequenceMatcher(None, source_norm, quote_norm, autojunk=False)
+    blocks = matcher.get_matching_blocks()
+    coverage = sum(b.size for b in blocks) / len(quote_norm)
+    longest = max((b.size for b in blocks), default=0)
+    return False, coverage, longest

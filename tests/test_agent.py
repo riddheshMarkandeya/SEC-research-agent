@@ -3368,8 +3368,22 @@ def test_verify_claims_table_grounding_overrides_the_anchor_path_false_accept():
     # need for the "2025"/"$35,013" pairing to make any sense. $35,013 is
     # that segment's THREE-MONTH FY2026 revenue, not FY2025's -- table
     # grounding is authoritative here specifically so this kind of
-    # pre-existing false accept can't survive alongside the false-negative
-    # fix.
+    # pre-existing false accept can't survive.
+    #
+    # Corrected 2026-09-13: an earlier version of this test (during this
+    # exact redesign) asserted the region-scoped rewrite should ALSO
+    # accept this, reasoning it was the same already-accepted "same-row"
+    # tradeoff as citing a sibling column's bare VALUE. That reasoning
+    # was wrong, caught by an independent review of the redesign: "2025"
+    # is one of two distinct year labels in the header row ("2026 |
+    # 2025 | 2026 | 2025"), and citing it ALONE (without "2026", the
+    # correct one for this cell) is a cherry-picked wrong-period LABEL,
+    # not a benign same-row value citation -- the yesterday-committed
+    # design (before this whole redesign) rejected this exact case too,
+    # confirmed directly, so accepting it was a real regression the
+    # redesign introduced, not a deliberate, already-accepted tradeoff.
+    # quote_is_grounded's cherry-pick check (see table_grounding.py) is
+    # what restores the correct rejection.
     results = [_fake_result(text=_MSFT_SEGMENT_TABLE_TEXT)]
     assert _quote_matches(
         "2025 Productivity and Business Processes Revenue $35,013",
@@ -3394,6 +3408,132 @@ def test_verify_claims_falls_back_to_quote_matches_for_a_value_only_in_prose():
     claims = [_valid_submitted_claim(value=228000.0, unit="raw", quote="Total headcount was 228,000 employees")]
     answer_text = "Total headcount was 228,000 [1]."
     assert verify_claims(claims, results, "q", answer_text) == []
+
+
+# ---------------------------------------------------------------------------
+# table_grounding.py region-scoped redesign (2026-09-13) -- end-to-end
+# regression tests for the two REAL failures a live 47-question eval
+# baseline found in the original word-vocabulary design. Real filing
+# text (CRM's remaining-performance-obligation table; NVIDIA's segment
+# table), not paraphrased -- see docs/plans/2026-09-13-table-grounding-
+# region-scoped-matching.md for the full diagnosis.
+# ---------------------------------------------------------------------------
+_CRM_RPO_TABLE_TEXT = """Remaining performance obligation consisted of the following (in billions):
+
+<TABLE>
+| Current | Noncurrent | Total |  |
+| --- | --- | --- | --- |
+| As of January 31, 2026 (1) | $35.1 | $37.3 | $72.4 |
+| As of January 31, 2025 | $30.2 | $33.2 | $63.4 |
+</TABLE>"""
+
+_NVDA_SEGMENT_TABLE_TEXT = """The table below presents details of our reportable segments.
+
+<TABLE>
+| Compute & Networking | Graphics | Total |  |
+| --- | --- | --- | --- |
+| (In millions) |  |  |  |
+| Three Months Ended Apr 26, 2026 |  |  |  |
+| Revenue | $74,550 | $7,065 | $81,615 |
+| Other segment items (1) | 21,215 | 4,124 | 25,339 |
+| Operating income | $53,335 | $2,941 | $56,276 |
+</TABLE>"""
+
+
+def test_verify_claims_accepts_crm_full_row_verbatim_quote_for_three_independent_claims():
+    # The real regression: the model quotes an entire table row verbatim
+    # for EACH of 3 claims (Current/Noncurrent/Total, three genuinely
+    # different metrics in one row) -- all 3 were wrongly refused by the
+    # original per-cell word-vocabulary design, since it excluded
+    # sibling-column content from any one cell's allowed vocabulary.
+    results = [_fake_result(text=_CRM_RPO_TABLE_TEXT)]
+    quote = "| As of January 31, 2026 (1) | $35.1 | $37.3 | $72.4 |"
+    claims = [
+        _valid_submitted_claim(value=72.4, unit="billion", quote=quote),
+        _valid_submitted_claim(value=35.1, unit="billion", quote=quote),
+        _valid_submitted_claim(value=37.3, unit="billion", quote=quote),
+    ]
+    answer_text = (
+        "As of January 31, 2026, Salesforce's total remaining performance obligation was "
+        "$72.4 billion [1], consisting of $35.1 billion current [1] and $37.3 billion noncurrent [1]."
+    )
+    assert verify_claims(claims, results, "q", answer_text) == []
+
+
+def test_verify_claims_accepts_nvidia_multiline_quote_spanning_header_and_data_rows():
+    # The second real regression: the model's quote spans the column-
+    # header row, the separator row, a caption row, a period-label row,
+    # AND the data row, all verbatim -- refused by the original design
+    # for the same reason as the CRM case.
+    results = [_fake_result(text=_NVDA_SEGMENT_TABLE_TEXT)]
+    quote = (
+        "| Compute & Networking | Graphics | Total |  |\n"
+        "| --- | --- | --- | --- |\n"
+        "| (In millions) |  |  |  |\n"
+        "| Three Months Ended Apr 26, 2026 |  |  |  |\n"
+        "| Revenue | $74,550 | $7,065 | $81,615 |"
+    )
+    claims = [
+        _valid_submitted_claim(value=74550.0, unit="million", quote=quote),
+        _valid_submitted_claim(value=7065.0, unit="million", quote=quote),
+    ]
+    answer_text = (
+        "For the quarter ended April 26, 2026, NVIDIA's Compute & Networking segment generated "
+        "$74,550 million in revenue [1], while the Graphics segment generated $7,065 million [1]."
+    )
+    assert verify_claims(claims, results, "q", answer_text) == []
+
+
+def test_verify_claims_still_rejects_cross_segment_steal_via_near_tolerance_cell():
+    # Regression B, end to end: Intelligent Cloud's real revenue
+    # ($34,681M) and Productivity & Business Processes' real revenue
+    # ($35,013M) are ~0.95% apart -- within the standard tolerance of
+    # each other -- so a claim of $35,013M can locate BOTH cells. A quote
+    # naming Intelligent Cloud with Productivity's real value must still
+    # be refused.
+    results = [_fake_result(text=_MSFT_SEGMENT_TABLE_TEXT)]
+    claims = [_valid_submitted_claim(
+        value=35013.0, unit="million",
+        quote="Intelligent Cloud Revenue $35,013",
+    )]
+    answer_text = "Intelligent Cloud's revenue was $35,013 million [1]."
+    warnings = verify_claims(claims, results, "q", answer_text)
+    assert len(warnings) == 1
+    assert warnings[0].check == "quote_not_found"
+
+
+def test_verify_claims_rejects_a_full_wrong_period_phrase_not_just_a_bare_year():
+    # HIGH-severity finding from an independent review of this exact
+    # redesign, end to end: a quote citing the FULL, plausible-sounding
+    # WRONG period phrase ("Three Months EndedMarch 31, 2026") alongside
+    # a value that's actually the OTHER period's ($102,149M is
+    # Productivity's NINE-month figure, not its three-month one) --
+    # confirmed both checks 1-2 (coverage, number-presence) pass on their
+    # own, since both the phrase and the value are genuinely somewhere in
+    # the region; the cherry-pick check (some but not all of the header
+    # row's own two period phrases) is what catches this specifically.
+    results = [_fake_result(text=_MSFT_SEGMENT_TABLE_TEXT)]
+    claims = [_valid_submitted_claim(
+        value=102149.0, unit="million",
+        quote="Three Months EndedMarch 31, 2026 Productivity and Business Processes Revenue $102,149",
+    )]
+    answer_text = "Productivity and Business Processes' quarterly revenue was $102,149 million [1]."
+    warnings = verify_claims(claims, results, "q", answer_text)
+    assert len(warnings) == 1
+    assert warnings[0].check == "quote_not_found"
+
+
+def test_verify_claims_rejects_nvidia_graphics_mislabel_of_computes_value():
+    # Same finding, NVIDIA's segment table: $74,550M is Compute &
+    # Networking's real revenue: a quote attributing it to "Graphics"
+    # alone (not reproducing the whole "Compute & Networking | Graphics
+    # | Total" header row) must be refused.
+    results = [_fake_result(text=_NVDA_SEGMENT_TABLE_TEXT)]
+    claims = [_valid_submitted_claim(value=74550.0, unit="million", quote="Graphics Revenue $74,550")]
+    answer_text = "NVIDIA's Graphics segment generated $74,550 million in revenue [1]."
+    warnings = verify_claims(claims, results, "q", answer_text)
+    assert len(warnings) == 1
+    assert warnings[0].check == "quote_not_found"
 
 
 # ---------------------------------------------------------------------------

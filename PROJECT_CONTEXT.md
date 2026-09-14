@@ -5175,6 +5175,181 @@ unit/integration suite and an extensive adversarial probe against the
 real MSFT chunk (see above) already give strong confidence, so this
 remaining step is confirmatory, not exploratory.
 
+### Table-grounding region-scoped redesign, fixing two live regressions (2026-09-13)
+
+Per user request, merged `eval/citation_stress_questions.jsonl`'s 6
+questions into `eval/eval_questions.jsonl` (41 → 47) and ran the first
+full baseline against yesterday's `table_grounding.py` feature — its
+first real exercise against actual model answers, since the live
+spot-check above never got past quota exhaustion. Overall pass rate
+(24/47) was in line with the last known-good baseline (22/41,
+2026-09-12), and a per-question diff against it found 27 unchanged, 6
+newly passing, 8 newly failing — six of the eight traced to confirmed
+pre-existing, unrelated causes (tool-budget exhaustion before
+`submit_answer` was ever reached; the model quoting citation *display*
+metadata that was never part of the real source text, on two different
+questions; one already-documented latent non-determinism bug). The
+other two were real, `table_grounding.py`-caused regressions, root-caused
+against `trace_logs/traces.jsonl` and the actual filing chunks:
+
+- **CRM's remaining-performance-obligation table**
+  (`crm-rpo-fy26`): one row holds three genuinely different metrics
+  (Current/Noncurrent/Total). The model quoted the row verbatim for
+  each of 3 claims; all 3 were refused, because `quote_is_grounded`'s
+  per-cell word-vocabulary allowlist (row label + group label + period
+  header + the cell's own value) excluded sibling-column content by
+  design — correct for blocking a cross-column fabrication, wrong for a
+  genuinely faithful multi-value disclosure.
+- **NVIDIA's segment table** (`nvda-segment-revenue-comparison-q1fy27`):
+  same mechanism, a multi-line quote spanning the column-header row,
+  separator row, a caption row, a period-label row, and one data row,
+  all verbatim.
+
+**A reactive fix (an unconditional "exact substring of the whole source
+wins" shortcut), tried mid-investigation without a plan, was found —
+before landing — to reopen the row-splice attack the whole feature
+exists to block**: a claim citing a raw, contiguous slice of text
+crossing from one row into an unrelated adjacent row's label (row
+boundaries are just newlines in the raw source) is a genuine exact
+substring of the WHOLE document, so an unconditional shortcut can't tell
+it from a real quote. Confirmed directly (`verify_claims(...) == []` for
+a fabricated $50,780→Intelligent Cloud claim). The user stopped further
+ad hoc patching here and asked for a full diagnosis and plan before
+touching the code again — see `docs/plans/2026-09-13-table-grounding-
+region-scoped-matching.md` for that diagnosis (including a second,
+independently-confirmed bug: `locate_value`'s 1%-tolerance can return
+multiple cells for one claim when two real values are close — MSFT's
+real Intelligent Cloud revenue $34,681M and Productivity & Business
+Processes revenue $35,013M are ~0.95% apart — and the old number-check
+compared a quote's numbers against the CALLER's claimed value instead of
+the specific cell's own content, making it vacuous for whichever wrong
+cell tolerance swept in).
+
+**Redesign, per the plan and the user's explicit direction to fix the
+underlying approach rather than patch around it**: `table_grounding.py`
+now builds a per-cell "permitted region" — the table's own leading
+caption/header rows (shared, table-wide context) + the cell's own
+governing group-label row (if any) + the cell's own data row, all as
+VERBATIM source text (each parsed `_Row` now keeps its own literal
+source line, not just split cells) — and matches a quote against that
+narrow region using `numeric_utils.text_coverage`, a coverage/exact-
+substring primitive newly extracted from `agent._quote_matches` (a pure
+refactor, verified behavior-preserving) so both modules share the
+identical logic without a circular import. A genuine multi-value row
+quote now naturally hits the exact-substring fast path within its own
+small region; a quote reaching into a different row/group has nothing to
+match there, since that content was never in the region to begin with —
+structural exclusion, not a threshold. `_classify_row` gained a
+parenthesization signal (a single-cell row is a permanent, table-wide
+"header" if parenthesized, e.g. `"(In millions)"`, else a resettable
+per-group "label", e.g. `"Intelligent Cloud"`) — needed because NVIDIA's
+real table has both shapes back-to-back before its first data row, and
+the old design could only track one label at a time. The old per-column
+`_period_header_index` shift-correction machinery (yesterday's own fix
+for a different bug) was deleted entirely — no longer needed once header
+rows are included in the region wholesale.
+
+**Testing the redesign against its own real fixtures before shipping it
+surfaced a second real bug in the SAME session**: pure coverage without
+any anchor-floor-equivalent lets a WRONG value's digits "scatter-match"
+via `difflib.SequenceMatcher` against unrelated OTHER real numbers in the
+same region — measured, a fabricated `$35,013` scored 94% coverage
+against a region containing no `$35,013` at all, purely from shared
+digits with `$34,681`/`$26,751`/etc. Reintroducing the old anchor floor
+would have reopened the original short-label false negative this whole
+module exists to fix. Fixed with a separate, targeted check: every
+number in the quote must equal a real number found somewhere in the
+region, using a TIGHT (near-exact) tolerance — not the loose 1%-relative
+one `locate_value` uses to find candidate cells, which would recreate
+the same vacuity one layer up (a real, ~0.95%-apart value pair must not
+be treated as interchangeable at this layer either).
+
+**A fresh subagent architecture review (briefed to be skeptical, since
+this was the second redesign of this module in two days and the first
+one shipped with real bugs) found a HIGH-severity regression in the
+redesign itself, independently re-verified before accepting it, not
+taken on trust**: removing the per-column period defense had silently
+widened the accepted "same-row" tradeoff further than the plan's own
+stated justification covered. A quote asserting the FULL, plausible
+wrong period phrase (`"Three Months EndedMarch 31, 2026 Productivity and
+Business Processes Revenue $102,149"` — $102,149M is actually the
+nine-month figure) passed the redesign's checks, since both the phrase
+and the value are genuinely present somewhere in the region — but
+directly re-running yesterday's committed design (`git show
+da8af5c:table_grounding.py`) against the identical test fixture showed
+it correctly REJECTED this exact case (`quote_is_grounded → False`,
+`period_header == "2026"`). The plan's "already inert on this exact
+table" justification had been drawn from a different, colspan-broken
+scenario — a real reasoning error, not just imprecise wording. Confirmed
+the identical mechanism on NVIDIA's segment table (Compute & Networking's
+real $74,550M revenue mislabeled as "Graphics"). **Fixed** with a
+cherry-pick check: a quote may not cite ONE label out of a multi-column
+header/label row while omitting that row's OTHER labels — a quote
+reproducing such a row wholesale (the real CRM/NVIDIA regressions this
+redesign fixes) is unaffected; a quote citing only one label alongside a
+sibling column's real value is rejected. One deliberate, documented side
+effect: a bare period token with no label at all (`"2026 34681"`) is now
+also rejected, since the check can't distinguish "the model named the
+objectively correct one of several period tokens" from "the model named
+the wrong one" without the same unreliable per-column mapping this
+redesign removed for good reason.
+
+Four lower-severity findings from the same review were filed to
+`BACKLOG.md`, not fixed (each latent/unevidenced or already covered by a
+new test, per this project's practice of not chasing unproven
+hypotheticals): a `_classify_row` parenthesization edge case
+(ASC 852 Predecessor/Successor reporting — not used by any of this
+project's 5 tracked tickers); no defense against similar-but-not-
+identical label substitution across table blocks (not exploitable in any
+real fixture; the missing multi-`<TABLE>`-block test coverage this same
+finding named WAS fixed directly); coverage inflation from a large
+header context (measured, never crossed the acceptance threshold); and a
+blank-first-cell continuation row misclassifying as "header" (fails
+safe, falls through to flat-text matching).
+
+**Verified**: full TDD throughout (`tests/test_table_grounding.py`
+substantially rewritten with real CRM/NVIDIA fixtures alongside the
+existing MSFT/AAPL ones, 17 → 21 tests; `tests/test_agent.py` gained 5
+new end-to-end tests through the full `verify_claims` pipeline — the two
+original regressions, the HIGH-finding cherry-pick fix on both real
+tables, and the near-tolerance cross-segment-steal case). Full suite
+green throughout (622 → 631). Live spot-check:
+`eval_harness.py --backend gemini --ids
+crm-rpo-fy26,nvda-segment-revenue-comparison-q1fy27,msft-segment-revenue-comparison-q3fy2026,msft-three-segments-revenue-q3fy2026`
+— both regressed questions now PASS; the originally-reported bug still
+PASSES; the fourth question failed, but with **zero** unverified
+citations across all four questions (`0/4 had at least one unverified
+numeric citation`) — traced to the same pre-existing, unrelated judge-
+grading bug already documented for that question (the judge incorrectly
+believes March 31, 2026 "has not yet occurred"), not a citation-gate
+issue. Full findings: `docs/reviews/2026-09-13-table-grounding-region-
+scoped-matching.md`.
+
+**Full 47-question baseline** (`eval/eval_results/20260913T224536Z.json`,
+quota-error-free): 31/47 passed, up from the pre-fix 24/47. A per-question
+diff against that pre-fix run found 5 newly-failing questions, all traced
+to confirmed pre-existing, unrelated causes, not this fix: 2 tool-budget
+exhaustions (`five-company-gross-margin-ranking-fy2025`,
+`five-company-operating-margin-ranking-fy2025`, both `citation_warnings:
+[]`); 1 more instance of the model quoting citation *display* metadata
+that was never part of the real source text
+(`nvda-crm-revenue-comparison`, `"NVDA 10-Q (reportDate=2026-04-26)\n"`
+prepended to an otherwise-correct XBRL quote — the same mechanism already
+documented for `aapl-net-income-fy2025`/`nvda-revenue-fy2026-indirect`
+above); 1 bracket-digit-extraction false positive on a non-table judged
+question (`pltr-government-contract-risk`, the answer's own `[2, 4]`-style
+multi-source citation brackets misread as bare numeric claims — the
+already-documented `_CITATION_MARKER` gap, `BACKLOG.md`). Directly
+confirmed both original target regressions and the original reported bug
+have zero citation warnings in this run
+(`crm-rpo-fy26`/`nvda-segment-revenue-comparison-q1fy27`/`msft-segment-
+revenue-comparison-q3fy2026`/`msft-three-segments-revenue-q3fy2026` all
+`citation_warnings: []`) — the two "still failing" segment-comparison
+questions fail purely on the same pre-existing judge date-hallucination
+bug noted above, not the citation gate. This closes the in-progress
+`BACKLOG.md` item that had been tracking one clean baseline run across
+the `calculate` tool, negative-number, and table-grounding fixes.
+
 ## Next steps
 
 See `BACKLOG.md` for the live task backlog. This section used to hold
