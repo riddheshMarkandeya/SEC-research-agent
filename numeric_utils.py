@@ -66,13 +66,15 @@ UNIT_MULTIPLIERS = {"thousand": 1e3, "million": 1e6, "billion": 1e9}
 
 _BARE_YEAR_STRING = re.compile(r"(?:19|20)\d{2}")
 
+_MAX_REFERENCE_MARKER_DIGITS = 2  # footnote markers run "(1)".."(99)", never longer
+
 
 def _looks_like_reference_number(text: str, open_paren_pos: int, digits: str, followed_by_unit_or_pct: bool) -> bool:
     """See docs/decisions/2026-09-11-negative-number-support.md for the
     real-corpus evidence behind all three conditions here. `open_paren_pos` is
     `match.start("open_paren")` -- only meaningful when the caller has
     already confirmed the parens wrap the number."""
-    if len(digits) > 2 or "." in digits or followed_by_unit_or_pct:
+    if len(digits) > _MAX_REFERENCE_MARKER_DIGITS or "." in digits or followed_by_unit_or_pct:
         return False
     preceding = text[:open_paren_pos].rstrip()
     return bool(preceding) and preceding[-1].isalpha()

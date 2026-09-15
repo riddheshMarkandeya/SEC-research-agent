@@ -15,9 +15,22 @@ line-length = 120
 # E/F/W: standard pycodestyle errors/warnings + pyflakes (unused
 # imports/names, obvious bugs). C90 + PLR09xx: the modularity-relevant
 # categories -- mccabe cyclomatic complexity, and Pylint's too-many-
-# returns/branches/arguments/statements refactor rules. None of C90/PLR
-# are enabled by ruff's own defaults; both must be selected explicitly.
-select = ["E", "F", "W", "C90", "PLR0911", "PLR0912", "PLR0913", "PLR0915"]
+# returns/branches/arguments/statements refactor rules. PLR0402: a
+# free, zero-noise style nit (import x.y as y -> from x import y).
+# PLR2004: magic-value-comparison -- see per-file-ignores below, its
+# ~93% hit rate in tests/ is expected/idiomatic (test assertions
+# comparing to literal expected values), not a real finding there.
+# None of these PLR/C90 codes are enabled by ruff's own defaults; all
+# must be selected explicitly. See
+# docs/decisions/2026-09-15-expand-ruff-plr-rules.md for the
+# full-PLR-family survey behind this specific selection.
+select = ["E", "F", "W", "C90", "PLR0402", "PLR0911", "PLR0912", "PLR0913", "PLR0915", "PLR2004"]
 
 [tool.ruff.lint.mccabe]
 max-complexity = 10
+
+[tool.ruff.lint.per-file-ignores]
+# Test assertions comparing to literal expected values are the normal,
+# idiomatic pattern -- PLR2004 flagging them is noise, not signal (93 of
+# 97 hits repo-wide were here; see the decision file above).
+"tests/*" = ["PLR2004"]

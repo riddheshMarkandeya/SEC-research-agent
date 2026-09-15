@@ -209,6 +209,7 @@ def _ollama_send_followup(state: dict, text: str, *, force_tool: str | None = No
 
 
 RETRY_DELAY_SECONDS = 15  # free-tier rate limits are generous but not infinite
+RETRY_ATTEMPTS = 4
 
 # Module-level Gemini client cache (lazy-initialized on first use).
 # Kept alive across calls to prevent garbage collection of the underlying
@@ -286,7 +287,7 @@ def _send_with_retry(chat, message, config=None):
     omitting it entirely (`method_config = config if config else
     self._config`, confirmed by reading the installed SDK's source), so
     there's no behavior difference to guard here -- just less branching."""
-    for attempt in range(4):
+    for attempt in range(RETRY_ATTEMPTS):
         try:
             return chat.send_message(message, config=config)
         except (genai_errors.ClientError, genai_errors.ServerError) as e:
@@ -300,11 +301,11 @@ def _send_with_retry(chat, message, config=None):
                 "llm_retry",
                 backend="gemini",
                 attempt=attempt + 1,
-                max_attempts=4,
+                max_attempts=RETRY_ATTEMPTS,
                 status_code=code,
-                exhausted=attempt == 3,
+                exhausted=attempt == RETRY_ATTEMPTS - 1,
             )
-            if attempt == 3:
+            if attempt == RETRY_ATTEMPTS - 1:
                 raise
             time.sleep(RETRY_DELAY_SECONDS * (attempt + 1))
 

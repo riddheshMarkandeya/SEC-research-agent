@@ -19,6 +19,7 @@ Derived ratios/growth (gross_margin, yoy_growth, etc.) live in
 formulas.py, not here -- see that module's docstring for why.
 """
 
+import http
 import json
 import time
 from datetime import date
@@ -125,7 +126,7 @@ def fetch_concept(ticker: str, tag: str) -> dict | None:
     url = f"https://data.sec.gov/api/xbrl/companyconcept/CIK{cik}/us-gaap/{tag}.json"
     resp = requests.get(url, headers=HEADERS)
     time.sleep(REQUEST_DELAY_SECONDS)
-    if resp.status_code == 404:
+    if resp.status_code == http.HTTPStatus.NOT_FOUND:
         return None
     resp.raise_for_status()
     data = resp.json()
@@ -339,7 +340,7 @@ def fetch_frame(tag: str, frame: str) -> dict | None:
     url = f"https://data.sec.gov/api/xbrl/frames/us-gaap/{tag}/USD/{frame}.json"
     resp = requests.get(url, headers=HEADERS)
     time.sleep(REQUEST_DELAY_SECONDS)
-    if resp.status_code == 404:
+    if resp.status_code == http.HTTPStatus.NOT_FOUND:
         return None
     resp.raise_for_status()
     data = resp.json()

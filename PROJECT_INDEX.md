@@ -40,6 +40,8 @@ One line per file in `docs/decisions/`, `docs/plans/`, and
 is excluded. Copy the relevant `TEMPLATE.md` when starting a new file in
 any of the three directories.
 
+- 2026-09-15 [decision] Expanded ruff's PLR selection (added PLR0402, scoped PLR2004 away from tests/) after surveying the full PLR family with real hit counts → `docs/decisions/2026-09-15-expand-ruff-plr-rules.md`
+- 2026-09-15 [review] Ruff PLR-expansion review — clean, no findings → `docs/reviews/2026-09-15-expand-ruff-plr-rules.md`
 - 2026-09-15 [decision] Restructured CLAUDE.md (global + project) into personal skills, path-scoped `.claude/rules/`, and a docs-sync hook → `docs/decisions/2026-09-15-claude-md-restructure.md`
 - 2026-09-15 [plan] CLAUDE.md restructure design → `docs/plans/2026-09-15-claude-md-restructure.md`
 - 2026-09-15 [review] CLAUDE.md restructure review — found/fixed a doc inconsistency, a hook false-positive, a crash edge case, and a test-coverage gap → `docs/reviews/2026-09-15-claude-md-restructure.md`

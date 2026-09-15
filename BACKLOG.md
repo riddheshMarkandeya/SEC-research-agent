@@ -45,6 +45,33 @@ reference:
 
 ## Backlog
 
+### From the 2026-09-15 broader ruff rule-category survey
+
+Full evidence/reasoning: `docs/decisions/2026-09-15-expand-ruff-plr-rules.md`'s
+Related section; raw findings not yet written up in their own decision
+file pending which (if any) get adopted. Reproduce with
+`ruff check --select B,SIM,UP,C4,RUF,ARG,RET,PERF,S,N,A,PTH,ERA,I .`
+
+- [ ] **[design, Med, TBD]** Whether to select `S113`
+  (request-without-timeout) and/or `B905` (zip-without-explicit-strict).
+  Both surveyed with real hit counts, unlike a name-based guess:
+  `S113` found 5 real production HTTP calls with no timeout at all
+  (`discover_tags.py:62`, `edgar_ingest.py:56,89`,
+  `xbrl_facts.py:127,341`) — a stalled SEC EDGAR response could hang the
+  agent indefinitely; `B905` found 3 real `zip()` calls in the retrieval
+  path (`query_chunks.py:97`, `retrieval.py:166,219`) that would
+  silently truncate instead of erroring if Chroma ever returned
+  mismatched-length document/metadata/distance lists. Rejected from the
+  same survey, each for a specific reason rather than by category
+  reputation: `S101`/`ARG001`/`ARG005`/`RUF059`/`B011` are 96-100%
+  idiomatic test-file noise (asserts, mock-signature params, tuple
+  unpacking) even where a handful of real hits exist; `ERA001` false-
+  positives on this project's own comment-banner/decision-file-pointer
+  conventions; `RET503` would push toward adding provably-unreachable
+  dead code to satisfy the linter, contradicting the project's own
+  error-handling philosophy; `RUF003` and a dozen other 1-4-hit codes
+  weren't worth the selected-rule overhead at that volume.
+
 ### From the 2026-09-15 CLAUDE.md restructure
 
 Full evidence/reasoning: `docs/decisions/2026-09-15-claude-md-restructure.md`.

@@ -18,7 +18,7 @@ import time
 from urllib.parse import quote
 
 import click
-import mcp.types as types
+from mcp import types
 import uvicorn
 from mcp.server import Server
 from starlette.responses import JSONResponse
