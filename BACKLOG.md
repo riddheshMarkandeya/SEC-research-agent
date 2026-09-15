@@ -26,8 +26,9 @@ suffer the same fate; prune it as items resolve.
 
 ## How to read an item
 
-Every bullet is tagged **[type, priority, effort]** — see CLAUDE.md's
-"Backlog tagging convention" (step 6) for the full definitions. Quick
+Every bullet is tagged **[type, priority, effort]** — see the
+`documentation-backlog-hygiene` skill's "Backlog tagging convention" for
+the full definitions. Quick
 reference:
 
 - **Type**: `bug` · `refactor` · `feature` · `performance` ·
@@ -43,6 +44,17 @@ reference:
 (none right now — see "Backlog" below for open items)
 
 ## Backlog
+
+### From the 2026-09-15 CLAUDE.md restructure
+
+Full evidence/reasoning: `docs/decisions/2026-09-15-claude-md-restructure.md`.
+
+- [ ] **[bug, Low, Standard]** `scripts/check_docs_sync.py`'s `PreToolUse`
+  hook only reliably catches the docs/index staging mismatch when `git
+  add` and `git commit` are separate tool calls — a single chained
+  `git add -A && git commit -m "..."` is checked against whatever was
+  already staged *before* that command runs (the hook fires pre-execution),
+  so it can miss the mismatch in that form. Documented, not fixed.
 
 ### From the 2026-09-15 ruff adoption
 

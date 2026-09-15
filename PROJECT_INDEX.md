@@ -40,6 +40,9 @@ One line per file in `docs/decisions/`, `docs/plans/`, and
 is excluded. Copy the relevant `TEMPLATE.md` when starting a new file in
 any of the three directories.
 
+- 2026-09-15 [decision] Restructured CLAUDE.md (global + project) into personal skills, path-scoped `.claude/rules/`, and a docs-sync hook → `docs/decisions/2026-09-15-claude-md-restructure.md`
+- 2026-09-15 [plan] CLAUDE.md restructure design → `docs/plans/2026-09-15-claude-md-restructure.md`
+- 2026-09-15 [review] CLAUDE.md restructure review — found/fixed a doc inconsistency, a hook false-positive, a crash edge case, and a test-coverage gap → `docs/reviews/2026-09-15-claude-md-restructure.md`
 - 2026-09-15 [decision] Adopt ruff as this project's linter, changed-files-scoped for now → `docs/decisions/2026-09-15-adopt-ruff-linter.md`
 - 2026-09-15 [decision] Comment-audit initiative concluded (19/19 main-source, 9/25 tests/ files done; rest deferred to opportunistic per-touch cleanup) → `docs/decisions/2026-09-15-comment-audit-concluded.md`
 - 2026-09-15 [decision] Comment audit Round 6: pointer-fixed 4 large unit-test files → `docs/decisions/2026-09-15-comment-audit-round6.md`

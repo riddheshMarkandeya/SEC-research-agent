@@ -8,5 +8,18 @@
       "Bash(python -c ' *)",
       "Bash(grep -n \"### \\\\`agent.py\\\\`\" -A 50 \"c:/riddhesh/projects/SEC research agent/PROJECT_CONTEXT.md\")"
     ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python scripts/check_docs_sync.py"
+          }
+        ]
+      }
+    ]
   }
 }
