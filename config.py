@@ -1,24 +1,12 @@
 """
 Central configuration — environment-driven settings shared across
-multiple modules.
-
-Existed because several of these values were previously copy-pasted as
-module-level constants in 3+ files each with no single source of truth
-— e.g. CHROMA_DIR was independently defined in index_chunks.py,
-retrieval.py, AND query_chunks.py, and the embedding model name the
-same way (as MODEL_NAME in two of them, EMBED_MODEL_NAME in the third —
-already-diverged naming, a warning sign of exactly the kind of
-"two-copies-of-the-truth" drift companies.py's own docstring flags for
-ticker/CIK data). If the Chroma path or embedding model ever needed to
-change, that used to mean hunting down and editing every copy in sync;
-missing one wouldn't error, it would silently query an empty store or
-compare vectors from two different embedding models.
+multiple modules. See
+docs/decisions/2026-08-17-centralized-env-config.md.
 
 Loads `.env` (see `.env.example` for the full list, with comments) via
-python-dotenv. Every setting below has a fallback equal to what was
-previously hardcoded, so nothing breaks without a `.env` file — it's
-for overriding a default (e.g. your own email for the SEC User-Agent),
-not required for the code to run.
+python-dotenv. Every setting below has a fallback, so nothing breaks
+without a `.env` file — it's for overriding a default (e.g. your own
+email for the SEC User-Agent), not required for the code to run.
 """
 
 import os
@@ -40,14 +28,10 @@ OLLAMA_MODEL_NAME = os.getenv("OLLAMA_MODEL_NAME", "qwen2.5:7b-instruct")
 
 # Which LLM backend agent.py/eval_harness.py use when --backend isn't
 # passed explicitly (llm_backends.py's BACKENDS dict has the full list).
-# Gemini since 2026-09-10 (see
-# docs/plans/2026-09-10-citation-gate-measurement-instrumentation.md):
-# qwen2.5:7b-instruct's documented capability ceiling (PROJECT_CONTEXT.md)
-# made it the wrong default for developing against as the agent's tool
-# surface grows, and gemini-flash-lite-latest's free tier (30 RPM/1500 RPD)
-# covers this project's eval volume many times over. Ollama remains fully
-# supported (still the only backend that needs no API key at all) --
-# demoted from default, not removed; pass --backend ollama explicitly.
+# Gemini since 2026-09-10 -- Ollama remains fully supported (the only
+# backend needing no API key) but demoted from default; pass
+# --backend ollama explicitly to use it. See
+# docs/decisions/2026-09-10-citation-gate-measurement-instrumentation.md.
 DEFAULT_BACKEND = os.getenv("DEFAULT_BACKEND", "gemini")
 
 # Gemini (free tier, api key from aistudio.google.com) -- llm_backends.py.

@@ -50,17 +50,38 @@ Full evidence/reasoning: `docs/plans/2026-09-14-documentation-system-overhaul.md
 `docs/reviews/2026-09-14-documentation-system-overhaul.md`,
 `docs/decisions/2026-09-14-documentation-system-overhaul.md`.
 
-- [ ] **[refactor, Med, Substantial]** 19 `.py` files (`agent.py`,
-  `xbrl_facts.py`, `mcp_server.py`, `config.py`, `companies.py`, and 14
-  others) have multi-line comments/docstrings narrating decision history
-  (incidents, rejected alternatives, migration stories) instead of
-  terse WHY-only comments — the deliberately deferred second half of the
-  documentation-system overhaul, now that `docs/decisions/` exists as a
-  destination. Per file: extract any decision-history content not
-  already captured in a `docs/decisions/*.md` file into one, then rewrite
-  the comment to either a terse one-line pointer (per the new
-  comment-pointer policy in `~/.claude/CLAUDE.md` step 3) or delete it
-  entirely if it's a pure WHAT-comment.
+(The comment-audit follow-up originally logged here undersold its real
+scope — it only counted files that name-check `PROJECT_CONTEXT.md` by
+name, missing files like `companies.py` that have the same problem
+without citing it. A full inventory was done and Round 1 completed the
+same day — see the section below, which supersedes this one.)
+
+### From the 2026-09-14 comment-audit Round 1
+
+Full evidence/reasoning: `docs/plans/2026-09-14-comment-audit-round1.md`,
+`docs/reviews/2026-09-14-comment-audit-round1.md`,
+`docs/decisions/2026-09-14-comment-audit-round1.md` (includes the full
+per-file inventory from both Explore passes, so a future round doesn't
+need to re-derive it).
+
+- [ ] **[refactor, Med, Substantial]** 13 remaining main-source `.py`
+  files (`agent.py` — 2497 lines, ~45 blocks, needs its own dedicated
+  pass; `xbrl_facts.py` — needs a genuinely new `EXTRACT` write-up for
+  its tag-selection investigation; `numeric_utils.py` — one ~100-line
+  regex-design block needing careful trimming; plus `llm_backends.py`,
+  `retrieval.py`, `index_chunks.py`, `eval_harness.py`,
+  `table_grounding.py`, `analyze_citation_gate.py`,
+  `chunk_documents.py`, `edgar_ingest.py`, `discover_tags.py`,
+  `query_chunks.py`) still have decision-history narration in
+  comments/docstrings. Same per-block process as Round 1: confirm each
+  block's mapping to an existing `docs/decisions/*.md` file before
+  trimming to a pointer; write a new decision file only for genuinely
+  undocumented content.
+- [ ] **[refactor, Low, Substantial]** Full `tests/` pass (25 files) —
+  same issue, much denser: `test_agent.py` alone has ~101 flagged
+  comment blocks, `test_table_grounding.py` is similarly dense. Lower
+  priority than the main-source files since test comments are read far
+  less often, but same process applies once picked up.
 
 ### From the 2026-09-11 hand-rolled-complexity review
 

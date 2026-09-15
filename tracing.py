@@ -1,20 +1,11 @@
 """
-Observability (Week 7 guardrails, last sub-item, extended 2026-09-05
-with a local backup): traces agent runs and tool calls to Langfuse,
-plus a specific "unmet metric/ratio request" signal for the
-ratio-formula-registration work's own requirement (see
-PROJECT_CONTEXT.md, 2026-08-28 addendum) -- there was no
-logging/telemetry anywhere for "a metric/ratio was requested and
-unavailable," so "let evidence decide" for new financial-ratio formulas
-was 100% manual until now.
-
-Every span/event is ALSO always written to a local JSONL file
-(TRACE_LOG_PATH), independent of whether Langfuse is configured --
-Langfuse Cloud's free tier caps at 50k observations/month with only
-30-day retention, and TRACING_ENABLED=False (no account configured)
-would otherwise mean zero observability rather than degraded
-observability. The local log is the always-on baseline; Langfuse is
-the optional cloud/dashboard layer on top of it.
+Observability: traces agent runs and tool calls to Langfuse, plus a
+"unmet metric/ratio request" signal. Every span/event is ALSO always
+written to a local JSONL file (TRACE_LOG_PATH), independent of whether
+Langfuse is configured -- the local log is the always-on baseline,
+Langfuse the optional cloud/dashboard layer on top of it. See
+docs/decisions/2026-09-04-langfuse-tracing.md and
+docs/decisions/2026-09-05-local-jsonl-trace-log.md.
 
 Isolated into its own module so agent.py/mcp_server.py never import the
 langfuse SDK directly -- every call site there just calls
@@ -75,8 +66,8 @@ def _write_local_log(record: dict) -> None:
     the target directory has changed since the last successful write
     (_ensured_log_dir) -- this runs on every traced_span() exit, i.e.
     every tool call and every run_agent() call, so re-verifying an
-    already-created directory on every single write is wasted I/O.
-    Found in code review."""
+    already-created directory on every single write is wasted I/O. See
+    docs/decisions/2026-09-05-local-jsonl-trace-log.md."""
     global _ensured_log_dir
     if not TRACE_LOG_PATH:
         return
@@ -98,7 +89,8 @@ def _write_local_log(record: dict) -> None:
         # (mcp_server.py) keeps running, every later write would keep
         # skipping mkdir() (thinking the directory's already ensured)
         # and fail forever, silently defeating the "always-on backup"
-        # this exists for. Found in code review.
+        # this exists for. See
+        # docs/decisions/2026-09-05-local-jsonl-trace-log.md.
         _ensured_log_dir = None
         print(f"[tracing] local log write failed ({TRACE_LOG_PATH}): {e}", file=sys.stderr)
 
@@ -159,7 +151,8 @@ def traced_span(as_type: str, name: str, input: dict | None = None) -> Iterator[
     # monotonic, not time.time(): a long-running process (mcp_server.py)
     # could see the wall clock adjusted backward (e.g. an NTP
     # correction) mid-span, which would corrupt duration_ms if measured
-    # with time.time() instead. Found in code review.
+    # with time.time() instead. See
+    # docs/decisions/2026-09-05-local-jsonl-trace-log.md.
     start = time.monotonic()
     span = _TracedSpan()
     try:
@@ -252,12 +245,11 @@ def flush() -> None:
     flush.
 
     Best-effort, same "never raise, ever" contract as
-    _write_local_log() above: found in code review (2026-09-10) that
-    mcp_server.py's main() calls this inside a `finally` wrapping
-    uvicorn.run() -- an unguarded failure here (e.g. a real Langfuse
-    network error at shutdown) would replace/mask whatever original
-    exception uvicorn.run() was propagating, hiding the actual crash
-    reason from whoever's debugging the restart."""
+    _write_local_log() above -- mcp_server.py's main() calls this inside
+    a `finally` wrapping uvicorn.run(), so an unguarded failure here
+    would mask whatever original exception uvicorn.run() was
+    propagating. See
+    docs/decisions/2026-09-10-fix-3-more-review-findings.md."""
     if not TRACING_ENABLED:
         return
     try:

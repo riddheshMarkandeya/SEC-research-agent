@@ -40,6 +40,9 @@ One line per file in `docs/decisions/`, `docs/plans/`, and
 is excluded. Copy the relevant `TEMPLATE.md` when starting a new file in
 any of the three directories.
 
+- 2026-09-14 [decision] Comment audit Round 1: pointer-fixed 6 low-risk main-source files → `docs/decisions/2026-09-14-comment-audit-round1.md`
+- 2026-09-14 [plan] Comment audit Round 1 design → `docs/plans/2026-09-14-comment-audit-round1.md`
+- 2026-09-14 [review] Comment audit Round 1 review (self-check + fresh subagent) → `docs/reviews/2026-09-14-comment-audit-round1.md`
 - 2026-09-14 [decision] Documentation system overhaul: index + per-decision files replace the narrative changelog → `docs/decisions/2026-09-14-documentation-system-overhaul.md`
 - 2026-09-14 [plan] Documentation system overhaul design → `docs/plans/2026-09-14-documentation-system-overhaul.md`
 - 2026-09-14 [review] Documentation system overhaul review (self-check) → `docs/reviews/2026-09-14-documentation-system-overhaul.md`

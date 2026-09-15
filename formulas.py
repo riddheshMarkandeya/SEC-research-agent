@@ -1,15 +1,8 @@
 """
-Week 5k/5n — Formula registry
--------------------------------------
-Every tool-computed derived metric (margins, YoY growth, and future
-additions) lives here, separate from xbrl_facts.py's raw-fact fetching.
-Split out once formula functions grew to more than half of
-xbrl_facts.py's own line count, with more on the way (multi-year
-averages, cash-flow ratios, etc. from the FinanceBench-informed eval
-growth) -- unlike the raw XBRL tags (a small, bounded set SEC actually
-defines), the list of financial ratios a user might ask for has no
-natural upper limit, so it gets its own module rather than continuing
-to grow inside the fact-fetching one.
+Formula registry -- every tool-computed derived metric (margins, YoY
+growth, multi-year averages) lives here, separate from xbrl_facts.py's
+raw-fact fetching. See
+docs/decisions/2026-08-18-formulas-module-split.md.
 
 None of these are themselves GAAP-tagged concepts (percentages/growth
 rates are prose/MD&A, not structured facts) -- each is computed here
@@ -37,13 +30,10 @@ def _compute_ratio_metric(
     period_end_date: str | None,
     as_percent: bool = True,
 ) -> dict | None:
-    """Shared body for every tool-computed ratio metric (gross/operating/
-    net margin, and now return-on-assets/asset-turnover/cash-to-assets).
-    Extracted once operating_margin/net_margin were added alongside
-    gross_margin, since all three are otherwise identical bodies
-    differing only in which metric is the numerator -- copy-pasting a
-    third time would reproduce exactly the kind of duplication this
-    project already fixed once (see config.py's own history).
+    """Shared body for gross/operating/net margin, and the return-on-
+    assets/asset-turnover/cash-to-assets ratios added since -- all are
+    otherwise-identical bodies differing only in which metric is the
+    numerator.
 
     Both legs are just handed the same fiscal_year/fiscal_period/
     period_end_date arguments and each resolves its own entry via
@@ -57,12 +47,10 @@ def _compute_ratio_metric(
 
     `as_percent=False` (asset_turnover's case) skips the *100 and
     reports `unit: "raw"` instead of `"percent"`, rounded to 2 decimals
-    instead of 1 -- asset turnover is conventionally expressed as a
-    decimal ratio ("1.04x"), not a percentage; found live (2026-08-25)
-    that `numeric_utils.normalize()` treats "percent" and "raw" as
-    different, never-cross-matching categories regardless of numeric
-    equivalence, so getting this wrong isn't just a display
-    preference, it silently breaks eval grading."""
+    instead of 1 -- numeric_utils.normalize() treats "percent" and "raw"
+    as non-matching categories, so getting this wrong silently breaks
+    eval grading. See
+    docs/decisions/2026-08-25-formula-registry-roa-turnover-cash.md."""
     numerator = get_metric(ticker, numerator_metric, fiscal_year, fiscal_period, period_end_date)
     denominator = get_metric(ticker, denominator_metric, fiscal_year, fiscal_period, period_end_date)
     if numerator is None or denominator is None:
@@ -95,26 +83,19 @@ RatioDefinition = NamedTuple(
 )
 
 # Declarative registry for every same-period ratio-of-two-metrics
-# formula -- the third and last formula "shape" in this module to
-# generalize (get_yoy_growth()/get_multi_year_average() below were
-# already generic over their `metric` parameter; this was the one
-# still stuck at one hand-written function per ratio). Holds only plain
-# data (strings/bools), never function references, so it can't go stale
-# under a monkeypatch the way a dict of function objects can (the exact
-# gotcha _get_annual_value() below documents having hit twice already).
-# Adding a new same-period ratio is a one-line entry here plus
-# get_ratio()/get_ratio_all_companies() below picking it up automatically
-# -- no new function required.
+# formula. Holds only plain data (strings/bools), never function
+# references, so it can't go stale under a monkeypatch the way a dict
+# of function objects can. Adding a new same-period ratio is a one-line
+# entry here plus get_ratio()/get_ratio_all_companies() below picking it
+# up automatically -- no new function required. See
+# docs/decisions/2026-08-28-ratio-definitions-table-driven-registry.md.
 #
 # `supports_cross_company=False` for return_on_assets/asset_turnover/
 # cash_to_assets/inventory_turnover/rd_intensity: total_assets' (and
 # inventory's) own SEC-assigned `frame` is None for annual instant
-# facts, and even a borrowed frame label wouldn't resolve correctly --
-# SEC's frames API uses a different label format for instant concepts
-# entirely (confirmed live, not assumed, when return_on_assets was
-# first added). No current eval question needs a cross-company version
-# of any of these five, so this stays an explicit, documented gate
-# rather than something inferred at call time.
+# facts, and SEC's frames API uses a different label format for instant
+# concepts entirely, so a borrowed frame label wouldn't resolve either.
+# See docs/decisions/2026-08-25-formula-registry-roa-turnover-cash.md.
 RATIO_DEFINITIONS: dict[str, RatioDefinition] = {
     "gross_margin": RatioDefinition("gross_profit", "revenue", True, True),
     "operating_margin": RatioDefinition("operating_income", "revenue", True, True),
@@ -189,14 +170,9 @@ def get_return_on_assets(
 ) -> dict | None:
     """Net income / total assets, as a percent -- the first ratio in this
     module combining a duration (income-statement) metric with an
-    instant (balance-sheet) one. Built to answer aapl-return-on-assets-
-    fy2025, one of the multi-statement eval questions deliberately added
-    with no tool support (Week 5v/eval-growth round), to generate real
-    evidence of what the agent does without a deterministic path --
-    same discipline that originally justified the margin registry
-    itself. See get_gross_margin() above for why this is a thin
-    get_ratio() wrapper, and RATIO_DEFINITIONS' own comment for why
-    there's no cross-company counterpart."""
+    instant (balance-sheet) one. See get_gross_margin() above for why
+    this is a thin get_ratio() wrapper, and RATIO_DEFINITIONS' own
+    comment for why there's no cross-company counterpart."""
     return get_ratio(ticker, "return_on_assets", fiscal_year, fiscal_period, period_end_date)
 
 
@@ -208,9 +184,8 @@ def get_asset_turnover(
 ) -> dict | None:
     """Revenue / total assets, as a plain decimal ratio (NOT a percent --
     see _compute_ratio_metric()'s `as_percent` docstring for why this
-    one specifically isn't). Built to answer
-    nvda-asset-turnover-fy2026. See get_gross_margin() above for why
-    this is a thin get_ratio() wrapper."""
+    one specifically isn't). See get_gross_margin() above for why this
+    is a thin get_ratio() wrapper."""
     return get_ratio(ticker, "asset_turnover", fiscal_year, fiscal_period, period_end_date)
 
 
@@ -222,9 +197,9 @@ def get_cash_to_assets(
 ) -> dict | None:
     """Cash and cash equivalents / total assets, as a percent -- both
     legs are instant (balance-sheet) concepts here, unlike
-    get_return_on_assets()/get_asset_turnover() above. Built to answer
-    msft-cash-to-assets-fy2025. See get_gross_margin() above for why
-    this is a thin get_ratio() wrapper."""
+    get_return_on_assets()/get_asset_turnover() above. See
+    get_gross_margin() above for why this is a thin get_ratio()
+    wrapper."""
     return get_ratio(ticker, "cash_to_assets", fiscal_year, fiscal_period, period_end_date)
 
 
@@ -232,27 +207,19 @@ def _compute_ratio_metric_all_companies(
     anchor: dict | None, numerator_metric: str, denominator_metric: str, as_percent: bool = True
 ) -> dict[str, dict]:
     """Shared body for every cross-company tool-computed ratio metric --
-    the frames-layer counterpart to _compute_ratio_metric(), extracted
-    for the same reason (operating_margin_all_companies/
-    net_margin_all_companies would otherwise be copies of
-    gross_margin_all_companies differing only in which metric is the
-    numerator). `anchor` is the caller's own already-resolved
-    get_X_margin() result, passed in rather than recomputed here, since
-    each margin function already knows which two metrics it's a ratio
-    of. A company is included only if BOTH frames have an entry for it
-    with matching period_end -- the two metrics can use different
-    underlying tags (see xbrl_facts.get_frame's docstring), so their
-    per-company period boundaries aren't guaranteed to align by
-    construction, only checked.
+    the frames-layer counterpart to _compute_ratio_metric(). `anchor` is
+    the caller's own already-resolved get_X_margin() result, passed in
+    rather than recomputed here, since each margin function already
+    knows which two metrics it's a ratio of. A company is included only
+    if BOTH frames have an entry for it with matching period_end -- the
+    two metrics can use different underlying tags (see
+    xbrl_facts.get_frame's docstring), so their per-company period
+    boundaries aren't guaranteed to align by construction, only checked.
 
-    `as_percent` mirrors _compute_ratio_metric()'s own flag -- added in
-    code review (2026-08-28) after `get_ratio_all_companies()` was found
-    to always hardcode `*100`/`unit: "percent"` regardless of what
-    RATIO_DEFINITIONS says, latent today (every current
-    supports_cross_company=True ratio happens to be as_percent=True) but
-    a real gap: RATIO_DEFINITIONS' own comment calls flipping a decimal
-    ratio like asset_turnover to cross-company "easy," which would have
-    silently mislabeled units without this."""
+    `as_percent` mirrors _compute_ratio_metric()'s own flag -- without
+    it, a decimal ratio like asset_turnover would get hardcoded
+    `unit: "percent"` here, silently mislabeled. See
+    docs/decisions/2026-08-28-ratio-definitions-table-driven-registry.md."""
     if anchor is None or anchor.get("frame") is None:
         return {}
     numerators = get_frame(numerator_metric, anchor["frame"])
@@ -393,18 +360,13 @@ def _get_annual_value(ticker: str, metric: str, fiscal_year: int) -> dict | None
 
     Checks RATIO_DEFINITIONS and dispatches through the generic
     get_ratio() rather than a per-ratio if/elif chain -- safe from the
-    dict-of-stale-function-objects gotcha this project has hit twice
-    before (agent.py's old RATIO_METRIC_FUNCTIONS, and this module's own
-    split from xbrl_facts.py) precisely because RATIO_DEFINITIONS holds
-    only plain data (strings/bools), never function references, so
-    there's no function object to go stale under a monkeypatch. This
-    also means a NEW ratio added only to RATIO_DEFINITIONS (no new named
-    function) works here automatically -- the exact crash class this
-    function's branches were built to prevent for return_on_assets/
-    asset_turnover/cash_to_assets (see test_formulas.py's
-    test_get_multi_year_average_averages_return_on_assets_across_years)
-    would otherwise reappear for every future ratio that isn't also
-    hand-added here."""
+    dict-of-stale-function-objects gotcha (see
+    docs/decisions/2026-08-18-formulas-module-split.md and
+    docs/decisions/2026-08-28-ratio-definitions-table-driven-registry.md)
+    since RATIO_DEFINITIONS holds only plain data, never function
+    references. This also means a NEW ratio added only to
+    RATIO_DEFINITIONS works here automatically, with no new named
+    function required."""
     if metric in RATIO_DEFINITIONS:
         return get_ratio(ticker, metric, fiscal_year=fiscal_year, fiscal_period="FY")
     return get_metric(ticker, metric, fiscal_year=fiscal_year, fiscal_period="FY")
@@ -414,17 +376,10 @@ def get_multi_year_average(
     ticker: str, metric: str, start_fiscal_year: int, end_fiscal_year: int
 ) -> dict | None:
     """Average of `metric` across every fiscal year from
-    start_fiscal_year through end_fiscal_year, inclusive.
-
-    Motivated by a real eval failure with no deterministic path before
-    this existed (aapl-3yr-avg-operating-margin-fy2023-fy2025): with
-    nothing to call, the model reached for self-computation on its own,
-    fetching each year's value via 3 separate get_financial_fact calls
-    and averaging them in its own reasoning text -- a rule-3 violation
-    ("don't combine numbers") the citation-verification gate correctly
-    caught once, and once misparsing the whole request as a Q4-specific
-    one instead. Computed here deterministically, same pattern as every
-    other formula in this module.
+    start_fiscal_year through end_fiscal_year, inclusive. See
+    docs/decisions/2026-08-19-fixing-6-accumulated-eval-findings.md for
+    why this exists (a real eval failure with no deterministic path
+    before it did).
 
     Unlike get_yoy_growth() (deliberately scoped to raw metrics only),
     this supports BOTH margin ratios and raw tagged metrics -- the

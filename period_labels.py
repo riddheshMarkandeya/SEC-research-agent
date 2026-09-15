@@ -1,30 +1,11 @@
 """
-Period-label augmentation for retrieval indexing
---------------------------------------------------
-Computes a canonical, natural-language period descriptor (fiscal year +
-quarter, or "annual report") for a chunk from its ticker/form/reportDate
-metadata, meant to be prepended to the text fed into BM25 tokenization
-and embedding in index_chunks.py and retrieval.py's _load_bm25_index() —
-NOT to the text stored/shown to the LLM, which already gets
-ticker/form/reportDate via agent.py's citation header
-(_format_results_block).
-
-Why this exists: SEC filings restate the same reporting period in
-multiple, non-overlapping vocabularies within the same document — a
-"Highlights" narrative section says "the third quarter of fiscal year
-2026," while the Notes/MD&A table covering the exact same period says
-"Three Months Ended March 31, 2026." Neither BM25 nor embedding
-similarity bridges that gap on its own: a question phrased one way can
-completely miss the chunk that states the right number using the other
-convention. A related problem: a company's own quarterly and annual
-filings repeat large blocks of near-identical MD&A boilerplate (e.g.
-"Gross profit consists of total net revenue less cost of revenue...")
-across every filing, differing only in the trailing number — without a
-per-filing anchor, retrieval can't tell which filing's copy is
-relevant. Diagnosed from two real eval failures (nvda-gross-margin-fy26,
-msft-rd-expense-q3fy26 — see PROJECT_CONTEXT.md), not a hypothetical
-problem: each target chunk's BM25/vector rank was checked directly
-before deciding this was worth building.
+Fiscal-period math (fiscal_year_label, fiscal_quarter) plus a
+natural-language period-label string (period_label/chunk_period_label).
+The period-label string was originally built to prepend to chunk text
+for retrieval indexing -- that indexing use was tried and reverted; the
+fiscal-period math is still used by verify_period_labels.py's
+fiscal-year-end safeguard. See
+docs/decisions/2026-08-16-fiscal-period-labels-tried-and-reverted.md.
 """
 
 from datetime import date

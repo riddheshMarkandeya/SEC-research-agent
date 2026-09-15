@@ -1,33 +1,11 @@
 """
-Week 6 — MCP server: expose search_filings/get_financial_fact/
-compare_financial_metric over Streamable HTTP
--------------------------------------------------------------
-Wraps the same three tools agent.py's own tool-calling loop uses, so
-any MCP client (Claude Desktop, Claude Code, another agent) can call
-this project's retrieval/XBRL tooling directly. Deliberately reuses
-agent.py's tool-dispatch logic (call_get_financial_fact/
-call_compare_financial_metric) and tool schemas (SEARCH_TOOL_SCHEMA/
-FACT_TOOL_SCHEMA/COMPARE_TOOL_SCHEMA) rather than reimplementing either
--- those already carry boundary validation and real-failure-tuned
-descriptions hardened over several rounds; a second copy would drift.
-
-Every tool result carries an always-present `source` block (ticker,
-form, period, accession, and a real sec_url) rather than gating it
-behind an opt-in flag -- matches how every reference information/search
-MCP server behaves (e.g. brave-search's own results always include the
-URL): a fact a caller can't trace back to a filing isn't very useful to
-an LLM that needs to cite it. search_filings citations additionally get
-a browser-native "Scroll To Text Fragment" (`#:~:text=`) anchor so a
-human clicking through lands on the cited sentence, not just the top of
-a 100+ page filing -- not attempted for get_financial_fact/
-compare_financial_metric, since those come from structured XBRL data
-with no prose position to anchor to.
-
-Uses the low-level mcp.server.Server API (not FastMCP) specifically so
-tool schemas can be supplied as plain JSON Schema dicts -- reusing
-agent.py's existing schemas directly -- rather than FastMCP's default
-of deriving a schema from Python type hints, which would mean
-maintaining the tool descriptions twice.
+MCP server: expose search_filings/get_financial_fact/
+compare_financial_metric over Streamable HTTP. Reuses agent.py's own
+tool-dispatch logic and schemas rather than reimplementing either.
+search_filings citations get a "Scroll To Text Fragment" anchor;
+get_financial_fact/compare_financial_metric don't, since those come
+from structured XBRL data with no prose position to anchor to. See
+docs/decisions/2026-08-25-mcp-server-week6.md.
 
 Usage:
     python mcp_server.py --port 8765
@@ -132,14 +110,11 @@ def _search_filings(args: dict) -> list[dict]:
     """Unlike get_financial_fact/compare_financial_metric above (which
     inherit boundary validation for free by delegating into agent.py's
     already-validated call_get_financial_fact/call_compare_financial_metric),
-    this handler builds its result directly from hybrid_search() with no
-    such delegation -- so it never got the same validation an MCP client
-    could bypass entirely (a hallucinated ticker used to fall through to
-    hybrid_search with no rejection, unlike the agent.py dispatch path,
-    found during the 2026-09-09 schema-validator redesign). Uses the same
-    generic validate_tool_args() agent.py's own search_filings dispatch
-    branch does, against the same SEARCH_TOOL_SCHEMA, so both entry
-    points enforce identical rules from one source of truth. soft_required
+    this handler builds its result directly from hybrid_search(), so it
+    needs its own validate_tool_args() call against the same
+    SEARCH_TOOL_SCHEMA agent.py's own search_filings dispatch branch
+    uses, keeping both entry points on one source of truth. See
+    docs/decisions/2026-09-09-schema-driven-arg-validation.md. soft_required
     -- query is schema-required but the empty-query case below has always
     just returned [] rather than erroring, so a missing query still isn't
     a hard rejection here either."""
@@ -222,7 +197,8 @@ def _is_authorized(auth_header: str | None, expected_token: str) -> bool:
     this gates a network-reachable server -- a plain `==` short-circuits
     on the first mismatched character, letting a remote attacker recover
     the token byte-by-byte via response-timing measurements instead of
-    needing the whole secret at once. Found in code review."""
+    needing the whole secret at once. See
+    docs/decisions/2026-09-01-mcp-server-auth-rate-limiting.md."""
     if not expected_token:
         return True
     if auth_header is None:
@@ -250,7 +226,8 @@ class _RateLimiter:
         # default (rate-limit key = client IP), a long-running server
         # would otherwise keep one entry per distinct caller forever,
         # even after that caller's window expired and it never
-        # reconnects. Found in code review.
+        # reconnects. See
+        # docs/decisions/2026-09-01-mcp-server-auth-rate-limiting.md.
         self._windows = {k: v for k, v in self._windows.items() if now - v[0] < self._window_seconds}
         window_start, count = self._windows.get(key, (now, 0))
         if count >= self._max_requests:
@@ -270,17 +247,10 @@ class _AuthRateLimitMiddleware:
     streamable_http_app()'s SSE-based transport).
 
     Rate limiting runs BEFORE auth, keyed by client IP rather than the
-    shared token. Originally built the other way around (auth first,
-    keyed by token when auth is enabled) -- code review caught two real
-    problems with that: (1) a rejected (401) request never touched the
-    rate limiter at all, so credential-guessing traffic against
-    MCP_AUTH_TOKEN was completely unthrottled; (2) keying by the one
-    shared token meant every legitimate caller using it drew from a
-    single global budget, so one noisy caller could lock out every
-    other one. Keying by IP and checking first fixes both: guessing
-    traffic from one IP gets throttled regardless of whether any guess
-    is ever correct, and separate legitimate callers (different IPs)
-    no longer share a budget."""
+    shared token -- keying by IP and checking first means credential-
+    guessing traffic gets throttled regardless of whether any guess is
+    correct, and separate legitimate callers don't share one budget. See
+    docs/decisions/2026-09-01-mcp-server-auth-rate-limiting.md."""
 
     def __init__(self, app):
         self._app = app
@@ -292,10 +262,11 @@ class _AuthRateLimitMiddleware:
         client = scope.get("client")
         key = client[0] if client else "unknown"
         if not _rate_limiter.allow(key, time.time()):
-            # Local-only debug event (Week 7 follow-up) -- lets someone
-            # exposing this server audit "who's getting rejected" after
-            # the fact; not sent to Langfuse (no traced_span is open at
-            # this point anyway -- this runs before any tool dispatch).
+            # Local-only debug event -- lets someone exposing this
+            # server audit "who's getting rejected" after the fact; not
+            # sent to Langfuse (no traced_span is open at this point
+            # anyway -- this runs before any tool dispatch). See
+            # docs/decisions/2026-09-05-local-only-debug-events.md.
             log_event("rate_limited", client_ip=key)
             response = JSONResponse(
                 {"error": "rate limit exceeded"},
@@ -336,8 +307,9 @@ def build_app(host: str = "127.0.0.1"):
 def main(host: str, port: int):
     # uvicorn.run() returns normally (no exception) on both SIGINT and
     # SIGTERM, so `finally` here flushes Langfuse on every real shutdown,
-    # not just uncaught errors -- see PROJECT_CONTEXT.md's 2026-09-10
-    # section for why this is `finally` and not a Starlette lifespan hook.
+    # not just uncaught errors -- streamable_http_app() exposes no
+    # shutdown hook to use instead. See
+    # docs/decisions/2026-09-10-fix-3-more-review-findings.md.
     try:
         uvicorn.run(build_app(host=host), host=host, port=port)
     finally:
