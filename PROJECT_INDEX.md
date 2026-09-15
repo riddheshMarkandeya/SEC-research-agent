@@ -40,6 +40,9 @@ One line per file in `docs/decisions/`, `docs/plans/`, and
 is excluded. Copy the relevant `TEMPLATE.md` when starting a new file in
 any of the three directories.
 
+- 2026-09-15 [decision] Comment audit Round 4: pointer-fixed agent.py → `docs/decisions/2026-09-15-comment-audit-round4.md`
+- 2026-09-15 [plan] Comment audit Round 4 design → `docs/plans/2026-09-15-comment-audit-round4.md`
+- 2026-09-15 [review] Comment audit Round 4 review (self-check + fresh subagent) → `docs/reviews/2026-09-15-comment-audit-round4.md`
 - 2026-09-15 [decision] Comment audit Round 3: pointer-fixed xbrl_facts.py and numeric_utils.py → `docs/decisions/2026-09-15-comment-audit-round3.md`
 - 2026-09-15 [plan] Comment audit Round 3 design → `docs/plans/2026-09-15-comment-audit-round3.md`
 - 2026-09-15 [review] Comment audit Round 3 review (self-check + fresh subagent) → `docs/reviews/2026-09-15-comment-audit-round3.md`

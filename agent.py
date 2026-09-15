@@ -1,25 +1,11 @@
 """
-Week 5 — Agent layer: tool-calling over hybrid_search
------------------------------------------------------------
-answer.py (Week 3) is a single-shot pipeline: the caller must already
-know which ticker to search (`--ticker CRM`). That's exactly the gap
-Week 3's residual finding flagged — an unfiltered, un-scoped query like
-"how many employees does the company have" doesn't reliably surface the
-right chunk, even though the *retrieval* is fine once properly scoped.
-The fix isn't better retrieval, it's a layer that figures out *which*
-company(ies) a question is about before searching — that's what an
-agent with a callable search tool does, and a hardcoded pipeline can't.
-
-This file gives the LLM a `search_filings` tool (wrapping
-retrieval.hybrid_search) instead of pre-fetching context ourselves. The
-model decides what to search for, which ticker to restrict to (if any),
-and whether it needs to search again — e.g. calling the tool twice, once
-per company, to answer a comparison question across two of the five
-covered companies. This is real tool-calling via Ollama's OpenAI-style
-`tools` API (verified against qwen2.5:7b-instruct's actual wire format
-before writing this: `arguments` comes back as a parsed dict, and the
-follow-up tool-result message needs only `{"role": "tool", "content":
-...}` — no `tool_call_id` required, unlike OpenAI's API).
+Agent layer: gives the LLM a `search_filings` tool (wrapping
+retrieval.hybrid_search) instead of pre-fetching context ourselves, so
+the model decides what to search for, which ticker to restrict to (if
+any), and whether to search again -- e.g. calling the tool twice, once
+per company, for a cross-company comparison question. See
+docs/decisions/2026-08-14-agent-v0-tool-calling.md for why this exists
+and how tool-calling was verified against the real backend wire format.
 
 Usage:
     python agent.py "How many full-time employees does Apple have?"
@@ -66,12 +52,9 @@ CHUNKS_PER_SEARCH = 5
 # RATIO_DEFINITIONS (formulas.py) is the single source of truth for
 # which ratios exist and how each is computed; get_ratio()/
 # get_ratio_all_companies() (also formulas.py) dispatch through it
-# generically, replacing what used to be two separate dicts here
-# (RATIO_METRIC_FUNCTIONS for cross-company-capable ratios,
-# SINGLE_COMPANY_RATIO_FUNCTIONS for the rest) -- collapsed once that
-# split turned out to be pure duplication of information already in
-# formulas.py's own table (see PROJECT_CONTEXT.md's "ratio-formula
-# registration" section for the full reasoning). A ratio's
+# generically -- see
+# docs/decisions/2026-08-28-ratio-definitions-table-driven-registry.md
+# for why this replaced two separate hand-maintained dicts. A ratio's
 # `supports_cross_company` flag (in RATIO_DEFINITIONS) is what
 # compare_financial_metric's dispatch below relies on to fall through to
 # the same graceful "not supported" result any other unrecognized metric
@@ -80,9 +63,8 @@ CHUNKS_PER_SEARCH = 5
 #
 # Derived once here rather than inline below, so the system prompt and
 # both tool schemas stay accurate automatically as RATIO_DEFINITIONS
-# grows -- the whole point of the table (see PROJECT_CONTEXT.md's
-# "ratio-formula registration" section) is a new ratio needing no
-# prompt/schema text updated by hand.
+# grows -- the whole point of the table (see the decision file above) is
+# a new ratio needing no prompt/schema text updated by hand.
 _CROSS_COMPANY_RATIOS = sorted(name for name, d in RATIO_DEFINITIONS.items() if d.supports_cross_company)
 _SINGLE_COMPANY_ONLY_RATIOS = sorted(name for name, d in RATIO_DEFINITIONS.items() if not d.supports_cross_company)
 _PERCENT_RATIOS = sorted(name for name, d in RATIO_DEFINITIONS.items() if d.as_percent)
@@ -270,7 +252,7 @@ COMPARE_TOOL_SCHEMA = {
     },
 }
 
-# 2026-09-10 -- see docs/plans/2026-09-10-structured-claims-citation-verification.md.
+# See docs/decisions/2026-09-10-structured-claims-citation-verification.md.
 # Deliberately NOT in mcp_server.py's _TOOL_SCHEMAS: this is a final-answer
 # mechanism internal to agent.py's own tool-calling loop (the model's
 # structured "here is my answer" instead of free text), not something an
@@ -343,7 +325,7 @@ SUBMIT_TOOL_SCHEMA = {
     },
 }
 
-# 2026-09-11 -- see docs/plans/2026-09-11-calculate-tool-and-stress-questions.md.
+# See docs/decisions/2026-09-11-calculate-tool-and-stress-questions.md.
 # Deliberately NOT in mcp_server.py's _TOOL_SCHEMAS, same reasoning as
 # SUBMIT_TOOL_SCHEMA above: citation_index_a/citation_index_b are only
 # meaningful within one _run_agent_impl run's own all_results, not to a
@@ -455,21 +437,11 @@ def _resolve_search_args(
 
     The model's own `query` text is only trusted on a *retry* against a
     ticker already searched earlier in this conversation
-    (`searched_tickers`). The first search against each company always
-    uses the original question verbatim instead. Found by testing, not
-    assumed: the model's self-written first-pass queries were the direct
-    cause of two separate eval failures — a too-vague query ("Microsoft
-    ... Q4 2025") buried the correct chunk among annual-report decoys,
-    while a too-literal one (the exact calendar date) over-matched an
-    unrelated financial-statement table instead of the prose paragraph
-    that never repeats that date. Different companies phrase the same
-    fact differently in their filings, so no single query-phrasing
-    instruction generalized across both — but the user's own original
-    question, which already contains the metric name and the period in
-    their own words, retrieved the right chunk in every case tested. A
-    retry search (the model deciding its first attempt came up short)
-    still gets to use its own query, since that's a deliberate
-    refinement rather than a first guess."""
+    (`searched_tickers`) -- a deliberate refinement, not a first guess.
+    The first search against each company always uses the original
+    question verbatim instead, since the model's own first-pass queries
+    are unreliable and no single query-phrasing instruction generalizes
+    across companies. See docs/decisions/2026-08-14-agent-v0-tool-calling.md."""
     ticker = args.get("ticker")
     if ticker not in searched_tickers:
         return fallback_query, ticker
@@ -528,18 +500,12 @@ def _never_tagged_hint(ticker: str, metric: str) -> str | None:
 
 def _format_no_fact_message(args: dict) -> str:
     """Built as its own function (not inlined at the call site) so the Q4
-    hint below is unit-testable without a live Ollama round-trip. Found
-    live: a bare "not found, try search_filings" message left the model
-    unaware this was a structural reporting gap rather than a retrieval
-    miss, so it trusted noisy search results back and fabricated a wrong-
-    quarter number instead of refusing (nvda-rd-expense-q4fy26-refusal).
-
-    The never-tagged hint below is the same principle applied to a
-    different structural gap: asked for Palantir's inventory turnover,
-    the model got only as far as "I can't compute this ratio" without
-    ever saying WHY (no inventory line item at all, not just an
-    unavailable period), and filled the gap with an unrelated cost-of-
-    revenue figure instead (pltr-inventory-turnover-fy2025-refusal)."""
+    hint below is unit-testable without a live Ollama round-trip -- both
+    hints exist because a bare "not found" message leaves the model
+    unaware WHY the data is missing, causing it to trust noisy search
+    results and fabricate instead of refusing. See
+    docs/decisions/2026-08-18-q4-refusal-fix.md and
+    docs/decisions/2026-08-19-fixing-6-accumulated-eval-findings.md."""
     message = (
         f"(no structured data found for metric={args.get('metric')!r} "
         f"ticker={args.get('ticker')!r} {args.get('fiscal_period')!r} "
@@ -583,19 +549,20 @@ def _is_valid_int(value) -> bool:
     from numbers), so this gets that exclusion for free instead of
     writing `isinstance(x, int) and not isinstance(x, bool)` by hand --
     the exact shape of bug (isinstance(True, int) is True in Python) that
-    silently let fiscal_year=true through the old hand-rolled check
-    (2026-09-09 review). Shared by _rejects_invalid_fiscal_year and the
-    multi-year-average combo check below, both of which read
-    fiscal_year-shaped args outside of validate_tool_args's generic pass
-    (see call_get_financial_fact's skip_properties)."""
+    silently let fiscal_year=true through the old hand-rolled check. See
+    docs/decisions/2026-09-09-schema-driven-arg-validation.md. Shared by
+    _rejects_invalid_fiscal_year and the multi-year-average combo check
+    below, both of which read fiscal_year-shaped args outside of
+    validate_tool_args's generic pass (see call_get_financial_fact's
+    skip_properties)."""
     return _INT_TYPE_VALIDATOR.is_valid(value)
 
 
 def _rejects_invalid_fiscal_year(tool: str, args: dict) -> bool:
     """True (having already logged the rejection) if args["fiscal_year"]
     is present but not a valid int -- shared by call_get_financial_fact
-    and call_compare_financial_metric, which otherwise each hand-rolled
-    an identical check (found in code review, 2026-09-10). A malformed
+    and call_compare_financial_metric, which otherwise would each
+    hand-roll an identical check. A malformed
     fiscal_year doesn't crash any downstream lookup -- it just fails to
     match and returns None/{}, which used to get recorded as
     reason="no_data_for_ticker" via record_unmet_metric_request(),
@@ -639,13 +606,12 @@ def validate_tool_args(
 ) -> bool:
     """True (having already logged the rejection) if args fails schema's
     parameter validation -- the generic replacement for what used to be
-    a hand-rolled extra-key/type/enum check per tool, duplicated three
-    times and broken three separate times across three review dates
-    (most recently: a hand-rolled `isinstance(fiscal_year, int)` silently
-    accepting a JSON boolean). `schema` is one of *_TOOL_SCHEMA, doing
-    double duty as both what's advertised to the LLM and what's enforced
-    here -- `additionalProperties: false` on each schema's `parameters`
-    is what replaces the old `set(args) - _FACT_ARG_KEYS`-style checks.
+    a hand-rolled extra-key/type/enum check per tool. See
+    docs/decisions/2026-09-09-schema-driven-arg-validation.md. `schema`
+    is one of *_TOOL_SCHEMA, doing double duty as both what's advertised
+    to the LLM and what's enforced here -- `additionalProperties: false`
+    on each schema's `parameters` is what replaces the old
+    `set(args) - _FACT_ARG_KEYS`-style checks.
 
     Two carve-outs exist because a handful of properties have runtime
     semantics a flat JSON Schema check can't safely express without
@@ -678,14 +644,10 @@ def validate_tool_args(
     valid as omitting it (nothing in this codebase distinguishes the two
     afterwards; every reader uses `args.get(...)`, which returns None
     either way) and just as invalid as omitting it for a required one.
-    Found in code review: this diff's own period_end_date fix (added
-    "null" to that one property's declared type after live testing showed
-    it) was the first instance of the general problem, not a one-off --
-    every other optional property (`ticker`, `fiscal_period`,
-    `yoy_growth`, ...) had the exact same gap, just not yet observed live.
-    Handling it once, generically, here closes the whole class instead of
-    enumerating `["string", "null"]" per property as each one is
-    separately noticed. An unrecognized EXTRA key is deliberately NOT
+    Handled once, generically, here rather than enumerating
+    `["string", "null"]` per property as each one would otherwise need
+    it noticed separately (see the decision file above). An unrecognized
+    EXTRA key is deliberately NOT
     stripped even if null-valued -- `additionalProperties: false` must
     still catch e.g. `{"segment": None}`, since the key itself is the
     problem, not its value."""
@@ -702,9 +664,8 @@ def validate_tool_args(
     # dict, not set -- a dict already preserves declaration order (used
     # below for property_order's tie-break) and `in` on a dict is an O(1)
     # key check same as a set, so routing through set() first would only
-    # lose that ordering for no benefit (found in code review: an earlier
-    # version did exactly that, making priority()'s tie-break silently
-    # dependent on this process's hash seed instead of schema order).
+    # lose that ordering for no benefit (a set's iteration order is this
+    # process's hash seed, not schema order).
     declared_properties = params.get("properties", {})
     instance = {k: v for k, v in args.items() if v is not None or k not in declared_properties}
     validator = jsonschema.Draft202012Validator(params)
@@ -731,40 +692,22 @@ _FISCAL_YEAR_PROPS = frozenset({"fiscal_year", "start_fiscal_year", "end_fiscal_
 
 def call_get_financial_fact(args: dict, question: str | None = None) -> dict | None:
     """This is a real system boundary, not just an internal call — the
-    model doesn't reliably respect the schema. Found live: asked for
-    "effective tax rate" (not a supported metric, not in the schema's
-    enum) and called this with metric omitted entirely rather than
-    picking a valid enum value or skipping the tool, which crashed the
-    whole run with an unhandled ValueError from xbrl_facts._tag_for
-    before this guard existed. Same class of issue as
-    _resolve_search_args's docstring above (the model doesn't always
-    include every schema-declared argument) — validated generically by
-    validate_tool_args at the boundary, rather than trusting the schema
-    was followed (required/type/enum/no-extra-keys); this function only
-    layers the business rules a flat schema check can't express.
+    model doesn't reliably respect the schema (e.g. it has called this
+    with `metric` omitted entirely, or invented an unsupported `segment`
+    filter). Validated generically by validate_tool_args at the boundary
+    rather than trusting the schema was followed; this function only
+    layers the business rules a flat schema check can't express. See
+    docs/decisions/2026-08-19-fixing-6-accumulated-eval-findings.md and
+    docs/decisions/2026-09-09-schema-driven-arg-validation.md.
 
     `yoy_growth=True` combined with a margin metric is rejected the same
     way: get_yoy_growth() only supports the raw tagged metrics (see its
     own docstring for why), so that combination isn't just unsupported,
     it's meaningless -- caught here rather than passed through.
 
-    An unrecognized EXTRA key is a different, newer-found shape of the
-    same "don't trust the schema" lesson: asked to compare NVIDIA's
-    Compute & Networking segment against its Graphics segment, the model
-    invented a `segment` filter this tool has never supported. The old
-    code only ever read known keys (`args.get(...)`), so the invented
-    key was silently dropped -- both "segment" calls quietly returned
-    the SAME consolidated total instead of erroring, and the model
-    concluded the two segments had equal revenue. validate_tool_args's
-    `additionalProperties: false` check rejects any unrecognized key
-    outright now (rather than silently ignoring it), turning that into a
-    clean "not supported, try search_filings" fallback.
-
     `start_fiscal_year`/`end_fiscal_year` (both required together, and
     rejected if combined with yoy_growth) dispatch to
-    get_multi_year_average() instead of a single-period lookup -- built
-    after the model reached for self-computation on its own for a
-    3-year-average question with no deterministic path (see that
+    get_multi_year_average() instead of a single-period lookup (see that
     function's own docstring). Supported for every RATIO_DEFINITIONS
     metric -- formulas._get_annual_value() dispatches any of them
     generically (see its own docstring).
@@ -773,21 +716,18 @@ def call_get_financial_fact(args: dict, question: str | None = None) -> dict | N
     mcp_server.py's direct callers don't) is passed through to
     record_unmet_metric_request() purely for observability, see below.
 
-    Week 7 guardrails (Langfuse): records an unmet-metric-request event
-    when `metric` isn't recognized at all (reason="unknown_metric" --
-    the "should we add a formula for this" signal) or when it's a
-    recognized metric/ratio but the underlying lookup -- get_metric(),
-    get_ratio(), get_yoy_growth(), or get_multi_year_average(), all four
-    genuine-data-lookup paths below -- found no data for this
-    ticker/period (reason="no_data_for_ticker" -- the same shape of gap
-    already found for inventory_turnover/AAPL/MSFT). Deliberately NOT
-    recorded for boundary rejections above (malformed/invented args,
-    invalid yoy_growth/multi-year-average combinations) -- those are a
-    schema-violation problem, not a "this formula doesn't exist yet"
-    problem, and would just be noise on the signal. Found in code
-    review: the yoy_growth/multi-year-average paths were initially
-    missed, only the plain get_metric()/get_ratio() path recorded this
-    at first."""
+    Records an unmet-metric-request event (see
+    docs/decisions/2026-09-04-langfuse-tracing.md) when `metric` isn't
+    recognized at all (reason="unknown_metric" -- the "should we add a
+    formula for this" signal) or when it's a recognized metric/ratio but
+    the underlying lookup -- get_metric(), get_ratio(), get_yoy_growth(),
+    or get_multi_year_average(), all four genuine-data-lookup paths
+    below -- found no data for this ticker/period
+    (reason="no_data_for_ticker"). Deliberately NOT recorded for boundary
+    rejections above (malformed/invented args, invalid yoy_growth/
+    multi-year-average combinations) -- those are a schema-violation
+    problem, not a "this formula doesn't exist yet" problem, and would
+    just be noise on the signal."""
     if validate_tool_args("get_financial_fact", FACT_TOOL_SCHEMA, args, skip_properties=_FISCAL_YEAR_PROPS):
         return None
     ticker = args["ticker"]
@@ -806,8 +746,7 @@ def call_get_financial_fact(args: dict, question: str | None = None) -> dict | N
     end_fiscal_year = args.get("end_fiscal_year")
     if start_fiscal_year is not None or end_fiscal_year is not None:
         # Deliberately does not check plain fiscal_year here -- this
-        # branch never reads it, so a value here is irrelevant (found in
-        # round-2 review, 2026-09-09).
+        # branch never reads it, so a value here is irrelevant.
         if args.get("yoy_growth") or not _is_valid_int(start_fiscal_year) or not _is_valid_int(end_fiscal_year):
             log_event(
                 "tool_call_rejected", tool="get_financial_fact", reason="invalid_multi_year_average_combo", args=args
@@ -817,12 +756,11 @@ def call_get_financial_fact(args: dict, question: str | None = None) -> dict | N
         if result is None:
             record_unmet_metric_request(ticker, metric, reason="no_data_for_ticker", question=question)
         return result
-    # Checked AFTER the multi-year-average branch above (found in round-2
-    # review, 2026-09-09): that branch never reads fiscal_year at all, so
-    # checking it any earlier would wrongly reject a valid multi-year-
-    # average request over a stray, irrelevant fiscal_year value -- this
-    # must only gate the two branches below, which are the only ones
-    # that actually use it.
+    # Checked AFTER the multi-year-average branch above: that branch
+    # never reads fiscal_year at all, so checking it any earlier would
+    # wrongly reject a valid multi-year-average request over a stray,
+    # irrelevant fiscal_year value -- this must only gate the two
+    # branches below, which are the only ones that actually use it.
     if _rejects_invalid_fiscal_year("get_financial_fact", args):
         return None
     fiscal_year = args.get("fiscal_year")
@@ -893,8 +831,8 @@ def call_compare_financial_metric(args: dict, question: str | None = None) -> di
     RATIO_DEFINITIONS' own comment for why there's no cross-company
     version of those five yet.
 
-    Same Week 7 Langfuse unmet-metric-request tracing as
-    call_get_financial_fact -- see that function's docstring. The
+    Same unmet-metric-request tracing as call_get_financial_fact -- see
+    that function's docstring. The
     `supports_cross_company=False` case above also lands in the generic
     `reason="no_data_for_ticker"` bucket rather than a third reason
     value: a human looking at the metric name in the Langfuse dashboard
@@ -920,13 +858,14 @@ def call_compare_financial_metric(args: dict, question: str | None = None) -> di
         result = get_ratio_all_companies(anchor_ticker, metric, fiscal_year, fiscal_period, period_end_date)
     else:
         result = get_metric_all_companies(anchor_ticker, metric, fiscal_year, fiscal_period, period_end_date)
-    # anchor_ticker not in result (not just `not result`) matters since
-    # 2026-09-07: instant metrics resolve each company independently
-    # with no requirement that the requested anchor itself has data
-    # (e.g. PLTR doesn't tag inventory but AAPL/MSFT do) -- found in
-    # code review, a non-empty-but-anchor-missing result used to record
-    # no signal at all that the specific company asked about has no
-    # data, even though everyone else's data is genuinely returned.
+    # anchor_ticker not in result (not just `not result`) matters:
+    # instant metrics resolve each company independently with no
+    # requirement that the requested anchor itself has data (e.g. PLTR
+    # doesn't tag inventory but AAPL/MSFT do) -- a non-empty-but-anchor-
+    # missing result must still record that the specific company asked
+    # about has no data, even though everyone else's data is genuinely
+    # returned. See
+    # docs/decisions/2026-09-07-fix-get-metric-all-companies-instant-metrics.md.
     if not result or anchor_ticker not in result:
         record_unmet_metric_request(anchor_ticker, metric, reason="no_data_for_ticker", question=question)
     return result
@@ -938,10 +877,10 @@ def _comparison_as_results(data: dict[str, dict], metric: str) -> list[dict]:
     shape _fact_as_result uses for a single company. A frames entry
     (duration metrics) doesn't carry a "form" field — "XBRL frame data"
     stands in for it rather than guessing 10-K vs. 10-Q. Instant metrics
-    (total_assets etc., 2026-09-07 redesign) resolve independently per
-    company via get_metric(), which DOES carry a real form — used when
-    present via fact.get(...) instead of always hardcoding the frame
-    fallback label."""
+    resolve independently per company via get_metric(), which DOES carry
+    a real form — used when present via fact.get(...) instead of always
+    hardcoding the frame fallback label. See
+    docs/decisions/2026-09-07-fix-get-metric-all-companies-instant-metrics.md."""
     results = []
     for ticker, fact in sorted(data.items()):
         results.append(
@@ -961,9 +900,9 @@ def _comparison_as_results(data: dict[str, dict], metric: str) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
-# calculate tool (2026-09-11) -- see CALCULATE_TOOL_SCHEMA's own comment
-# and docs/plans/2026-09-11-calculate-tool-and-stress-questions.md for the
-# full design reasoning. Two independent guarantees: operand GROUNDING
+# calculate tool -- see CALCULATE_TOOL_SCHEMA's own comment and
+# docs/decisions/2026-09-11-calculate-tool-and-stress-questions.md for
+# the full design reasoning. Two independent guarantees: operand GROUNDING
 # (_ground_operand, reusing _number_candidates -- the same primitive
 # _verify_one_claim already trusts for a submit_answer claim) and
 # arithmetic CORRECTNESS (call_calculate runs the operation in real
@@ -982,24 +921,19 @@ def _ground_operand(value: float, unit: str, citation_index: int, all_results: l
     in this file.
 
     On failure, distinguishes three real cases rather than returning one
-    generic message for all of them -- found live (2026-09-13 baseline,
-    aapl-revenue-growth-q3fy2026): a value labeled `unit_a: "billion"`
-    that was actually raw got the message "operand_a=109417000000 was
-    not found -- double check the value and citation index", which
-    blames the value and citation index, BOTH of which were correct; the
-    model's retry changed neither and failed identically twice.
+    generic message for all of them -- a message that blames the wrong
+    field sends the model's retry nowhere useful (see
+    docs/reviews/2026-09-14-tool-turn-waste.md for the live case that
+    motivated computing which correction actually applies, instead of a
+    single generic message):
     - MISLABELED UNIT (correctable): the same bare value grounds under a
       DIFFERENT unit than the one claimed, in the SAME cited result --
       says so explicitly, naming the unit that actually matches, since
-      that is the one field the old message never mentioned.
+      that is the one field a generic message never mentions.
     - WRONG CITATION INDEX (correctable): the value grounds under its
       OWN claimed unit in a DIFFERENT already-retrieved result -- says
       so explicitly and names which result, rather than leaving this
-      indistinguishable from the terminal case below (an earlier version
-      of this function's message claimed "a different citation index
-      will not help" without ever having checked any other index --
-      found in review, before this was live-verified against a case that
-      would have made that claim false).
+      indistinguishable from the terminal case below.
     - GENUINELY UNGROUNDABLE (terminal, not correctable): the value
       grounds under NO unit in the cited result, and does not appear
       under its claimed unit in any OTHER retrieved result either --
@@ -1137,8 +1071,8 @@ def _format_computed_number(value: float) -> str:
     (numeric_utils.py) has no exponent support at all. A value in that
     range could never be re-extracted from the very citation text this
     module generates, silently defeating the whole point of a citable
-    computed result -- found in code review, 2026-09-11, confirmed live
-    (test_calculation_as_result_text_avoids_scientific_notation_for_large_values).
+    computed result -- guarded by
+    test_calculation_as_result_text_avoids_scientific_notation_for_large_values.
     `.6f` gives 6 decimal places of precision (matching this project's
     finest existing rounding, RatioDefinition(as_percent=True)'s 1 decimal
     place, with headroom); trailing zeros and a bare trailing "." are
@@ -1207,13 +1141,9 @@ _CITATION_WINDOW_CHARS = 150
 # widening it would break that per-index logic, not just the pattern.
 # This one exists solely for verify_claims()'s coverage check, which
 # only needs to strip citation-marker-SHAPED text before scanning for
-# numbers -- it never reads the indices out. Real false positive found
-# live 2026-09-11 (41-question baseline re-run): a multi-source bracket
-# like "[1, 3, 5]" survived _CITATION_MARKER.sub() untouched, so its bare
-# digits 1/3/5 were themselves extracted as spurious uncovered-number
-# claims and refused an otherwise fully-grounded answer -- the same
-# marker-format gap BACKLOG.md already tracked for the prose fallback
-# path, turning out to also hit this newer coverage check.
+# numbers -- it never reads the indices out (a bracket's own bare digits
+# would otherwise be extracted as spurious uncovered-number claims). See
+# docs/decisions/2026-09-10-structured-claims-citation-verification.md.
 _ANY_CITATION_BRACKET = re.compile(r"\[\s*\d+(?:\s*,\s*\d+)*\s*\]")
 
 # Text that looks number-shaped but isn't a claim to verify -- stripped
@@ -1223,32 +1153,25 @@ _ANY_CITATION_BRACKET = re.compile(r"\[\s*\d+(?:\s*,\s*\d+)*\s*\]")
 # answer to match, so spurious extras there are harmless noise, not
 # wrong verdicts) and stripping this there could hide a genuine
 # date/form-shaped ground-truth value in some future question type.
-# Three patterns, all found live, not anticipated up front:
-#   - Dates ("June 27, 2026" -> 27, 2026) were the single biggest source
-#     of noise on a real multi-sentence answer (12 warnings for one
-#     answer, only 1 of them the actual misgrounded value).
+# Four patterns, each found live rather than anticipated up front -- see
+# docs/decisions/2026-08-17-citation-verification-pass.md (dates, bare
+# years, 10-K/10-Q) and docs/decisions/2026-09-10-structured-claims-citation-verification.md
+# (Note N, N-year/N-day) for the corpus evidence behind each:
+#   - Dates ("June 27, 2026" -> 27, 2026), the single biggest noise
+#     source on a real multi-sentence answer.
 #   - Bare year-like numbers ("fiscal Q3 2025" -> the 2025 survives the
 #     date pattern above since it's not glued to a month name) -- a
 #     standalone 1900-2099 number next to a citation is virtually always
 #     a period label, not a numeric claim.
 #   - "10-K"/"10-Q" (the only two form types this project ingests, see
-#     edgar_ingest.py's FORM_TYPES) were producing a "claims 10.0 (raw)"
-#     warning on the majority of a 21-question eval run's answers --
-#     the model routinely writes "the 10-Q filing [1]" in its own prose,
-#     and "10" isn't glued to a preceding letter (there's a space before
-#     it), so the digit-glued-to-letter fix in numeric_utils.py doesn't
-#     catch it.
+#     edgar_ingest.py's FORM_TYPES) -- "10" isn't glued to a preceding
+#     letter (there's a space before it), so the digit-glued-to-letter
+#     fix in numeric_utils.py doesn't catch it.
 #   - "Note 1"/"Note 12" (a footnote/financial-statement-note reference)
 #     and "3-year"/"5-day" (an ordinal/count phrase, often echoing the
 #     question's own wording, e.g. "3-year average operating margin") --
-#     both added 2026-09-10 (see
-#     docs/plans/2026-09-10-structured-claims-citation-verification.md),
-#     found live verifying the structured-claims coverage check inherits
-#     this same prose-noise problem: a bare `1` from "Note 1" or `3` from
-#     "3-year" sitting near a real citation gets treated as its own
-#     spurious claim. Confirmed live: the 41-question baseline's
-#     `aapl-3yr-avg-operating-margin-fy2023-fy2025` was wrongly refused
-#     this exact way (BACKLOG.md).
+#     a bare `1` or `3` from either shape sitting near a real citation
+#     would otherwise be treated as its own spurious claim.
 _NON_CLAIM_PATTERN = re.compile(
     r"\b(?:January|February|March|April|May|June|July|August|September|October|November|December)"
     r"\s+\d{1,2},?\s+\d{4}\b|\b\d{4}-\d{2}-\d{2}\b|\b(?:19|20)\d{2}\b|\b10-[KQ]\b"
@@ -1258,53 +1181,48 @@ _NON_CLAIM_PATTERN = re.compile(
 
 
 # ---------------------------------------------------------------------------
-# Structured-claims quote grounding (2026-09-10) -- verifies a
-# submit_answer claim's `quote` genuinely appears in its cited source
-# chunk, allowing for reformatting/paraphrase but not fabrication. See
-# docs/plans/2026-09-10-structured-claims-citation-verification.md for
-# the full design reasoning behind every choice below.
+# Structured-claims quote grounding -- verifies a submit_answer claim's
+# `quote` genuinely appears in its cited source chunk, allowing for
+# reformatting/paraphrase but not fabrication. See
+# docs/decisions/2026-09-10-structured-claims-citation-verification.md
+# for the full design reasoning behind every choice below.
 # ---------------------------------------------------------------------------
 _QUOTE_MIN_CHARS = 15  # a 2-character quote like "$5" would match almost any source trivially
-# Moved to numeric_utils.QUOTE_COVERAGE_THRESHOLD (2026-09-13), alongside
+# Lives in numeric_utils.QUOTE_COVERAGE_THRESHOLD, alongside
 # text_coverage(), so table_grounding.py's region-scoped check can share
 # the identical threshold. Kept as an alias, not a second constant, since
-# every existing call site in this module refers to it by this name.
+# every existing call site in this module refers to it by this name. See
+# docs/decisions/2026-09-13-table-grounding-region-scoped-matching.md.
 _QUOTE_COVERAGE_THRESHOLD = QUOTE_COVERAGE_THRESHOLD
 _QUOTE_ANCHOR_CHARS = 30  # a real quote's whole span usually appears as one long contiguous match
 # A bare-number quote (no surrounding prose -- e.g. quoting an XBRL fact's
 # raw value directly, "391035000000") needs a different length bar than
 # prose: DIGIT count, not character count, is what makes a number
-# specific enough to trust. Found live (2026-09-10, running the newly-
-# wired agent loop end to end): the model quoted just an XBRL fact's bare
-# number with no surrounding "revenue = ... USD" context, and 12
-# normalized characters is under _QUOTE_MIN_CHARS (15), so a completely
-# correct, unambiguous quote was wrongly rejected as "too short to
-# verify" -- forcing an unnecessary retry/refusal on an otherwise-correct
-# answer. A 6+ digit number is astronomically unlikely to match by
-# coincidence even though it's short as text.
+# specific enough to trust -- a 12-character bare number is under
+# _QUOTE_MIN_CHARS (15) despite being an unambiguous, correct quote,
+# and a 6+ digit number is astronomically unlikely to match by
+# coincidence even though it's short as text. See
+# docs/decisions/2026-09-10-structured-claims-citation-verification.md.
 _BARE_NUMBER_MIN_DIGITS = 6
 
 
-# Moved to numeric_utils.normalize_for_match (2026-09-12) so
-# table_grounding.py can share the exact same implementation without a
-# circular import (table_grounding is imported BY agent.py, so it can't
-# import back from agent.py -- the same reason numeric_utils.py itself
-# was split out of eval_harness.py). Kept as an alias, not re-exported
-# under a new name, since every existing call site and test in this
-# module refers to it as `_normalize_for_match`. See
-# numeric_utils.normalize_for_match's own docstring for the corrected
-# NFKC-dash-folding claim this one used to make incorrectly.
+# Lives in numeric_utils.normalize_for_match so table_grounding.py can
+# share the exact same implementation without a circular import
+# (table_grounding is imported BY agent.py, so it can't import back from
+# agent.py). Kept as an alias, not re-exported under a new name, since
+# every existing call site and test in this module refers to it as
+# `_normalize_for_match`. See
+# docs/decisions/2026-09-12-structure-aware-table-quote-grounding.md.
 _normalize_for_match = normalize_for_match
 
 
 def _quote_is_long_enough(quote_norm: str) -> bool:
     """Shared length gate for a normalized quote, used by both
-    _quote_matches() and _verify_one_claim()'s own pre-check -- pulled
-    out as its own function after a 2026-09-10 code review found the two
-    call sites had drifted: _verify_one_claim() still ran a plain
-    len(quote_norm) < _QUOTE_MIN_CHARS check of its own, missing the
-    digit-count exception below, so it silently reproduced the exact
-    bare-XBRL-number false positive that exception exists to fix. See
+    _quote_matches() and _verify_one_claim()'s own pre-check -- both
+    call sites must share this exactly, not each run their own plain
+    len(quote_norm) < _QUOTE_MIN_CHARS check, or one could silently miss
+    the digit-count exception below and reproduce the exact bare-XBRL-
+    number false positive that exception exists to fix. See
     _BARE_NUMBER_MIN_DIGITS's own comment for why a short-as-text bare
     number can still be long/specific enough to trust."""
     digit_count = sum(ch.isdigit() for ch in quote_norm)
@@ -1351,14 +1269,16 @@ def _quote_matches(quote: str, source: str) -> bool:
     Length gate accepts EITHER _QUOTE_MIN_CHARS of prose OR
     _BARE_NUMBER_MIN_DIGITS of digits -- see that constant's own comment
     for why a short-as-text bare number can still be long/specific
-    enough to trust (found live: a bare XBRL value like "391035000000"
-    is 12 characters, under 15, but is exactly the kind of quote this
-    exists to accept, not reject).
+    enough to trust (e.g. a bare XBRL value like "391035000000" is 12
+    characters, under 15, but is exactly the kind of quote this exists
+    to accept, not reject).
 
     The actual coverage/anchor computation is numeric_utils.text_coverage
-    (extracted 2026-09-13 so table_grounding.py can share the identical
-    logic against a narrower region, without a circular import back to
-    this module) -- this function is now just that primitive plus the
+    (lives there so table_grounding.py can share the identical logic
+    against a narrower region, without a circular import back to this
+    module -- see
+    docs/decisions/2026-09-13-table-grounding-region-scoped-matching.md)
+    -- this function is now just that primitive plus the
     length gate and this module's own anchor-floor threshold."""
     quote_norm = _normalize_for_match(quote)
     if not _quote_is_long_enough(quote_norm):
@@ -1381,20 +1301,14 @@ def _number_candidates(text: str, *, unit_source: str | None = None) -> list[tup
     ("Remaining performance obligation consisted of the following (in
     billions):") and leave the actual cell values bare ("$72.4"), so a
     per-cell extract_numbers() reads $72.4 as 72.4 raw, not 72.4
-    billion. Found live: this produced a false "claims 72.4 (billion)
-    but that value doesn't appear in the cited source" warning on
-    crm-rpo-fy26 -- a question that PASSED with the exact correct
-    answer, not one of the intentionally-hard formula-gap questions, so
-    this false positive would have undermined trust in the checker for
-    exactly the simple, correctly-answered questions it should be most
-    reliable on. This only ADDS candidate interpretations (a raw number
-    can still also match as raw) -- it never removes a way for a
-    genuine mismatch to be caught.
+    billion -- a real, correctly-answered question was once wrongly
+    refused this way (see
+    docs/decisions/2026-09-10-structured-claims-citation-verification.md).
+    This only ADDS candidate interpretations (a raw number can still
+    also match as raw) -- it never removes a way for a genuine mismatch
+    to be caught.
 
-    `unit_source` (2026-09-10, originally named _source_number_candidates
-    with no such parameter -- see
-    docs/plans/2026-09-10-structured-claims-citation-verification.md) is
-    what lets the structured-claims verifier check a claim's short
+    `unit_source` is what lets the structured-claims verifier check a claim's short
     `quote` (which usually won't itself restate a caption-only unit)
     against its cited chunk's full text as the place the caption lives,
     without requiring the model to have copied the caption into the
@@ -1454,24 +1368,20 @@ def _iter_citation_claims(answer_text: str, all_results: list[dict]):
 # UNLESS what comes after that whitespace is a citation marker
 # ("...total. [1]" is one sentence, not two) or a lowercase letter (an
 # abbreviation like "U.S." continuing mid-clause, not a real sentence
-# start) -- found in code review: without the lowercase exclusion, "...
-# primarily from U.S. sales [1]" registered a false break, making a
-# correctly-cited claim look unreachable from its own marker and
-# wrongly refusing an otherwise-correct answer.
+# start -- without this exclusion, "... primarily from U.S. sales [1]"
+# registers a false break, wrongly refusing an otherwise-correct answer).
 #
 # Both lookaheads deliberately sit INSIDE the pattern (matching only the
 # punctuation character itself, zero-width beyond it) rather than
-# consuming "\s+" before checking what follows -- found in code review:
-# an earlier version (`r"[.!?]\s+(?![\[a-z])"`) let the greedy `\s+`
-# backtrack to a SHORTER whitespace match whenever the maximal one
-# failed the lookahead, so "billion.  [1]" (two spaces) still registered
-# a false break by matching only the first space and finding the SECOND
-# space didn't look like "[" or a letter either -- the exact same false-
-# refusal bug the lookahead was built to prevent, just triggered by
-# extra whitespace instead of an abbreviation. `(?!\s*[\[a-z])` checks
-# ALL possible amounts of trailing whitespace at once (a negative
-# lookahead has no successful match to backtrack away from), so it's
-# immune to this regardless of how much whitespace follows.
+# consuming "\s+" before checking what follows -- a version that
+# consumes "\s+" first (`r"[.!?]\s+(?![\[a-z])"`) lets the greedy `\s+`
+# backtrack to a SHORTER whitespace match whenever the maximal one fails
+# the lookahead, so "billion.  [1]" (two spaces) still registers a false
+# break via the first space alone. `(?!\s*[\[a-z])` checks ALL possible
+# amounts of trailing whitespace at once (a negative lookahead has no
+# successful match to backtrack away from), so it's immune to this
+# regardless of how much whitespace follows. See
+# docs/decisions/2026-09-09-citation-gap-frame-ordering-retrieval-verify.md.
 #
 # Residual, deliberately-not-fixed gaps this still doesn't catch: a
 # marker with NO whitespace after the preceding period at all
@@ -1490,14 +1400,13 @@ def _iter_uncited_claims(answer_text: str):
     has NO citation marker attached to it -- the counterpart gap
     _iter_citation_claims() above can't see, since that walk is driven
     entirely by _CITATION_MARKER matches: a claim with no marker nearby
-    never enters that loop at all. Found live (PROJECT_CONTEXT.md's
-    2026-08-25 "Formula registry extended" section, msft-cash-to-assets-
-    fy2025): the model self-computed a ratio from two separately-
-    retrieved raw values and stated the result with no citation marker
-    nearby, in 2 of 4 manual runs -- an answer that sailed through
-    unrefused despite violating the same "every numeric claim must trace
-    to a source" principle _iter_citation_claims() enforces for the
-    cited case.
+    never enters that loop at all. See
+    docs/decisions/2026-09-09-citation-gap-frame-ordering-retrieval-verify.md
+    for the real, observed case (msft-cash-to-assets-fy2025) this closes
+    -- a self-computed value stated with no citation marker nearby sailed
+    through unrefused despite violating the same "every numeric claim
+    must trace to a source" principle _iter_citation_claims() enforces
+    for the cited case.
 
     Current contract: each marker attaches to EVERY REACHABLE claim on
     ONE side of it -- all reachable claims immediately before it (the
@@ -1524,9 +1433,9 @@ def _iter_uncited_claims(answer_text: str):
     4.0% of total assets" has one claim on each side of [1], and the
     4.0% (an ungrounded, self-computed figure, not a second grounded
     fact) must stay unattached -- see
-    docs/plans/2026-09-09-citation-gap-frame-ordering-retrieval-verify.md
-    and its matching docs/reviews/ file for the full history of designs
-    tried and rejected against this codebase's own existing test cases.
+    docs/decisions/2026-09-09-citation-gap-frame-ordering-retrieval-verify.md
+    for the full history of designs tried and rejected against this
+    codebase's own existing test cases.
 
     Two implementation notes:
     - Operates on the UNTOUCHED original answer_text throughout, never a
@@ -1592,7 +1501,7 @@ def collect_citation_warnings(answer_text: str, all_results: list[dict]) -> list
     verify_citations() is now a one-line `.message` projection of this.
 
     Added for the citation-gate FP/FN measurement work (see
-    docs/plans/2026-09-10-citation-gate-measurement-instrumentation.md):
+    docs/decisions/2026-09-10-citation-gate-measurement-instrumentation.md):
     that work needs to break false positives down by which of the two
     checks fired, and inferring that from a warning string's wording
     would be exactly the kind of fragility the rest of this file's
@@ -1604,10 +1513,10 @@ def collect_citation_warnings(answer_text: str, all_results: list[dict]) -> list
     sent back to the model, so changing the wording would change model
     behavior and perturb the very population the measurement work is
     trying to observe."""
-    # Two dedup sets, deliberately not one -- found in code review, in
-    # two rounds: a single value+unit-only key (fixing the cross-loop
-    # duplicate below) ALSO collapsed two genuinely different,
-    # independently-broken citations that happen to share a value --
+    # Two dedup sets, deliberately not one: a single value+unit-only key
+    # (fixing the cross-loop duplicate below) ALSO collapses two
+    # genuinely different, independently-broken citations that happen to
+    # share a value --
     # "$99 million [1]. ... $99 million [2]." with neither source
     # containing 99 -- into one warning, silently dropping that [2] is
     # ALSO broken. `seen_citation_keys` keeps citation-claims' own dedup
@@ -1673,16 +1582,13 @@ def verify_citations(answer_text: str, all_results: list[dict]) -> list[str]:
     numeric grading already does (now in numeric_utils.py), applied to
     the cited result's text instead of a ground-truth expected value.
 
-    Motivated by a real, observed case (see PROJECT_CONTEXT.md,
-    aapl-revenue-growth-q3fy2026): asked for a computed ratio (YoY
-    revenue growth) with no supporting tool, the model retrieved two raw
-    dollar figures via get_financial_fact, self-computed a percentage
-    from them in its own reasoning text (violating rule 3, "don't
-    combine or infer numbers"), and cited both dollar-figure sources for
-    a percentage that appears in NEITHER of them. Built to catch exactly
-    that shape of problem — confirmed live against the real question,
-    which is also where the date-noise and duplicate-warning issues
-    below were found and fixed, not assumed.
+    Motivated by a real, observed case (see
+    docs/decisions/2026-08-17-citation-verification-pass.md,
+    aapl-revenue-growth-q3fy2026): asked for a computed ratio with no
+    supporting tool, the model self-computed a percentage from two raw
+    dollar figures (violating rule 3, "don't combine or infer numbers")
+    and cited both dollar-figure sources for a percentage that appears
+    in NEITHER of them. Built to catch exactly that shape of problem.
 
     Also flags a numeric claim with NO citation marker anywhere near it
     at all -- see _iter_uncited_claims()'s own docstring for the second
@@ -1705,14 +1611,12 @@ def value_is_citation_verified(value: float, unit: str, answer_text: str, all_re
     Built for eval_harness.py's grade_numeric()/grade_comparison(): they
     only check whether the expected value appears somewhere in the
     answer text, which can't tell a correctly-cited answer from one that
-    states the right number but attaches it to the wrong source. Found
-    live, not hypothetical: aapl-employees-fy25 used to "pass" (166,000
-    appears in the answer) even though its citation actually points at a
-    chunk about debt notes and share repurchases, not employee count —
-    the wrong-chunk citation is exactly the kind of silent misgrounding
-    verify_citations() already catches for OTHER claims; this is what
-    wires that same check into what decides pass/fail for the specific
-    value a question is graded on.
+    states the right number but attaches it to the wrong source -- the
+    wrong-chunk-citation case is exactly the kind of silent misgrounding
+    verify_citations() already catches for OTHER claims; this wires that
+    same check into what decides pass/fail for the specific value a
+    question is graded on. See
+    docs/decisions/2026-08-18-citation-verification-wired-into-eval-gate.md.
 
     Returns True if `value` is never attached to a citation at all
     (nothing to contradict a plain-text match), or if AT LEAST ONE of
@@ -1739,33 +1643,26 @@ def _quote_grounded_in_source(value: float, unit: str, quote: str, source_text: 
     If the claimed value can be located in a parsed table cell in
     `source_text`, that structural check is AUTHORITATIVE: it decides
     the outcome, with no fallback to _quote_matches() even if the
-    structural check fails. This was a deliberate 2026-09-12 decision,
-    not a default -- _quote_matches's flat coverage/anchor-floor check
-    was found to accept several real misattributions on this exact
-    table shape whenever a segment label happened to be long enough
-    (wrong fiscal period, a 10x-inflated value, a nine-month figure
-    misquoted as a quarterly one -- see
-    docs/plans/2026-09-12-structure-aware-table-quote-grounding.md for
-    the measured evidence), so letting it rescue a structural rejection
-    would silently reopen exactly the holes this change closes.
+    structural check fails -- a deliberate design choice, not a default.
+    _quote_matches's flat coverage/anchor-floor check accepts several
+    real misattributions on this exact table shape whenever a segment
+    label happens to be long enough (wrong fiscal period, a 10x-inflated
+    value, a nine-month figure misquoted as a quarterly one), so letting
+    it rescue a structural rejection would silently reopen exactly the
+    holes this module closes. See
+    docs/decisions/2026-09-12-structure-aware-table-quote-grounding.md.
 
-    `quote_is_grounded()` was redesigned 2026-09-13 (see
-    docs/plans/2026-09-13-table-grounding-region-scoped-matching.md)
-    after a live 47-question eval baseline found two real regressions in
-    the original word-vocabulary design: a genuinely faithful, byte-for-
-    byte quote of a whole table row with multiple independently-claimed
-    values (CRM's remaining-performance-obligation row, Current/
-    Noncurrent/Total in one row; NVIDIA's segment table, a multi-line
-    quote spanning caption/header rows plus one data row) was wrongly
-    refused, because the old design's allowed vocabulary excluded
-    sibling-column content entirely. The redesign matches against a
-    tightly-scoped per-cell region (the table's own leading caption/
-    header rows, plus the cell's own governing group label, plus the
-    cell's own data row -- see table_grounding.GroundedCell) instead of
-    a fixed word list, which fixes both real cases while still rejecting
-    the row-splice/cross-segment-steal attacks this module exists to
-    block (verified directly, not assumed -- see
-    tests/test_table_grounding.py).
+    `quote_is_grounded()` matches against a tightly-scoped per-cell
+    region (the table's own leading caption/header rows, plus the cell's
+    own governing group label, plus the cell's own data row -- see
+    table_grounding.GroundedCell) rather than a fixed word-vocabulary
+    list, so a genuinely faithful multi-value row quote (e.g. a table row
+    stating Current/Noncurrent/Total together) isn't wrongly refused for
+    citing sibling-column content, while still rejecting the row-splice/
+    cross-segment-steal attacks this module exists to block (verified
+    directly, not assumed -- see tests/test_table_grounding.py). See
+    docs/decisions/2026-09-13-table-grounding-region-scoped-matching.md
+    for the region-scoped redesign this reflects.
 
     If the value isn't in any table cell (no table in this source, or a
     genuinely prose-stated value), that's not evidence of anything --
@@ -1834,8 +1731,8 @@ def verify_claims(claims: list[dict], all_results: list[dict], question: str, an
     """Structured-claims counterpart to collect_citation_warnings() above,
     used when the model answers via submit_answer (SUBMIT_TOOL_SCHEMA)
     instead of free-text prose with [n] markers. See
-    docs/plans/2026-09-10-structured-claims-citation-verification.md for
-    the full design.
+    docs/decisions/2026-09-10-structured-claims-citation-verification.md
+    for the full design.
 
     Two passes: first, each claim is checked independently against its
     own cited source (_verify_one_claim) -- citation index in range,
@@ -1850,8 +1747,8 @@ def verify_claims(claims: list[dict], all_results: list[dict], question: str, an
     A number that also appears in `question` is exempt from the coverage
     check: it's the model repeating what the user asked, not a claim the
     model is asserting (kills "3-year"-shaped noise and date/fiscal-year
-    echoes at the source, without needing a claims entry for them) --
-    see docs/plans's own accepted-tradeoff note on this. `_NON_CLAIM_PATTERN`
+    echoes at the source, without needing a claims entry for them) -- an
+    accepted tradeoff, see the decision file above. `_NON_CLAIM_PATTERN`
     (dates, bare years, 10-K/10-Q, Note N, N-year/N-day) is stripped from
     both `question` and `answer_text` before extraction, same noise
     filter collect_citation_warnings() already relies on."""
@@ -1898,16 +1795,16 @@ def verify_claims(claims: list[dict], all_results: list[dict], question: str, an
 
 
 # Backends allowed to get the citation-verification retry (see
-# _should_retry_for_citations below). Gated to Gemini only, decided
-# 2026-08-25 after live-verifying both backends: this exact mechanism
-# was already tried against Ollama once and reverted (Week 5j -- see
-# docs/plans/2026-08-24-citation-retry-loop-design.md) after
+# _should_retry_for_citations below). Gated to Gemini only -- this exact
+# mechanism was already tried against Ollama once and reverted after
 # qwen2.5:7b-instruct proved unable to reliably act on the corrective
 # feedback (giving up on an already-correct answer, or fabricating an
-# estimate under retry pressure). A fresh live re-run this time showed
-# no regression, but a single run can't outweigh that documented
-# history against Ollama's own known run-to-run noise -- so the retry
-# stays scoped to the backend it was actually re-verified for.
+# estimate under retry pressure); a single clean Gemini re-run can't
+# outweigh that documented Ollama history against its own known
+# run-to-run noise, so the retry stays scoped to the backend it was
+# actually re-verified for. See
+# docs/decisions/2026-08-18-citation-retry-loop-v1-tried-reverted.md and
+# docs/decisions/2026-08-25-citation-retry-loop-gemini-gated.md.
 _CITATION_RETRY_BACKENDS = {"gemini"}
 
 
@@ -1916,19 +1813,19 @@ def _should_retry_for_citations(citation_warnings: list[str], already_retried: b
     turn for its own unverified citation(s). True only when there's
     something to correct, the single retry (see
     _format_citation_retry_message below) hasn't already been spent this
-    conversation -- capped at one retry, same as the original Week 5j
-    design, sharing run_agent()'s existing MAX_TOOL_ITERATIONS budget
-    rather than a separate one -- and `backend` is one this retry is
-    actually enabled for (see _CITATION_RETRY_BACKENDS above)."""
+    conversation -- capped at one retry, sharing run_agent()'s existing
+    MAX_TOOL_ITERATIONS budget rather than a separate one -- and
+    `backend` is one this retry is actually enabled for (see
+    _CITATION_RETRY_BACKENDS above)."""
     return bool(citation_warnings) and not already_retried and backend in _CITATION_RETRY_BACKENDS
 
 
-# Shared wording, extracted 2026-09-10 so the prose-retry message below
-# and the structured-claims retry message (_format_claim_retry_message,
-# added the same day for submit_answer) can't drift apart -- both target
-# the same two live failure modes documented on
-# _format_citation_retry_message below, and there's no reason a future
-# wording tweak to one should silently leave the other behind.
+# Shared wording so the prose-retry message below and the structured-
+# claims retry message (_format_claim_retry_message, for submit_answer)
+# can't drift apart -- both target the same two live failure modes
+# documented on _format_citation_retry_message below, and there's no
+# reason a future wording tweak to one should silently leave the other
+# behind.
 _CITATION_RETRY_GUIDANCE = (
     "Before answering again, check whether any of the search results ALREADY "
     "shown earlier in this conversation actually support each flagged claim -- "
@@ -1944,10 +1841,12 @@ _CITATION_RETRY_GUIDANCE = (
 
 def _format_citation_retry_message(answer: str, citation_warnings: list[str]) -> str:
     """Builds the corrective follow-up message for a one-time citation
-    retry (see run_agent() and docs/plans/2026-08-24-
-    citation-retry-loop-design.md). Revisits Week 5j's reverted attempt,
-    with wording (_CITATION_RETRY_GUIDANCE above) that directly targets
-    the two live failure modes that caused that revert:
+    retry (see run_agent() and
+    docs/decisions/2026-08-18-citation-retry-loop-v1-tried-reverted.md).
+    The wording (_CITATION_RETRY_GUIDANCE above) directly targets the two
+    live failure modes that caused the v1 revert -- removing either
+    property from the wording would silently reopen the failure mode it
+    exists to prevent:
 
     1. aapl-employees-fy25's retry gave up entirely instead of checking
        the 4 OTHER already-retrieved chunks for a valid citation -- so
@@ -1972,9 +1871,8 @@ def _format_citation_retry_message(answer: str, citation_warnings: list[str]) ->
 
 def _format_claim_retry_message(answer_text: str, warnings: list["CitationWarning"]) -> str:
     """Structured-claims counterpart to _format_citation_retry_message
-    above, used for a submit_answer retry (2026-09-10) instead of a
-    prose one -- see
-    docs/plans/2026-09-10-structured-claims-citation-verification.md.
+    above, used for a submit_answer retry instead of a prose one -- see
+    docs/decisions/2026-09-10-structured-claims-citation-verification.md.
     Reuses the exact same hard-won guidance via _CITATION_RETRY_GUIDANCE
     so both retry flavors stay consistent by construction, not by
     copy-paste discipline. Delivered as a submit_answer tool RESULT
@@ -1993,14 +1891,14 @@ def _format_claim_retry_message(answer_text: str, warnings: list["CitationWarnin
 
 
 def _format_refusal_message(warnings: list[str]) -> str:
-    """Week 7 hard-gate refusal, returned by _finalize_answer() below in
-    place of an answer whose citations still don't check out after any
-    applicable retry. Implements the project's own design principle
-    (PROJECT_CONTEXT.md): "Every numeric claim must trace to a specific
-    filing + section, or the agent refuses" -- previously
-    verify_citations()'s findings were only ever surfaced as warnings
-    alongside the (still-returned) answer; this is what actually
-    withholds it."""
+    """Hard-gate refusal, returned by _finalize_answer() below in place
+    of an answer whose citations still don't check out after any
+    applicable retry. Implements this project's own standing design
+    principle (see CLAUDE.md, "This project's design principles"):
+    "Every numeric claim must trace to a specific filing + section, or
+    the agent refuses" -- previously verify_citations()'s findings were
+    only ever surfaced as warnings alongside the (still-returned)
+    answer; this is what actually withholds it."""
     warnings_block = "\n".join(f"- {w}" for w in warnings)
     return (
         "I can't confirm this answer against the sources I retrieved -- "
@@ -2010,7 +1908,7 @@ def _format_refusal_message(warnings: list[str]) -> str:
 
 
 # Backends allowed to FORCE a submit_answer call when the model replies
-# with plain text instead of any tool call (2026-09-10). A separate set
+# with plain text instead of any tool call. A separate set
 # from _CITATION_RETRY_BACKENDS above -- currently identical membership,
 # but the two represent different policies (which backends get a
 # citation retry vs. which backends get forced tool choice) that could
@@ -2067,7 +1965,7 @@ def _count_citation_checks(warnings: list["CitationWarning"]) -> dict[str, int]:
     """How many warnings each check (`CitationWarning.check`) produced --
     shared by _finalize_answer's log event and run_agent's span output
     below so the two don't independently hand-roll the same accumulation
-    loop (found in code review, 2026-09-10)."""
+    loop."""
     return dict(Counter(w.check for w in warnings))
 
 
@@ -2083,21 +1981,19 @@ def _finalize_answer(
     _grade()) use the raw list directly rather than re-parsing it out of
     the answer text.
 
-    Added 2026-09-10 for the citation-gate FP/FN measurement work (see
-    docs/plans/2026-09-10-citation-gate-measurement-instrumentation.md):
-    `withheld_answer` preserves what the model actually said whenever the
-    gate refuses, since re-grading that text against ground truth is the
-    only way to tell a correct-but-wrongly-refused answer (a false
-    positive) from a genuinely bad one. Nothing before this could recover
-    that text once refused. Also fires a `citation_gate_refused` log
-    event (local JSONL only, never Langfuse -- see log_event's own
-    docstring) whenever it refuses, since this is the one place a real
-    answer gets thrown away and, until now, nothing recorded that it
-    happened. `backend`/`retried` are keyword-only so the two flags can't
-    be swapped positionally.
+    `withheld_answer` (see
+    docs/decisions/2026-09-10-citation-gate-measurement-instrumentation.md)
+    preserves what the model actually said whenever the gate refuses,
+    since re-grading that text against ground truth is the only way to
+    tell a correct-but-wrongly-refused answer (a false positive) from a
+    genuinely bad one. Also fires a `citation_gate_refused` log event
+    (local JSONL only, never Langfuse -- see log_event's own docstring)
+    whenever it refuses, since this is the one place a real answer gets
+    thrown away. `backend`/`retried` are keyword-only so the two flags
+    can't be swapped positionally.
 
-    `citation_warning_details` (2026-09-10, structured-claims work) is
-    populated directly from `warnings` here -- NOT re-derived by a second
+    `citation_warning_details` is populated directly from `warnings`
+    here -- NOT re-derived by a second
     pass elsewhere -- so `eval_harness._citation_gate_evidence()` can stop
     calling collect_citation_warnings() (the PROSE checker) on a refusal
     that might have come from the STRUCTURED checker instead, which could
@@ -2194,12 +2090,11 @@ def _dispatch_tool_call(
     # live, not a bug (see that function's own docstring) -- so a
     # missing query must not be a hard rejection here.
     #
-    # Checked BEFORE _resolve_search_args() runs (round-2 review
-    # finding, 2026-09-10), not after -- that function's own `ticker not
-    # in searched_tickers` (a set) already crashes on a non-hashable
-    # ticker like a list, the exact unhashable-ticker crash class
-    # validate_tool_args is also safe against (jsonschema's type/enum
-    # checks use plain equality, never hashing the instance).
+    # Checked BEFORE _resolve_search_args() runs, not after -- that
+    # function's own `ticker not in searched_tickers` (a set) would
+    # crash on a non-hashable ticker like a list, the exact unhashable-
+    # ticker crash class validate_tool_args is safe against (jsonschema's
+    # type/enum checks use plain equality, never hashing the instance).
     if validate_tool_args("search_filings", SEARCH_TOOL_SCHEMA, args, soft_required=frozenset({"query"})):
         raw_ticker = args.get("ticker")
         if raw_ticker is not None and (not isinstance(raw_ticker, str) or raw_ticker not in COMPANIES):
@@ -2230,12 +2125,12 @@ def run_agent(question: str, backend: str | None = None, verbose: bool = False) 
     internal return paths fires (see its own docstring). Adds no
     behavior change to the returned answer/results/citation_warnings for
     any existing caller/test; the 4th field (AgentResult.withheld_answer)
-    is new (2026-09-10, see _finalize_answer's docstring).
+    is described in _finalize_answer's own docstring.
 
     `backend=None` resolves to config.DEFAULT_BACKEND -- resolved HERE,
     inside the function body, rather than as a literal `= DEFAULT_BACKEND`
-    parameter default (2026-09-10): a parameter default is evaluated once
-    at module-import time, so a literal default would freeze in whatever
+    parameter default: a parameter default is evaluated once at
+    module-import time, so a literal default would freeze in whatever
     DEFAULT_BACKEND happened to be when agent.py was first imported and
     silently ignore any later change to it -- the exact bug the previous
     hardcoded `= "ollama"` default had, just with an extra layer of
@@ -2243,11 +2138,11 @@ def run_agent(question: str, backend: str | None = None, verbose: bool = False) 
 
     `citation_checks` in the span output reads the per-check counts
     straight from `result.citation_warning_details` (AgentResult's 5th
-    field, added 2026-09-10) -- previously this re-derived them by
-    calling collect_citation_warnings() (the PROSE checker) a second
-    time on the withheld/returned text, which would silently disagree
-    with whatever ACTUALLY refused the answer once a structured-path
-    refusal could exist (collect_citation_warnings can't see a
+    field) rather than re-deriving them by calling
+    collect_citation_warnings() (the PROSE checker) a second time on the
+    withheld/returned text -- that would silently disagree with whatever
+    ACTUALLY refused the answer once a structured-path refusal exists
+    (collect_citation_warnings can't see a
     quote_not_found/value_not_in_quote/etc. failure at all -- those only
     ever come from verify_claims()). Reading the field _finalize_answer
     already computed removes both that risk and the redundant regex
@@ -2286,8 +2181,8 @@ def _run_agent_impl(question: str, backend: str, verbose: bool = False) -> Agent
     model's actual answer text in favor of a refusal whenever those
     warnings are non-empty.
 
-    A final answer arrives one of two ways (2026-09-10, see
-    docs/plans/2026-09-10-structured-claims-citation-verification.md):
+    A final answer arrives one of two ways (see
+    docs/decisions/2026-09-10-structured-claims-citation-verification.md):
 
     - `submit_answer` (SUBMIT_TOOL_SCHEMA), the preferred path: claims
       are structured data (value/unit/citation_index/quote), verified by
@@ -2319,20 +2214,16 @@ def _run_agent_impl(question: str, backend: str, verbose: bool = False) -> Agent
 
     One self-correction retry on an unverified citation/claim, shared
     across whichever path produced the answer (retried_for_citations
-    caps the whole conversation at one retry total, not one per path) --
-    revisited 2026-08-24 against the swappable-backend layer (originally
-    tried and reverted in Week 5j -- see PROJECT_CONTEXT.md and
-    docs/plans/2026-08-24-citation-retry-loop-design.md). Gated to
-    Gemini only (see _CITATION_RETRY_BACKENDS) -- decided 2026-08-25
-    after live-verifying both backends showed no regression on that
-    particular run, but Ollama's documented history with this exact
-    mechanism (and its own run-to-run noise) wasn't outweighed by one
-    clean re-run. The structured-claims retry (2026-09-10) reuses this
-    same gate and budget, just delivers its feedback as a submit_answer
-    tool RESULT instead of a plain follow-up turn -- keeps the chat
-    history well-formed (a dangling function call followed by a bare
-    user turn has historically 400'd on Gemini) and needs no new
-    plumbing, since it's exactly what send_tool_results already does."""
+    caps the whole conversation at one retry total, not one per path).
+    Gated to Gemini only -- see _CITATION_RETRY_BACKENDS's own comment
+    and docs/decisions/2026-08-18-citation-retry-loop-v1-tried-reverted.md
+    / docs/decisions/2026-08-25-citation-retry-loop-gemini-gated.md for
+    why. The structured-claims retry reuses this same gate and budget,
+    just delivers its feedback as a submit_answer tool RESULT instead of
+    a plain follow-up turn -- keeps the chat history well-formed (a
+    dangling function call followed by a bare user turn has historically
+    400'd on Gemini) and needs no new plumbing, since it's exactly what
+    send_tool_results already does."""
     start, send_tool_results, send_followup = BACKENDS[backend]
     tool_schemas = [FACT_TOOL_SCHEMA, COMPARE_TOOL_SCHEMA, SEARCH_TOOL_SCHEMA, CALCULATE_TOOL_SCHEMA, SUBMIT_TOOL_SCHEMA]
     state, turn = start(question, SYSTEM_PROMPT, tool_schemas)
@@ -2344,14 +2235,13 @@ def _run_agent_impl(question: str, backend: str, verbose: bool = False) -> Agent
     # Pending-retry snapshots for the exhausted-budget fallback at the
     # bottom -- at most one is ever set, since retried_for_citations caps
     # the whole conversation at one retry regardless of which path fires
-    # it. pre_retry_submit_args (2026-09-10) caches the RAW submit_answer
-    # args rather than pre-computed warnings -- a pure function of
-    # (submit_args, all_results) can't go stale the way a cached warnings
-    # list could if all_results grows before the budget runs out, which
-    # is exactly how the OLD pre_retry_answer mechanism this replaces
-    # (for the structured path only) could pair stale warnings with a
-    # grown all_results (BACKLOG.md). pre_retry_answer itself is
-    # UNCHANGED -- it still exists for the untouched prose-fallback path.
+    # it. pre_retry_submit_args caches the RAW submit_answer args rather
+    # than pre-computed warnings -- a pure function of (submit_args,
+    # all_results) can't go stale the way a cached warnings list could if
+    # all_results grows before the budget runs out. See
+    # docs/reviews/2026-09-10-citation-gate-measurement-instrumentation.md.
+    # pre_retry_answer itself is UNCHANGED -- it still exists for the
+    # untouched prose-fallback path.
     pre_retry_submit_args: dict | None = None
     pre_retry_answer: tuple[str, list[CitationWarning]] | None = None
 
@@ -2485,8 +2375,8 @@ def main():
     if result.results:
         print("\nSources:")
         print(_format_citation_key(result.results))
-    # No separate "Citation warnings:" print block: since the Week 7
-    # hard gate (_finalize_answer), non-empty citation_warnings always
+    # No separate "Citation warnings:" print block: since the hard gate
+    # (_finalize_answer), non-empty citation_warnings always
     # means `answer` IS the refusal message, which already lists every
     # warning verbatim -- printing them again here would just repeat
     # the same lines a second time.

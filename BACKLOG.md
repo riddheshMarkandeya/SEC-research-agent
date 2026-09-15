@@ -86,20 +86,15 @@ Full evidence/reasoning: `docs/plans/2026-09-15-comment-audit-round3.md`,
 `docs/reviews/2026-09-15-comment-audit-round3.md`,
 `docs/decisions/2026-09-15-comment-audit-round3.md`.
 
-- [ ] **[refactor, Med, Substantial]** `agent.py` (Round 4) needs its own
-  dedicated pass, not a routine pointer-fix batch: 2497 lines, ~45+
-  narrated blocks — denser than Round 2's entire 10-file batch combined.
-  Round 3's inventory (done via direct reading after the Explore-agent
-  inventory hit a session usage limit partway through) is preserved in
-  full in `docs/plans/2026-09-15-comment-audit-round3.md`'s "Round 4
-  backlog notes" section: known stale `PROJECT_CONTEXT.md` references to
-  repoint, several blocks citing a `docs/plans/*.md` file directly that
-  should repoint to a paired `docs/decisions/*.md` file instead, and a
-  list of very long docstrings needing careful KEEP-the-reasoning/
-  TRIM-the-narrative judgment calls (`_ground_operand`, `_quote_matches`,
-  `verify_claims`, `_quote_grounded_in_source`, `_iter_uncited_claims`,
-  `validate_tool_args`, `_SENTENCE_BREAK`'s comment) rather than a quick
-  batch pass.
+(Round 4 — see the section below — completed `agent.py`, the file this
+round deferred.)
+
+### From the 2026-09-15 comment-audit Round 4
+
+Full evidence/reasoning: `docs/plans/2026-09-15-comment-audit-round4.md`,
+`docs/reviews/2026-09-15-comment-audit-round4.md`,
+`docs/decisions/2026-09-15-comment-audit-round4.md`.
+
 - [ ] **[refactor, Low, Substantial]** Full `tests/` pass (25 files) —
   same issue, much denser: `test_agent.py` alone has ~101 flagged
   comment blocks, `test_table_grounding.py` is similarly dense. Lower
