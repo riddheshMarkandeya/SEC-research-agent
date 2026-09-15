@@ -74,14 +74,32 @@ Full evidence/reasoning: `docs/plans/2026-09-14-comment-audit-round2.md`,
 `docs/reviews/2026-09-14-comment-audit-round2.md`,
 `docs/decisions/2026-09-14-comment-audit-round2.md`.
 
-- [ ] **[refactor, Med, Substantial]** 3 remaining main-source files need
-  their own dedicated pass (Round 3), not a routine pointer-fix batch:
-  `agent.py` (2497 lines, ~45 blocks — the largest file in the codebase),
-  `xbrl_facts.py` (needs a genuinely new `EXTRACT` write-up for its
-  tag-selection investigation — original content to write, not just
-  verify), `numeric_utils.py` (a single ~100-line regex-design block,
-  the single highest-value trim target in the codebase per the original
-  inventory).
+(Round 3 — see the section below — completed `xbrl_facts.py` and
+`numeric_utils.py`, the 2 of the 3 files originally logged here that
+turned out well-scoped for a normal-sized round. `agent.py` turned out
+far denser than expected and is now its own properly-scoped Round 4,
+tracked below.)
+
+### From the 2026-09-15 comment-audit Round 3
+
+Full evidence/reasoning: `docs/plans/2026-09-15-comment-audit-round3.md`,
+`docs/reviews/2026-09-15-comment-audit-round3.md`,
+`docs/decisions/2026-09-15-comment-audit-round3.md`.
+
+- [ ] **[refactor, Med, Substantial]** `agent.py` (Round 4) needs its own
+  dedicated pass, not a routine pointer-fix batch: 2497 lines, ~45+
+  narrated blocks — denser than Round 2's entire 10-file batch combined.
+  Round 3's inventory (done via direct reading after the Explore-agent
+  inventory hit a session usage limit partway through) is preserved in
+  full in `docs/plans/2026-09-15-comment-audit-round3.md`'s "Round 4
+  backlog notes" section: known stale `PROJECT_CONTEXT.md` references to
+  repoint, several blocks citing a `docs/plans/*.md` file directly that
+  should repoint to a paired `docs/decisions/*.md` file instead, and a
+  list of very long docstrings needing careful KEEP-the-reasoning/
+  TRIM-the-narrative judgment calls (`_ground_operand`, `_quote_matches`,
+  `verify_claims`, `_quote_grounded_in_source`, `_iter_uncited_claims`,
+  `validate_tool_args`, `_SENTENCE_BREAK`'s comment) rather than a quick
+  batch pass.
 - [ ] **[refactor, Low, Substantial]** Full `tests/` pass (25 files) —
   same issue, much denser: `test_agent.py` alone has ~101 flagged
   comment blocks, `test_table_grounding.py` is similarly dense. Lower

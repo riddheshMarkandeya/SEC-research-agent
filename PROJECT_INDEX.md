@@ -40,6 +40,10 @@ One line per file in `docs/decisions/`, `docs/plans/`, and
 is excluded. Copy the relevant `TEMPLATE.md` when starting a new file in
 any of the three directories.
 
+- 2026-09-15 [decision] Comment audit Round 3: pointer-fixed xbrl_facts.py and numeric_utils.py → `docs/decisions/2026-09-15-comment-audit-round3.md`
+- 2026-09-15 [plan] Comment audit Round 3 design → `docs/plans/2026-09-15-comment-audit-round3.md`
+- 2026-09-15 [review] Comment audit Round 3 review (self-check + fresh subagent) → `docs/reviews/2026-09-15-comment-audit-round3.md`
+- 2026-09-15 [decision] XBRL metric-tag selection methodology, extracted from xbrl_facts.py's own comments → `docs/decisions/2026-09-15-xbrl-tag-selection-methodology.md`
 - 2026-09-14 [decision] Comment audit Round 2: pointer-fixed 10 more main-source files → `docs/decisions/2026-09-14-comment-audit-round2.md`
 - 2026-09-14 [plan] Comment audit Round 2 design → `docs/plans/2026-09-14-comment-audit-round2.md`
 - 2026-09-14 [review] Comment audit Round 2 review (self-check + fresh subagent) → `docs/reviews/2026-09-14-comment-audit-round2.md`

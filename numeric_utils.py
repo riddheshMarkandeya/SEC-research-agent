@@ -17,130 +17,45 @@ import unicodedata
 # marker parsing as the number 1); callers only need the *correct* value
 # to appear somewhere among the candidates, extra noise is harmless.
 #
-# The leading digit group is `\d+`, not `\d{1,3}` — capping it at 3
-# looked reasonable for comma-grouped numbers ("1,234,567" does start
-# with 1-3 digits) but silently broke on a bare, comma-less run of many
-# digits (e.g. "109417000000.0", exactly what xbrl_facts.py's raw float
-# values format as): regex alternation tries branches left-to-right and
-# stops at the first one that matches at all, not the longest overall
-# match, so `\d{1,3}` would greedily claim just "109" and leave "417",
-# "000", "000.0" as separate, wrong candidates instead of one correct
-# number. Found this via agent.py's verify_citations() tests failing
-# against real XBRL-sourced result text, not by inspection — every
-# existing caller up to that point only ever ran this against a model's
-# own answer text, which is naturally comma-grouped or unit-suffixed and
-# never triggered the bug.
-# `(?<!\w)` immediately before the digit group rejects a number glued
-# to a preceding letter or digit ("Q3" -> was matching "3", "FY2026" ->
-# was matching "026" since a failed lookbehind at one start position
-# just makes the regex engine retry the next position inside the same
-# digit run — \w excludes digits too, so every retry position inside a
-# glued alphanumeric run also fails, correctly rejecting the whole
-# token instead of leaking a fragment). A real dollar figure or percent
-# is always preceded by whitespace, "$", or start-of-string, never a
-# letter, so this doesn't affect genuine matches. Found via
-# verify_citations() flagging "Q3" as a spurious claimed value of 3.
+# The leading digit group is intentionally `\d+`, not `\d{1,3}` — a
+# capped group fragments a long, comma-less digit run (e.g. raw XBRL
+# float formatting like "109417000000.0") into multiple wrong pieces.
+# `(?<!\w)` immediately before it rejects a number glued to a preceding
+# letter/digit ("Q3" would otherwise match as "3").
 #
-# Negative-number support (2026-09-11, found missing entirely during a
-# hand-rolled-complexity review): two signals, `sign` (a bare leading
-# "-") and `open_paren`/`close_paren` (the accounting convention of
-# wrapping a negative in parentheses, e.g. "$(1,234)"). Design grounded
-# in the real ./chunks/*/*.jsonl corpus, not guessed -- grepped it before
-# writing this: the actual format SEC filings use is a bare parenthesized
-# number with the unit stated separately in a table caption ("(433)",
-# "$(1,122)", "(2.5)%", "(237)%"), never a unit word glued INSIDE the
-# parens -- so `close_paren` only needs to sit directly after the digit
-# group, with `unit`/`pct` still free to match afterward (handles both
-# "(433)" and "(433) thousand").
+# Negative-number support: `sign` (a bare leading "-", or the real
+# Unicode MINUS SIGN U+2212) and `open_paren`/`close_paren` (the real
+# SEC-filing accounting convention of wrapping a negative in parentheses,
+# e.g. "$(1,234)"). `sign` is gated by its OWN `(?<!\d)` lookbehind
+# (checked immediately before it, not just before the digit group) so a
+# hyphen glued directly to a PRECEDING digit is never read as this
+# number's sign -- needed for a hyphen-joined ISO date ("2024-01-25")
+# and a hyphenated range ("10-15 percent"), where the second half would
+# otherwise misread as negative.
 #
-# `sign` is gated by `(?<!\d)` (checked immediately before it, not just
-# before the digit group) so a hyphen glued directly to a PRECEDING digit
-# is never read as this number's sign -- traced by hand against two real
-# shapes: a hyphen-joined ISO date ("2024-01-25") and a hyphenated range
-# ("10-15 percent"). Without this, the second half of either would
-# misread as negative (a failed match attempt at the hyphen's own
-# position just makes finditer retry starting one character later,
-# landing past the digit instead of using it as a sign -- same retry
-# mechanics as the existing letter-glued lookbehind above).
+# `sign` matching alone is NOT sufficient to tell a genuine negation from
+# a SPACED "-" used as a subtraction operator (e.g. "223,000 - 166,000",
+# or "17.9% − 20%" with the model's own computed-value disclosure) --
+# that disambiguation needs the Python-level
+# `_is_negative()`/`_preceded_by_number()` below, since a regex
+# lookbehind can't skip variable-width whitespace to check what's really
+# before the sign. Don't try to "simplify" this into a regex-only check;
+# it can't express that distinction.
 #
-# That regex-level guard alone isn't enough, found live 2026-09-12 (the
-# first real eval run after shipping this): a SPACED hyphen used as a
-# subtraction operator ("223,000 - 166,000") has whitespace, not a digit,
-# immediately before it, so `(?<!\d)` passes and the second operand was
-# misread as negative -- this broke an otherwise-fully-correct answer's
-# citation verification the very first time a model wrote its own
-# computed-value disclosure using "-" for subtraction (system prompt rule
-# 9 asks the model to show its `calculate` work inline; the model is free
-# to choose "-" over the word "subtract"). No regex-only fix exists here
-# (Python's `re` lookbehind can't skip variable-width whitespace), so
-# `_is_negative()` below re-checks this at the Python level: after the
-# regex says `sign` matched, look backward past any whitespace and
-# confirm the nearest real character still isn't a digit (see
-# `_preceded_by_number()`) -- a genuine negation is preceded by a word,
-# punctuation, or nothing at all; a subtraction's minuend is a number.
+# The parenthesized case has two carve-outs, both suppressing a false
+# negative-sign read on real, evidenced corpus boilerplate rather than a
+# hypothetical: a bare year in parens (`_BARE_YEAR_STRING`, e.g.
+# COSO-framework citation years) and a bare 1-2 digit reference/footnote
+# marker glued to a preceding word (`_looks_like_reference_number()`,
+# e.g. "Registrant (1)", "Total debt securities (1)").
 #
-# `sign` also matches U+2212 (the proper Unicode MINUS SIGN), not just
-# ASCII hyphen-minus -- found the same live run, same root cause (a
-# model's own rule-9 disclosure prose, this time "17.9% - 20% = -2.1%"
-# rendered with the real minus-sign glyph). Confirmed
-# `unicodedata.normalize("NFKC", ...)` does NOT fold U+2212 to ASCII "-"
-# (they aren't compatibility-equivalent characters), so this codebase's
-# existing NFKC-based quote normalization (agent._normalize_for_match)
-# could never have caught this either -- it needed its own fix here.
-#
-# The parenthesized case ALSO needs two carve-outs, both found live
-# against the real corpus (one during the original design, one flagged by
-# code review and confirmed the same way before fixing it):
-#
-# 1. Bare years (`_BARE_YEAR_STRING`): "(2013)"/"(2025)"-style bare year
-#    references are common boilerplate (COSO framework citations in every
-#    10-K's internal-controls section; exhibit-index references) -- a
-#    naive "any (NUM) is negative" rule would turn these into spurious
-#    negative-year candidates. Matches only a comma-less, decimal-less
-#    4-digit 19xx/20xx string, since a real dollar figure in that range is
-#    always comma-grouped in SEC tables (>= 1000 always gets a thousands
-#    separator) -- so this can't accidentally suppress a genuine negative
-#    dollar amount. (Residual, accepted limitation: a real charge stated
-#    as an exact, comma-less 4-digit 19xx/20xx figure -- e.g. "Impairment
-#    charge (2010)" meaning -$2010 -- would also be read as positive.
-#    Genuinely ambiguous with no available disambiguating signal even to
-#    a human reading the isolated text, and unlike the footnote-marker
-#    case below, no real occurrence of this shape was found in the actual
-#    corpus -- not fixed further, per this project's practice of fixing
-#    what's evidenced rather than chasing every hypothetical.)
-# 2. Bare reference markers (`_looks_like_reference_number`): found in
-#    code review, confirmed live against real corpus text -- a bare 1-2
-#    digit parenthesized number is common filing boilerplate having
-#    nothing to do with a negative value ("Mark whether the Registrant
-#    (1) has filed... and (2) has been..." appears on literally every
-#    10-K's cover page in this project's corpus; footnote markers glued
-#    to a table row's own LABEL, e.g. "Total debt securities (1)", are
-#    the same shape).
-#
-#    An earlier version of this guard fired on digit-count alone (<=2
-#    digits, no comma/decimal, no adjacent unit/percent) -- a second
-#    architecture-review pass caught, and live corpus grepping then
-#    CONFIRMED AT SCALE (554 occurrences across the whole corpus, not a
-#    one-off), that this was wrong: a short comma-less negative value is
-#    the NORMAL shape for a table cell whose unit is stated once in the
-#    table's own caption, not per-cell (e.g. a comprehensive-income
-#    statement's small translation-adjustment line items, "| (73) | (86)
-#    | (87) |"). Gating on digit count alone suppressed far more real
-#    negatives than it correctly excluded markers -- a regression worse
-#    than the false positive it was meant to fix.
-#
-#    The actual distinguishing signal, found by comparing both real
-#    shapes side by side: a footnote/reference marker is always GLUED to
-#    a preceding WORD ("Registrant (1)", "securities (1)", nothing but a
-#    space between the two); a real table-cell value always starts fresh
-#    -- right after a "|" delimiter, a newline, another number, or a
-#    currency symbol, never directly after a letter. So the guard now
-#    requires ALL THREE: short (<=2 digits, no comma/decimal), NOT
-#    immediately followed by a unit word or "%" (a real percent this
-#    small does occur, "(4)%", and is never a marker -- a marker is never
-#    followed by "%"), AND the nearest non-whitespace character before
-#    the "(" is alphabetic. All three together correctly separate every
-#    real occurrence of both shapes found in the corpus.
+# Design history and full corpus evidence:
+# docs/decisions/2026-08-17-citation-verification-pass.md (the `\d{1,3}`
+# cap and glued-letter fixes above) and
+# docs/decisions/2026-09-11-negative-number-support.md (all of the
+# negative-number design above, including the corpus evidence behind
+# both parenthesized-case carve-outs and the spaced-hyphen/Unicode-minus
+# findings that motivated the Python-level check).
 NUMBER_PATTERN = re.compile(
     r"(?P<open_paren>\()?\s*(?<!\d)(?P<sign>[-−])?\$?\s*(?<!\w)(?P<digits>\d+(?:,\d{3})*(?:\.\d+)?)"
     r"(?P<close_paren>\))?\s*(?P<unit>billion|million|thousand|percent)?\s*(?P<pct>%)?",
@@ -153,8 +68,8 @@ _BARE_YEAR_STRING = re.compile(r"(?:19|20)\d{2}")
 
 
 def _looks_like_reference_number(text: str, open_paren_pos: int, digits: str, followed_by_unit_or_pct: bool) -> bool:
-    """See NUMBER_PATTERN's own comment (carve-out 2) for the real-corpus
-    evidence behind all three conditions here. `open_paren_pos` is
+    """See docs/decisions/2026-09-11-negative-number-support.md for the
+    real-corpus evidence behind all three conditions here. `open_paren_pos` is
     `match.start("open_paren")` -- only meaningful when the caller has
     already confirmed the parens wrap the number."""
     if len(digits) > 2 or "." in digits or followed_by_unit_or_pct:
@@ -192,11 +107,11 @@ def _preceded_by_number(text: str, pos: int) -> bool:
 
 def _is_negative(text: str, match: re.Match, digits: str, unit_word: str | None, percent_sign: str | None) -> bool:
     """Whether one NUMBER_PATTERN match represents a negative value --
-    pulled out of extract_numbers_with_spans()'s loop (found in
-    architecture review, 2026-09-11) so the base sign/paren rule and both
-    carve-outs (bare year, reference number -- see NUMBER_PATTERN's own
-    comment for the real-corpus evidence behind each) live in one
-    obviously-named place instead of a dense inline conditional."""
+    pulled out of extract_numbers_with_spans()'s loop so the base
+    sign/paren rule and both carve-outs (bare year, reference number --
+    see NUMBER_PATTERN's own comment) live in one obviously-named place
+    instead of a dense inline conditional. See
+    docs/decisions/2026-09-11-negative-number-support.md."""
     if match.group("sign"):
         return not _preceded_by_number(text, match.start("sign"))
     wrapped_in_parens = bool(match.group("open_paren")) and bool(match.group("close_paren"))
@@ -257,11 +172,11 @@ def normalize(value: float, unit: str) -> tuple[str, float]:
 
 
 # Shared with agent._QUOTE_COVERAGE_THRESHOLD (an alias for this, not a
-# second constant) and table_grounding.py's region-coverage check --
-# moved here 2026-09-13 alongside text_coverage() for the same
-# circular-import reason. 0.90 is the fraction of a quote's own
-# (normalized) characters that must be found in the source/region for a
-# non-exact match to still count as genuine.
+# second constant) and table_grounding.py's region-coverage check -- see
+# docs/decisions/2026-09-13-table-grounding-region-scoped-matching.md
+# for why this lives here rather than in either caller. 0.90 is the
+# fraction of a quote's own (normalized) characters that must be found
+# in the source/region for a non-exact match to still count as genuine.
 QUOTE_COVERAGE_THRESHOLD = 0.90
 
 
@@ -275,26 +190,23 @@ def normalize_for_match(text: str) -> str:
     than the source (a mid-sentence line break, doubled spaces from
     table formatting).
 
-    Moved here from agent.py (2026-09-12, alongside adding
-    table_grounding.py, which also needs it and cannot import from
-    agent.py without a circular import -- the same reason this module
-    was split out of eval_harness.py to begin with, see the module
-    docstring above) -- agent._normalize_for_match is now a thin alias
-    for this function, not a second implementation.
+    agent._normalize_for_match is a thin alias for this function, not a
+    second implementation -- lives here rather than in agent.py for the
+    same reason numeric_utils.py itself exists (this module's own
+    docstring): table_grounding.py needs it too and cannot import from
+    agent.py without a circular import. See
+    docs/plans/2026-09-12-structure-aware-table-quote-grounding.md
+    ("New module: table_grounding.py").
 
-    NOTE: despite what an earlier version of this docstring (and this
-    module's own NUMBER_PATTERN comment on U+2212) implied, NFKC does
-    NOT fold true Unicode dashes to ASCII '-' -- measured directly: an
-    em dash (U+2014), en dash (U+2013), hyphen (U+2010), non-breaking
-    hyphen (U+2011, which does fold, but to U+2010, not ASCII '-'), and
-    minus sign (U+2212) all pass through NFKC unchanged. Only the
-    fullwidth hyphen-minus (U+FF0D) folds to ASCII '-'. The existing
-    curly-quote/en-dash regression test for this function
+    NOTE: NFKC does NOT fold true Unicode dashes to ASCII '-' -- an em
+    dash (U+2014), en dash (U+2013), hyphen (U+2010), non-breaking hyphen
+    (U+2011, which folds, but to U+2010, not ASCII '-'), and minus sign
+    (U+2212) all pass through NFKC unchanged; only the fullwidth
+    hyphen-minus (U+FF0D) folds to ASCII '-'. The existing curly-quote/
+    en-dash regression test for this function
     (test_quote_matches_nfkc_curly_quote_and_en_dash_normalization in
-    tests/test_agent.py) in fact passes via the coverage/anchor
-    fuzzy-match path, not via any dash folding -- confirmed by direct
-    measurement while investigating a 2026-09-12 table-grounding bug,
-    not assumed."""
+    tests/test_agent.py) passes via the coverage/anchor fuzzy-match path,
+    not via any dash folding."""
     text = unicodedata.normalize("NFKC", text)
     text = text.casefold()
     return " ".join(text.split())
@@ -303,11 +215,11 @@ def normalize_for_match(text: str) -> str:
 def text_coverage(quote: str, source: str) -> tuple[bool, float, int]:
     """Core fuzzy-containment primitive shared by agent._quote_matches
     (whole-document prose matching) and table_grounding.quote_is_grounded
-    (matching against one cell's own small permitted region) -- extracted
-    2026-09-13 for the same reason normalize_for_match() was: both
-    modules need the identical SequenceMatcher-based logic, and
-    table_grounding.py cannot import it from agent.py (agent.py imports
-    table_grounding.py). Returns `(exact, coverage, longest)`:
+    (matching against one cell's own small permitted region) -- lives
+    here rather than in either caller for the same circular-import
+    reason as normalize_for_match() above (see
+    docs/decisions/2026-09-13-table-grounding-region-scoped-matching.md).
+    Returns `(exact, coverage, longest)`:
 
     - `exact`: True if `quote` (normalized) is an exact substring of
       `source` (normalized) -- the fast path. When True, `coverage` is

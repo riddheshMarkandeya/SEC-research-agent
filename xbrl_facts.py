@@ -1,18 +1,11 @@
 """
-Week 5b — Structured XBRL facts tool
--------------------------------------
-A second agent tool, alongside `search_filings` (retrieval.hybrid_search).
-Built to fix two eval failures (`nvda-gross-margin-fy26`,
-`msft-rd-expense-q3fy26`) that turned out to be a structural retrieval
-limit, not a query-formulation or model-comprehension problem: NVIDIA's
-71.1% gross margin and Microsoft's $8,915M Q3 FY26 R&D expense are both
-numbers that live in unstructured prose competing against near-duplicate
-boilerplate from the company's other filings (see PROJECT_CONTEXT.md's
-`period_labels.py` section for the retrieval-side fix that was tried and
-reverted). Both numbers are also GAAP concepts SEC filers tag in
-structured XBRL data, fetchable directly by (company, concept, period) —
-sidestepping the retrieval-collision problem for this class of question
-entirely, rather than trying to out-rank the decoys.
+Structured XBRL facts tool: a second agent tool, alongside
+`search_filings` (retrieval.hybrid_search), for fetching a GAAP concept
+directly by (company, concept, period) instead of relying on retrieval
+to surface it from filing prose. See
+docs/decisions/2026-08-16-xbrl-structured-facts-tool.md for why this
+exists and docs/decisions/2026-08-16-fiscal-period-labels-tried-and-reverted.md
+for the retrieval-side alternative that was tried and reverted first.
 
 Endpoint: SEC's `companyconcept` API (one concept, full filing history),
 not the much larger `companyfacts` API (every concept the company has
@@ -41,50 +34,19 @@ HEADERS = {"User-Agent": SEC_USER_AGENT}
 CACHE_DIR = Path("./xbrl_cache")
 REQUEST_DELAY_SECONDS = 0.3  # match edgar_ingest.py's courtesy delay
 
-# Verified against real companyconcept responses, but this took two
-# passes to get right, and the second pass is the important lesson: a
-# 200 status code on a concept URL only means the company has EVER
-# tagged that concept, not that it still tags it in RECENT filings.
-# First pass checked only status codes and defaulted "revenue" to
-# "Revenues" (200 for AAPL/MSFT/NVDA/CRM) with PLTR as the sole
-# override (its "Revenues" 404s). That looked right until a live
-# comparison-question test asked for CRM's most recent quarter and
-# silently got nothing back -- checking the actual latest entry per
-# company (not just the status code) showed AAPL's "Revenues" data
-# stops in 2018 and MSFT's stops in 2011: both switched to the more
-# specific ASC 606 tag years ago and never looked back. CRM's most
-# recent quarter has the same gap. NVDA is the actual outlier, still
-# actively using plain "Revenues" through its latest 2026 filings (and
-# NVDA's own past use of the ASC 606 tag stops in 2022, so it can't be
-# the default either) -- there's no single tag that works for all five
-# companies, which is exactly why this is a per-company override map
-# and not one shared default. All five companies do tag "GrossProfit"
-# directly through their latest filings (checked the same way), which
-# is what makes gross-margin-as-a-tool-computed-ratio viable without an
-# extra concept lookup or override per company. "OperatingIncomeLoss"
-# (added for operating_margin) checked the same way: all five companies
-# have recent entries, no overrides needed there either. "Assets" and
-# "CashAndCashEquivalentsAtCarryingValue" (added to fix
-# nvda-total-assets-q1fy27/aapl-cash-equivalents-q3fy2026 -- both were
-# retrieval/attribution failures for values that turned out to be
-# perfectly clean structured facts) checked the same way too: all five
-# companies have recent entries for both, no overrides needed.
-# "InventoryNet" (added to fix pltr-inventory-turnover-fy2025-refusal)
-# checked the same way, with a twist worth keeping: it's clean for
-# AAPL/MSFT/NVDA (recent entries, no overrides needed) but Palantir and
-# Salesforce genuinely never tag it at all (404) -- not a data-quality
-# gap to override, a real structural fact about their business models
-# (software/services companies, no physical goods inventory). See
-# is_metric_tagged() below for how that distinction gets surfaced to
-# the model instead of silently looking identical to "just not tagged
-# for this specific period."
+# DEFAULT_METRIC_TAGS/METRIC_TAG_OVERRIDES map friendly metric names to
+# real GAAP tags, with a per-company override where no single tag works
+# for all five covered companies (e.g. revenue: NVDA still uses
+# "Revenues" while the other four use the ASC 606 tag). Each tag here
+# was verified against real fetched data for all 5 companies, not
+# assumed from a status code alone -- see
+# docs/decisions/2026-09-15-xbrl-tag-selection-methodology.md for the
+# full methodology and per-metric findings (including why InventoryNet's
+# 404 for PLTR/CRM is a real business-model fact, not a gap to override).
+#
 # Adding a new metric here that's an XBRL "instant" (point-in-time
 # balance) concept, not "duration"? Add it to INSTANT_METRICS below too
-# -- found in code review (2026-09-07) that forgetting to would silently
-# reproduce the exact borrowed-calendar-window bug get_metric_all_
-# companies() had to be redesigned to fix (see that function's own
-# docstring). Check via a real fetched entry: "start" absent from the
-# entry (see _duration_days()) means instant.
+# -- see that set's own comment for why.
 DEFAULT_METRIC_TAGS = {
     "revenue": "RevenueFromContractWithCustomerExcludingAssessedTax",
     "gross_profit": "GrossProfit",
@@ -112,19 +74,15 @@ INSTANT_METRICS = {"total_assets", "cash_and_equivalents", "inventory"}
 
 # A companyconcept response's entries aren't one-per-period: a single
 # 10-K/10-Q re-reports 2-3 years (or the prior-year comparative quarter)
-# of the same concept in the same filing, all sharing the filing's own
-# fy/fp label. Verified on NVDA's FY2026 10-K (accn 0001045810-26-000021):
-# its GrossProfit entries for fy=2026/fp="FY" include FY2024, FY2025, AND
-# FY2026's own values, distinguished only by `end` date. And on MSFT's
-# Q3 FY26 10-Q (accn 0001193125-26-191507): its ResearchAndDevelopment-
-# Expense entries for fy=2026/fp="Q3" include the current 3-month figure,
-# the prior-year comparative 3-month figure, AND two 9-month
-# year-to-date figures -- same fy/fp, different (start, end, duration).
-# So disambiguation needs BOTH a duration filter (to separate a quarter
-# from its filing's own 9-month YTD figure, which shares the quarter's
-# `end` date) and a max(end) tiebreak (to separate the current period
-# from a same-duration prior-year comparative, which always has an
-# earlier `end`).
+# of the same concept, all sharing the filing's own fy/fp label (e.g.
+# NVDA's FY2026 10-K reports FY2024/FY2025/FY2026 GrossProfit under one
+# fy/fp label; MSFT's Q3 FY26 10-Q reports the current quarter, the
+# prior-year comparative quarter, AND two 9-month YTD figures under
+# another). Disambiguation needs BOTH a duration filter (quarter vs. the
+# filing's own YTD figure, which shares the quarter's `end` date) and a
+# max(end) tiebreak (current period vs. a same-duration prior-year
+# comparative, which always has an earlier `end`). See
+# docs/decisions/2026-08-16-xbrl-structured-facts-tool.md.
 _QUARTER_DURATION_DAYS = (80, 100)
 _ANNUAL_DURATION_DAYS = (350, 380)
 
@@ -133,10 +91,8 @@ def _duration_days(entry: dict) -> int | None:
     """None for an XBRL "instant" fact (a point-in-time balance, e.g.
     Assets or CashAndCashEquivalentsAtCarryingValue) -- these have no
     `start`, only `end`, unlike a "duration" fact (revenue, income,
-    expenses) which is measured over a period and has both. Every
-    metric this module supported before total_assets/cash_and_equivalents
-    was duration-type, so this case was never exercised until adding
-    those two crashed here with a bare KeyError."""
+    expenses) which is measured over a period and has both. See
+    docs/decisions/2026-08-19-fixing-6-accumulated-eval-findings.md."""
     if "start" not in entry:
         return None
     start = date.fromisoformat(entry["start"])
@@ -180,15 +136,12 @@ def fetch_concept(ticker: str, tag: str) -> dict | None:
 def is_metric_tagged(ticker: str, metric: str) -> bool:
     """True if `ticker` tags `metric` in its XBRL filings AT ALL (any
     period, ever) -- distinct from get_metric() returning None for one
-    SPECIFIC period that isn't available. Motivated by
-    pltr-inventory-turnover-fy2025-refusal: Palantir genuinely never
-    tags InventoryNet at all, unlike "just not this quarter" -- the
-    model needs to know WHICH kind of missing this is to correctly
-    explain why instead of fabricating, the same "why, not just that"
-    principle behind the Q4-not-disclosed hint. Reuses fetch_concept()'s
-    own disk cache, so this is a cache read, not a second network call,
-    whenever get_metric() already tried (and failed at) the same lookup
-    moments earlier."""
+    SPECIFIC period that isn't available. See
+    docs/decisions/2026-08-19-fixing-6-accumulated-eval-findings.md and
+    docs/decisions/2026-09-15-xbrl-tag-selection-methodology.md. Reuses
+    fetch_concept()'s own disk cache, so this is a cache read, not a
+    second network call, whenever get_metric() already tried (and
+    failed at) the same lookup moments earlier."""
     return fetch_concept(ticker, _tag_for(ticker, metric)) is not None
 
 
@@ -196,13 +149,8 @@ def _latest_entry(entries: list[dict]) -> dict | None:
     """The most recently reported entry for a concept, across all
     fiscal years/periods, whatever its duration -- used when the caller
     doesn't (or can't) specify a period at all, e.g. "the most recent
-    quarter." Found live: a real cross-company comparison question
-    phrased exactly that way ("their most recent quarter") had no
-    calendar date or fiscal label to give get_metric(), so the model
-    called compare_financial_metric with no period at all, which
-    silently returned nothing (fiscal_year=None never matches anything
-    in _pick_entry) and the model abandoned the comparison entirely
-    rather than retrying with an actual period.
+    quarter." See docs/decisions/2026-08-17-frames-api-cross-company.md
+    for why this exists.
 
     Ties at the same `end` date (a fresh 10-Q's own quarter-length
     figure and its same-report 9-month year-to-date cumulative share an
@@ -249,26 +197,11 @@ def _pick_entry(entries: list[dict], fiscal_year: int, fiscal_period: str) -> di
 
 def _pick_entry_by_end_date(entries: list[dict], period_end_date: str) -> dict | None:
     """Filter a concept's USD entries down to the one true value ending
-    exactly on `period_end_date`.
-
-    Replaces an earlier approach that first converted the date to a
-    (fiscal_year, fiscal_period) guess (via period_labels.py's fiscal-
-    year arithmetic, mirroring resolve_fiscal_period()'s old role) and
-    matched entries on THAT computed label instead of on the date
-    itself. That had a real, silent-failure-mode risk: fiscal-year
-    arithmetic is a second, independent computation of something the
-    data already states directly (every entry carries its own `end`
-    date) -- if that arithmetic were ever off by one, it wouldn't fail
-    loudly, it would silently match a DIFFERENT real entry that happens
-    to share the (wrong) computed fy/fp label, rather than the one
-    actually asked about. This is exactly the shape of bug already found
-    once for a model-computed fiscal year (see get_metric's "Known
-    limitation" note and PROJECT_CONTEXT.md's NVDA fiscal-year-vs-
-    calendar-year case) -- reproducing the same risk inside our own
-    lookup code, just one level removed from the model, defeated the
-    point of fixing it there. Matching directly against `end` removes
-    the risk by construction: there's no computed label to be wrong,
-    only a string comparison against data SEC already returned.
+    exactly on `period_end_date`, matched directly against each entry's
+    own `end` date rather than a computed fiscal-year/fiscal-period
+    label -- see docs/decisions/2026-08-17-xbrl-period-matching-end-date-fix.md
+    for why matching on a computed label is a real, silent-failure-mode
+    risk this avoids by construction.
 
     Duration still disambiguates a quarter's own figure from an
     annual/YTD figure that happens to share the same `end` date (see the
@@ -356,16 +289,11 @@ def get_metric(
     if data is None:
         return None
     entries = data.get("units", {}).get("USD", [])
-    # The empty-string check matters on its own: a real, live-observed
-    # model quirk (see agent.py's _call_get_financial_fact docstring for
-    # the sibling case) is that for a question with no specific calendar
-    # date ("total revenue for 2025"), the model called this with
-    # period_end_date="" instead of omitting it or using
-    # fiscal_year/fiscal_period -- an empty string must be treated as
-    # "not provided" and fall through to the fiscal_year/fiscal_period
-    # path, not as a date to match against (it never matches any real
-    # `end` value, so this would return None either way, but the
-    # fallback path is the one the caller actually meant).
+    # An empty string must be treated as "not provided" and fall through
+    # to the fiscal_year/fiscal_period path, not as a date to match
+    # against -- see docs/decisions/2026-08-16-xbrl-structured-facts-tool.md
+    # (bug #4) and agent.py's own sibling case for the model quirk this
+    # guards against.
     if period_end_date:
         entry = _pick_entry_by_end_date(entries, period_end_date)
     elif fiscal_year is None:
@@ -390,21 +318,13 @@ def get_metric(
 # ---------------------------------------------------------------------------
 # frames — one metric, every covered company, one (or few) API calls
 # ---------------------------------------------------------------------------
-# Naive plan was to compute a "CY{year}Q{quarter}" frame label myself
-# from a calendar date using ordinary calendar-quarter math (Jan-Mar =
-# Q1, Apr-Jun = Q2, ...). Checked against real data before writing any
-# of that: NVIDIA's quarter ending April 26 is assigned frame
-# "CY2026Q1" by SEC, not the naively-expected "CY2026Q2" -- SEC's own
-# bucketing tolerates a wider window than strict calendar-month
-# boundaries (to accommodate the many non-calendar fiscal years it
-# aggregates across), and guessing that window would reproduce exactly
-# the class of period-matching bug already fought twice in this file
-# (the fiscal-year-from-calendar-date bug, and the quarter-vs-YTD
-# disambiguation in _pick_entry). Every companyconcept entry already
-# carries the SEC-assigned "frame" label directly (confirmed for all 5
-# covered companies' latest entries), so frame lookups are anchored to
-# one company's own already-verified get_metric() resolution instead of
-# computed independently.
+# The frame label is never computed independently from a calendar date
+# (SEC's own quarter bucketing doesn't follow ordinary calendar-quarter
+# math for non-calendar fiscal years -- see
+# docs/decisions/2026-08-17-frames-api-cross-company.md). Every
+# companyconcept entry already carries the SEC-assigned "frame" label
+# directly, so frame lookups are anchored to one company's own
+# already-verified get_metric() resolution instead.
 def fetch_frame(tag: str, frame: str) -> dict | None:
     """Fetch one us-gaap concept for every SEC filer that reported it
     for a given frame (e.g. "CY2026Q1"), cached to disk indefinitely —
@@ -443,26 +363,19 @@ def get_frame(metric: str, frame: str) -> dict[str, dict]:
     """`metric` for every covered company that reported it under
     `frame`, keyed by ticker. A single frames call only covers filers
     using ONE specific tag -- since our own companies don't all use the
-    same tag for some metrics (e.g. "revenue": NVDA uses "Revenues",
-    the other four use the ASC 606 tag; see DEFAULT_METRIC_TAGS/
-    METRIC_TAG_OVERRIDES above), a single tag query would silently omit
-    whichever covered companies use a different tag for that metric --
-    the same class of bug as the original revenue-tag-default mistake,
-    just at the frames layer instead of companyconcept. Queries every
-    distinct tag actually in play for `metric` across the 5 covered
-    companies and merges the results, so this is robust to that by
-    construction rather than by remembering to special-case it."""
+    same tag for some metrics (see DEFAULT_METRIC_TAGS/
+    METRIC_TAG_OVERRIDES above and
+    docs/decisions/2026-09-15-xbrl-tag-selection-methodology.md), a
+    single-tag query would silently omit whichever covered companies use
+    a different tag. Queries every distinct tag actually in play for
+    `metric` and merges the results, robust to that by construction."""
     companies = load_companies()
     cik_to_ticker = {int(info["cik"]): ticker for ticker, info in companies.items()}
-    # sorted(), not a bare set iteration: if two distinct tags ever both
-    # report data for the SAME ticker (none of the 5 covered companies
-    # do today, but a company mid-transition between two GAAP tags
-    # plausibly could), which value wins used to be nondeterministic
-    # (Python's set iteration order, an implementation detail). Sorting
-    # makes processing order deterministic; it's only a FALLBACK
-    # tie-break now, though -- see the ticker's-own-designated-tag
-    # preference below, which is what actually decides the winner in
-    # the common case.
+    # sorted(), not a bare set iteration, for deterministic processing
+    # order if two distinct tags ever report data for the SAME ticker --
+    # only a FALLBACK tie-break; the ticker's-own-designated-tag
+    # preference below decides the winner in the common case. See
+    # docs/decisions/2026-09-09-citation-gap-frame-ordering-retrieval-verify.md.
     tags_in_play = sorted({_tag_for(ticker, metric) for ticker in companies})
 
     results: dict[str, dict] = {}
@@ -479,26 +392,15 @@ def get_frame(metric: str, frame: str) -> dict[str, dict]:
                 if tag == winning_tag[ticker]:
                     # Same-tag duplicate entry (e.g. an amended filing
                     # appearing twice under one accession), not a
-                    # cross-tag disagreement -- found in code review:
-                    # this must not be mislabeled as one below.
-                    # First-entry-wins here, silently, matching this
-                    # same-tag case's unchanged, pre-existing behavior.
+                    # cross-tag disagreement -- must not be mislabeled as
+                    # one below. First-entry-wins here, silently.
                     continue
                 # Prefer the ticker's OWN designated tag over whichever
-                # tag happened to be processed first -- found in code
-                # review: plain alphabetical-sort tie-break is arbitrary,
-                # not principled, and _tag_for(ticker, metric) already
-                # gives the objectively correct answer for THIS ticker
-                # (it's what built tags_in_play in the first place).
-                # Without this, a ticker whose own tag sorts second
-                # would silently keep a wrong value from a different
-                # tag that happens to also report its CIK. (The
-                # "winning_tag[ticker] != designated_tag" half of this
-                # check a prior version had here was dead code, found in
-                # code review: the same-tag-duplicate branch above
-                # already rules out tag == winning_tag[ticker], so
-                # tag == designated_tag alone already implies
-                # winning_tag[ticker] != designated_tag.)
+                # tag happened to be processed first: _tag_for(ticker,
+                # metric) already gives the objectively correct answer
+                # for THIS ticker, so a plain alphabetical tie-break
+                # would be arbitrary, not principled. See
+                # docs/decisions/2026-09-09-citation-gap-frame-ordering-retrieval-verify.md.
                 designated_tag = _tag_for(ticker, metric)
                 if tag == designated_tag:
                     log_event(
@@ -553,46 +455,28 @@ def get_metric_all_companies(
     with no data for the period is simply excluded, not fatal to the
     others.
 
-    Known limitation, found in code review (2026-09-07): calling this
-    with `period_end_date` instead of fiscal_year/fiscal_period passes
-    the identical literal date to every company, and different
-    companies' balance-sheet snapshots essentially never land on the
-    exact same calendar date -- so a period_end_date-anchored instant
-    comparison effectively collapses to whichever company (usually only
-    the caller's own anchor) happens to match exactly. fiscal_year/
-    fiscal_period doesn't have this problem: each company resolves its
-    OWN fy/fp labels independently, a genuinely company-relative
-    concept. Not fixed here -- a real fix would need the closest-date-
-    matching mechanism considered and declined in favor of this
-    simpler design (see docs/plans/2026-09-07-fix-get-metric-all-
-    companies-instant-metrics.md); revisit if a real question needs it.
-
-    This replaced a same-day regression (2026-09-07): an earlier version
-    tried to borrow another covered company's SEC-assigned `frame` when
-    `ticker`'s own instant-fact entry lacked one (a real, documented SEC
-    API gap -- frames aren't assigned to every observation). That
-    silently substituted a DIFFERENT requested time window instead of
-    degrading honestly -- live-verified anchoring NVDA's own frame-less
-    FY2026 total_assets against MSFT's frame returned NVDA's Q2 FY2027
-    balance mislabeled as FY2026.
+    Known limitation: calling this with `period_end_date` instead of
+    fiscal_year/fiscal_period passes the identical literal date to every
+    company, and different companies' balance-sheet snapshots essentially
+    never land on the exact same calendar date -- so a period_end_date-
+    anchored instant comparison effectively collapses to whichever
+    company (usually only the caller's own anchor) happens to match
+    exactly. fiscal_year/fiscal_period doesn't have this problem: each
+    company resolves its OWN fy/fp labels independently. Not fixed here;
+    revisit if a real question needs it. See
+    docs/decisions/2026-09-07-fix-get-metric-all-companies-instant-metrics.md
+    for why instant metrics are resolved independently per company at
+    all (no SEC frame, no anchor requirement), rather than via the same
+    frame-borrowing mechanism duration metrics use below.
 
     Duration metrics (revenue, income, etc.) resolve `ticker`'s own fact
     via get_metric() to read its SEC-assigned `frame`, then fetch that
     frame for every covered company (see the module-level comment above
-    for why this doesn't compute the frame label independently).
-    Calendar-window bucketing via frames IS the correct, standard
-    technique for these -- unlike instant metrics, this was never the
-    bug. Returns {} if `ticker`'s own fact isn't available or has no
-    frame, with NO fallback to another company's frame -- unlike the
-    instant-metrics branch above, this is correctly narrower than what
-    briefly shipped on 2026-09-06: that fix's fallback applied to EVERY
-    metric, including duration ones, which was equally wrong for the
-    same reason (a different company's own fiscal_year/fiscal_period
-    resolves to a different real calendar window). Found in code review
-    (2026-09-07) that an earlier draft of this docstring inaccurately
-    claimed duration metrics were "unchanged from before" -- true
-    relative to the pre-2026-09-06 codebase, false relative to what was
-    actually shipped for one day."""
+    for why this doesn't compute the frame label independently). Returns
+    {} if `ticker`'s own fact isn't available or has no frame, with NO
+    fallback to another company's frame -- see the decision file above
+    for why a same-company-frame fallback here would reintroduce the
+    exact bug that redesign fixed for instant metrics."""
     if metric in INSTANT_METRICS:
         results: dict[str, dict] = {}
         for candidate in load_companies():
