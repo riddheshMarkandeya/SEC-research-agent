@@ -16,9 +16,7 @@ from contextlib import contextmanager
 
 from agent import (
     CALCULATE_TOOL_SCHEMA,
-    COMPARE_TOOL_SCHEMA,
     FACT_TOOL_SCHEMA,
-    RATIO_DEFINITIONS,
     SEARCH_TOOL_SCHEMA,
     SUBMIT_TOOL_SCHEMA,
     AgentResult,

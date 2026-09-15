@@ -44,135 +44,26 @@ reference:
 
 ## Backlog
 
-### From the 2026-09-14 documentation-system overhaul
+### From the 2026-09-15 ruff adoption
 
-Full evidence/reasoning: `docs/plans/2026-09-14-documentation-system-overhaul.md`,
-`docs/reviews/2026-09-14-documentation-system-overhaul.md`,
-`docs/decisions/2026-09-14-documentation-system-overhaul.md`.
+Full evidence/reasoning: `docs/decisions/2026-09-15-adopt-ruff-linter.md`.
 
-(The comment-audit follow-up originally logged here undersold its real
-scope — it only counted files that name-check `PROJECT_CONTEXT.md` by
-name, missing files like `companies.py` that have the same problem
-without citing it. A full inventory was done and Round 1 completed the
-same day — see the section below, which supersedes this one.)
-
-### From the 2026-09-14 comment-audit Round 1
-
-Full evidence/reasoning: `docs/plans/2026-09-14-comment-audit-round1.md`,
-`docs/reviews/2026-09-14-comment-audit-round1.md`,
-`docs/decisions/2026-09-14-comment-audit-round1.md` (includes the full
-per-file inventory from both Explore passes, so a future round doesn't
-need to re-derive it).
-
-(Round 2 — see the section below — completed 10 of the 13 remaining
-main-source files originally logged here. This entry now only tracks
-what's left.)
-
-### From the 2026-09-14 comment-audit Round 2
-
-Full evidence/reasoning: `docs/plans/2026-09-14-comment-audit-round2.md`,
-`docs/reviews/2026-09-14-comment-audit-round2.md`,
-`docs/decisions/2026-09-14-comment-audit-round2.md`.
-
-(Round 3 — see the section below — completed `xbrl_facts.py` and
-`numeric_utils.py`, the 2 of the 3 files originally logged here that
-turned out well-scoped for a normal-sized round. `agent.py` turned out
-far denser than expected and is now its own properly-scoped Round 4,
-tracked below.)
-
-### From the 2026-09-15 comment-audit Round 3
-
-Full evidence/reasoning: `docs/plans/2026-09-15-comment-audit-round3.md`,
-`docs/reviews/2026-09-15-comment-audit-round3.md`,
-`docs/decisions/2026-09-15-comment-audit-round3.md`.
-
-(Round 4 — see the section below — completed `agent.py`, the file this
-round deferred.)
-
-### From the 2026-09-15 comment-audit Round 4
-
-Full evidence/reasoning: `docs/plans/2026-09-15-comment-audit-round4.md`,
-`docs/reviews/2026-09-15-comment-audit-round4.md`,
-`docs/decisions/2026-09-15-comment-audit-round4.md`.
-
-(Round 5 — see the section below — completed 5 small `tests/` files;
-the rest of the `tests/` pass is now scoped into Round 6-10+ items
-below, replacing the single undifferentiated item that used to be
-here.)
-
-### From the 2026-09-15 comment-audit Round 5
-
-Full evidence/reasoning: `docs/plans/2026-09-15-comment-audit-round5.md`,
-`docs/reviews/2026-09-15-comment-audit-round5.md`,
-`docs/decisions/2026-09-15-comment-audit-round5.md` — includes the full
-three-Explore-agent inventory of all 25 `tests/` files, so the rounds
-below don't need to re-derive it.
-
-(Round 6 — see the section below — completed sub-group (a):
-`test_llm_backends.py`, `test_xbrl_facts.py`, `test_formulas.py`,
-`test_eval_harness.py`. Sub-groups (b) and (c) remain below, renumbered
-as their own rounds.)
-
-### From the 2026-09-15 comment-audit Round 6
-
-Full evidence/reasoning: `docs/plans/2026-09-15-comment-audit-round6.md`,
-`docs/reviews/2026-09-15-comment-audit-round6.md`,
-`docs/decisions/2026-09-15-comment-audit-round6.md`.
-
-- [ ] **[refactor, Low, Standard]** Round 6b: the 7 remaining
-  `tests/manual/verify_*.py` scripts (`verify_calculate.py`,
-  `verify_retrieval.py`, `verify_tracing.py`, `verify_tool_turn_waste.py`,
-  `verify_submit_answer.py`, `verify_mcp_server.py`,
-  `verify_period_labels.py` — all confirmed ALREADY-DOCUMENTED, share a
-  repeated live-code-carve-out boilerplate preamble that could be
-  trimmed uniformly).
-- [ ] **[refactor, Low, Standard]** Round 6c: `test_edgar_ingest.py`,
-  `test_chunk_documents.py`, `test_mcp_server.py`, `test_retrieval.py`
-  (4-9 blocks each, ALREADY-DOCUMENTED but dense/interlinked enough to
-  need non-mechanical editing — some blocks cross-reference other test
-  files by name).
-- [ ] **[refactor, Med, Standard]** Round 7: `test_tracing.py` (491
-  lines) — a cluster of ~5 "found in code review" blocks
-  (`traced_span`/`_write_local_log`/`flush` hardening: monotonic-vs-
-  wall-clock duration, an assertion-swallowed-by-broad-except pitfall
-  repeated twice, non-OSError serialization failures, directory-
-  deleted-mid-run cache invalidation, `flush()` masking uvicorn's real
-  exception) with no existing decision-file home — likely needs one new
-  `docs/decisions/*-tracing-hardening.md` file covering all of them as
-  a unit (EXTRACT), not five piecemeal extracts.
-- [ ] **[refactor, Med, Standard]** Round 8: `test_numeric_utils.py`
-  (267 lines, 12+ dense blocks — the densest of the small/medium
-  files) — confirmed ALREADY-DOCUMENTED (nearly everything maps to
-  `2026-09-11-negative-number-support.md`), but several blocks explain
-  load-bearing "why this specific input shape" reasoning easy to
-  accidentally over-trim alongside the incident narration — needs the
-  same KEEP-reasoning/TRIM-narrative care as `agent.py`'s Round 4, at a
-  smaller scale.
-- [ ] **[refactor, Med, Substantial]** Round 9: `test_table_grounding.py`
-  (443 lines, densest-per-line of any file inventoried) — module
-  docstring plus roughly half the test functions carry paragraph-length
-  incident narration duplicating the `2026-09-12`/`2026-09-13`
-  table-grounding decision files almost verbatim. This batch's
-  `agent.py`-equivalent — needs careful, non-mechanical editing, not a
-  routine batch slot.
-- [ ] **[refactor, Med, Substantial]** Round 10+: `test_agent.py`
-  (3,713 lines, larger than `agent.py` itself, ~101-140 narrated
-  blocks — the densest file in the codebase) — split into 3 sub-passes
-  along its natural structure: **10a** (lines ~58-1349, ~55-60 blocks:
-  formatting helpers + prose citation verification + tool-schema/
-  `calculate` validation), **10b** (lines ~1349-2923, ~40-48 blocks,
-  the single densest stretch: fact/ratio dispatch, unmet-request/
-  rejection logging, `_dispatch_tool_call`, the full `run_agent()` loop
-  — may need a further split at ~line 2277 into dispatch/logging vs.
-  retry/hard-gate/submit-loop), **10c** (lines ~2923-3713, ~25-28
-  blocks: `_finalize_answer`, quote-matching primitives, `verify_claims`,
-  table-grounding integration tests, `_partition_submit_call` — one
-  flagged judgment-call block, the bare-XBRL-number quote test, needs
-  the same KEEP-reasoning/TRIM-narrative treatment as `agent.py`'s
-  `_ground_operand`). No test-function docstrings exist anywhere in
-  this file — all narration lives in 33 dashed-divider section-header
-  comments and inline test-body comments. No EXTRACT candidates found
-  during the spot-check.
+- [ ] **[refactor, Low, Substantial]** 155-violation pre-existing lint
+  baseline, not fixed on adoption (deliberately — see the decision
+  file). `E501` (144) is mostly deliberate long system-prompt/tool-
+  schema strings and single-line test-fixture dicts, low value to
+  fix. The genuine modularity findings (11 total): `agent.py`'s
+  `call_get_financial_fact`/`call_calculate`/`_dispatch_tool_call`/
+  `_run_agent_impl` (all `C901` excess-complexity; the last also trips
+  `PLR0912`/`PLR0915`), `formulas.py`'s and `tests/test_agent.py`'s one
+  `PLR0913` each (too-many-arguments), and
+  `tests/manual/verify_period_labels.py`'s `main` (`C901`). Fix
+  opportunistically per the incremental-improvement policy whenever
+  one of these functions is next touched, not as a dedicated pass.
+- [ ] **[misc, Low, TBD]** Migrate `ruff` from changed-files-scoped
+  manual review to a hard pre-commit gate (alongside the existing
+  pytest hook) once enough of the codebase is clean that a full-repo
+  run wouldn't be dominated by the baseline above.
 
 ### From the 2026-09-11 hand-rolled-complexity review
 

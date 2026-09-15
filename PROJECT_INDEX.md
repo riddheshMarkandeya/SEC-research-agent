@@ -40,6 +40,8 @@ One line per file in `docs/decisions/`, `docs/plans/`, and
 is excluded. Copy the relevant `TEMPLATE.md` when starting a new file in
 any of the three directories.
 
+- 2026-09-15 [decision] Adopt ruff as this project's linter, changed-files-scoped for now → `docs/decisions/2026-09-15-adopt-ruff-linter.md`
+- 2026-09-15 [decision] Comment-audit initiative concluded (19/19 main-source, 9/25 tests/ files done; rest deferred to opportunistic per-touch cleanup) → `docs/decisions/2026-09-15-comment-audit-concluded.md`
 - 2026-09-15 [decision] Comment audit Round 6: pointer-fixed 4 large unit-test files → `docs/decisions/2026-09-15-comment-audit-round6.md`
 - 2026-09-15 [plan] Comment audit Round 6 design → `docs/plans/2026-09-15-comment-audit-round6.md`
 - 2026-09-15 [review] Comment audit Round 6 review (self-check + fresh subagent) → `docs/reviews/2026-09-15-comment-audit-round6.md`

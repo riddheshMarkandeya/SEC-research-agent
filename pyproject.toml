@@ -1,3 +1,23 @@
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
+
+# See docs/decisions/2026-09-15-adopt-ruff-linter.md and this project's
+# own CLAUDE.md for the current rollout stage (changed-files-scoped for
+# now, not a full-repo pre-commit gate -- the existing codebase has a
+# real, not-yet-fixed baseline of violations, largely file-size/
+# complexity ones on a handful of already-known-large files).
+[tool.ruff]
+target-version = "py313"
+line-length = 120
+
+[tool.ruff.lint]
+# E/F/W: standard pycodestyle errors/warnings + pyflakes (unused
+# imports/names, obvious bugs). C90 + PLR09xx: the modularity-relevant
+# categories -- mccabe cyclomatic complexity, and Pylint's too-many-
+# returns/branches/arguments/statements refactor rules. None of C90/PLR
+# are enabled by ruff's own defaults; both must be selected explicitly.
+select = ["E", "F", "W", "C90", "PLR0911", "PLR0912", "PLR0913", "PLR0915"]
+
+[tool.ruff.lint.mccabe]
+max-complexity = 10

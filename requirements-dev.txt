@@ -2,3 +2,8 @@
 # develop it. Install alongside requirements.txt: pip install -r
 # requirements.txt -r requirements-dev.txt
 pytest==9.1.1
+
+# Linter/static-analysis, run scoped to changed files as part of step 7
+# review (see docs/decisions/2026-09-15-adopt-ruff-linter.md and this
+# project's own CLAUDE.md for the current rollout stage).
+ruff==0.16.7

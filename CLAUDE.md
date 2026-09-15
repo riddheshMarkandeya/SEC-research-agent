@@ -31,6 +31,35 @@ No UI exists in this project today; if one is added, name its concrete
 live-only surfaces here and apply the generic file's UI section (step 8)
 in full before starting that work.
 
+## This project's linter
+
+The generic file's step 7 static-analysis requirement, named
+concretely: this project uses **`ruff`** (`requirements-dev.txt`,
+config in `pyproject.toml`'s `[tool.ruff]`/`[tool.ruff.lint]`). Rule
+selection: `E`/`F`/`W` (standard hygiene) plus `C90`/`PLR0911`/
+`PLR0912`/`PLR0913`/`PLR0915` (the modularity-relevant categories —
+cyclomatic complexity, too-many-returns/branches/arguments/statements).
+See `docs/decisions/2026-09-15-adopt-ruff-linter.md` for the full
+rationale and the current 155-violation baseline (dominated by `E501`
+on deliberately-long system-prompt/tool-schema strings and single-line
+test-fixture dicts — low-value noise, not a real modularity signal;
+the 11 `C90`/`PLR09xx` hits are the genuine ones, concentrated in
+`agent.py`'s largest functions).
+
+**Current rollout stage: changed-files-scoped, not a pre-commit gate.**
+Run `ruff check <changed files> --fix` as part of every step-7 review
+(apply safe auto-fixes; whatever remains in a line the current change
+actually added or modified must be fixed by hand before calling the
+work done; a violation in a touched file but on an untouched line is
+pre-existing debt — leave it, log it to `BACKLOG.md` once per file if
+not already tracked). Do **not** run `ruff check .` unscoped and try to
+fix everything it finds — the baseline is large and known, and fixing
+it wholesale is explicitly out of scope until the migration below.
+**Migrate to a hard pre-commit gate** (alongside the existing pytest
+hook) once enough of the codebase is clean that a full-repo run
+wouldn't be dominated by pre-existing debt — tracked as its own
+`BACKLOG.md` item until then.
+
 ## This project's documentation system
 
 The generic file's five-artifact template (step 6), named concretely
