@@ -40,6 +40,9 @@ One line per file in `docs/decisions/`, `docs/plans/`, and
 is excluded. Copy the relevant `TEMPLATE.md` when starting a new file in
 any of the three directories.
 
+- 2026-09-14 [decision] Comment audit Round 2: pointer-fixed 10 more main-source files → `docs/decisions/2026-09-14-comment-audit-round2.md`
+- 2026-09-14 [plan] Comment audit Round 2 design → `docs/plans/2026-09-14-comment-audit-round2.md`
+- 2026-09-14 [review] Comment audit Round 2 review (self-check + fresh subagent) → `docs/reviews/2026-09-14-comment-audit-round2.md`
 - 2026-09-14 [decision] Comment audit Round 1: pointer-fixed 6 low-risk main-source files → `docs/decisions/2026-09-14-comment-audit-round1.md`
 - 2026-09-14 [plan] Comment audit Round 1 design → `docs/plans/2026-09-14-comment-audit-round1.md`
 - 2026-09-14 [review] Comment audit Round 1 review (self-check + fresh subagent) → `docs/reviews/2026-09-14-comment-audit-round1.md`
@@ -94,6 +97,7 @@ any of the three directories.
 - 2026-08-25 [decision] Formula registry extended: return_on_assets, asset_turnover, cash_to_assets → `docs/decisions/2026-08-25-formula-registry-roa-turnover-cash.md`
 - 2026-08-25 [decision] MCP server exposing all 3 agent tools over Streamable HTTP (Week 6) → `docs/decisions/2026-08-25-mcp-server-week6.md`
 - 2026-08-24 [plan] Citation-verification retry-loop v2 design → `docs/plans/2026-08-24-citation-retry-loop-design.md`
+- 2026-08-20 [decision] Swappable LLM backend: llm_backends.py normalizes Ollama/Gemini into one shared loop → `docs/decisions/2026-08-20-swappable-llm-backend.md`
 - 2026-08-20 [decision] Comparison-reasoning bug root-caused: local-model capability limit, confirmed via Gemini → `docs/decisions/2026-08-20-comparison-reasoning-model-capability-limit.md`
 - 2026-08-20 [plan] Swappable LLM backend design (Ollama/Gemini) → `docs/plans/2026-08-20-swappable-llm-backend-design.md`
 - 2026-08-20 [plan] Swappable LLM backend implementation plan → `docs/plans/2026-08-20-swappable-llm-backend.md`

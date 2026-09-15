@@ -64,19 +64,24 @@ Full evidence/reasoning: `docs/plans/2026-09-14-comment-audit-round1.md`,
 per-file inventory from both Explore passes, so a future round doesn't
 need to re-derive it).
 
-- [ ] **[refactor, Med, Substantial]** 13 remaining main-source `.py`
-  files (`agent.py` — 2497 lines, ~45 blocks, needs its own dedicated
-  pass; `xbrl_facts.py` — needs a genuinely new `EXTRACT` write-up for
-  its tag-selection investigation; `numeric_utils.py` — one ~100-line
-  regex-design block needing careful trimming; plus `llm_backends.py`,
-  `retrieval.py`, `index_chunks.py`, `eval_harness.py`,
-  `table_grounding.py`, `analyze_citation_gate.py`,
-  `chunk_documents.py`, `edgar_ingest.py`, `discover_tags.py`,
-  `query_chunks.py`) still have decision-history narration in
-  comments/docstrings. Same per-block process as Round 1: confirm each
-  block's mapping to an existing `docs/decisions/*.md` file before
-  trimming to a pointer; write a new decision file only for genuinely
-  undocumented content.
+(Round 2 — see the section below — completed 10 of the 13 remaining
+main-source files originally logged here. This entry now only tracks
+what's left.)
+
+### From the 2026-09-14 comment-audit Round 2
+
+Full evidence/reasoning: `docs/plans/2026-09-14-comment-audit-round2.md`,
+`docs/reviews/2026-09-14-comment-audit-round2.md`,
+`docs/decisions/2026-09-14-comment-audit-round2.md`.
+
+- [ ] **[refactor, Med, Substantial]** 3 remaining main-source files need
+  their own dedicated pass (Round 3), not a routine pointer-fix batch:
+  `agent.py` (2497 lines, ~45 blocks — the largest file in the codebase),
+  `xbrl_facts.py` (needs a genuinely new `EXTRACT` write-up for its
+  tag-selection investigation — original content to write, not just
+  verify), `numeric_utils.py` (a single ~100-line regex-design block,
+  the single highest-value trim target in the codebase per the original
+  inventory).
 - [ ] **[refactor, Low, Substantial]** Full `tests/` pass (25 files) —
   same issue, much denser: `test_agent.py` alone has ~101 flagged
   comment blocks, `test_table_grounding.py` is similarly dense. Lower

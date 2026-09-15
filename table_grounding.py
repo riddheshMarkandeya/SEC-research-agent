@@ -1,13 +1,11 @@
 """
-Structure-aware quote grounding for values that live in a markdown table
-(2026-09-12, redesigned 2026-09-13). Used by agent._verify_one_claim() as
-a REPLACEMENT for _quote_matches's flat-text anchor floor whenever a
-claim's value can be located in a parsed table cell; _quote_matches
-remains the path for prose (see
-docs/plans/2026-09-12-structure-aware-table-quote-grounding.md for the
-original investigation, and
-docs/plans/2026-09-13-table-grounding-region-scoped-matching.md for the
-redesign below).
+Structure-aware quote grounding for values that live in a markdown
+table. Used by agent._verify_one_claim() as a REPLACEMENT for
+_quote_matches's flat-text anchor floor whenever a claim's value can be
+located in a parsed table cell; _quote_matches remains the path for
+prose. See
+docs/decisions/2026-09-12-structure-aware-table-quote-grounding.md and
+docs/decisions/2026-09-13-table-grounding-region-scoped-matching.md.
 
 Why a flat string-similarity check over the WHOLE source can't do this
 job: verifying a claim about a table cell needs to tell a genuine,
@@ -15,21 +13,20 @@ possibly multi-value disclosure ("Current $35.1, Noncurrent $37.3, Total
 $72.4" -- all real, all in the same row) apart from a value spliced onto
 an unrelated adjacent row/group's label (a markdown row boundary and an
 empty table cell normalize to the identical string, so naive locality
-tricks can't tell them apart -- see the first plan doc for the measured
-proof). The fix here is neither a length-based heuristic nor a fixed
-word-vocabulary allowlist (both were tried; both broke on real filings --
-see the second plan doc's diagnosis) -- it's SCOPE: build a small,
-precisely-bounded "permitted region" for the cell actually being verified
-(the table's own leading caption/header rows -- which describe the WHOLE
-table, not one group -- plus the cell's OWN governing group label, if
-any, plus the cell's OWN data row, all as their real VERBATIM source
-text) and reuse the exact same coverage/exact-substring matching
-`_quote_matches` already uses (numeric_utils.text_coverage), just against
-that narrow region instead of the whole chunk. A genuine multi-value row
-quote naturally hits the exact-substring fast path within its own small
-region; a quote that reaches into a DIFFERENT row or group has nothing to
-match there at all, since that content was never included in the region
-to begin with -- the exclusion is structural, not threshold-tuned.
+tricks can't tell them apart). The fix here is SCOPE, not a length-based
+heuristic or word-vocabulary allowlist (both tried, both broke on real
+filings): build a small, precisely-bounded "permitted region" for the
+cell actually being verified (the table's own leading caption/header
+rows -- which describe the WHOLE table, not one group -- plus the
+cell's OWN governing group label, if any, plus the cell's OWN data row,
+all as their real VERBATIM source text) and reuse the exact same
+coverage/exact-substring matching `_quote_matches` already uses
+(numeric_utils.text_coverage), just against that narrow region instead
+of the whole chunk. A genuine multi-value row quote naturally hits the
+exact-substring fast path within its own small region; a quote that
+reaches into a DIFFERENT row or group has nothing to match there at
+all, since that content was never included in the region to begin with
+-- the exclusion is structural, not threshold-tuned.
 
 Split into its own module rather than added to agent.py (already 2000+
 lines) for the same reason numeric_utils.py exists as its own module
@@ -137,10 +134,10 @@ def _classify_row(cells: list[str]) -> str:
       parenthesized ("(In millions)"). That last case matters: SEC
       filings render a table-wide unit/scale caption as its own single-
       cell row indistinguishably from a genuine group label by cell
-      shape alone -- confirmed live 2026-09-13 on NVIDIA's segment
-      table, where "(In millions)" (a permanent, whole-table caption)
-      and "Three Months Ended Apr 26, 2026" (a resettable, per-period
-      group label) are BOTH single-cell rows back to back. Parens are
+      shape alone -- e.g. "(In millions)" (a permanent, whole-table
+      caption) and "Three Months Ended Apr 26, 2026" (a resettable,
+      per-period group label) can both be single-cell rows back to
+      back. Parens are
       the real, observed distinguishing signal across every filing in
       this corpus: a caption is always parenthesized ("(In millions)",
       "(Unaudited)", "(in thousands, except per share data)"); a group/
@@ -219,8 +216,7 @@ def _leading_header_context(rows: list[_Row]) -> str:
 
     Separator/blank rows are included too (harmless boilerplate -- "---"
     carries no misattributable content, and a model that quotes the
-    separator row verbatim, as observed live on NVIDIA's segment table,
-    should not lose coverage for it)."""
+    separator row verbatim should not lose coverage for it)."""
     lines = []
     for row in rows:
         if row.kind in ("label", "data"):
@@ -282,12 +278,11 @@ def locate_value(blocks: list[TableBlock], value: float, unit: str) -> list[Grou
     or the chunk may hold no table at all.
 
     Can return MULTIPLE cells for one claim: two distinct real numbers
-    can sit within the standard 1% tolerance of each other (confirmed
-    live 2026-09-13 -- a real MSFT segment table has Intelligent Cloud
-    revenue $34,681M and Productivity & Business Processes revenue
-    $35,013M, a genuine ~0.95% gap). Callers must check EVERY returned
-    cell's own permitted_region, never assume the first is the right
-    one."""
+    can sit within the standard 1% tolerance of each other (e.g. a real
+    MSFT segment table's Intelligent Cloud revenue $34,681M and
+    Productivity & Business Processes revenue $35,013M, a genuine
+    ~0.95% gap). Callers must check EVERY returned cell's own
+    permitted_region, never assume the first is the right one."""
     target_category, target_norm = normalize(value, unit)
     tolerance = max(0.01 * abs(target_norm), 0.05)
 
@@ -370,55 +365,37 @@ def quote_is_grounded(quote: str, cell: GroundedCell) -> bool:
        a quote restating the region's wording without exact comma/
        dollar-sign/decimal formatting, or using an ordinary connective/
        caption word -- exactly like _quote_matches already tolerates for
-       prose (an earlier, narrower word-vocabulary-allowlist version of
-       this function couldn't recognize its own source verbatim, which
-       is what caused the real regressions this redesign fixes -- see
-       docs/plans/2026-09-13-table-grounding-region-scoped-matching.md).
+       prose.
 
     2. Every number-shaped token in `quote` must equal a real number
        found somewhere in the region (by VALUE, tolerant of formatting
        and the table's own caption-unit scale -- not scattered digit
-       coincidence). This second check is NOT redundant with coverage:
-       found live 2026-09-13, re-testing this exact redesign before
-       shipping it -- a WRONG value's digits can still score 90%+
-       coverage via difflib.SequenceMatcher finding scattered,
-       non-contiguous single-character/short-fragment matches against
-       various OTHER real numbers sprinkled through the same region
-       (confirmed measured: "$35,013" against Intelligent Cloud's own
-       region, which contains no $35,013 at all, scored 94% coverage
-       purely from shared digits with $34,681/$26,751/etc). Dropping the
-       old anchor-floor requirement (see this function's own history)
-       reopened exactly this hole; reintroducing the SAME anchor-floor
-       mechanism would in turn reopen the original short-label false
-       negative this whole module exists to fix (a genuine short label's
-       longest contiguous match, e.g. "intelligent cloud", is well under
-       any anchor floor big enough to matter). Checking numbers BY VALUE
-       against the region's real content -- not by contiguous-match
-       length -- is what closes the scattered-digit hole without
-       reopening the length-dependent one: a wrong value simply isn't a
-       real number anywhere in the region, however its digits happen to
-       overlap with ones that are.
+       coincidence). This second check is NOT redundant with coverage: a
+       WRONG value's digits can still score 90%+ coverage via
+       difflib.SequenceMatcher finding scattered, non-contiguous
+       single-character/short-fragment matches against various OTHER
+       real numbers sprinkled through the same region. Checking numbers
+       BY VALUE against the region's real content -- not by
+       contiguous-match length -- closes that scattered-digit hole
+       without reopening the length-dependent false-negative hole a
+       plain anchor-floor length requirement would (a genuine short
+       label's longest contiguous match is well under any anchor floor
+       big enough to matter). See
+       docs/decisions/2026-09-13-table-grounding-region-scoped-matching.md.
 
     3. The quote must not cherry-pick ONE cell's own label out of a
        multi-column header row (`cell.multi_cell_context_tokens`) while
-       omitting that row's OTHER labels. Found live 2026-09-13 by an
-       independent review of this exact redesign, re-verified directly:
-       a quote citing "Three Months EndedMarch 31," (one of two period
-       phrases in the same header row) alongside a value that's actually
-       the OTHER period's ("Nine Months EndedMarch 31,"'s own figure)
-       passed checks 1-2 (both phrases and the value are genuinely
-       "in the region" -- the whole point of including header rows
-       wholesale) -- confirmed against the real MSFT fixture, and the
-       yesterday-committed design (before this whole redesign) correctly
-       rejected this exact case, so this is a real regression, not a
-       pre-existing accepted limitation as an earlier version of this
-       docstring claimed. Same mechanism on NVIDIA's segment table: a
-       quote citing "Graphics" with Compute & Networking's own real
-       value. A quote that reproduces a multi-column row's labels
-       WHOLESALE (all of them, e.g. the real NVIDIA/CRM regressions this
-       redesign fixes) is unaffected -- cherry-picking is specifically
-       "some but not all" of one row's own distinct labels, not "any
-       overlap with a multi-column row at all"."""
+       omitting that row's OTHER labels -- e.g. a quote citing "Three
+       Months EndedMarch 31," (one of two period phrases in the same
+       header row) alongside a value that's actually the OTHER period's
+       figure would otherwise pass checks 1-2, since both phrases and
+       the value are genuinely "in the region" (the whole point of
+       including header rows wholesale). A quote that reproduces a
+       multi-column row's labels WHOLESALE (all of them) is unaffected
+       -- cherry-picking is specifically "some but not all" of one row's
+       own distinct labels, not "any overlap with a multi-column row at
+       all". See
+       docs/decisions/2026-09-13-table-grounding-region-scoped-matching.md."""
     exact, coverage, _ = text_coverage(quote, cell.permitted_region)
     if not (exact or coverage >= QUOTE_COVERAGE_THRESHOLD):
         return False
@@ -441,13 +418,11 @@ def quote_is_grounded(quote: str, cell: GroundedCell) -> bool:
             # 1%-relative business tolerance locate_value() uses to find
             # candidate CELLS. Reformatting (comma/dollar-sign/decimal
             # removal) never changes the underlying parsed float at all,
-            # so no real tolerance is needed for that; using the loose
-            # 1% tolerance here instead would recreate Regression B one
-            # layer up (found live 2026-09-13: $34,681 and $35,013 are
-            # genuinely ~0.95% apart, so the loose tolerance would accept
-            # either as "matching" the other, making this check unable to
-            # tell two real, DIFFERENT segments' values apart -- exactly
-            # what it exists to catch).
+            # so no real tolerance is needed for that; two real,
+            # DIFFERENT segments' values can be as close as ~0.95% apart
+            # (e.g. $34,681 vs. $35,013), so the loose 1% tolerance would
+            # wrongly accept either as "matching" the other here. See
+            # docs/decisions/2026-09-13-table-grounding-region-scoped-matching.md.
             tolerance = max(1e-6 * abs(q_norm), 1e-9)
             if any(
                 r_category == q_category and abs(r_norm - q_norm) <= tolerance

@@ -1,8 +1,7 @@
 """
-Week 2 — Table-to-Markdown Conversion + Table-Aware Chunking
----------------------------------------------------------------
-Takes the output of edgar_ingest.py (per-filing _text.txt with [TABLE_n]
-markers, plus _tables.json) and:
+Table-to-markdown conversion + table-aware chunking. Takes the output of
+edgar_ingest.py (per-filing _text.txt with [TABLE_n] markers, plus
+_tables.json) and:
 
   1. Cleans up each table's messy row data (SEC HTML splits currency
      symbols and padding into separate empty cells).
@@ -22,6 +21,8 @@ Input:  ./data/<TICKER>/<accession>_text.txt
         ./data/<TICKER>/<accession>_meta.json
 Output: ./chunks/<TICKER>/<accession>_chunks.jsonl
         (one JSON object per line: {text, metadata})
+
+See docs/decisions/2026-08-13-chunking-pipeline.md.
 """
 
 import json
@@ -41,7 +42,7 @@ OVERLAP_CHARS = 200          # trailing context carried into the next chunk
 
 # SEC filings sometimes have hidden Inline XBRL taxonomy metadata (tag
 # paths, raw dates, "us-gaap:...Member" strings) sitting outside any
-# <table> tag, so Week 1's table-stripping doesn't catch it. This
+# <table> tag, so edgar_ingest.py's table-stripping doesn't catch it. This
 # boilerplate phrase marks the start of the real, human-readable filing
 # text across virtually all 10-K/10-Q filings, so we use it as a generic
 # (non-company-specific) anchor to cut the junk before it.
@@ -62,10 +63,10 @@ def strip_leading_metadata(text: str) -> str:
     # "UNITED STATES"). Guard both rfind()s explicitly rather than
     # chaining them directly: fewer than 2 newlines before the anchor
     # (e.g. "UNITED STATES" is the very first line, or shares no
-    # newline with it at all) used to leave this at -1, and text[-1:]
-    # doesn't mean "from the start" -- it silently truncated the whole
-    # document to its last character (review §6, found live via a
-    # future filing, not any of the 25 already ingested here).
+    # newline with it at all) leaves this at -1, and text[-1:] doesn't
+    # mean "from the start" -- it would silently truncate the whole
+    # document to its last character. See
+    # docs/decisions/2026-09-09-fix-3-more-review-findings.md.
     first_nl = preceding.rfind("\n")
     # No ternary on first_nl == -1 needed: when "\n" isn't in `preceding`
     # at all, it can't be found in any sub-range of it either, so the
@@ -207,9 +208,10 @@ def is_exhibit_index_table(table_markdown: str) -> bool:
     """
     header_region = table_markdown[:400].lower()
     # Multi-row/colspan headers (e.g. "Exhibit" + "Number" spanning two
-    # source cells) lose their separating space during Week 1's cell-text
-    # extraction and collapse to "exhibitnumber". Match on a whitespace-
-    # stripped copy too so both "Exhibit Number" and "ExhibitNumber" hit.
+    # source cells) lose their separating space during edgar_ingest.py's
+    # cell-text extraction and collapse to "exhibitnumber". Match on a
+    # whitespace-stripped copy too so both "Exhibit Number" and
+    # "ExhibitNumber" hit.
     header_region_nospace = re.sub(r"\s+", "", header_region)
     exhibit_signal = (
         "exhibit number" in header_region

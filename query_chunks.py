@@ -1,10 +1,11 @@
 """
-Week 2b — Manual sanity-check queries against the Chroma index
-------------------------------------------------------------------
-Runs a preset list of financial questions against the sec_filings
-Chroma collection and prints the top matches so retrieval quality can
-be eyeballed before Week 3 builds the real (hybrid + reranked)
-retrieval layer. Not an eval harness — no scoring, just human review.
+Manual sanity-check queries against the Chroma index. Runs a preset
+list of financial questions against the sec_filings Chroma collection
+and prints the top matches so retrieval quality can be eyeballed. Not
+an eval harness — no scoring, just human review. See
+docs/decisions/2026-08-13-embedding-indexing-and-query-cli.md (and
+retrieval.py's hybrid_search() for the real, hybrid+reranked retrieval
+layer other code should use instead of querying Chroma directly).
 
 Usage:
     python query_chunks.py                  # run all preset queries

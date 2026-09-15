@@ -1,10 +1,9 @@
 """
-Week 1 — SEC EDGAR Filing Ingestion
-------------------------------------
-Fetches recent 10-K and 10-Q filings for a set of companies, parses the
-filing HTML, and separates prose text from tables (tables are kept
-separately so Week 2 can convert them to markdown instead of letting
-them get flattened/lost during chunking).
+SEC EDGAR filing ingestion. Fetches recent 10-K and 10-Q filings for a
+set of companies, parses the filing HTML, and separates prose text from
+tables (tables are kept separately so chunk_documents.py can convert
+them to markdown instead of letting them get flattened/lost during
+chunking). See docs/decisions/2026-08-13-edgar-ingestion.md.
 
 Usage:
     pip install requests beautifulsoup4 lxml
@@ -94,7 +93,7 @@ def fetch_filing_html(cik: str, accession: str, primary_doc: str) -> str:
 
 def get_filing_url(ticker: str, accession: str) -> str | None:
     """The real SEC EDGAR URL for an already-ingested filing, built for
-    mcp_server.py's citation `source` blocks (Week 6) -- no new network
+    mcp_server.py's citation `source` blocks -- no new network
     call, since `cik` and `primaryDocument` are already sitting in this
     filing's own _meta.json (written by process_ticker() below, using
     the exact same `filing` dict get_filing_list() returned). Returns
@@ -118,10 +117,11 @@ def parse_filing(html: str) -> tuple[str, list[dict]]:
 
     # Pull out tables first so their content doesn't end up duplicated
     # or mangled in the prose text extraction. Each removed table is
-    # replaced with a [TABLE_n] marker left IN PLACE in the text, so Week 2
-    # can splice the markdown version of the table back in at the exact
-    # spot it came from (instead of text and tables living as two
-    # disconnected documents with no positional link between them).
+    # replaced with a [TABLE_n] marker left IN PLACE in the text, so
+    # chunk_documents.py can splice the markdown version of the table
+    # back in at the exact spot it came from (instead of text and tables
+    # living as two disconnected documents with no positional link
+    # between them).
     tables = []
     for idx, table_tag in enumerate(soup.find_all("table")):
         rows = []
@@ -163,10 +163,10 @@ def parse_filing(html: str) -> tuple[str, list[dict]]:
         flags=re.MULTILINE,
     )
     text = re.sub(r"\n{3,}", "\n\n", text)  # re-collapse blank lines after stripping
-    # Found in code review (2026-09-10): a noise line at the very start
-    # or end of the document left a stray leading/trailing newline
-    # behind, since the earlier .strip() above ran before this block
-    # existed to create one.
+    # A noise line at the very start or end of the document leaves a
+    # stray leading/trailing newline behind, since the earlier .strip()
+    # above ran before this block existed to create one. See
+    # docs/decisions/2026-09-10-fix-3-more-review-findings.md.
     text = text.strip()
     # ------------------------------------------------------------------
 

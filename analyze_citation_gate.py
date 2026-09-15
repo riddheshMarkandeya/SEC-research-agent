@@ -2,13 +2,11 @@
 Measures the citation hard gate's (agent.py's verify_citations()/
 _finalize_answer()) false-positive/false-negative rate against ground
 truth, by reading eval_harness.py report JSON files rather than running
-anything live -- see
-docs/plans/2026-09-10-citation-gate-measurement-instrumentation.md for
-the full design and the rationale for why this had to live here rather
-than in a trace_logs/traces.jsonl reader (logs have no ground truth) or
-inside run_eval() itself (re-running the whole eval is expensive; the
-report is the durable, committed artifact, so re-classifying from it is
-free and re-runnable any time the classification rules change).
+anything live -- the report is the durable, committed artifact, so
+re-classifying from it is free and re-runnable any time the
+classification rules change, unlike re-running the whole eval or
+reading trace_logs/traces.jsonl (which has no ground truth). See
+docs/decisions/2026-09-10-citation-gate-measurement-instrumentation.md.
 
 Definitions (numeric/comparison rows only -- judged rows have no
 ground-truth number to re-grade against, so they're excluded):

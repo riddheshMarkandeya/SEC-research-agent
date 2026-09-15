@@ -1,11 +1,8 @@
 """
-Swappable LLM backend layer (Week 5v / Next Steps item 2).
-------------------------------------------------------------
-This module was created to eliminate duplication: both Ollama (HTTP API)
-and Gemini (google-genai SDK) have different wire formats for tool calling.
-Normalizing both into one shape (ModelTurn) lets agent.py drive a single
-shared loop regardless of which backend answers -- see
-docs/plans/2026-08-20-swappable-llm-backend-design.md.
+Swappable LLM backend layer: normalizes Ollama's and Gemini's different
+tool-calling wire formats into one shape (ModelTurn) so agent.py can
+drive a single shared loop regardless of which backend answers. See
+docs/decisions/2026-08-20-swappable-llm-backend.md.
 
 Deliberately takes system_prompt/tool_schemas as parameters rather than
 importing them from agent.py -- agent.py needs `from llm_backends import
@@ -36,12 +33,10 @@ from tracing import log_event
 ModelTurn = NamedTuple("ModelTurn", [("tool_calls", list[dict]), ("text", str | None)])
 
 # Ollama's raw wire-format tool_calls shape (response.json()["message"]["tool_calls"]),
-# checked BEFORE _ollama_message_to_turn indexes into it -- found during
-# the 2026-09-09 schema-validator redesign: c["function"]["name"]/
-# c["function"]["arguments"] crashed with a bare KeyError on a malformed
-# entry, before the tool call ever reached agent.py's own boundary
-# validation. A genuine JSON-native boundary (response.json() is already
-# a plain dict), unlike Gemini's raw response below.
+# checked BEFORE _ollama_message_to_turn indexes into it -- a genuine
+# JSON-native boundary (response.json() is already a plain dict),
+# unlike Gemini's raw response below. See
+# docs/decisions/2026-09-09-schema-driven-arg-validation.md.
 _OLLAMA_RAW_TOOL_CALLS_SCHEMA = {
     "type": "array",
     "items": {
@@ -119,13 +114,12 @@ def ollama_call(state: dict) -> dict:
 
     Deliberately does NOT retry a plain ReadTimeout: that means the
     connection was accepted and Ollama was already generating, just
-    slower than the 240s budget -- this project's own CPU-only setup is
-    documented to already take 60-70s+ per question (see memory/
-    PROJECT_CONTEXT.md), so a ReadTimeout is plausibly a genuinely slow
-    answer, not a stalled server. Retrying that would silently turn one
-    240s timeout into up to three (~12 minutes), indistinguishable from
-    a hang -- worse than just failing once. Found in code review
-    (2026-08-26) before this ever shipped."""
+    slower than the 240s budget -- this project's own CPU-only setup
+    already takes 60-70s+ per question, so a ReadTimeout is plausibly a
+    genuinely slow answer, not a stalled server. Retrying that would
+    silently turn one 240s timeout into up to three (~12 minutes),
+    indistinguishable from a hang -- worse than just failing once. See
+    docs/decisions/2026-08-26-week7-citation-hard-gate-ollama-retry.md."""
     for attempt in range(OLLAMA_RETRY_ATTEMPTS):
         try:
             response = requests.post(
@@ -138,9 +132,8 @@ def ollama_call(state: dict) -> dict:
                     # Ollama defaults to a 4096-token context window regardless
                     # of what the model actually supports -- dangerously small
                     # here, since a single search returns up to 5 chunks
-                    # (~3000 chars each). See PROJECT_CONTEXT.md's agent.py
-                    # section for how this was found (a comparison question
-                    # silently truncating context, caught via `ollama ps`).
+                    # (~3000 chars each). See
+                    # docs/decisions/2026-08-14-agent-v0-tool-calling.md.
                     # temperature defaults to 0.1 (agent generation) but is
                     # overridable via state["temperature"] -- eval_harness.py's
                     # grade_judged() reuses this function and wants 0.0 for
@@ -155,10 +148,11 @@ def ollama_call(state: dict) -> dict:
             response.raise_for_status()
             return response.json()["message"]
         except requests.exceptions.ConnectionError as e:
-            # Local-only debug event (Week 7 follow-up) -- not sent to
-            # Langfuse, just kept so a flaky local Ollama server is
-            # diagnosable after the fact instead of only visible in a
-            # scrolled-away --verbose terminal.
+            # Local-only debug event -- not sent to Langfuse, just kept
+            # so a flaky local Ollama server is diagnosable after the
+            # fact instead of only visible in a scrolled-away --verbose
+            # terminal. See
+            # docs/decisions/2026-09-05-local-only-debug-events.md.
             log_event(
                 "llm_retry",
                 backend="ollama",
@@ -243,16 +237,10 @@ def _strip_additional_properties(value):
     property's own sub-schema) and "items" (an array's item schema),
     the only two places JSON Schema nests another schema.
 
-    Added 2026-09-10 (see
-    docs/plans/2026-09-10-structured-claims-citation-verification.md)
-    when `submit_answer`'s `claims` array needed `additionalProperties:
-    false` on its ITEM schema, one level deeper than any of the 3
-    existing tools ever needed -- the original strip below was a single
-    top-level dict comprehension, so that nested key would have reached
-    Gemini's SDK unstripped and reproduced the exact 400 INVALID_ARGUMENT
-    this function's docstring already describes fixing once, just one
-    level deeper. Confirmed live against the installed SDK before this
-    fix existed, not assumed."""
+    Descends recursively (not just top-level) since `submit_answer`'s
+    `claims` array needs `additionalProperties: false` on its ITEM
+    schema, one level deeper than any of the other 3 tools need. See
+    docs/decisions/2026-09-10-structured-claims-citation-verification.md."""
     if isinstance(value, dict):
         return {
             k: _strip_additional_properties(v)
@@ -275,16 +263,12 @@ def _to_gemini_tool(schema: dict) -> types.FunctionDeclaration:
     _strip_additional_properties(), recursively -- see that function's
     own docstring) before handing the dict to Gemini's SDK: Gemini's
     Schema type (a stricter OpenAPI 3.0 subset) doesn't support that
-    keyword at all -- unlike Ollama, which tolerates it fine -- and
-    passing it through made EVERY tool-calling request on this backend
-    fail with a live 400 INVALID_ARGUMENT ("Unknown name
-    additional_properties"), found via a live Gemini spot-check eval run
-    immediately after the 2026-09-09 schema-validator redesign added
-    `additionalProperties: false` to every *_TOOL_SCHEMA. Ollama's own
-    wire format and agent.py's/mcp_server.py's runtime
+    keyword at all -- unlike Ollama, which tolerates it fine. Ollama's
+    own wire format and agent.py's/mcp_server.py's runtime
     `validate_tool_args()` both still see the real, unmodified dict --
     this only narrows what's advertised to Gemini's stricter dialect,
-    not what's enforced at the boundary."""
+    not what's enforced at the boundary. See
+    docs/decisions/2026-09-09-schema-driven-arg-validation.md."""
     fn = schema["function"]
     parameters = _strip_additional_properties(fn["parameters"])
     return types.FunctionDeclaration(name=fn["name"], description=fn["description"], parameters=parameters)
@@ -309,9 +293,9 @@ def _send_with_retry(chat, message, config=None):
             code = getattr(e, "code", None)
             if code not in (429, 503):
                 raise
-            # Local-only debug event (Week 7 follow-up), same reasoning
-            # as ollama_call's matching log_event above -- only for the
-            # retryable-error path, not every ClientError/ServerError.
+            # Local-only debug event, same reasoning as ollama_call's
+            # matching log_event above -- only for the retryable-error
+            # path, not every ClientError/ServerError.
             log_event(
                 "llm_retry",
                 backend="gemini",
@@ -330,11 +314,9 @@ def _gemini_response_to_turn(resp) -> ModelTurn:
     doesn't apply directly without first converting it, unwarranted
     ceremony for the one field that actually needs a check here.
     `candidates` can legitimately be empty (e.g. a safety-filtered
-    response), which used to raise a bare IndexError on
-    resp.candidates[0] before this guard existed (found during the
-    2026-09-09 schema-validator redesign) -- a plain guard clause instead,
-    deliberately not jsonschema-based, unlike the normalized-output check
-    below."""
+    response) -- a plain guard clause here, deliberately not
+    jsonschema-based, unlike the normalized-output check below. See
+    docs/decisions/2026-09-09-schema-driven-arg-validation.md."""
     if not resp.candidates:
         log_event("llm_response_malformed", backend="gemini", error="no candidates in response")
         raise RuntimeError("Gemini response has no candidates (likely blocked by safety filters, or empty)")
@@ -358,11 +340,11 @@ def _forced_config(base_config: "types.GenerateContentConfig", force_tool: str |
     constructing a bare `GenerateContentConfig(tool_config=...)`, because
     `Chat.send_message(config=...)` REPLACES the chat's config wholesale
     rather than merging (`method_config = config if config else
-    self._config`, verified 2026-09-10 by reading google/genai/chats.py's
-    actual source, not assumed from docs) -- a bare forced config would
-    silently drop `tools`/`system_instruction`/`temperature` on that one
-    turn. `model_copy` also leaves `base_config` itself untouched, so the
-    SAME base config can be reused on a later un-forced turn."""
+    self._config`) -- a bare forced config would silently drop
+    `tools`/`system_instruction`/`temperature` on that one turn.
+    `model_copy` also leaves `base_config` itself untouched, so the SAME
+    base config can be reused on a later un-forced turn. See
+    docs/decisions/2026-09-10-structured-claims-citation-verification.md."""
     if force_tool is None:
         return base_config
     return base_config.model_copy(
@@ -380,13 +362,11 @@ def _gemini_start(question: str, system_prompt: str, tool_schemas: list[dict]) -
     config = types.GenerateContentConfig(tools=[tools], system_instruction=system_prompt, temperature=0.1)
     chat = client.chats.create(model=GEMINI_MODEL_NAME, config=config)
     resp = _send_with_retry(chat, question)
-    # state carries `config` alongside `chat` (2026-09-10) -- previously
-    # just the bare chat object, which threw the config away entirely.
-    # A forced-tool-choice turn (see _forced_config above) needs it back:
-    # send_message(config=...) replaces the chat's config wholesale, so
-    # re-supplying the WHOLE config (not just tool_config) is mandatory,
-    # not optional. agent.py still treats this as an opaque `state`
-    # object, same invariant as before.
+    # state carries `config` alongside `chat`, not just the bare chat
+    # object -- a forced-tool-choice turn (see _forced_config above)
+    # needs it back, since send_message(config=...) replaces the chat's
+    # config wholesale, so re-supplying the WHOLE config is mandatory.
+    # agent.py still treats this as an opaque `state` object.
     return {"chat": chat, "config": config}, _gemini_response_to_turn(resp)
 
 
@@ -413,9 +393,9 @@ BACKENDS: dict[str, tuple[Callable, Callable, Callable]] = {
 
 
 def complete(backend: str, system_prompt: str, user_prompt: str, temperature: float = 0.0) -> str:
-    """One-shot, tool-free completion -- added 2026-09-10 for
-    eval_harness.py's grade_judged() to honor --judge-backend (see
-    docs/plans/2026-09-10-citation-gate-measurement-instrumentation.md).
+    """One-shot, tool-free completion, used by eval_harness.py's
+    grade_judged() to honor --judge-backend. See
+    docs/decisions/2026-09-10-citation-gate-measurement-instrumentation.md.
 
     Deliberately NOT threaded through the BACKENDS 3-callable
     tool-calling protocol above: this function's only caller never calls
@@ -433,13 +413,12 @@ def complete(backend: str, system_prompt: str, user_prompt: str, temperature: fl
     to client.models.generate_content, which would require making that
     retry helper accept an arbitrary callable instead of a chat object.
     Response normalization goes through _gemini_response_to_turn() too
-    (found missing in code review, 2026-09-10) rather than reading
-    `resp.text` directly -- that function is what guards the empty-
-    candidates/safety-filtered case (with its own log_event) that a bare
-    `resp.text` access would otherwise handle silently and
-    inconsistently with every other Gemini call site. tool_calls will
-    always be `[]` here (no tools were ever offered), so its `text`
-    field is exactly `resp.text`."""
+    rather than reading `resp.text` directly -- that function is what
+    guards the empty-candidates/safety-filtered case (with its own
+    log_event) that a bare `resp.text` access would otherwise handle
+    silently and inconsistently with every other Gemini call site.
+    tool_calls will always be `[]` here (no tools were ever offered), so
+    its `text` field is exactly `resp.text`."""
     if backend == "ollama":
         state = {
             "messages": [

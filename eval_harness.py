@@ -1,22 +1,9 @@
 """
-Week 4/5 — Eval harness (scaffolding)
-----------------------------------------
-Runs every question in eval_questions.jsonl through agent.run_agent()
-and grades the result, so changes to retrieval/prompting/agent behavior
-can be measured against a fixed baseline instead of eyeballed. This
-exists specifically because Week 3's answer.py (and now Week 5's
-agent.py) enforce "cite everything or refuse" only via prompt
-instruction — nothing checks that it actually happened. This harness is
-where that gets checked mechanically.
-
-Routes through agent.run_agent() rather than answer.generate_answer()
-as of Week 5 — the agent resolves which ticker(s) a question is about
-itself (via tool-calling), which is a closer match to how this system
-is actually meant to be used, and lets comparison questions exercise
-the agent's multi-tool-call path. Every existing question's "ticker"
-field is now purely documentation for a human skimming the file — it's
-no longer passed into the call; the agent has to infer it from the
-question text, same as real usage.
+Eval harness: runs every question in eval_questions.jsonl through
+agent.run_agent() and grades the result, so changes to retrieval/
+prompting/agent behavior can be measured against a fixed baseline
+instead of eyeballed. See
+docs/decisions/2026-08-13-eval-harness-scaffolding-and-early-bug-hunts.md.
 
 Three grading strategies, chosen per-question by its "type" field:
   - "numeric": exact-match. The question has one verifiable ground-truth
@@ -27,21 +14,11 @@ Three grading strategies, chosen per-question by its "type" field:
   - "comparison": like "numeric", but for questions spanning multiple
     companies — requires EVERY entity in the question's "expected" list
     to have its value found in the answer, not just any one of them.
-    Added after finding, by hand, that agent.py could correctly
-    retrieve both companies' figures via two tool calls but only report
-    one of them in its final synthesis — this type exists specifically
-    to catch that failure mode mechanically instead of by manual luck.
   - "judged": LLM-as-judge. For qualitative questions ("what risks does
     X describe...") or refusal questions (no ground-truth number exists
     to match), a second LLM call grades PASS/FAIL against a short
     criteria string, since there's no single correct string to diff
     against.
-
-This is scaffolding, not the full eval suite — eval_questions.jsonl has
-8 seed questions (reusing facts already verified earlier in this
-project rather than new research) to prove the harness works end-to-end.
-Growing it to the full 30-50 question FinanceBench-style set is a
-separate, later task.
 
 Usage:
     python eval_harness.py
@@ -58,10 +35,10 @@ from agent import run_agent, value_is_citation_verified
 from config import DEFAULT_BACKEND, GEMINI_MODEL_NAME, OLLAMA_MODEL_NAME
 
 # OLLAMA_MODEL_NAME/GEMINI_MODEL_NAME record which specific model actually
-# answered/judged a report (see save_report()'s own docstring). Before
-# 2026-09-10, grade_judged() always called Ollama directly regardless of
-# --backend; complete() is llm_backends.py's one-shot, tool-free
-# completion helper that now lets it honor --judge-backend instead.
+# answered/judged a report (see save_report()'s own docstring).
+# complete() is llm_backends.py's one-shot, tool-free completion helper
+# that lets grade_judged() honor --judge-backend. See
+# docs/decisions/2026-09-10-citation-gate-measurement-instrumentation.md.
 from llm_backends import BACKENDS, complete
 from tracing import flush
 from numeric_utils import extract_numbers, normalize
@@ -89,12 +66,10 @@ def grade_numeric(
         if category != expected_category:
             continue
         if abs(norm - expected_norm) <= tolerance:
-            # A plain-text match isn't enough on its own -- found live,
-            # not hypothetical: aapl-employees-fy25 used to "pass" here
-            # even though its citation actually pointed at a chunk about
-            # debt notes, nothing to do with employee count. all_results
+            # A plain-text match isn't enough on its own -- all_results
             # is optional (None skips this) so existing/simple callers
             # that don't have citation context keep working unchanged.
+            # See docs/decisions/2026-09-10-citation-gate-measurement-instrumentation.md.
             if all_results is not None and not value_is_citation_verified(
                 expected_value, expected_unit, answer_text, all_results
             ):
@@ -148,17 +123,13 @@ Respond with exactly two lines: the first line is either PASS or FAIL, the secon
 
 
 def grade_judged(question: str, answer_text: str, criteria: str, backend: str = "ollama") -> tuple[bool, str]:
-    """Routes through llm_backends.complete() -- until 2026-09-10 this
-    always called Ollama directly regardless of --backend; `backend` (see
-    docs/plans/2026-09-10-citation-gate-measurement-instrumentation.md)
-    lets --judge-backend pick which one actually grades. complete() still
-    carries the same temperature=0.0 (stricter/more deterministic than
-    generation's 0.1) and no tool_schemas -- grading never calls tools --
-    this function always wanted; it just no longer hardcodes Ollama to
-    get them. complete() itself reuses each backend's existing
-    retry/backoff/log_event machinery (ollama_call/_send_with_retry),
-    so that guarantee (found in code review 2026-09-06, when a raw
-    requests.post here bypassed it entirely) still holds."""
+    """Routes through llm_backends.complete() so `backend` (--judge-
+    backend) picks which one actually grades, at the same temperature=0.0
+    (stricter than generation's 0.1) and no tool_schemas -- grading never
+    calls tools. complete() reuses each backend's existing retry/backoff/
+    log_event machinery, so that guarantee holds here too. See
+    docs/decisions/2026-09-06-full-codebase-review.md and
+    docs/decisions/2026-09-10-citation-gate-measurement-instrumentation.md."""
     user_prompt = (
         f"Question asked: {question}\n\n"
         f"Grading criteria: {criteria}\n\n"
@@ -209,12 +180,10 @@ def _select_questions(questions: list[dict], ids: list[str] | None, include_skip
 def _grade_by_type(q: dict, answer_text: str, retrieved: list[dict]) -> tuple[bool, str]:
     """Numeric/comparison type dispatch shared between _grade() below
     (the real pass/fail verdict) and _citation_gate_evidence() (the
-    "would this have passed" check on the withheld text) -- factored out
-    in code review (2026-09-10): both independently branched on
-    q["type"] with the same two calls, which would have needed updating
-    in two places in sync for a signature change or a third gradeable
-    type. Caller is responsible for confirming q["type"] is one of these
-    two first."""
+    "would this have passed" check on the withheld text) -- both need
+    the same two calls, so this avoids updating two places in sync for a
+    signature change or a third gradeable type. Caller is responsible
+    for confirming q["type"] is one of these two first."""
     if q["type"] == "numeric":
         return grade_numeric(answer_text, q["expected_value"], q["expected_unit"], retrieved)
     return grade_comparison(answer_text, q["expected"], retrieved)
@@ -230,21 +199,18 @@ def _grade(
 
     Numeric/comparison questions short-circuit to FAIL when the agent
     hard-gate-refused (non-empty citation_warnings) instead of calling
-    grade_numeric()/grade_comparison() on the refusal text. Found in
-    code review (2026-08-26): agent.py's Week 7 refusal message
-    necessarily repeats the claimed value it's rejecting (e.g. "[1]
-    claims 166000.0 ... doesn't appear in the cited source"), which
-    grade_numeric()'s plain extract_numbers() scan can match as if it
-    were a real, verified answer -- silently scoring a refusal as a
-    PASS. Judged questions are deliberately NOT short-circuited here:
-    some are written to expect a refusal (e.g.
-    nvda-rd-expense-q4fy26-refusal), and grade_judged() already
-    evaluates the actual answer text against its own criteria, which is
-    the correct way to check whether refusing was the right call.
+    grade_numeric()/grade_comparison() on the refusal text -- a refusal
+    message necessarily repeats the claimed value it's rejecting, which
+    a plain text scan could otherwise match as if it were a real,
+    verified answer. See
+    docs/decisions/2026-08-26-week7-citation-hard-gate-ollama-retry.md.
+    Judged questions are deliberately NOT short-circuited here: some are
+    written to expect a refusal, and grade_judged() already evaluates
+    the actual answer text against its own criteria, which is the
+    correct way to check whether refusing was the right call.
 
-    `judge_backend` (2026-09-10) is passed straight through to
-    grade_judged() -- see run_eval()'s docstring for why it isn't just
-    reused from `backend`."""
+    `judge_backend` is passed straight through to grade_judged() -- see
+    run_eval()'s docstring for why it isn't just reused from `backend`."""
     if citation_warnings and q["type"] in ("numeric", "comparison"):
         return False, "agent refused to answer (hard-gated on unverified citation(s)) -- no value to grade"
     if q["type"] in ("numeric", "comparison"):
@@ -258,9 +224,10 @@ def _empty_citation_gate_evidence() -> dict:
     """A fresh dict on every call -- deliberately NOT a module-level
     constant. `citation_warning_details` is a list; a shared constant
     would hand every row in a batch the SAME list object via a shallow
-    `dict(...)`/`**` copy (found in code review, 2026-09-10) -- harmless
-    today since nothing mutates it in place, but a silent
-    corrupt-every-other-row trap waiting for the next edit that does."""
+    `dict(...)`/`**` copy -- harmless today since nothing mutates it in
+    place, but a silent corrupt-every-other-row trap waiting for the
+    next edit that does. See
+    docs/decisions/2026-09-10-citation-gate-measurement-instrumentation.md."""
     return {
         "withheld_answer": None,
         "gate_withheld_would_have_passed": None,
@@ -273,34 +240,28 @@ def _citation_gate_evidence(
     q: dict, retrieved: list[dict], withheld_answer: str | None, citation_warning_details: list[dict]
 ) -> dict:
     """The 4 additive report fields the citation-gate FP/FN measurement
-    work needs (see
-    docs/plans/2026-09-10-citation-gate-measurement-instrumentation.md).
-    `_grade()`'s own short-circuit still scores a hard-gated numeric/
-    comparison question as FAIL -- that user-facing verdict is untouched
-    here. This is purely additional evidence: what the model actually
-    said before the hard gate withheld it, and whether that text would
-    have passed the existing grader if the gate hadn't fired.
+    work needs. `_grade()`'s own short-circuit still scores a hard-gated
+    numeric/comparison question as FAIL -- that user-facing verdict is
+    untouched here. This is purely additional evidence: what the model
+    actually said before the hard gate withheld it, and whether that
+    text would have passed the existing grader if the gate hadn't fired.
 
     Only populated when the gate actually refused a numeric/comparison
     question -- a judged question has no ground-truth number to re-grade
     against, and a passing row has nothing withheld to re-grade in the
     first place. `gate_withheld_would_have_passed` re-runs the SAME
     grade_numeric()/grade_comparison() (via _grade_by_type(), shared with
-    _grade()'s real verdict) the real verdict would have used, so "would
-    have passed" means exactly what it always has, including the
-    citation-verification check against the real retrieved chunks.
+    _grade()'s real verdict) the real verdict would have used.
 
-    `citation_warning_details` (2026-09-10) is passed straight through
-    from `AgentResult.citation_warning_details` (the caller already has
-    it) rather than re-derived by calling collect_citation_warnings() --
-    the PROSE checker -- on the withheld text a second time. That
-    re-derivation used to silently disagree with whatever ACTUALLY
-    refused the answer once a structured-path refusal could exist:
-    collect_citation_warnings() can't see a quote_not_found/
-    value_not_in_quote/etc. failure at all, since those only ever come
-    from verify_claims(). Passing the real field through instead of
-    re-deriving is what keeps analyze_citation_gate.py's
-    false_positive_by_check breakdown accurate for both checkers."""
+    `citation_warning_details` is passed straight through from
+    `AgentResult.citation_warning_details` (the caller already has it)
+    rather than re-derived by calling collect_citation_warnings() a
+    second time -- that re-derivation can't see a structured-path
+    (quote_not_found/value_not_in_quote/etc.) refusal at all, since those
+    only ever come from verify_claims(). Passing the real field through
+    keeps analyze_citation_gate.py's false_positive_by_check breakdown
+    accurate for both checkers. See
+    docs/decisions/2026-09-10-citation-gate-measurement-instrumentation.md."""
     if withheld_answer is None or q["type"] not in ("numeric", "comparison"):
         return _empty_citation_gate_evidence()
 
@@ -322,21 +283,21 @@ def run_eval(
     judge_backend: str | None = None,
 ) -> list[dict]:
     """`backend=None` resolves to config.DEFAULT_BACKEND, resolved HERE
-    rather than via a literal `= DEFAULT_BACKEND` parameter default
-    (2026-09-10) -- a parameter default is bound once at module-import
-    time and would silently freeze in whatever DEFAULT_BACKEND was at
-    that moment, ignoring any later change (same reasoning as
-    agent.run_agent()'s matching fix).
+    rather than via a literal `= DEFAULT_BACKEND` parameter default -- a
+    parameter default is bound once at module-import time and would
+    silently freeze in whatever DEFAULT_BACKEND was at that moment,
+    ignoring any later change (same reasoning as agent.run_agent()'s
+    matching fix).
 
     `judge_backend` then defaults to `backend` itself, NOT
-    config.DEFAULT_BACKEND directly (2026-09-10, see
-    docs/plans/2026-09-10-citation-gate-measurement-instrumentation.md):
-    --backend ollama is the no-API-key path this project deliberately
-    keeps runnable, and defaulting the judge to DEFAULT_BACKEND instead
-    would make it silently require a Gemini key for every judged question
-    even when the caller explicitly asked for the no-key backend.
-    --judge-backend still overrides this either way, e.g. to grade a
-    Gemini run's judged questions with Ollama as a cross-model check."""
+    config.DEFAULT_BACKEND directly: --backend ollama is the no-API-key
+    path this project deliberately keeps runnable, and defaulting the
+    judge to DEFAULT_BACKEND instead would make it silently require a
+    Gemini key for every judged question even when the caller explicitly
+    asked for the no-key backend. --judge-backend still overrides this
+    either way, e.g. to grade a Gemini run's judged questions with Ollama
+    as a cross-model check. See
+    docs/decisions/2026-09-10-citation-gate-measurement-instrumentation.md."""
     backend = backend or DEFAULT_BACKEND
     judge_backend = judge_backend or backend
     questions = load_questions(questions_path)
@@ -353,7 +314,8 @@ def run_eval(
             # still matches CITATION_PATTERN, so a refusal would otherwise get
             # has_citation=True -- a real answer's citation and a refusal's
             # description of a FAILED citation shouldn't count the same way in
-            # this stat. Found in code review (2026-08-26).
+            # this stat. See
+            # docs/decisions/2026-08-26-week7-citation-hard-gate-ollama-retry.md.
             has_citation = not citation_warnings and bool(CITATION_PATTERN.search(answer_text))
 
             passed, detail = _grade(q, answer_text, citation_warnings, retrieved, judge_backend)
@@ -361,13 +323,13 @@ def run_eval(
                 q, retrieved, result.withheld_answer, result.citation_warning_details
             )
         except Exception as e:
-            # Broad on purpose (found in code review, 2026-09-06): a
-            # network error, exhausted retries, or an unexpected bug in
-            # run_agent()/_grade() should all fail just THIS question the
-            # same way, not silently discard every already-graded result
-            # in the batch before it (no partial report, no flush) --
-            # this is a boundary where many different failure types
-            # should all degrade identically.
+            # Broad on purpose: a network error, exhausted retries, or an
+            # unexpected bug in run_agent()/_grade() should all fail just
+            # THIS question the same way, not silently discard every
+            # already-graded result in the batch before it (no partial
+            # report, no flush) -- this is a boundary where many
+            # different failure types should all degrade identically.
+            # See docs/decisions/2026-09-06-full-codebase-review.md.
             print(f"  -> ERROR: {type(e).__name__}: {e}")
             results.append(
                 {
@@ -440,12 +402,10 @@ def save_report(results: list[dict], backend: str, judge_backend: str | None = N
     model answered -- OLLAMA_MODEL_NAME/GEMINI_MODEL_NAME are both
     configurable via .env and can change over time, which would make an
     old report ambiguous about what actually produced it. `answer_model`
-    records whichever one actually ran. `judge_model` used to be
-    hardcoded to OLLAMA_MODEL_NAME (grade_judged() called Ollama
-    directly, regardless of `backend`); as of 2026-09-10 it records
-    whichever backend actually judged -- `judge_backend` defaults to
-    `backend` itself, same reasoning as run_eval()'s own default (see
-    that function's docstring)."""
+    records whichever one actually ran; `judge_model` records whichever
+    backend actually judged -- `judge_backend` defaults to `backend`
+    itself, same reasoning as run_eval()'s own default (see that
+    function's docstring)."""
     judge_backend = judge_backend or backend
     RESULTS_DIR.mkdir(exist_ok=True)
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")

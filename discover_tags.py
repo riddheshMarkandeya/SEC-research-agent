@@ -1,14 +1,10 @@
 """
-Dev-time XBRL tag discovery
-----------------------------
-xbrl_facts.py's DEFAULT_METRIC_TAGS has grown one entry at a time, each
-one discovered by an eval question failing (see that dict's comment for
-the full history: total_assets, cash_and_equivalents, inventory all
-arrived this way). This module is the alternative: fetch SEC's
-`companyfacts` API, which returns EVERY tag a company has ever reported
-across all taxonomies in one response, and let you browse/search it
-directly to find candidate metrics before writing (or debugging) an eval
-question, instead of after.
+Dev-time XBRL tag discovery: fetch SEC's `companyfacts` API, which
+returns EVERY tag a company has ever reported across all taxonomies in
+one response, and let you browse/search it directly to find candidate
+metrics before writing (or debugging) an eval question, instead of
+discovering one only after an eval question fails. See
+docs/decisions/2026-08-19-discover-tags-dev-tool.md.
 
 Deliberately NOT used by the runtime agent path: xbrl_facts.py's
 fetch_concept() stays on the narrower `companyconcept` endpoint (one tag

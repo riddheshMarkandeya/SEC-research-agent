@@ -1,15 +1,8 @@
 """
-Week 3 — Hybrid retrieval: BM25 (lexical) + Chroma (vector) + reranking
---------------------------------------------------------------------------
-This is the retrieval layer other code (Week 4's eval harness, Week 5's
-agent) should import, rather than reimplementing search. It exists
-because Week 2b's manual sanity queries surfaced a real gap: pure
-semantic search missed a chunk that stated "remaining performance
-obligation" almost verbatim, because that exact phrase carries more
-signal as a literal keyword match than as a sentence embedding. BM25
-catches exact/near-exact term matches that embeddings can smear across
-many "semantically similar" but wrong-company chunks — the two methods
-fail in different, complementary ways.
+Hybrid retrieval: BM25 (lexical) + Chroma (vector) + reranking. This is
+the retrieval layer other code (the eval harness, the agent) should
+import, rather than reimplementing search. See
+docs/decisions/2026-08-13-hybrid-retrieval-and-reranker-fix.md.
 
 Pipeline per query:
   1. Pull a wide candidate pool (default 25) from BM25 and from Chroma's
@@ -125,13 +118,9 @@ def _load_bm25_index():
         raise RuntimeError(f"No chunks found under {CHUNKS_DIR.resolve()} — run chunk_documents.py first.")
 
     # Tried tokenizing a period_labels.py period-label-prefixed version
-    # of the text here (mirroring an index_chunks.py embedding change),
-    # to fix nvda-gross-margin-fy26 and msft-rd-expense-q3fy26 -- see
-    # PROJECT_CONTEXT.md. Reverted: it caused a regression on a
-    # previously-passing query (pltr-revenue-2025), diagnosed as an
-    # unrelated chunk gaining a disproportionate rank boost from sharing
-    # the same per-filing prefix as every other chunk in that filing.
-    # Net effect on the eval suite was a regression, not an improvement.
+    # of the text here (mirroring an index_chunks.py embedding change) --
+    # reverted, net regression on the eval suite. See
+    # docs/decisions/2026-08-16-fiscal-period-labels-tried-and-reverted.md.
     tokenized_corpus = [_tokenize(r["text"]) for r in records]
     _bm25_index = BM25Okapi(tokenized_corpus)
     _bm25_records = records
@@ -217,31 +206,11 @@ def _combine_fused_and_rerank(
     Combines the original fused (BM25+vector) ranking with the cross-
     encoder's ranking by taking, per candidate, the BETTER of the two
     RRF contributions — not letting the cross-encoder's ranking fully
-    replace the fused one, and (importantly) not simply summing the two
-    either.
-
-    Found by evidence, not by assumption: `cross-encoder/ms-marco-MiniLM-
-    L-6-v2` was trained on short, single-topic MS MARCO web passages
-    (~350 chars average). Our chunks run up to ~3000 chars and are often
-    multi-topic (e.g. one real MSFT chunk covers device competition,
-    gaming, and search ads before finally reaching a "Human Capital
-    Resources" paragraph with the actual employee count). Verified by
-    inspecting the cross-encoder's own tokenized input directly (no
-    truncation was happening — the relevant sentence was fully present)
-    that the model itself, not a truncation bug, was scoring that chunk
-    very low (rank 43 of 48) despite it being rank 3 of 48 in the fused
-    BM25+vector ranking — two independent signals strongly agreed the
-    chunk was relevant, and a single cross-encoder judgment overrode both.
-
-    A first attempt summed the two rankings' RRF contributions (i.e. ran
-    reciprocal_rank_fusion() again, one layer up). That still buried the
-    chunk: several competing chunks were merely *decent* by both signals
-    (e.g. fused rank ~20, rerank rank ~5), and a sum of two OK scores beat
-    one great score (fused rank 5) plus one terrible one (rerank rank 44).
-    Taking the MAX of the two RRF contributions instead means a candidate
-    only needs to be excellent by ONE signal to survive — which is what
-    actually rescued this chunk in testing (confirmed empirically before
-    committing to this over the sum approach, not assumed to be better).
+    replace the fused one, and not simply summing the two either (a sum
+    still buries a chunk that's excellent by only one signal, since
+    several merely-decent-by-both competitors can outscore it). See
+    docs/decisions/2026-08-13-hybrid-retrieval-and-reranker-fix.md for
+    the regression this fixes and why summing didn't work.
     """
     fused_rank = {doc_id: i for i, (doc_id, _, _, _) in enumerate(candidates, start=1)}
     rerank_rank = {
@@ -274,46 +243,18 @@ def _rescue_demoted_table_chunk(
     (i.e. both base retrievers considered it relevant), swap it in for the
     weakest surviving slot.
 
-    Regression case: msft-segment-revenue-comparison-q3fy2026. The chunk
-    with the actual segment revenue table ($35,013M/$34,681M/$13,192M)
-    ranked #14 of ~40 in the fused pool but was reranked to #17 by
-    cross-encoder/ms-marco-MiniLM-L-6-v2, outside top_n, in favor of
-    near-duplicate MD&A boilerplate that lexically echoes the segment
-    names without containing the actual figures. combined_score()'s
-    existing MAX-of-two-RRF-contributions logic (see
-    _combine_fused_and_rerank's docstring) doesn't cover this: a fused
-    rank of ~14 isn't good enough to win on its own -- it loses to
-    anything reranked into roughly the top 5 -- so this is a genuinely
-    separate rescue, not a duplicate of that mechanism.
-
     Deliberately gated on the base retrievers' OWN pre-rerank confidence,
-    not on guessing the question is fact/metric-seeking (hybrid_search has
-    no such signal at inference time, and pattern-matching question
-    phrasing would be exactly the kind of fragile heuristic
-    period_labels.py's reverted reranking-signal fix already risked). This
-    is why it's self-limiting: a table with no lexical/semantic match to a
-    prose question (e.g. an AI-risk question) won't rank in the top half
-    of the fused pool to begin with, so the rescue never fires for it --
-    verified by test_combine_does_not_rescue_a_table_chunk_that_also_
-    ranked_poorly_pre_rerank.
+    not on guessing the question is fact/metric-seeking -- self-limiting
+    by construction: a table with no lexical/semantic match to a prose
+    question won't rank in the top half of the fused pool to begin with,
+    so the rescue never fires for it.
 
-    `contains_table` alone (chunk_documents.py's "<TABLE>" in chunk_text
-    check) isn't enough of a filter, found while live-verifying this fix
-    against the real MSFT question: 10-Qs also carry a recurring
-    "Microsoft Cloud" metrics GLOSSARY table (term -> definition, e.g.
-    "Microsoft 365 Commercial cloud revenue growth" -> its definition) --
-    also flagged contains_table=True, also boilerplate repeated near-
-    verbatim every quarter, and it out-ranked the real segment-revenue
-    table in the fused pool (rank 6 vs rank 14) precisely because it's
-    MORE consistently similar across quarters, the same "near-duplicate
-    boilerplate" pattern this project keeps re-encountering, one level
-    deeper than expected. A real financial data table and a glossary
-    table are both syntactically "a table" but only one contains actual
-    reported figures -- checked directly against real chunk text: MSFT's
-    genuine segment-revenue table chunks had 32-37 "$" occurrences, its
-    glossary-table chunks had 0. Requiring a minimum dollar-figure count
-    is a cheap, general way to tell them apart without hardcoding any
-    business-specific term."""
+    `contains_table` alone isn't enough of a filter: a glossary/
+    definitions table (term -> definition, no real figures) is also
+    flagged contains_table=True, so a minimum dollar-figure count
+    (_MIN_DOLLAR_FIGURES_FOR_TABLE_RESCUE) distinguishes a genuine
+    financial data table from one merely shaped like a table. See
+    docs/decisions/2026-08-19-table-chunk-rescue-in-reranking.md."""
     if any(metadata.get("contains_table") for _, _, metadata, _ in ranked[:top_n]):
         return ranked  # a table chunk already survived on its own merits
 
