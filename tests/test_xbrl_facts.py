@@ -60,9 +60,8 @@ NVDA_ASSETS_ENTRIES = [
 # _duration_days / instant-fact handling -- balance-sheet items (Assets,
 # CashAndCashEquivalentsAtCarryingValue) are XBRL "instant" concepts with
 # no `start`, unlike every metric this module supported before them
-# (revenue, income, expenses, all "duration" concepts). Regression cases:
-# nvda-total-assets-q1fy27, aapl-cash-equivalents-q3fy2026 -- adding
-# these metrics crashed _duration_days with TypeError until this fix.
+# (revenue, income, expenses, all "duration" concepts). See
+# docs/decisions/2026-08-19-fixing-6-accumulated-eval-findings.md.
 # ---------------------------------------------------------------------------
 def test_duration_days_returns_none_for_instant_entry_without_start():
     assert _duration_days({"end": "2026-04-26", "val": 1}) is None
@@ -144,12 +143,11 @@ def test_pick_entry_by_end_date_returns_none_when_no_entry_matches():
 
 
 def test_get_metric_with_empty_string_period_end_date_falls_back_to_fiscal_args(monkeypatch):
-    # Live-observed model behavior: for a question with no specific
-    # calendar date ("total revenue for 2025"), the model called this
-    # with period_end_date="" instead of omitting it, which used to
-    # crash date.fromisoformat with an unhandled ValueError. An empty
-    # string must be treated as "not provided", falling back to
-    # whatever fiscal_year/fiscal_period were also passed.
+    # An empty string must be treated as "not provided", falling back
+    # to whatever fiscal_year/fiscal_period were also passed -- not as
+    # a date to match against, which used to crash date.fromisoformat
+    # with an unhandled ValueError. See
+    # docs/decisions/2026-08-16-xbrl-structured-facts-tool.md (bug #4).
     monkeypatch.setattr(
         "xbrl_facts.fetch_concept",
         lambda ticker, tag: {"units": {"USD": NVDA_GROSS_PROFIT_ENTRIES}},
@@ -167,14 +165,15 @@ def test_get_metric_with_malformed_period_end_date_returns_none_not_crash(monkey
 
 
 def test_get_metric_with_fiscal_year_end_calendar_date_returns_annual_value(monkeypatch):
-    # A real latent bug the old resolve_fiscal_period()-based approach
-    # had: for NVDA (fiscal_year_end_month=1), passing its FY2026 end
-    # date "2026-01-25" as period_end_date computed fiscal_period="Q4"
-    # (fiscal-quarter arithmetic has no "FY" case, only Q1-Q4), which
-    # then searched for a 10-Q-shaped quarterly entry that doesn't exist
-    # -- silently returning None for a perfectly valid annual-figure
-    # question phrased with a calendar date instead of "fiscal year
-    # 2026". Matching directly on `end` sidesteps this entirely.
+    # Matching directly on `end` sidesteps a real latent bug a computed-
+    # label approach would have: for NVDA (fiscal_year_end_month=1),
+    # passing its FY2026 end date "2026-01-25" as period_end_date would
+    # compute fiscal_period="Q4" (fiscal-quarter arithmetic has no "FY"
+    # case, only Q1-Q4), then search for a 10-Q-shaped quarterly entry
+    # that doesn't exist -- silently returning None for a perfectly
+    # valid annual-figure question phrased with a calendar date instead
+    # of "fiscal year 2026". See
+    # docs/decisions/2026-08-17-xbrl-period-matching-end-date-fix.md.
     monkeypatch.setattr(
         "xbrl_facts.fetch_concept",
         lambda ticker, tag: {"units": {"USD": NVDA_GROSS_PROFIT_ENTRIES}},
@@ -224,12 +223,10 @@ def test_latest_entry_empty_list_returns_none():
 
 
 def test_get_metric_with_no_period_given_returns_latest(monkeypatch):
-    # Real, live-found gap: a cross-company comparison question asked
-    # for "their most recent quarter" -- no calendar date or fiscal
-    # label to give get_metric(), so the model called the comparison
-    # tool with no period at all, which used to silently return nothing
-    # (fiscal_year=None never matched anything in _pick_entry) and the
-    # model abandoned the whole comparison rather than retrying.
+    # With no period given at all (fiscal_year=None), this must resolve
+    # to the single most-recently-reported entry rather than silently
+    # matching nothing in _pick_entry. See
+    # docs/decisions/2026-08-17-frames-api-cross-company.md.
     monkeypatch.setattr(
         "xbrl_facts.fetch_concept",
         lambda ticker, tag: {"units": {"USD": NVDA_GROSS_PROFIT_ENTRIES}},
@@ -288,11 +285,7 @@ def test_get_metric_reads_through_fetch_concept(monkeypatch):
 
 
 def test_get_metric_resolves_total_assets_to_the_assets_tag(monkeypatch):
-    # Regression case: nvda-total-assets-q1fy27. total_assets wasn't in
-    # DEFAULT_METRIC_TAGS at all, so the model had no structured path
-    # and fell back to search_filings, which can't find the balance
-    # sheet table for this query -- confirmed the "Assets" tag is clean
-    # (no per-company override needed) for all 5 companies before adding it.
+    # See docs/decisions/2026-08-19-fixing-6-accumulated-eval-findings.md.
     entries = [
         {"end": "2026-04-26", "val": 259474000000, "accn": "x", "fy": 2027, "fp": "Q1", "form": "10-Q", "filed": "2026-05-20"},
     ]
@@ -307,11 +300,7 @@ def test_get_metric_resolves_total_assets_to_the_assets_tag(monkeypatch):
 
 
 def test_get_metric_resolves_cash_and_equivalents_to_the_cash_tag(monkeypatch):
-    # Regression case: aapl-cash-equivalents-q3fy2026. Retrieval COULD
-    # find the right chunk for this one, but citation attribution still
-    # failed -- routing it through the structured tool (like every other
-    # DEFAULT_METRIC_TAGS metric) sidesteps attribution risk entirely
-    # instead of trying to make unstructured citation more reliable.
+    # See docs/decisions/2026-08-19-fixing-6-accumulated-eval-findings.md.
     entries = [
         {"end": "2026-06-27", "val": 39544000000, "accn": "x", "fy": 2026, "fp": "Q3", "form": "10-Q", "filed": "2026-07-31"},
     ]
@@ -326,10 +315,10 @@ def test_get_metric_resolves_cash_and_equivalents_to_the_cash_tag(monkeypatch):
 
 
 def test_get_metric_resolves_inventory_to_the_inventorynet_tag(monkeypatch):
-    # Regression case: pltr-inventory-turnover-fy2025-refusal. Palantir
-    # genuinely never tags InventoryNet at all (confirmed via
-    # fetch_concept 404) -- verified the tag is clean (no per-company
-    # override needed) for the 3 companies that DO tag it before adding.
+    # See docs/decisions/2026-08-19-fixing-6-accumulated-eval-findings.md
+    # and docs/decisions/2026-09-15-xbrl-tag-selection-methodology.md
+    # (Palantir genuinely never tags InventoryNet -- a real business-
+    # model fact, not a data gap).
     entries = [
         {"end": "2026-04-26", "val": 25797000000, "accn": "x", "fy": 2027, "fp": "Q1", "form": "10-Q", "filed": "2026-05-20"},
     ]
@@ -474,15 +463,12 @@ def test_get_frame_skips_tags_with_no_frame_data(monkeypatch):
 
 
 def test_get_frame_resolves_tag_collision_deterministically_and_logs_it(monkeypatch):
-    # review §15: if two distinct tags both report data for the SAME
-    # ticker in the same frame (a company mid-transition between two
-    # GAAP tags could plausibly show up in both tags' frame responses,
-    # even though companies.json only maps it to one "current" tag), the
-    # merge used to silently depend on Python's set iteration order --
-    # untestable before, since tags_in_play was an unordered set.
-    # tags_in_play is now sorted, so "AaaTag" (alphabetically first)
-    # deterministically wins over "ZzzTag" regardless of hash order, and
-    # the conflict itself is logged instead of silently discarded.
+    # If two distinct tags both report data for the SAME ticker in the
+    # same frame (a company mid-transition between two GAAP tags could
+    # plausibly show up in both tags' frame responses), the merge must
+    # be deterministic (tags_in_play is sorted) and the conflict itself
+    # logged rather than silently discarded. See
+    # docs/decisions/2026-09-09-citation-gap-frame-ordering-retrieval-verify.md.
     aaa_response = {"data": [{"accn": "a", "cik": 320193, "end": "2026-03-28", "val": 100.0}]}
     zzz_response = {"data": [{"accn": "z", "cik": 320193, "end": "2026-03-28", "val": 200.0}]}
 
@@ -507,11 +493,11 @@ def test_get_frame_resolves_tag_collision_deterministically_and_logs_it(monkeypa
 
 
 def test_get_frame_does_not_log_a_conflict_for_a_same_tag_duplicate_entry(monkeypatch):
-    # Found in code review: two entries for the same ticker within ONE
-    # tag's own data list (e.g. an amended/restated filing appearing
-    # twice under a different accession) isn't a cross-tag disagreement
-    # and must not be mislabeled as one -- first-entry-wins, silently,
-    # matching this same-tag case's pre-existing (unlogged) behavior.
+    # Two entries for the same ticker within ONE tag's own data list
+    # (e.g. an amended/restated filing appearing twice under a different
+    # accession) isn't a cross-tag disagreement and must not be
+    # mislabeled as one -- first-entry-wins, silently. See
+    # docs/decisions/2026-09-09-citation-gap-frame-ordering-retrieval-verify.md.
     duplicate_response = {
         "data": [
             {"accn": "original", "cik": 320193, "end": "2026-03-28", "val": 100.0},
@@ -530,15 +516,12 @@ def test_get_frame_does_not_log_a_conflict_for_a_same_tag_duplicate_entry(monkey
 
 
 def test_get_frame_prefers_tickers_own_designated_tag_over_alphabetical_order(monkeypatch):
-    # Found in code review: a plain alphabetical-sort tie-break is
-    # arbitrary, not principled -- get_frame() already has the
-    # objectively correct answer for a given ticker available via
-    # _tag_for(ticker, metric) (it's what built tags_in_play in the
-    # first place) and was ignoring it. Without this, a ticker whose own
-    # designated tag happens to sort SECOND would silently keep a wrong
-    # value from a different tag that incidentally also reports its CIK
-    # (e.g. a company mid-transition between two GAAP tags), forever,
-    # regardless of which is actually correct.
+    # A plain alphabetical-sort tie-break is arbitrary, not principled --
+    # get_frame() must prefer the objectively correct answer for a given
+    # ticker, available via _tag_for(ticker, metric) (it's what built
+    # tags_in_play in the first place), over whichever tag happens to
+    # sort first. See
+    # docs/decisions/2026-09-09-citation-gap-frame-ordering-retrieval-verify.md.
     aaa_response = {"data": [{"accn": "wrong", "cik": 320193, "end": "2026-03-28", "val": 999.0}]}
     zzz_response = {"data": [{"accn": "right", "cik": 320193, "end": "2026-03-28", "val": 100.0}]}
 
@@ -610,15 +593,13 @@ def test_get_metric_all_companies_returns_empty_when_anchor_has_no_frame(monkeyp
 
 
 def test_get_metric_all_companies_duration_metric_never_tries_other_companies(monkeypatch):
-    # Regression guard (found in code review 2026-09-07): yesterday's
-    # shipped fix applied a cross-company frame-borrowing fallback to
-    # EVERY metric, including duration ones -- today's redesign removes
-    # it for duration metrics too (the same borrowed-window bug applies
-    # equally: a different company's own fiscal_year/fiscal_period
-    # number represents a different real calendar window). Only the
-    # requested ticker should ever be queried for a duration metric,
-    # even when its own frame is missing -- never a fallback to another
-    # company.
+    # A cross-company frame-borrowing fallback is wrong for duration
+    # metrics too, same as for instant ones below: a different company's
+    # own fiscal_year/fiscal_period number represents a different real
+    # calendar window. Only the requested ticker should ever be queried
+    # for a duration metric, even when its own frame is missing -- never
+    # a fallback to another company. See
+    # docs/decisions/2026-09-07-fix-get-metric-all-companies-instant-metrics.md.
     checked_tickers = []
 
     def fake_get_metric(ticker, metric, fiscal_year, fiscal_period, period_end_date):
@@ -636,18 +617,14 @@ def test_get_metric_all_companies_duration_metric_never_tries_other_companies(mo
 # ---------------------------------------------------------------------------
 # get_metric_all_companies -- instant metrics (total_assets/
 # cash_and_equivalents/inventory) take a DIFFERENT path from duration
-# metrics (gross_profit etc. above), added 2026-09-07 to replace a
-# same-day regression: borrowing another company's SEC-assigned frame
-# for an instant concept silently substitutes a DIFFERENT requested
-# time window (verified live: anchoring NVDA's own frame-less FY2026
-# total_assets against MSFT's frame returned NVDA's Q2 FY2027 balance
-# mislabeled as FY2026). Real financial-analysis practice ("calendariza-
-# tion") explicitly does not apply calendar-window alignment to balance-
-# sheet figures the way it does to income-statement ones -- so instant
-# metrics are resolved independently per company instead, no frame, no
-# anchor requirement at all. Duration metrics (tested above) are
-# unaffected -- calendar-window bucketing via frames is the standard,
-# correct technique for THOSE and already works.
+# metrics (gross_profit etc. above): real financial-analysis practice
+# ("calendarization") explicitly does not apply calendar-window
+# alignment to balance-sheet figures the way it does to income-statement
+# ones, so instant metrics are resolved independently per company
+# instead, no frame, no anchor requirement at all. Duration metrics
+# (tested above) are unaffected -- calendar-window bucketing via frames
+# is the standard, correct technique for THOSE and already works. See
+# docs/decisions/2026-09-07-fix-get-metric-all-companies-instant-metrics.md.
 # ---------------------------------------------------------------------------
 def test_get_metric_all_companies_resolves_instant_metrics_independently_per_company(monkeypatch):
     def fake_get_metric(ticker, metric, fiscal_year, fiscal_period, period_end_date):
@@ -684,9 +661,9 @@ def test_get_metric_all_companies_instant_metric_skips_companies_with_no_data(mo
 
 
 def test_get_metric_all_companies_instant_metric_never_calls_get_frame(monkeypatch):
-    # Regression guard: instant metrics must never touch the frames API
-    # at all, not even as a fallback -- that's the exact mechanism that
-    # caused the 2026-09-07 regression.
+    # Instant metrics must never touch the frames API at all, not even
+    # as a fallback. See
+    # docs/decisions/2026-09-07-fix-get-metric-all-companies-instant-metrics.md.
     monkeypatch.setattr(
         "xbrl_facts.get_metric",
         lambda ticker, metric, fiscal_year, fiscal_period, period_end_date: {

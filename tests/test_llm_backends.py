@@ -101,11 +101,11 @@ def test_gemini_response_to_turn_multiple_tool_calls_preserve_order():
 
 
 # ---------------------------------------------------------------------------
-# _to_gemini_tool -- regression coverage for a live bug found via a
-# Gemini spot-check eval run (2026-09-09): Gemini's Schema type (a
+# _to_gemini_tool -- regression coverage: Gemini's Schema type (a
 # stricter OpenAPI 3.0 subset than Ollama's OpenAI-style wire format)
 # doesn't support "additionalProperties" at all -- every tool-calling
 # request failed with a 400 INVALID_ARGUMENT until this was stripped.
+# See docs/decisions/2026-09-09-schema-driven-arg-validation.md.
 # ---------------------------------------------------------------------------
 def _search_filings_like_schema():
     return {
@@ -144,8 +144,8 @@ def test_to_gemini_tool_preserves_everything_else():
 def _nested_array_schema():
     # Shaped like the planned submit_answer tool: an array-of-objects
     # property whose ITEM schema also carries additionalProperties, one
-    # level deeper than any of the 3 existing tools ever needed. Added
-    # 2026-09-10 -- see docs/plans/2026-09-10-structured-claims-citation-verification.md.
+    # level deeper than any of the 3 existing tools ever needed. See
+    # docs/decisions/2026-09-10-structured-claims-citation-verification.md.
     return {
         "type": "function",
         "function": {
@@ -172,27 +172,24 @@ def _nested_array_schema():
 
 
 def test_to_gemini_tool_strips_additional_properties_recursively():
-    # Regression test for a bug found in design review (2026-09-10),
-    # before it ever shipped: the original strip was a single top-level
-    # dict comprehension (`{k: v for k, v in fn["parameters"].items() if
-    # k != "additionalProperties"}`), so a NESTED additionalProperties
-    # (inside an array property's item schema) reached Gemini's SDK
-    # unstripped -- confirmed live against the installed SDK to still
-    # attach `additional_properties=False` to the nested Schema object,
-    # which reproduces the exact 400 INVALID_ARGUMENT
-    # ("Unknown name additional_properties") the top-level strip was
-    # built to fix in the first place, just one level deeper.
+    # A single top-level dict comprehension (`{k: v for k, v in
+    # fn["parameters"].items() if k != "additionalProperties"}`) would
+    # leave a NESTED additionalProperties (inside an array property's
+    # item schema) unstripped, reproducing the same 400 INVALID_ARGUMENT
+    # one level deeper. See
+    # docs/decisions/2026-09-10-structured-claims-citation-verification.md.
     tool = _to_gemini_tool(_nested_array_schema())
     assert tool.parameters.additional_properties is None
     assert tool.parameters.properties["claims"].items.additional_properties is None
 
 
 # ---------------------------------------------------------------------------
-# Response-shape validation (2026-09-09 schema-validator redesign): both
-# _ollama_message_to_turn and _gemini_response_to_turn used to index
-# straight into the raw response (c["function"]["name"], resp.candidates[0])
-# with no shape check, crashing with a bare KeyError/IndexError before a
-# tool call ever reached agent.py's own boundary validation.
+# Response-shape validation: both _ollama_message_to_turn and
+# _gemini_response_to_turn used to index straight into the raw response
+# (c["function"]["name"], resp.candidates[0]) with no shape check,
+# crashing with a bare KeyError/IndexError before a tool call ever
+# reached agent.py's own boundary validation. See
+# docs/decisions/2026-09-09-schema-driven-arg-validation.md.
 # ---------------------------------------------------------------------------
 def test_ollama_message_to_turn_raises_on_tool_call_missing_function_key(monkeypatch):
     calls = []
@@ -273,7 +270,7 @@ def test_get_gemini_client_raises_runtime_error_when_key_missing(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# ollama_call retry/backoff (Week 7 guardrails) -- pure control-flow, mocks
+# ollama_call retry/backoff -- pure control-flow, mocks
 # requests.post/time.sleep rather than a live Ollama server, same principle
 # as the fixture-shaped ModelTurn tests above.
 # ---------------------------------------------------------------------------
@@ -303,9 +300,9 @@ def test_ollama_call_retries_on_connection_error_then_succeeds(monkeypatch):
 
     assert message == {"role": "assistant", "content": "ok"}
     assert len(attempts) == 2
-    # Week 7 guardrails follow-up: every retry attempt is logged locally
-    # (tracing.log_event), not just printed under --verbose -- see
-    # PROJECT_CONTEXT.md's "local-only debug events" section.
+    # Every retry attempt is logged locally (tracing.log_event), not
+    # just printed under --verbose -- see
+    # docs/decisions/2026-09-05-local-only-debug-events.md.
     assert len(log_calls) == 1
     category, fields = log_calls[0]
     assert category == "llm_retry"
@@ -337,15 +334,15 @@ def test_ollama_call_retries_on_connect_timeout_then_succeeds(monkeypatch):
 
 
 def test_ollama_call_does_not_retry_on_read_timeout(monkeypatch):
-    # Regression guard (found in code review, 2026-08-26): a
-    # ReadTimeout means the server accepted the connection and was
+    # A ReadTimeout means the server accepted the connection and was
     # generating, just slower than the 240s budget -- this project's
     # own CPU-only setup is already documented to take 60-70s+ per
     # question, so this is plausibly a genuinely slow answer, not a
     # stalled server. Retrying it would silently turn one 240s timeout
     # into up to 3, i.e. a ~12-minute hang indistinguishable from the
     # process being stuck -- worse than just failing once, so this must
-    # propagate immediately, not retry.
+    # propagate immediately, not retry. See
+    # docs/decisions/2026-08-26-week7-citation-hard-gate-ollama-retry.md.
     monkeypatch.setattr("llm_backends.time.sleep", lambda s: None)
     attempts = []
 
@@ -429,8 +426,8 @@ def test_ollama_call_uses_temperature_from_state_when_given(monkeypatch):
 
 # ---------------------------------------------------------------------------
 # _send_with_retry (Gemini) retry/backoff -- same pure control-flow
-# principle as ollama_call above, plus the new Week 7 local-only
-# llm_retry logging (this function had no dedicated tests before now).
+# principle as ollama_call above, plus local-only llm_retry logging
+# (this function had no dedicated tests before now).
 # ---------------------------------------------------------------------------
 def _fake_gemini_error(code):
     return genai_errors.ClientError(code, {"message": "error"})
@@ -440,9 +437,9 @@ class _FakeChat:
     def __init__(self, responses):
         self._responses = iter(responses)
         # Records every config _send_with_retry actually passed through,
-        # in order -- added 2026-09-10 so tests can assert on it directly
-        # instead of only on the response, for the forced-tool-config work
-        # (see docs/plans/2026-09-10-structured-claims-citation-verification.md).
+        # in order, so tests can assert on it directly instead of only
+        # on the response -- for the forced-tool-config work, see
+        # docs/decisions/2026-09-10-structured-claims-citation-verification.md.
         self.configs_received = []
 
     def send_message(self, message, config=None):
@@ -524,7 +521,7 @@ def test_send_with_retry_succeeds_first_try_without_sleeping(monkeypatch):
 
 
 def test_send_with_retry_passes_config_through_when_given(monkeypatch):
-    # 2026-09-10: _send_with_retry gained an optional `config` param so a
+    # _send_with_retry has an optional `config` param so a
     # forced-tool-choice turn (see _gemini_send/_gemini_send_followup
     # below) can override the chat's default AUTO-mode config. Passing
     # `config=` explicitly is safe even when it's None -- the real SDK's
@@ -551,9 +548,9 @@ def test_send_with_retry_defaults_config_to_none(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# Gemini state shape + forced tool choice (2026-09-10, see
-# docs/plans/2026-09-10-citation-gate-measurement-instrumentation.md and
-# docs/plans/2026-09-10-structured-claims-citation-verification.md).
+# Gemini state shape + forced tool choice. See
+# docs/decisions/2026-09-10-citation-gate-measurement-instrumentation.md
+# and docs/decisions/2026-09-10-structured-claims-citation-verification.md.
 # _gemini_start's state must carry its own `config` alongside the `chat`
 # object (previously just the bare chat) because a forced turn needs to
 # re-supply the WHOLE GenerateContentConfig, not just tool_config --
@@ -638,8 +635,8 @@ def test_gemini_send_followup_forces_tool_choice_while_preserving_base_config():
 # with Gemini's (agent.py calls both through the same BACKENDS protocol)
 # but it has zero effect -- Ollama has no tool_choice/tool_config
 # equivalent at all (confirmed: neither its native /api/chat nor its
-# OpenAI-compatible endpoint support tool_choice; see
-# docs/plans/2026-09-10-structured-claims-citation-verification.md).
+# OpenAI-compatible endpoint support tool_choice). See
+# docs/decisions/2026-09-10-structured-claims-citation-verification.md.
 # ---------------------------------------------------------------------------
 def test_ollama_send_accepts_and_ignores_force_tool(monkeypatch):
     monkeypatch.setattr("llm_backends.requests.post", lambda *a, **k: _FakeOllamaResponse())
@@ -660,9 +657,9 @@ def test_ollama_send_followup_accepts_and_ignores_force_tool(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# complete() -- one-shot, tool-free completion added 2026-09-10 for
-# eval_harness.py's grade_judged() to honor --judge-backend. Deliberately
-# separate from the BACKENDS 3-callable tool-calling protocol: its only
+# complete() -- one-shot, tool-free completion for eval_harness.py's
+# grade_judged() to honor --judge-backend. Deliberately separate from
+# the BACKENDS 3-callable tool-calling protocol: its only
 # caller never calls tools, never takes a second turn, and needs
 # temperature 0.0, which the tool-calling path hardcodes to 0.1 (see
 # _gemini_start above). Only the Ollama branch is unit-tested here (pure
@@ -711,11 +708,11 @@ def test_complete_raises_on_unknown_backend():
 
 def test_complete_gemini_raises_on_empty_candidates(monkeypatch):
     # complete()'s Gemini branch must go through _gemini_response_to_turn()
-    # rather than reading resp.text directly (found in code review,
-    # 2026-09-10) -- this is what makes a safety-filtered/empty response
-    # raise the same informative RuntimeError (with the same log_event)
-    # every other Gemini call site already gets, instead of silently
-    # returning "".
+    # rather than reading resp.text directly -- this is what makes a
+    # safety-filtered/empty response raise the same informative
+    # RuntimeError (with the same log_event) every other Gemini call
+    # site already gets, instead of silently returning "". See
+    # docs/decisions/2026-09-10-citation-gate-measurement-instrumentation.md.
     fake_chat = _FakeChat([SimpleNamespace(candidates=[], text=None)])
     monkeypatch.setattr(
         "llm_backends._get_gemini_client",

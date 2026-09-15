@@ -108,20 +108,25 @@ Full evidence/reasoning: `docs/plans/2026-09-15-comment-audit-round5.md`,
 three-Explore-agent inventory of all 25 `tests/` files, so the rounds
 below don't need to re-derive it.
 
-- [ ] **[refactor, Low, Substantial]** Round 6: routine pointer-fix
-  batches, grouped by theme — (a) `test_llm_backends.py` (731 lines,
-  ~10-12 blocks, nearly all already self-citing a `docs/plans/*.md`
-  twin), `test_xbrl_facts.py` (703 lines, ~10 blocks, mostly fixture-
-  provenance notes plus regression narration possibly covered by
-  `2026-09-15-xbrl-tag-selection-methodology.md`), `test_formulas.py`
-  (794 lines, only ~5-6 true narration blocks despite the line count),
-  `test_eval_harness.py` (581 lines, ~10 blocks, mostly self-citing);
-  (b) the 7 remaining `tests/manual/verify_*.py` scripts
-  (`verify_calculate.py`, `verify_retrieval.py`, `verify_tracing.py`,
-  `verify_tool_turn_waste.py`, `verify_submit_answer.py`,
-  `verify_mcp_server.py`, `verify_period_labels.py` — all confirmed
-  ALREADY-DOCUMENTED, share a repeated live-code-carve-out boilerplate
-  preamble that could be trimmed uniformly); (c) `test_edgar_ingest.py`,
+(Round 6 — see the section below — completed sub-group (a):
+`test_llm_backends.py`, `test_xbrl_facts.py`, `test_formulas.py`,
+`test_eval_harness.py`. Sub-groups (b) and (c) remain below, renumbered
+as their own rounds.)
+
+### From the 2026-09-15 comment-audit Round 6
+
+Full evidence/reasoning: `docs/plans/2026-09-15-comment-audit-round6.md`,
+`docs/reviews/2026-09-15-comment-audit-round6.md`,
+`docs/decisions/2026-09-15-comment-audit-round6.md`.
+
+- [ ] **[refactor, Low, Standard]** Round 6b: the 7 remaining
+  `tests/manual/verify_*.py` scripts (`verify_calculate.py`,
+  `verify_retrieval.py`, `verify_tracing.py`, `verify_tool_turn_waste.py`,
+  `verify_submit_answer.py`, `verify_mcp_server.py`,
+  `verify_period_labels.py` — all confirmed ALREADY-DOCUMENTED, share a
+  repeated live-code-carve-out boilerplate preamble that could be
+  trimmed uniformly).
+- [ ] **[refactor, Low, Standard]** Round 6c: `test_edgar_ingest.py`,
   `test_chunk_documents.py`, `test_mcp_server.py`, `test_retrieval.py`
   (4-9 blocks each, ALREADY-DOCUMENTED but dense/interlinked enough to
   need non-mechanical editing — some blocks cross-reference other test

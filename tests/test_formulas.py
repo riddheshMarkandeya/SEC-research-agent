@@ -159,11 +159,10 @@ def test_get_return_on_assets_returns_none_if_either_metric_missing(monkeypatch)
 
 def test_get_asset_turnover_computes_raw_ratio_not_percent(monkeypatch):
     # Asset turnover is conventionally a decimal ratio ("1.04x"), not a
-    # percentage -- found live (2026-08-25): a real Gemini answer stated
-    # "approximately 1.04", and the eval question's own expected_unit
-    # had to be corrected from "percent" to "raw" for exactly this
-    # reason (normalize() treats them as different, never-cross-matching
-    # categories). The first non-percent ratio in this module.
+    # percentage -- normalize() treats "percent" and "raw" as different,
+    # never-cross-matching categories, so this must not accidentally
+    # multiply by 100. The first non-percent ratio in this module. See
+    # docs/decisions/2026-08-25-formula-registry-roa-turnover-cash.md.
     revenue_entries = [
         {"start": "2025-01-27", "end": "2026-01-25", "val": 215938000000, "accn": "x", "fy": 2026, "fp": "FY", "form": "10-K", "filed": "2026-02-25"},
     ]
@@ -263,17 +262,13 @@ def test_get_yoy_growth_returns_none_when_prior_value_is_zero(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# get_multi_year_average -- regression case: aapl-3yr-avg-operating-margin-
-# fy2023-fy2025. With no deterministic tool for an N-year average, the
-# model reached for self-computation on its own (once landing close via
-# 3 separate get_financial_fact calls averaged in its own reasoning text,
-# a rule-3 violation the citation-verification gate correctly caught;
-# once misparsing the whole request as a Q4-specific one instead).
-# Supports both margin ratios (formulas.get_operating_margin, etc.) and
-# raw tagged metrics (xbrl_facts.get_metric) uniformly, unlike
-# get_yoy_growth() which is deliberately scoped to raw metrics only --
-# the actual failing question needs a margin average, so this can't
-# exclude margins the way yoy_growth does.
+# get_multi_year_average -- supports both margin ratios
+# (formulas.get_operating_margin, etc.) and raw tagged metrics
+# (xbrl_facts.get_metric) uniformly, unlike get_yoy_growth() which is
+# deliberately scoped to raw metrics only -- a multi-year-average
+# question can ask for a margin average, so this can't exclude margins
+# the way yoy_growth does. See
+# docs/decisions/2026-08-19-fixing-6-accumulated-eval-findings.md.
 # ---------------------------------------------------------------------------
 def test_get_multi_year_average_averages_margin_across_years(monkeypatch):
     # Real AAPL operating margin values (verified via get_metric() before
@@ -406,13 +401,13 @@ def test_get_multi_year_average_returns_none_when_start_after_end():
 # ---------------------------------------------------------------------------
 def test_get_gross_margin_all_companies_computes_ratio_per_company(monkeypatch):
     # Mocks formulas.get_ratio, not get_gross_margin directly --
-    # get_gross_margin_all_companies() now delegates to the shared
+    # get_gross_margin_all_companies() delegates to the shared
     # get_ratio_all_companies() engine (see that function's own
     # docstring), which computes its anchor via get_ratio(), not the
-    # named per-ratio function -- found in code review (2026-08-28)
-    # that mocking get_gross_margin here no longer intercepted anything,
-    # silently letting these tests fall through to real network/cache
-    # calls instead of the intended fixture data.
+    # named per-ratio function, so mocking get_gross_margin here would
+    # silently intercept nothing and fall through to real network/cache
+    # calls instead of the intended fixture data. See
+    # docs/decisions/2026-08-28-ratio-definitions-table-driven-registry.md.
     monkeypatch.setattr(
         "formulas.get_ratio",
         lambda ticker, ratio_name, fiscal_year, fiscal_period, period_end_date: {
@@ -705,18 +700,17 @@ def test_get_ratio_all_companies_returns_empty_without_calling_get_frame_when_un
 
 
 def test_get_ratio_all_companies_respects_as_percent_false(monkeypatch):
-    # Regression guard (found in code review, 2026-08-28): the
-    # cross-company path must respect RATIO_DEFINITIONS' own as_percent
-    # flag, same as get_ratio()/_compute_ratio_metric() already do for
-    # the single-company path -- currently latent (today's 3
-    # cross-company-capable ratios are all as_percent=True), but flipping
-    # a decimal ratio like asset_turnover/inventory_turnover to
-    # supports_cross_company=True later (explicitly called "easy" in
+    # The cross-company path must respect RATIO_DEFINITIONS' own
+    # as_percent flag, same as get_ratio()/_compute_ratio_metric()
+    # already do for the single-company path -- currently latent
+    # (today's 3 cross-company-capable ratios are all as_percent=True),
+    # but flipping a decimal ratio like asset_turnover/inventory_turnover
+    # to supports_cross_company=True later (explicitly called "easy" in
     # RATIO_DEFINITIONS' own comment) would otherwise silently multiply
     # by 100 and mislabel the unit "percent" instead of "raw" --
     # numeric_utils.normalize() treats those as non-cross-matching
-    # categories, so this would silently break eval grading exactly the
-    # way _compute_ratio_metric()'s own as_percent docstring warns about.
+    # categories, so this would silently break eval grading. See
+    # docs/decisions/2026-08-28-ratio-definitions-table-driven-registry.md.
     monkeypatch.setitem(
         formulas.RATIO_DEFINITIONS,
         "decimal_cross_company_ratio",
