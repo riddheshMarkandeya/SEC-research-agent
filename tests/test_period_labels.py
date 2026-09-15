@@ -5,8 +5,8 @@ chunk_period_label (which only does static-file lookup via
 companies.json, no network/model calls, so it's fine to test directly).
 
 Every case here mirrors a fact independently confirmed from the actual
-filing text during diagnosis (see PROJECT_CONTEXT.md) — not invented
-expectations.
+filing text during diagnosis, not invented expectations. See
+docs/decisions/2026-08-16-fiscal-period-labels-tried-and-reverted.md.
 """
 
 from datetime import date

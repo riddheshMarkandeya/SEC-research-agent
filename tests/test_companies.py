@@ -31,13 +31,14 @@ def test_load_companies_ciks_are_ten_digit_zero_padded():
 
 
 # ---------------------------------------------------------------------------
-# _validate -- schema check on companies.json's shape (2026-09-09
-# schema-validator redesign). Real gap it closes: every downstream reader
-# (agent.py, xbrl_facts.py, period_labels.py, edgar_ingest.py) does raw
-# info["name"]/info["cik"]/info["fiscal_year_end_month"] indexing with no
-# defensive check of its own, so a malformed entry used to surface as a
-# confusing KeyError three layers down in some unrelated ticker/metric
-# lookup instead of one clear error at load time.
+# _validate -- schema check on companies.json's shape. Real gap it
+# closes: every downstream reader (agent.py, xbrl_facts.py,
+# period_labels.py, edgar_ingest.py) does raw info["name"]/info["cik"]/
+# info["fiscal_year_end_month"] indexing with no defensive check of its
+# own, so a malformed entry used to surface as a confusing KeyError three
+# layers down in some unrelated ticker/metric lookup instead of one clear
+# error at load time. See
+# docs/decisions/2026-09-09-schema-driven-arg-validation.md.
 # ---------------------------------------------------------------------------
 def test_validate_accepts_the_real_companies_json():
     # Regression guard against the schema itself being wrong -- the real

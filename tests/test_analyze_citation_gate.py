@@ -93,9 +93,10 @@ def test_classify_row_excluded_for_judged_questions_regardless_of_other_fields()
 
 
 def test_classify_row_unknown_pre_instrumentation_for_a_legacy_row_missing_gate_fields():
-    # A report written before 2026-09-10 has none of the 4 new keys at
-    # all -- must be excluded from denominators, not crash and not be
-    # silently counted as a pass.
+    # A report written before the citation-gate measurement fields (see
+    # docs/decisions/2026-09-10-citation-gate-measurement-instrumentation.md)
+    # has none of the 4 new keys at all -- must be excluded from
+    # denominators, not crash and not be silently counted as a pass.
     legacy_row = {
         "id": "q1",
         "ticker": "AAPL",
@@ -172,9 +173,9 @@ def test_summarize_counts_and_rates_across_a_mixed_batch():
 
 
 def test_summarize_handles_structured_claims_check_values_with_no_code_changes():
-    # 2026-09-10: agent.py's structured-claims verifier (verify_claims())
-    # introduced 5 new CitationWarning `check` values (citation_out_of_range,
-    # quote_too_short, quote_not_found, value_not_in_quote, uncovered_number)
+    # agent.py's structured-claims verifier introduced 5 new
+    # CitationWarning `check` values (see
+    # docs/decisions/2026-09-10-structured-claims-citation-verification.md)
     # that this analyzer was never updated for -- by design, since it only
     # ever reads `check` generically as a string key, never enumerates the
     # old two-value vocabulary. This is the confirming test for that design

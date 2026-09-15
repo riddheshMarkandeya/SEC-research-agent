@@ -1,12 +1,12 @@
 """
 One-time (re-runnable) live verification of llm_backends.complete()'s
-Gemini branch -- the one path added 2026-09-10 (see
-docs/plans/2026-09-10-citation-gate-measurement-instrumentation.md) with
-no unit-test coverage, per this project's CLAUDE.md carve-out: the Ollama
-branch is pure control flow around an already-tested ollama_call() and is
-unit-tested in tests/test_llm_backends.py, but the Gemini branch makes a
-real API call through the google-genai SDK and mocking that would only
-test the mock, not the code.
+Gemini branch (see
+docs/decisions/2026-09-10-citation-gate-measurement-instrumentation.md)
+with no unit-test coverage, per this project's CLAUDE.md carve-out: the
+Ollama branch is pure control flow around an already-tested ollama_call()
+and is unit-tested in tests/test_llm_backends.py, but the Gemini branch
+makes a real API call through the google-genai SDK and mocking that
+would only test the mock, not the code.
 
 Specifically checks the property complete() exists to guarantee that the
 existing BACKENDS tool-calling path can't: a single-turn, tool-free

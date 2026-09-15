@@ -95,11 +95,79 @@ Full evidence/reasoning: `docs/plans/2026-09-15-comment-audit-round4.md`,
 `docs/reviews/2026-09-15-comment-audit-round4.md`,
 `docs/decisions/2026-09-15-comment-audit-round4.md`.
 
-- [ ] **[refactor, Low, Substantial]** Full `tests/` pass (25 files) —
-  same issue, much denser: `test_agent.py` alone has ~101 flagged
-  comment blocks, `test_table_grounding.py` is similarly dense. Lower
-  priority than the main-source files since test comments are read far
-  less often, but same process applies once picked up.
+(Round 5 — see the section below — completed 5 small `tests/` files;
+the rest of the `tests/` pass is now scoped into Round 6-10+ items
+below, replacing the single undifferentiated item that used to be
+here.)
+
+### From the 2026-09-15 comment-audit Round 5
+
+Full evidence/reasoning: `docs/plans/2026-09-15-comment-audit-round5.md`,
+`docs/reviews/2026-09-15-comment-audit-round5.md`,
+`docs/decisions/2026-09-15-comment-audit-round5.md` — includes the full
+three-Explore-agent inventory of all 25 `tests/` files, so the rounds
+below don't need to re-derive it.
+
+- [ ] **[refactor, Low, Substantial]** Round 6: routine pointer-fix
+  batches, grouped by theme — (a) `test_llm_backends.py` (731 lines,
+  ~10-12 blocks, nearly all already self-citing a `docs/plans/*.md`
+  twin), `test_xbrl_facts.py` (703 lines, ~10 blocks, mostly fixture-
+  provenance notes plus regression narration possibly covered by
+  `2026-09-15-xbrl-tag-selection-methodology.md`), `test_formulas.py`
+  (794 lines, only ~5-6 true narration blocks despite the line count),
+  `test_eval_harness.py` (581 lines, ~10 blocks, mostly self-citing);
+  (b) the 7 remaining `tests/manual/verify_*.py` scripts
+  (`verify_calculate.py`, `verify_retrieval.py`, `verify_tracing.py`,
+  `verify_tool_turn_waste.py`, `verify_submit_answer.py`,
+  `verify_mcp_server.py`, `verify_period_labels.py` — all confirmed
+  ALREADY-DOCUMENTED, share a repeated live-code-carve-out boilerplate
+  preamble that could be trimmed uniformly); (c) `test_edgar_ingest.py`,
+  `test_chunk_documents.py`, `test_mcp_server.py`, `test_retrieval.py`
+  (4-9 blocks each, ALREADY-DOCUMENTED but dense/interlinked enough to
+  need non-mechanical editing — some blocks cross-reference other test
+  files by name).
+- [ ] **[refactor, Med, Standard]** Round 7: `test_tracing.py` (491
+  lines) — a cluster of ~5 "found in code review" blocks
+  (`traced_span`/`_write_local_log`/`flush` hardening: monotonic-vs-
+  wall-clock duration, an assertion-swallowed-by-broad-except pitfall
+  repeated twice, non-OSError serialization failures, directory-
+  deleted-mid-run cache invalidation, `flush()` masking uvicorn's real
+  exception) with no existing decision-file home — likely needs one new
+  `docs/decisions/*-tracing-hardening.md` file covering all of them as
+  a unit (EXTRACT), not five piecemeal extracts.
+- [ ] **[refactor, Med, Standard]** Round 8: `test_numeric_utils.py`
+  (267 lines, 12+ dense blocks — the densest of the small/medium
+  files) — confirmed ALREADY-DOCUMENTED (nearly everything maps to
+  `2026-09-11-negative-number-support.md`), but several blocks explain
+  load-bearing "why this specific input shape" reasoning easy to
+  accidentally over-trim alongside the incident narration — needs the
+  same KEEP-reasoning/TRIM-narrative care as `agent.py`'s Round 4, at a
+  smaller scale.
+- [ ] **[refactor, Med, Substantial]** Round 9: `test_table_grounding.py`
+  (443 lines, densest-per-line of any file inventoried) — module
+  docstring plus roughly half the test functions carry paragraph-length
+  incident narration duplicating the `2026-09-12`/`2026-09-13`
+  table-grounding decision files almost verbatim. This batch's
+  `agent.py`-equivalent — needs careful, non-mechanical editing, not a
+  routine batch slot.
+- [ ] **[refactor, Med, Substantial]** Round 10+: `test_agent.py`
+  (3,713 lines, larger than `agent.py` itself, ~101-140 narrated
+  blocks — the densest file in the codebase) — split into 3 sub-passes
+  along its natural structure: **10a** (lines ~58-1349, ~55-60 blocks:
+  formatting helpers + prose citation verification + tool-schema/
+  `calculate` validation), **10b** (lines ~1349-2923, ~40-48 blocks,
+  the single densest stretch: fact/ratio dispatch, unmet-request/
+  rejection logging, `_dispatch_tool_call`, the full `run_agent()` loop
+  — may need a further split at ~line 2277 into dispatch/logging vs.
+  retry/hard-gate/submit-loop), **10c** (lines ~2923-3713, ~25-28
+  blocks: `_finalize_answer`, quote-matching primitives, `verify_claims`,
+  table-grounding integration tests, `_partition_submit_call` — one
+  flagged judgment-call block, the bare-XBRL-number quote test, needs
+  the same KEEP-reasoning/TRIM-narrative treatment as `agent.py`'s
+  `_ground_operand`). No test-function docstrings exist anywhere in
+  this file — all narration lives in 33 dashed-divider section-header
+  comments and inline test-body comments. No EXTRACT candidates found
+  during the spot-check.
 
 ### From the 2026-09-11 hand-rolled-complexity review
 
