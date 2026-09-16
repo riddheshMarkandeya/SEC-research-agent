@@ -47,6 +47,8 @@ pushes this section past 50, cut the oldest entries back down to 40 and
 prepend them (verbatim, still reverse-chronological) to the top of
 `PROJECT_INDEX_ARCHIVE.md`.
 
+- 2026-09-16 [review] Final-turn safety net review — independent plan review caught a dangling-function-call bug before implementation; code review found 2 minor doc/lint hygiene misses, both fixed → `docs/reviews/2026-09-16-final-turn-safety-net.md`
+- 2026-09-16 [decision] Fixed MAX_TOOL_ITERATIONS zero-slack bug (no turn left to submit after 5 dispatch calls) — added a Gemini-only reserved final-turn safety net, budget itself unchanged, baseline 37/47 → 39/47 → `docs/decisions/2026-09-16-final-turn-safety-net.md`
 - 2026-09-15 [decision] Fixed the qualitative-claims placeholder-value false-refusal bug (model invented value=1 for non-numeric citations) — made value/unit optional in SUBMIT_TOOL_SCHEMA, baseline 36/47 → 37/47 → `docs/decisions/2026-09-15-qualitative-claims-schema.md`
 - 2026-09-15 [decision] Adopted pyright in basic mode (strict mode's real baseline was 4,655 errors, ~94% noise; basic was 154) — fixed all core-module findings live-verified → `docs/decisions/2026-09-15-adopt-pyright.md`
 - 2026-09-15 [decision] Evaluated pytest-archon/import-linter for architecture-boundary enforcement — rejected, doesn't fit this project's flat (no-package) module layout → `docs/decisions/2026-09-15-evaluate-architecture-linters.md`

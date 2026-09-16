@@ -1896,6 +1896,35 @@ def _should_retry_for_citations(citation_warnings: list[str], already_retried: b
     return bool(citation_warnings) and not already_retried and backend in _CITATION_RETRY_BACKENDS
 
 
+# Backends allowed the final-turn safety net below (BACKLOG.md's
+# MAX_TOOL_ITERATIONS zero-slack bug -- see docs/decisions/
+# 2026-09-16-final-turn-safety-net.md). Gemini only, matching
+# _CITATION_RETRY_BACKENDS/_FORCED_SUBMIT_BACKENDS's own precedent: this
+# is a directive nudge injected right as the tool-call budget runs out,
+# structurally the same kind of corrective-pressure mechanism that got
+# qwen2.5:7b-instruct gated out elsewhere in this file for being
+# unreliable under it. Kept as its own set rather than reusing either
+# existing one, same reasoning _FORCED_SUBMIT_BACKENDS's own comment
+# already gives for not collapsing into _CITATION_RETRY_BACKENDS despite
+# identical current membership.
+_FINAL_TURN_BACKENDS = {"gemini"}
+
+
+def _should_force_final_submit(already_attempted: bool, calls_made: int, backend: str) -> bool:
+    """Whether run_agent() should spend its one reserved, submit-only
+    final round trip: the dispatch budget is exhausted but the model is
+    still actively requesting tool calls rather than having already
+    given up (that case is handled separately, by the forced-submit-on-
+    prose mechanism below). Capped at one shot per conversation via
+    already_attempted, the same single-shot pattern as
+    forced_submit_attempted/_should_retry_for_citations. Gated to
+    _FINAL_TURN_BACKENDS. NOT a MAX_TOOL_ITERATIONS increase -- the
+    resulting turn answers every pending tool call with a synthetic
+    "not run" result and force_tool="submit_answer", never a real
+    dispatch call."""
+    return not already_attempted and calls_made >= MAX_TOOL_ITERATIONS and backend in _FINAL_TURN_BACKENDS
+
+
 # Shared wording so the prose-retry message below and the structured-
 # claims retry message (_format_claim_retry_message, for submit_answer)
 # can't drift apart -- both target the same two live failure modes
@@ -1999,6 +2028,35 @@ def _format_refusal_message(warnings: list[str]) -> str:
 _FORCED_SUBMIT_BACKENDS = {"gemini"}
 
 _FORCE_SUBMIT_MESSAGE = "Please provide your final answer now by calling submit_answer."
+
+# Delivered as the `content` of a synthetic tool-result answering each
+# pending call on the final-turn safety net's one reserved round trip
+# (see _should_force_final_submit above) -- worded to read sensibly as
+# such ("this request was not run"), not as a plain followup message.
+# Deliberately NOT _FORCE_SUBMIT_MESSAGE: that message is for a model
+# that already believes it's done (replied in prose); this situation is
+# different in kind -- mid-flow, the budget cut it off, most likely to
+# NOT have separately reasoned about coverage. Deliberately no "final
+# attempt"/deadline-pressure language, per the documented scar on
+# _CITATION_RETRY_GUIDANCE above: that exact framing previously
+# pushed the model to fabricate an estimate on
+# nvda-rd-expense-q4fy26-refusal -- the same canary question this fix
+# targets. Mirrors _CITATION_RETRY_GUIDANCE's already-proven phrasing
+# ("completely acceptable outcome," explicit prohibition on
+# inventing/estimating) rather than inventing new wording under pressure.
+_FINAL_TURN_SUBMIT_MESSAGE = (
+    "No more tool calls are available for this question -- nothing else will be "
+    "dispatched, so this request was not run. Call submit_answer now using only what "
+    "you've already retrieved above.\n\n"
+    "Before you do, check rule 6: did you actually get data for every company, "
+    "period, or quantity this question asks about? If something is missing or came "
+    "back unavailable, do not present a partial result as if it fully answers the "
+    "question -- name what's missing per rule 7, or refuse per rule 2 if the missing "
+    "piece could change the answer (e.g. you can't rank or compare without it). An "
+    "honest refusal, or an answer that explicitly says what you could and couldn't "
+    "verify, is a completely acceptable outcome here -- do not guess, estimate, or "
+    "invent a value for anything you didn't actually retrieve."
+)
 
 
 def _partition_submit_call(tool_calls: list[dict]) -> tuple[dict | None, list[dict]]:
@@ -2309,6 +2367,13 @@ def _run_agent_impl(question: str, backend: str, verbose: bool = False) -> Agent
     calls_made = 1
     retried_for_citations = False
     forced_submit_attempted = False
+    # Separate from forced_submit_attempted -- that flag fires when the
+    # model has already stopped calling tools and replied in prose; this
+    # one fires when the model is still actively mid-dispatch and the
+    # budget itself is what stops it. Both can legitimately fire once
+    # each in the same conversation, the same already-accepted pattern
+    # as forced_submit_attempted/retried_for_citations coexisting today.
+    final_turn_attempted = False
     # Pending-retry snapshots for the exhausted-budget fallback at the
     # bottom -- at most one is ever set, since retried_for_citations caps
     # the whole conversation at one retry regardless of which path fires
@@ -2395,7 +2460,27 @@ def _run_agent_impl(question: str, backend: str, verbose: bool = False) -> Agent
             return _finalize_answer(answer, warnings, all_results, backend=backend, retried=retried_for_citations)
 
         if calls_made >= MAX_TOOL_ITERATIONS:
-            break
+            if not _should_force_final_submit(final_turn_attempted, calls_made, backend):
+                break
+            # Reserved, submit-only final round trip (BACKLOG.md's
+            # MAX_TOOL_ITERATIONS zero-slack bug). `other` is guaranteed
+            # non-empty here (an empty-tool-calls turn is already fully
+            # handled above by `if not turn.tool_calls:`), so every
+            # pending call gets answered with a synthetic "not run"
+            # result -- via send_tool_results, not send_followup, since
+            # those calls are already recorded as pending/unanswered in
+            # the chat history and a bare followup turn on top of them
+            # is exactly the "dangling function call followed by a bare
+            # user turn" shape that's historically 400'd on Gemini (see
+            # this function's own docstring above). force_tool hard-
+            # constrains the model's NEXT reply to submit_answer.
+            final_turn_attempted = True
+            if verbose:
+                print("  [final turn] dispatch budget exhausted with tool calls still pending -- forcing final submit")
+            results = [{"name": c["name"], "content": _FINAL_TURN_SUBMIT_MESSAGE} for c in other]
+            turn = send_tool_results(state, results, force_tool="submit_answer")
+            calls_made += 1
+            continue
 
         results = [
             {"name": c["name"], "content": _dispatch_tool_call(c, question, all_results, searched_tickers, verbose)}

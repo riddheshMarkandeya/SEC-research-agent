@@ -22,6 +22,7 @@ from agent import (
     AgentResult,
     CitationWarning,
     _CITATION_RETRY_GUIDANCE,
+    _FINAL_TURN_SUBMIT_MESSAGE,
     call_calculate,
     call_compare_financial_metric,
     call_get_financial_fact,
@@ -43,6 +44,7 @@ from agent import (
     _format_refusal_message,
     _format_results_block,
     _resolve_search_args,
+    _should_force_final_submit,
     _should_retry_for_citations,
     validate_tool_args,
     run_agent,
@@ -2326,6 +2328,31 @@ def test_should_retry_for_citations_false_for_ollama_even_with_warnings_and_not_
 
 
 # ---------------------------------------------------------------------------
+# _should_force_final_submit (final-turn safety net for the
+# MAX_TOOL_ITERATIONS zero-slack bug -- BACKLOG.md, docs/decisions/
+# 2026-09-16-final-turn-safety-net.md)
+# ---------------------------------------------------------------------------
+def test_should_force_final_submit_true_when_budget_exhausted_and_not_yet_attempted():
+    assert _should_force_final_submit(already_attempted=False, calls_made=6, backend="gemini") is True
+
+
+def test_should_force_final_submit_false_once_already_attempted():
+    assert _should_force_final_submit(already_attempted=True, calls_made=6, backend="gemini") is False
+
+
+def test_should_force_final_submit_false_when_budget_not_yet_exhausted():
+    assert _should_force_final_submit(already_attempted=False, calls_made=5, backend="gemini") is False
+
+
+def test_should_force_final_submit_false_for_ollama_even_with_budget_exhausted():
+    # Gated like _CITATION_RETRY_BACKENDS/_FORCED_SUBMIT_BACKENDS above --
+    # no live evidence yet for how Ollama responds to a directive nudge
+    # under budget pressure, so this mechanism stays Gemini-only until
+    # proven otherwise (see the decision doc).
+    assert _should_force_final_submit(already_attempted=False, calls_made=6, backend="ollama") is False
+
+
+# ---------------------------------------------------------------------------
 # run_agent() -- loop control flow only, via a fake/scripted backend (see
 # module docstring for why this is fair game for a unit test despite
 # run_agent() otherwise being live-only)
@@ -2350,12 +2377,19 @@ def test_run_agent_citation_retry_exhausting_budget_returns_pre_retry_answer_not
     # see the design doc), before the scenario proceeds exactly as it did
     # before that mechanism existed. MAX_TOOL_ITERATIONS bumped by 1 (2 ->
     # 3) to make room for that extra forced round trip without changing
-    # what the test is actually regression-testing.
+    # what the test is actually regression-testing. Bumped by one more
+    # (2026-09-16) for the final-turn safety net's own reserved round
+    # trip -- see the sibling test below for the same pattern.
     monkeypatch.setattr("agent.MAX_TOOL_ITERATIONS", 3)
 
     final_answer_turn = ModelTurn(tool_calls=[], text="Apple's revenue was $100 billion [1].")
     forced_attempt_still_text = ModelTurn(tool_calls=[], text="Apple's revenue was $100 billion [1].")
     followup_makes_new_tool_call = ModelTurn(tool_calls=[{"name": "search_filings", "args": {}}], text=None)
+    # The model ignores the final-turn safety net's forced nudge too
+    # (mock only -- Gemini's real hard constraint isn't exercised by
+    # this fake), so the loop still falls through to the unmodified
+    # post-loop pre_retry_answer fallback this test actually verifies.
+    ignores_forced_nudge = ModelTurn(tool_calls=[{"name": "search_filings", "args": {}}], text=None)
 
     def fake_start(question, system_prompt, tool_schemas):
         return {}, final_answer_turn
@@ -2365,7 +2399,10 @@ def test_run_agent_citation_retry_exhausting_budget_returns_pre_retry_answer_not
     def fake_send_followup(state, text, force_tool=None):
         return next(followups)
 
-    monkeypatch.setattr("agent.BACKENDS", {"gemini": (fake_start, None, fake_send_followup)})
+    def fake_send_tool_results(state, results, force_tool=None):
+        return ignores_forced_nudge
+
+    monkeypatch.setattr("agent.BACKENDS", {"gemini": (fake_start, fake_send_tool_results, fake_send_followup)})
     monkeypatch.setattr(
         "agent.collect_citation_warnings",
         lambda answer, all_results: [
@@ -2514,6 +2551,128 @@ def test_run_agent_returns_generic_timeout_message_unchanged_when_iterations_exh
     )
     assert warnings == []
     assert withheld_answer is None
+
+
+# ---------------------------------------------------------------------------
+# Final-turn safety net (BACKLOG.md's MAX_TOOL_ITERATIONS zero-slack bug --
+# docs/decisions/2026-09-16-final-turn-safety-net.md): when the dispatch budget
+# is exhausted but the model is still actively requesting tool calls (not
+# yet given up), the loop spends one reserved, submit-only round trip
+# instead of immediately falling through to the generic timeout.
+# ---------------------------------------------------------------------------
+def test_run_agent_final_turn_safety_net_rescues_a_clean_refusal(monkeypatch):
+    monkeypatch.setattr("agent.MAX_TOOL_ITERATIONS", 2)
+
+    keeps_calling_tools = ModelTurn(tool_calls=[{"name": "search_filings", "args": {}}], text=None)
+    clean_refusal = _submit_turn(answer_text="I don't have enough data to answer.", claims=[])
+
+    def fake_start(question, system_prompt, tool_schemas):
+        return {}, keeps_calling_tools
+
+    send_tool_results_calls = []
+
+    def fake_send_tool_results(state, results, force_tool=None):
+        send_tool_results_calls.append((results, force_tool))
+        return clean_refusal if force_tool == "submit_answer" else keeps_calling_tools
+
+    monkeypatch.setattr("agent.BACKENDS", {"gemini": (fake_start, fake_send_tool_results, None)})
+    monkeypatch.setattr(
+        "agent._dispatch_tool_call",
+        lambda call, question, all_results, searched_tickers, verbose: "search result",
+    )
+    monkeypatch.setattr("agent.verify_claims", lambda claims, all_results, question, answer_text: [])
+
+    answer, all_results, warnings, withheld_answer, _ = run_agent("What was the value?", backend="gemini")
+
+    # One ordinary dispatch round trip (calls_made 1 -> 2), then exactly
+    # one forced final-turn round trip once the budget is exhausted.
+    assert len(send_tool_results_calls) == 2
+    forced_results, forced_tool = send_tool_results_calls[-1]
+    assert forced_tool == "submit_answer"
+    assert len(forced_results) == 1  # one synthetic result per pending call in `other`
+    assert forced_results[0]["name"] == "search_filings"
+    assert answer == "I don't have enough data to answer."
+    assert answer != (
+        "I wasn't able to finish answering within the allotted number of searches. "
+        "Try asking a more specific or narrower question."
+    )
+    assert warnings == []
+    assert withheld_answer is None
+
+
+def test_run_agent_final_turn_safety_net_fires_at_most_once(monkeypatch):
+    # An uncooperative model (realistic for Ollama's no-forcing case, or
+    # Gemini simply ignoring the nudge) keeps requesting tool calls even
+    # on the forced final turn -- the safety net must not fire a second
+    # time; the loop falls through to the unmodified generic timeout.
+    monkeypatch.setattr("agent.MAX_TOOL_ITERATIONS", 2)
+
+    keeps_calling_tools = ModelTurn(tool_calls=[{"name": "search_filings", "args": {}}], text=None)
+
+    def fake_start(question, system_prompt, tool_schemas):
+        return {}, keeps_calling_tools
+
+    send_tool_results_calls = []
+
+    def fake_send_tool_results(state, results, force_tool=None):
+        send_tool_results_calls.append((results, force_tool))
+        return keeps_calling_tools  # never complies, whether forced or not
+
+    monkeypatch.setattr("agent.BACKENDS", {"gemini": (fake_start, fake_send_tool_results, None)})
+    monkeypatch.setattr(
+        "agent._dispatch_tool_call",
+        lambda call, question, all_results, searched_tickers, verbose: "search result",
+    )
+
+    answer, all_results, warnings, withheld_answer, _ = run_agent("What was the value?", backend="gemini")
+
+    forced_calls = [c for c in send_tool_results_calls if c[1] == "submit_answer"]
+    assert len(forced_calls) == 1  # spent exactly once, never repeated
+    assert answer == (
+        "I wasn't able to finish answering within the allotted number of searches. "
+        "Try asking a more specific or narrower question."
+    )
+    assert warnings == []
+    assert withheld_answer is None
+
+
+def test_run_agent_final_turn_safety_net_not_applied_on_ollama(monkeypatch):
+    # Gated to _FINAL_TURN_BACKENDS = {"gemini"} -- Ollama's behavior on
+    # budget exhaustion must be completely unchanged by this mechanism.
+    monkeypatch.setattr("agent.MAX_TOOL_ITERATIONS", 2)
+
+    keeps_calling_tools = ModelTurn(tool_calls=[{"name": "search_filings", "args": {}}], text=None)
+
+    def fake_start(question, system_prompt, tool_schemas):
+        return {}, keeps_calling_tools
+
+    def fake_send_tool_results(state, results, force_tool=None):
+        assert force_tool is None, "the final-turn safety net must never fire for Ollama"
+        return keeps_calling_tools
+
+    monkeypatch.setattr("agent.BACKENDS", {"ollama": (fake_start, fake_send_tool_results, None)})
+    monkeypatch.setattr(
+        "agent._dispatch_tool_call",
+        lambda call, question, all_results, searched_tickers, verbose: "search result",
+    )
+
+    answer, all_results, warnings, withheld_answer, _ = run_agent("What was the value?", backend="ollama")
+
+    assert answer == (
+        "I wasn't able to finish answering within the allotted number of searches. "
+        "Try asking a more specific or narrower question."
+    )
+
+
+def test_final_turn_submit_message_contains_no_deadline_pressure_language():
+    # Regression guard against reintroducing the documented fabrication
+    # scar (agent.py's _CITATION_RETRY_GUIDANCE docstring): a prior
+    # "final attempt" framing pushed the model to fabricate an estimate
+    # on nvda-rd-expense-q4fy26-refusal instead of refusing honestly.
+    lowered = _FINAL_TURN_SUBMIT_MESSAGE.lower()
+    assert "final attempt" not in lowered
+    assert "last chance" not in lowered
+    assert "acceptable outcome" in lowered  # mirrors _CITATION_RETRY_GUIDANCE's proven phrasing
 
 
 def test_run_agent_refuses_when_gemini_retry_still_leaves_unverified_citation(monkeypatch):
@@ -2802,17 +2961,27 @@ def test_run_agent_submit_answer_retry_exhausting_budget_reverifies_against_curr
     # pre-computed warnings) and re-runs verify_claims against whatever
     # all_results actually is by the time the budget runs out -- here,
     # grown by one more search dispatched AFTER the retry fired.
+    # MAX_TOOL_ITERATIONS bumped by 1 again (3, was already bumped once
+    # for the citation-retry mechanism) to make room for the final-turn
+    # safety net's own reserved round trip (2026-09-16) without changing
+    # what this test is actually regression-testing -- see the same
+    # pattern already noted on the sibling test above (line ~2351).
     monkeypatch.setattr("agent.MAX_TOOL_ITERATIONS", 3)
     first_submit = _submit_turn(answer_text="The value was 100.")
     retry_makes_new_search = ModelTurn(tool_calls=[{"name": "search_filings", "args": {"query": "more"}}], text=None)
     another_search_turn = ModelTurn(tool_calls=[{"name": "search_filings", "args": {"query": "even more"}}], text=None)
+    # The model ignores the forced final-turn nudge too (realistic mock
+    # scenario -- Gemini's real hard constraint isn't exercised by this
+    # fake), so the loop still falls through to the unmodified post-loop
+    # fallback this test actually verifies.
+    ignores_forced_nudge = ModelTurn(tool_calls=[{"name": "search_filings", "args": {"query": "still"}}], text=None)
 
     def fake_start(question, system_prompt, tool_schemas):
         return {}, first_submit
 
-    responses = iter([retry_makes_new_search, another_search_turn])
+    responses = iter([retry_makes_new_search, another_search_turn, ignores_forced_nudge])
 
-    def fake_send_tool_results(state, results):
+    def fake_send_tool_results(state, results, force_tool=None):
         return next(responses)
 
     monkeypatch.setattr("agent.BACKENDS", {"gemini": (fake_start, fake_send_tool_results, None)})
