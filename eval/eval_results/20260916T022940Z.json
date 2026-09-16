@@ -1,0 +1,55 @@
+{
+  "backend": "gemini",
+  "answer_model": "gemini-flash-lite-latest",
+  "judge_model": "gemini-flash-lite-latest",
+  "results": [
+    {
+      "id": "aapl-ai-risk",
+      "ticker": "AAPL",
+      "question": "What risks does Apple describe related to artificial intelligence?",
+      "type": "judged",
+      "passed": true,
+      "detail": "The answer explicitly mentions that AI issues may create reputational, legal, financial, and competitive risks, and includes proper citation markers like [1].",
+      "has_citation": true,
+      "citation_warnings": [],
+      "answer": "Apple describes several risks related to artificial intelligence (AI) in its SEC filings:\n\n- **Reputational, Competitive, and Financial Harm:** Issues related to AI may result in reputational, competitive, and financial harm, regulatory action, legal liability, and other adverse effects [1]. \n- **Emerging Legal, Regulatory, Ethical, and Operational Risks:** AI technologies present risks regarding competition and strategy, recouping costs and returns on investments, product liability, intellectual property infringement, data privacy, cybersecurity, sanctions and export controls, exposing users to harmful or inaccurate content, bias and discrimination, and online safety and the protection of minors [1]. Apple notes it may be unsuccessful in identifying or resolving all potential issues and failures before they arise [1].\n- **Cybersecurity and Cyberattacks:** The rapid advancement and dissemination of AI technologies significantly increase cybersecurity risks [2]. AI can be used to produce highly targeted phishing campaigns, automate vulnerability discovery and exploitation, generate deepfakes to bypass authentication, and accelerate attacks [2]. Furthermore, AI technologies themselves can be susceptible to security threats, exposing Apple and its suppliers to additional vulnerabilities [2].\n- **Computing Resource Constraints:** Apple's AI and machine learning offerings depend on access to sufficient computing resources [5]. High demand across the industry has led to constrained supply, extended lead times, and increasing costs for cloud computing and AI infrastructure [5]. Relying on third-party cloud service providers or its own data centers, Apple may be unable to secure sufficient capacity on commercially reasonable terms or at all, which can limit functionality, delay new feature deployments, or cause significantly higher costs [5].\n- **New Laws and Ethical Considerations:** Expanding the use of technologies such as machine learning and AI features requires navigating new legal, regulatory, and ethical considerations [4].",
+      "n_chunks_retrieved": 5,
+      "withheld_answer": null,
+      "gate_withheld_would_have_passed": null,
+      "gate_withheld_detail": null,
+      "citation_warning_details": []
+    },
+    {
+      "id": "crm-ai-risk",
+      "ticker": "CRM",
+      "question": "What risks does Salesforce describe related to artificial intelligence?",
+      "type": "judged",
+      "passed": true,
+      "detail": "The answer explicitly discusses reputational, legal, regulatory, and competitive risks associated with AI and includes multiple citation markers like [9] and [14].",
+      "has_citation": true,
+      "citation_warnings": [],
+      "answer": "In its filings, Salesforce describes several risks and challenges related to artificial intelligence (AI), including generative and agentic AI (such as Agentforce), which could affect its business, reputation, and customer adoption:\n\n* **Emerging Ethical, Legal, and Social Issues:** The development and deployment of AI offerings\u2014which involve information regarding our customers\u2019 customers\u2014raise emerging ethical, legal, and operational considerations [9]. If Salesforce enables or offers solutions that draw controversy due to their perceived or actual impact on human rights, privacy, employment, or other social concerns, it may experience new or heightened governmental or regulatory scrutiny, investigations, enforcement actions, fines or penalties, and reputational or competitive harm [9].\n* **Inaccurate or Unreliable AI Performance and Generative Risks:** AI applications may be targeted or misused, or may perform in ways that are inaccurate, biased, unreliable, or otherwise harmful [14]. Known risks of generative AI also include accuracy, bias, toxicity, privacy, security, and data provenance, and technologies may create content that appears correct but is factually inaccurate or flawed [4].\n* **Inadequate Development and Governance:** Inadequate or ineffective AI development, testing, deployment, content labeling, governance, monitoring, or oversight could result in AI applications not operating as intended or with reduced functionality, reduced product acceptance, or diminished confidence in outputs, subjecting the company to regulatory scrutiny, competitive harm, legal liability, and reputational damage [14].\n* **Resource Requirements and Impact on Profit Margins:** Uncertainty around new and emerging AI applications such as generative AI content creation and AI agents will require additional investment in compliance, governance, and the licensing or development of proprietary datasets, machine learning models, and systems to test for accuracy, bias, and other variables, which are often complex, may be costly, and could impact profit margins [4].\n* **Regulatory Compliance and Evolving Frameworks:** Regulatory frameworks such as the EU Digital Services Act (\"DSA\"), the EU AI Act, and other rapidly evolving global laws and regulations related to AI, privacy, and consumer protection could increase compliance costs, restrict features or data flows, delay launches, and expose the company to penalties or litigation [9].\n* **Reliance on Third-Party Technologies:** Salesforce relies in part on third-party models, datasets, cloud infrastructure, or other technologies in developing or offering certain AI applications, exposing the company to risks relating to performance, availability, security vulnerabilities, intellectual property claims, licensing restrictions, cost increases, or changes in terms of service [14].\n* **Misuse of Technology:** Actions taken by customers or employees, including through the use or misuse of products or technologies for unlawful activities, improper information sharing, or other harmful purposes, may result in reputational harm, regulatory scrutiny, or legal liability [9].",
+      "n_chunks_retrieved": 15,
+      "withheld_answer": null,
+      "gate_withheld_would_have_passed": null,
+      "gate_withheld_detail": null,
+      "citation_warning_details": []
+    },
+    {
+      "id": "pltr-government-contract-risk",
+      "ticker": "PLTR",
+      "question": "What risks does Palantir describe related to its dependence on government contracts?",
+      "type": "judged",
+      "passed": true,
+      "detail": "The answer explicitly states Palantir's dependence on government contracts, describes multiple specific related risks (such as funding fluctuations, compliance, and international perceptions), and includes proper citation markers like [2].",
+      "has_citation": true,
+      "citation_warnings": [],
+      "answer": "Palantir describes several risks and challenges related to its dependence on government contracts and sales to the public sector in its filings:\n\n- **Dependence on Public Sector Revenue:** A significant portion of Palantir's business and expected growth depends on securing and maintaining contracts with federal, state, local, and foreign governments and government agencies (including agencies of the U.S. federal government, both directly and through other contractors) [2]. \n- **International Perceptions:** Palantir's perceived relationship with the U.S. government could adversely affect its business prospects in certain non-U.S. geographies or with certain non-U.S. governments [2].\n- **Competitive, Expensive, and Time-Consuming Sales Process:** Selling to government agencies is highly competitive, expensive, and time-consuming, often requiring significant upfront time and expense without any assurance that these efforts will generate a sale [2].\n- **Onerous Contractual Terms:** Palantir must comply with specialized laws and regulations relating to the formation, administration, and performance of contracts, which provide public sector customers rights not typically found in commercial contracts [2].\n- **Fiscal and Policy Changes:** Business and results of operations can be adversely affected by changes in fiscal or contracting policies, or decreases in available government funding, including federal efforts to enhance operational efficiency, enforce executive orders, or address administration priorities [4].\n- **Program and Requirement Changes:** Changes in government programs or applicable requirements\u2014including permitted subcontractors or other vendors\u2014can negatively impact results [10].\n- **Personnel and Facility Clearances:** Restrictions in the grant of personnel security clearances to employees, or the inability to maintain facility clearances required to perform on classified U.S. federal and foreign government contracts, pose significant operational risks [10].\n- **Government Certifications:** The inability to achieve or maintain critical government certifications and authorizations (such as FedRAMP, IL2, IL4, IL5, and IL6) can harm the business [10].\n- **Political Environment and Global Conflicts:** Changes in the political environment\u2014such as changes in leadership or government composition\u2014or disruptions from geopolitical conflicts (such as the Russia-Ukraine conflict, conflicts in the Middle East, and related economic sanctions or regional instability) can cause uncertainty, changes in priorities, and resultant funding fluctuations [10].",
+      "n_chunks_retrieved": 15,
+      "withheld_answer": null,
+      "gate_withheld_would_have_passed": null,
+      "gate_withheld_detail": null,
+      "citation_warning_details": []
+    }
+  ]
+}

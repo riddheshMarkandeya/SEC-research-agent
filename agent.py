@@ -103,7 +103,7 @@ Rules:
 6. For a question spanning multiple companies, you must query EVERY company mentioned — with `search_filings` if `get_financial_fact` didn't cover it — before writing your final answer. A `get_financial_fact` call returning "not available" for one company is not a reason to stop; it means try `search_filings` for that same company next, and you must still go on to query every other company the question asks about. Do not conclude a company's data is unavailable unless you have actually searched for it.
 7. If `compare_financial_metric` returns fewer than all five companies, your final answer must explicitly name which companies were and weren't covered (e.g. "data was only available for AAPL and PLTR; the others hadn't filed a matching quarter yet") — do not phrase a conclusion as if it covers "all five companies" or similar when it only covers the ones that were actually returned.
 8. ONLY when a single sentence combines facts from two or more DIFFERENT companies (e.g. comparing NVIDIA and Salesforce), put each citation marker immediately after the specific fact it supports, not bundled together at the end — write "NVIDIA's revenue was $81.6 billion [1], while Salesforce's was $11.1 billion [2]." not "NVIDIA's revenue was $81.6 billion, while Salesforce's was $11.1 billion [1][2]." This rule does not add any new requirement to single-company answers or to a refusal under rule 2 — never search for extra facts just to have something to cite per-sentence; a plain, single citation at the end of a normal sentence is already correct and needs no change.
-9. Deliver your final answer ONLY by calling `submit_answer` -- never as plain text. Put the reader-facing answer in `answer_text` (citation markers there are for the reader, same as rules 1 and 8 above). For EVERY number in `answer_text`, add a matching entry to `claims`: the value, its unit, which numbered search result it comes from, and the exact supporting text copied verbatim from that result -- do not paraphrase or summarize the quote. A tool's own computed output (e.g. `get_financial_fact` with `yoy_growth: true`, `calculate`, or any ratio metric) is still a single, directly reported value -- quote that result's own text, the same as any other directly-stated number, per rule 3. If you need to combine, compare, or derive a number from values you've already seen (a difference, a ratio, a percentage change) despite rule 3 telling you not to work this out yourself -- call `calculate` FIRST and cite ITS result the same way as any other; never state a self-computed value directly, since there is nothing that states it for you to quote, and it will be refused. When `answer_text` includes a value derived via `calculate`, show the computation inline (e.g. "computed as $34,550M ÷ $195,201M = 17.7%") rather than presenting it as though the filing stated it directly. Restating an already-cited value in a DIFFERENT UNIT (e.g. a raw dollar amount as billions) is NOT a derivation and needs no `calculate` call at all -- state it directly with the new unit, citing the same result with the same verbatim quote as before; keep enough significant figures that the restated value stays within about 1% of the source figure (e.g. state $4,475,446,000 as "$4.48 billion", not "$4.4 billion" or "$4 billion" -- too coarse a rounding will be treated as an unsupported value and the whole answer refused). A number with no matching claim at all will be treated as ungrounded and the whole answer refused, so it is better to omit a number you can't support than to state it without a claim."""
+9. Deliver your final answer ONLY by calling `submit_answer` -- never as plain text. Put the reader-facing answer in `answer_text` (citation markers there are for the reader, same as rules 1 and 8 above). For EVERY number in `answer_text`, add a matching entry to `claims`: the value, its unit, which numbered search result it comes from, and the exact supporting text copied verbatim from that result -- do not paraphrase or summarize the quote. A citation marker supporting a purely QUALITATIVE fact with no number at all (e.g. a bullet point describing a risk factor) still needs a `claims` entry -- citation_index and quote -- but OMIT value and unit together; never invent a placeholder number just to fill them in. A tool's own computed output (e.g. `get_financial_fact` with `yoy_growth: true`, `calculate`, or any ratio metric) is still a single, directly reported value -- quote that result's own text, the same as any other directly-stated number, per rule 3. If you need to combine, compare, or derive a number from values you've already seen (a difference, a ratio, a percentage change) despite rule 3 telling you not to work this out yourself -- call `calculate` FIRST and cite ITS result the same way as any other; never state a self-computed value directly, since there is nothing that states it for you to quote, and it will be refused. When `answer_text` includes a value derived via `calculate`, show the computation inline (e.g. "computed as $34,550M ÷ $195,201M = 17.7%") rather than presenting it as though the filing stated it directly. Restating an already-cited value in a DIFFERENT UNIT (e.g. a raw dollar amount as billions) is NOT a derivation and needs no `calculate` call at all -- state it directly with the new unit, citing the same result with the same verbatim quote as before; keep enough significant figures that the restated value stays within about 1% of the source figure (e.g. state $4,475,446,000 as "$4.48 billion", not "$4.4 billion" or "$4 billion" -- too coarse a rounding will be treated as an unsupported value and the whole answer refused). A number with no matching claim at all will be treated as ungrounded and the whole answer refused, so it is better to omit a number you can't support than to state it without a claim."""
 
 SEARCH_TOOL_SCHEMA = {
     "type": "function",
@@ -274,11 +274,13 @@ SUBMIT_TOOL_SCHEMA = {
         "name": "submit_answer",
         "description": (
             "Deliver your final answer. This is the ONLY way to answer -- do not reply with plain "
-            "text instead. `answer_text` is what the user reads; `claims` is a structured list of "
-            "every numeric fact in it, each tied to the specific search result it comes from. Every "
-            "number stated in `answer_text` must have a matching entry in `claims` -- a number with "
-            "no matching claim will be treated as ungrounded and the whole answer refused. `claims` "
-            "may be empty for a qualitative or refusal answer with no numbers to ground."
+            "text instead. `answer_text` is what the user reads; `claims` is a structured list, one "
+            "entry per citation marker in it, each tied to the specific search result it comes from. "
+            "A claim that states a real number includes `value`/`unit`; a claim supporting a purely "
+            "qualitative fact with no number (e.g. a risk-factor bullet) omits both -- either way, "
+            "`citation_index` and `quote` are always required. A number with no matching claim will "
+            "be treated as ungrounded and the whole answer refused. `claims` may be empty only for a "
+            "refusal answer with nothing to cite at all."
         ),
         "parameters": {
             "type": "object",
@@ -293,15 +295,25 @@ SUBMIT_TOOL_SCHEMA = {
                 },
                 "claims": {
                     "type": "array",
-                    "description": "One entry per numeric fact stated in answer_text.",
+                    "description": "One entry per citation marker in answer_text, numeric or qualitative.",
                     "items": {
                         "type": "object",
                         "properties": {
-                            "value": {"type": "number", "description": "The numeric value, e.g. 72.4 for $72.4 billion."},
+                            "value": {
+                                "type": "number",
+                                "description": (
+                                    "The numeric value, e.g. 72.4 for $72.4 billion. Omit entirely "
+                                    "(along with `unit`) for a qualitative claim with no real number."
+                                ),
+                            },
                             "unit": {
                                 "type": "string",
                                 "enum": _CLAIM_UNITS,
-                                "description": "raw (a plain count/dollar amount with no scale word), thousand, million, billion, or percent.",
+                                "description": (
+                                    "raw (a plain count/dollar amount with no scale word), thousand, "
+                                    "million, billion, or percent. Omit entirely (along with `value`) "
+                                    "for a qualitative claim with no real number."
+                                ),
                             },
                             "citation_index": {
                                 "type": "integer",
@@ -315,7 +327,7 @@ SUBMIT_TOOL_SCHEMA = {
                                 ),
                             },
                         },
-                        "required": ["value", "unit", "citation_index", "quote"],
+                        "required": ["citation_index", "quote"],
                         "additionalProperties": False,
                     },
                 },
@@ -1492,8 +1504,8 @@ CitationWarning = NamedTuple(
     [
         ("check", str),  # "cited_claim_unsupported" | "uncited_claim"
         ("citation_index", int | None),  # the [n] this warning is about, or None for the uncited check
-        ("value", float),
-        ("unit", str),
+        ("value", float | None),  # None for a qualitative claim, which has no real value to report
+        ("unit", str | None),  # None for a qualitative claim, which has no real unit to report
         ("message", str),  # the exact string verify_citations() has always returned for this warning
     ],
 )
@@ -1679,20 +1691,15 @@ def _quote_grounded_in_source(value: float, unit: str, quote: str, source_text: 
 
 
 def _verify_one_claim(claim: dict, all_results: list[dict]) -> "CitationWarning | None":
-    """Checks one submit_answer claim against its own cited source:
-    citation index in range, quote long enough to mean anything, quote
-    genuinely present in that source (_quote_grounded_in_source -- see
-    its own docstring for the table-aware/flat-text split), and the
-    claimed value actually attributable to that quote specifically (via
-    _number_candidates, using the FULL source chunk as unit_source so a
-    caption-only unit still resolves -- see that function's own
-    docstring). Returns None when all four pass. Checked in this order
-    deliberately: each later check assumes the earlier ones already
-    held (there's no source to check a value against until the index is
-    known valid; no point fuzzy-matching a quote too short to mean
-    anything)."""
+    """Checks one submit_answer claim against its own cited source, then
+    dispatches to _verify_numeric_claim or _verify_qualitative_claim
+    depending on whether the claim states a real value. A claim
+    supplying only one of value/unit (a malformed shape no schema
+    validation catches, since both left `required` would forbid the
+    legitimate qualitative case) gets its own warning here rather than
+    crashing either branch on a missing key."""
     n = claim["citation_index"]
-    value, unit, quote = claim["value"], claim["unit"], claim["quote"]
+    value, unit, quote = claim.get("value"), claim.get("unit"), claim["quote"]
     if not (1 <= n <= len(all_results)):
         return CitationWarning(
             check="citation_out_of_range",
@@ -1701,7 +1708,31 @@ def _verify_one_claim(claim: dict, all_results: list[dict]) -> "CitationWarning 
             unit=unit,
             message=f"[{n}] is not a valid citation index -- results are numbered 1-{len(all_results)}",
         )
+    if (value is None) != (unit is None):
+        return CitationWarning(
+            check="malformed_claim",
+            citation_index=n,
+            value=value,
+            unit=unit,
+            message=f"[{n}] must include BOTH value and unit for a numeric claim, or omit both for a qualitative one",
+        )
     source_text = all_results[n - 1]["text"]
+    if value is None:
+        return _verify_qualitative_claim(n, quote, source_text)
+    assert unit is not None  # the (value is None) != (unit is None) check above already ruled this out
+    return _verify_numeric_claim(n, value, unit, quote, source_text)
+
+
+def _verify_numeric_claim(n: int, value: float, unit: str, quote: str, source_text: str) -> "CitationWarning | None":
+    """Checks a claim already known to state a real (value, unit): quote
+    long enough to mean anything, quote genuinely present in that source
+    (_quote_grounded_in_source -- see its own docstring for the
+    table-aware/flat-text split), and the claimed value actually
+    attributable to that quote specifically (via _number_candidates,
+    using the FULL source chunk as unit_source so a caption-only unit
+    still resolves -- see that function's own docstring). Returns None
+    when all three pass. Checked in this order deliberately: each later
+    check assumes the earlier ones already held."""
     if not _quote_is_long_enough(_normalize_for_match(quote)):
         return CitationWarning(
             check="quote_too_short",
@@ -1732,6 +1763,37 @@ def _verify_one_claim(claim: dict, all_results: list[dict]) -> "CitationWarning 
     return None
 
 
+def _verify_qualitative_claim(n: int, quote: str, source_text: str) -> "CitationWarning | None":
+    """Checks a claim with no real value to ground (a citation marker
+    supporting a purely qualitative fact, e.g. a risk-factor bullet):
+    quote long enough to mean anything, and quote genuinely present in
+    the cited source -- via _quote_matches() directly, not
+    _quote_grounded_in_source(), since there's no value to locate a
+    specific table cell for. No value-in-quote check at all, since
+    there's no value to verify. This is a real grounding check, not a
+    rubber stamp: a fabricated qualitative citation (a quote that isn't
+    actually in the cited source) is caught here, which it silently
+    wouldn't have been under the older `claims: []` fallback for a fully
+    qualitative answer."""
+    if not _quote_is_long_enough(_normalize_for_match(quote)):
+        return CitationWarning(
+            check="quote_too_short",
+            citation_index=n,
+            value=None,
+            unit=None,
+            message=f"[{n}]'s quote {quote!r} is too short to verify",
+        )
+    if not _quote_matches(quote, source_text):
+        return CitationWarning(
+            check="qualitative_quote_not_found",
+            citation_index=n,
+            value=None,
+            unit=None,
+            message=f"[{n}]'s quote doesn't appear in source [{n}]",
+        )
+    return None
+
+
 def verify_claims(claims: list[dict], all_results: list[dict], question: str, answer_text: str) -> list["CitationWarning"]:
     """Structured-claims counterpart to collect_citation_warnings() above,
     used when the model answers via submit_answer (SUBMIT_TOOL_SCHEMA)
@@ -1741,13 +1803,18 @@ def verify_claims(claims: list[dict], all_results: list[dict], question: str, an
 
     Two passes: first, each claim is checked independently against its
     own cited source (_verify_one_claim) -- citation index in range,
-    quote long enough, quote genuinely present in that source, and the
-    claimed value attributable to that specific quote. Second, a
-    COVERAGE cross-check scans `answer_text` for numbers and requires
+    quote long enough, and quote genuinely present in that source; a
+    claim that also states a real value is additionally checked for
+    whether that value is attributable to the specific quote, while a
+    qualitative claim (no value/unit -- see _verify_qualitative_claim)
+    skips that value check, since there's no value to attribute. Second,
+    a COVERAGE cross-check scans `answer_text` for numbers and requires
     each to match some claim's normalized (value, unit) within the same
     1%-relative/0.05-floor tolerance grade_numeric() uses -- this is what
     stops the model from writing an ungrounded number in prose while
     conveniently leaving it out of `claims` to dodge the first pass.
+    Qualitative and malformed claims contribute nothing to this pass,
+    since neither states a real number to cover.
 
     A number that also appears in `question` is exempt from the coverage
     check: it's the model repeating what the user asked, not a claim the
@@ -1759,7 +1826,11 @@ def verify_claims(claims: list[dict], all_results: list[dict], question: str, an
     filter collect_citation_warnings() already relies on."""
     warnings = [w for w in (_verify_one_claim(c, all_results) for c in claims) if w is not None]
 
-    claimed_normalized = [normalize(c["value"], c["unit"]) for c in claims]
+    # Qualitative and malformed claims (see _verify_one_claim) have no
+    # real value to normalize -- and no number to be covering anyway.
+    claimed_normalized = [
+        normalize(c["value"], c["unit"]) for c in claims if c.get("value") is not None and c.get("unit") is not None
+    ]
     question_numbers = extract_numbers(_NON_CLAIM_PATTERN.sub("", question))
     # Strip [n]/[n, m, ...] citation markers before extracting --
     # otherwise a bare digit INSIDE a marker (e.g. the "1" in "[1]", or

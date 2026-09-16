@@ -921,6 +921,21 @@ def test_submit_tool_schema_rejects_claim_missing_quote():
     assert validate_tool_args("submit_answer", SUBMIT_TOOL_SCHEMA, args) is True
 
 
+def test_submit_tool_schema_rejects_claim_missing_citation_index():
+    claim = _valid_claim()
+    del claim["citation_index"]
+    args = {"answer_text": "text", "claims": [claim]}
+    assert validate_tool_args("submit_answer", SUBMIT_TOOL_SCHEMA, args) is True
+
+
+def test_submit_tool_schema_accepts_a_qualitative_claim_with_no_value_or_unit():
+    # 2026-09-15: value/unit are no longer required, so a citation marker
+    # supporting a purely qualitative fact can validly omit both.
+    claim = {"citation_index": 1, "quote": "the value was 100"}
+    args = {"answer_text": "text [1].", "claims": [claim]}
+    assert validate_tool_args("submit_answer", SUBMIT_TOOL_SCHEMA, args) is False
+
+
 def test_submit_tool_schema_rejects_invented_claim_key():
     args = {"answer_text": "text", "claims": [_valid_claim(confidence=0.9)]}
     assert validate_tool_args("submit_answer", SUBMIT_TOOL_SCHEMA, args) is True
@@ -3261,6 +3276,91 @@ def test_verify_claims_value_not_in_quote():
     warnings = verify_claims(claims, results, "q", "Revenue was $200 million [1].")
     assert len(warnings) == 1
     assert warnings[0].check == "value_not_in_quote"
+
+
+# ---------------------------------------------------------------------------
+# Qualitative claims (2026-09-15) -- a claims entry with no value/unit,
+# used for a citation marker supporting a purely qualitative fact (e.g.
+# a risk-factor bullet with no number in it). Previously value/unit were
+# both required, so the model would invent a placeholder value (1) to
+# satisfy the schema, which then always failed the value-in-quote check
+# and refused an otherwise-correct qualitative answer.
+# ---------------------------------------------------------------------------
+def _qualitative_claim(**overrides):
+    claim = {"citation_index": 1, "quote": "the reported value for the period was exactly 100"}
+    claim.update(overrides)
+    return claim
+
+
+def test_verify_claims_qualitative_claim_with_real_quote_passes():
+    results = [_fake_result(text="the reported value for the period was exactly 100 raw units")]
+    claims = [_qualitative_claim()]
+    answer_text = "The value was reported as significant [1]."
+    assert verify_claims(claims, results, "q", answer_text) == []
+
+
+def test_verify_claims_qualitative_claim_with_fabricated_quote_is_caught():
+    # The closed-gap case: a fabricated qualitative citation would have
+    # been silently trusted under the old claims: [] fallback for a
+    # fully qualitative answer -- it's now actually grounded-checked.
+    results = [_fake_result(text="Research and development expenses increased due to higher headcount.")]
+    claims = [_qualitative_claim(quote="the reported value for the period was exactly 100")]
+    warnings = verify_claims(claims, results, "q", "Something happened [1].")
+    assert len(warnings) == 1
+    assert warnings[0].check == "qualitative_quote_not_found"
+    assert warnings[0].value is None
+    assert warnings[0].unit is None
+
+
+def test_verify_claims_qualitative_claim_quote_too_short():
+    results = [_fake_result(text="the reported value for the period was exactly 100")]
+    claims = [_qualitative_claim(quote="100")]
+    warnings = verify_claims(claims, results, "q", "Something [1].")
+    assert len(warnings) == 1
+    assert warnings[0].check == "quote_too_short"
+    assert "None" not in warnings[0].message
+
+
+def test_verify_claims_malformed_claim_value_without_unit_does_not_crash():
+    # A malformed claim doesn't count as covering its number either, so
+    # this correctly produces BOTH warnings, not just one: malformed_claim
+    # from _verify_one_claim, and uncovered_number from the coverage
+    # cross-check (claimed_normalized skips the malformed claim, same as
+    # it skips a qualitative one). The point of this test is that it
+    # doesn't crash, not that there's exactly one warning.
+    results = [_fake_result(text="the reported value for the period was exactly 100")]
+    claims = [_qualitative_claim(value=100.0)]  # value with no unit -- malformed, not qualitative
+    warnings = verify_claims(claims, results, "q", "The value was 100 [1].")
+    checks = {w.check for w in warnings}
+    assert checks == {"malformed_claim", "uncovered_number"}
+
+
+def test_verify_claims_malformed_claim_unit_without_value_does_not_crash():
+    results = [_fake_result(text="the reported value for the period was exactly 100")]
+    claims = [_qualitative_claim(unit="million")]  # unit with no value -- malformed, not qualitative
+    warnings = verify_claims(claims, results, "q", "Something [1].")
+    assert len(warnings) == 1
+    assert warnings[0].check == "malformed_claim"
+
+
+def test_verify_claims_mix_of_qualitative_and_numeric_claims_grades_each_correctly():
+    results = [
+        _fake_result(text="the reported value for the period was exactly 100 raw units"),
+        _fake_result(text="Research and development expenses increased due to higher headcount."),
+    ]
+    claims = [
+        _valid_submitted_claim(citation_index=1),
+        _qualitative_claim(citation_index=2, quote="Research and development expenses increased due to higher"),
+    ]
+    answer_text = "The value was 100 [1], driven by higher R&D spending [2]."
+    assert verify_claims(claims, results, "q", answer_text) == []
+
+
+def test_verify_one_claim_qualitative_claim_passes():
+    from agent import _verify_one_claim
+
+    results = [_fake_result(text="the reported value for the period was exactly 100 raw units")]
+    assert _verify_one_claim(_qualitative_claim(), results) is None
 
 
 def test_verify_claims_caption_unit_case_still_passes():

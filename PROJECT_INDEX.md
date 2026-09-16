@@ -47,6 +47,7 @@ pushes this section past 50, cut the oldest entries back down to 40 and
 prepend them (verbatim, still reverse-chronological) to the top of
 `PROJECT_INDEX_ARCHIVE.md`.
 
+- 2026-09-15 [decision] Fixed the qualitative-claims placeholder-value false-refusal bug (model invented value=1 for non-numeric citations) — made value/unit optional in SUBMIT_TOOL_SCHEMA, baseline 36/47 → 37/47 → `docs/decisions/2026-09-15-qualitative-claims-schema.md`
 - 2026-09-15 [decision] Adopted pyright in basic mode (strict mode's real baseline was 4,655 errors, ~94% noise; basic was 154) — fixed all core-module findings live-verified → `docs/decisions/2026-09-15-adopt-pyright.md`
 - 2026-09-15 [decision] Evaluated pytest-archon/import-linter for architecture-boundary enforcement — rejected, doesn't fit this project's flat (no-package) module layout → `docs/decisions/2026-09-15-evaluate-architecture-linters.md`
 - 2026-09-15 [decision] Capped PROJECT_INDEX.md's session-read cost — split into a 50-entry-capped Recent section plus PROJECT_INDEX_ARCHIVE.md, generalizing the 2026-09-14 overhaul recursively → `docs/decisions/2026-09-15-cap-project-index-growth.md`
