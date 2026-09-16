@@ -47,6 +47,8 @@ pushes this section past 50, cut the oldest entries back down to 40 and
 prepend them (verbatim, still reverse-chronological) to the top of
 `PROJECT_INDEX_ARCHIVE.md`.
 
+- 2026-09-15 [decision] Adopted pyright in basic mode (strict mode's real baseline was 4,655 errors, ~94% noise; basic was 154) — fixed all core-module findings live-verified → `docs/decisions/2026-09-15-adopt-pyright.md`
+- 2026-09-15 [decision] Evaluated pytest-archon/import-linter for architecture-boundary enforcement — rejected, doesn't fit this project's flat (no-package) module layout → `docs/decisions/2026-09-15-evaluate-architecture-linters.md`
 - 2026-09-15 [decision] Capped PROJECT_INDEX.md's session-read cost — split into a 50-entry-capped Recent section plus PROJECT_INDEX_ARCHIVE.md, generalizing the 2026-09-14 overhaul recursively → `docs/decisions/2026-09-15-cap-project-index-growth.md`
 - 2026-09-15 [decision] Revoked the comment→decision-file pointer convention (comments must now be self-contained, no file-path links) — amends the 2026-09-14 documentation-system overhaul and comment-audit rounds → `docs/decisions/2026-09-15-revoke-comment-pointer-convention.md`
 - 2026-09-15 [decision] Expanded ruff's PLR selection (added PLR0402, scoped PLR2004 away from tests/) after surveying the full PLR family with real hit counts → `docs/decisions/2026-09-15-expand-ruff-plr-rules.md`

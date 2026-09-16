@@ -408,6 +408,7 @@ def get_multi_year_average(
             return None
         values.append(result["value"])
         latest = result
+    assert latest is not None  # loop always runs >=1 time (checked above), always sets latest
     average = sum(values) / len(values)
     return {
         "value": round(average, 1) if latest["unit"] == "percent" else average,

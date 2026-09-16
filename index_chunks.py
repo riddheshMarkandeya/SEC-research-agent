@@ -80,7 +80,7 @@ def main():
         batch_size=EMBED_BATCH_SIZE,
         show_progress_bar=True,
         normalize_embeddings=True,  # cosine similarity via dot product
-    )
+    ).tolist()
 
     print(f"Opening persistent Chroma store at {CHROMA_DIR} ...")
     client = chromadb.PersistentClient(path=CHROMA_DIR)

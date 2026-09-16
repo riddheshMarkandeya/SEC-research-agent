@@ -34,3 +34,26 @@ max-complexity = 10
 # idiomatic pattern -- PLR2004 flagging them is noise, not signal (93 of
 # 97 hits repo-wide were here; see the decision file above).
 "tests/*" = ["PLR2004"]
+
+# basic, not strict: strict mode's real baseline was 4,655 errors, ~94%
+# of them Unknown-type-propagation noise from this codebase's dict-
+# shaped data flow, not real gaps. basic mode's baseline was 154 --
+# comparable to ruff's own 155-violation baseline -- with real, fixable
+# findings. See docs/decisions/2026-09-15-adopt-pyright.md and this
+# project's own CLAUDE.md for the current rollout stage (changed-files-
+# scoped for now, mirroring ruff's own rollout -- not a pre-commit gate
+# yet).
+[tool.pyright]
+pythonVersion = "3.13"
+typeCheckingMode = "basic"
+venvPath = "."
+venv = ".venv"
+exclude = [
+    ".venv",
+    "**/__pycache__",
+    "chroma_db",
+    "chunks",
+    "data",
+    "xbrl_cache",
+    "trace_logs",
+]

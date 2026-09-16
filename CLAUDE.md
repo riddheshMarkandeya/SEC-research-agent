@@ -55,6 +55,34 @@ gate** (alongside the existing pytest hook) once enough of the codebase
 is clean that a full-repo run wouldn't be dominated by pre-existing
 debt — tracked as its own `BACKLOG.md` item until then.
 
+## This project's type checker
+
+The `independent-review-pass` skill's static-analysis requirement,
+extended: this project also uses **`pyright`** in **basic mode**
+(`requirements-dev.txt`, config in `pyproject.toml`'s `[tool.pyright]`).
+Strict mode was tried first and rejected — its real baseline was 4,655
+errors, ~94% Unknown-type-propagation noise from this codebase's
+dict-shaped data flow, not real gaps. Basic mode's baseline (154 errors)
+was comparable in scale to ruff's own 155-violation baseline; see
+`docs/decisions/2026-09-15-adopt-pyright.md` for the full comparison and
+rationale. The 7 core modules named in the live-code-TDD section above,
+plus `tracing.py`, are clean under basic mode as of adoption; the
+remaining baseline (117 errors) is entirely in test files and manual
+verify scripts under `tests/`.
+
+**Current rollout stage: changed-files-scoped, not a pre-commit gate** —
+same stage and same migration trigger as ruff (see above): run
+`pyright <changed files>` as part of every `independent-review-pass`;
+a violation in a touched file but on an untouched line is pre-existing
+debt, left in place. Do **not** run `pyright` unscoped across the whole
+repo and try to fix everything it finds. **Migrate to a hard
+pre-commit gate** alongside ruff's own eventual migration (tracked as
+one shared `BACKLOG.md` item) once enough of the codebase is clean.
+Revisiting strict mode is a separate, explicitly tracked `BACKLOG.md`
+item — not automatic, since the last attempt showed it needs either a
+real reduction in the codebase's untyped-dict data flow first, or a
+scoped-down strict preset, neither of which happened in this adoption.
+
 ## This project's documentation system
 
 The `documentation-backlog-hygiene` skill's five-artifact template,

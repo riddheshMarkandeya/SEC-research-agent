@@ -164,6 +164,7 @@ def ollama_call(state: dict) -> dict:
             if attempt == OLLAMA_RETRY_ATTEMPTS - 1:
                 raise
             time.sleep(OLLAMA_RETRY_DELAY_SECONDS * (attempt + 1))
+    raise AssertionError("unreachable: the loop above always returns or raises on its last attempt")
 
 
 def _ollama_start(question: str, system_prompt: str, tool_schemas: list[dict]) -> tuple[dict, ModelTurn]:
@@ -272,7 +273,12 @@ def _to_gemini_tool(schema: dict) -> types.FunctionDeclaration:
     docs/decisions/2026-09-09-schema-driven-arg-validation.md."""
     fn = schema["function"]
     parameters = _strip_additional_properties(fn["parameters"])
-    return types.FunctionDeclaration(name=fn["name"], description=fn["description"], parameters=parameters)
+    # google-genai's own pydantic model coerces a plain dict into a Schema at
+    # runtime (verified live, per this function's docstring) -- its type stub
+    # only advertises the stricter `Schema | None`, not the dict shorthand.
+    return types.FunctionDeclaration(
+        name=fn["name"], description=fn["description"], parameters=parameters  # pyright: ignore[reportArgumentType]
+    )
 
 
 def _send_with_retry(chat, message, config=None):
@@ -351,7 +357,9 @@ def _forced_config(base_config: "types.GenerateContentConfig", force_tool: str |
     return base_config.model_copy(
         update={
             "tool_config": types.ToolConfig(
-                function_calling_config=types.FunctionCallingConfig(mode="ANY", allowed_function_names=[force_tool])
+                function_calling_config=types.FunctionCallingConfig(
+                    mode=types.FunctionCallingConfigMode.ANY, allowed_function_names=[force_tool]
+                )
             )
         }
     )

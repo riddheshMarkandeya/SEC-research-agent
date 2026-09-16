@@ -7,3 +7,8 @@ pytest==9.1.1
 # review (see docs/decisions/2026-09-15-adopt-ruff-linter.md and this
 # project's own CLAUDE.md for the current rollout stage).
 ruff==0.16.7
+
+# Static type checker (basic mode), same changed-files-scoped rollout
+# stage as ruff -- see docs/decisions/2026-09-15-adopt-pyright.md.
+pyright==1.1.414
+lxml-stubs==0.5.1

@@ -104,7 +104,7 @@ class _TracedSpan:
 
     def __init__(self, langfuse_span=None):
         self.output = None
-        self.error = None
+        self.error: str | None = None
         self._langfuse_span = langfuse_span
 
     def update(self, *, output=None, **kwargs) -> None:
@@ -158,7 +158,16 @@ def traced_span(as_type: str, name: str, input: dict | None = None) -> Iterator[
     try:
         if TRACING_ENABLED:
             client = _get_langfuse_client()
-            with client.start_as_current_observation(as_type=as_type, name=name, input=input) as langfuse_span:
+            # langfuse's own as_type param is a private, per-call-overloaded
+            # Literal type (ObservationTypeLiteralNoEvent, not part of its
+            # public API) -- our own as_type is deliberately the wider "any
+            # of langfuse's observation kinds" str this project actually
+            # passes (see this function's docstring), so no single overload
+            # matches structurally even though every real call site passes
+            # a value langfuse itself accepts.
+            with client.start_as_current_observation(
+                as_type=as_type, name=name, input=input  # pyright: ignore[reportCallIssue, reportArgumentType]
+            ) as langfuse_span:
                 span._langfuse_span = langfuse_span
                 yield span
         else:

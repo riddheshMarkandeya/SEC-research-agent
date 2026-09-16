@@ -15,9 +15,10 @@ Usage:
 import argparse
 import re
 from collections import Counter
-from typing import NamedTuple
+from typing import Any, NamedTuple, TypeGuard
 
 import jsonschema
+import jsonschema.exceptions
 
 from companies import load_companies
 from config import DEFAULT_BACKEND
@@ -476,7 +477,7 @@ _Q4_NOT_DISCLOSED_HINT = (
 )
 
 
-def _never_tagged_hint(ticker: str, metric: str) -> str | None:
+def _never_tagged_hint(ticker: str | None, metric: str | None) -> str | None:
     """None unless `ticker` genuinely never tags `metric` at all (as
     opposed to just not having it for the specific period asked about)
     -- see xbrl_facts.is_metric_tagged()'s own docstring. Scoped to raw
@@ -486,6 +487,10 @@ def _never_tagged_hint(ticker: str, metric: str) -> str | None:
     anything meaningful about it."""
     if metric not in DEFAULT_METRIC_TAGS or ticker not in COMPANIES:
         return None
+    # Both memberships just checked above -- DEFAULT_METRIC_TAGS/COMPANIES
+    # are keyed by str, so passing either check already proves ticker/metric
+    # are real strings, not None. Spelled out for the type checker.
+    assert isinstance(ticker, str) and isinstance(metric, str)
     if is_metric_tagged(ticker, metric):
         return None
     return (
@@ -542,7 +547,7 @@ def _format_no_comparison_message(args: dict) -> str:
 _INT_TYPE_VALIDATOR = jsonschema.Draft202012Validator({"type": "integer"})
 
 
-def _is_valid_int(value) -> bool:
+def _is_valid_int(value: Any) -> TypeGuard[int]:
     """True if value is a JSON-Schema-valid "integer" -- an int but NOT a
     bool. jsonschema's default type checker already excludes bool from
     "integer" (JSON itself treats true/false as their own type, distinct
@@ -2076,6 +2081,7 @@ def _dispatch_tool_call(
         with traced_span("tool", name, input=args) as span:
             calc_result, error = call_calculate(args, all_results)
             if calc_result is None:
+                assert error is not None  # call_calculate's contract: exactly one of the two is None
                 span.update(output={"found": False, "error": error})
                 return error
             start_index = len(all_results) + 1

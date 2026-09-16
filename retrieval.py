@@ -29,9 +29,11 @@ Usage from the command line (manual spot-checking):
 import argparse
 import json
 import re
+from collections.abc import Mapping
 from pathlib import Path
 
 import chromadb
+from chromadb import Where
 from rank_bm25 import BM25Okapi
 from sentence_transformers import CrossEncoder, SentenceTransformer
 
@@ -126,7 +128,7 @@ def _load_bm25_index():
     _bm25_records = records
 
 
-def _make_id(metadata: dict) -> str:
+def _make_id(metadata: Mapping[str, object]) -> str:
     """Must match index_chunks.py's id scheme so BM25 and Chroma results
     can be fused by a shared key."""
     return f"{metadata['accessionNumber']}_{metadata['chunk_index']}"
@@ -138,6 +140,7 @@ def _make_id(metadata: dict) -> str:
 # ---------------------------------------------------------------------------
 def bm25_search(query: str, n: int, ticker: str | None = None) -> list[tuple[str, str, dict]]:
     _load_bm25_index()
+    assert _bm25_index is not None and _bm25_records is not None  # _load_bm25_index() always sets both
     scores = _bm25_index.get_scores(_tokenize(query))
 
     ranked_indices = sorted(range(len(scores)), key=lambda i: scores[i], reverse=True)
@@ -157,13 +160,16 @@ def bm25_search(query: str, n: int, ticker: str | None = None) -> list[tuple[str
 def vector_search(query: str, n: int, ticker: str | None = None) -> list[tuple[str, str, dict]]:
     model = _get_embed_model()
     collection = _get_chroma_collection()
-    query_embedding = model.encode(QUERY_INSTRUCTION + query, normalize_embeddings=True)
+    query_embedding = model.encode(QUERY_INSTRUCTION + query, normalize_embeddings=True).tolist()
 
-    where = {"ticker": ticker} if ticker else None
+    where: Where | None = {"ticker": {"$eq": ticker}} if ticker else None
     hits = collection.query(query_embeddings=[query_embedding], n_results=n, where=where)
 
+    documents = hits["documents"]
+    metadatas = hits["metadatas"]
+    assert documents is not None and metadatas is not None  # always populated: no include= override
     results = []
-    for doc, meta in zip(hits["documents"][0], hits["metadatas"][0]):
+    for doc, meta in zip(documents[0], metadatas[0]):
         results.append((_make_id(meta), doc, meta))
     return results
 
@@ -285,7 +291,7 @@ def rerank(query: str, candidates: list[tuple[str, str, dict, float]], top_n: in
 
     model = _get_rerank_model()
     pairs = [(query, text) for _, text, _, _ in candidates]
-    scores = model.predict(pairs)
+    scores = model.predict(pairs).tolist()
 
     return _combine_fused_and_rerank(candidates, scores, top_n)
 

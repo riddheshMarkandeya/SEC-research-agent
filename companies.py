@@ -10,8 +10,15 @@ re-run edgar_ingest.py -> chunk_documents.py -> index_chunks.py for it.
 
 import json
 from pathlib import Path
+from typing import TypedDict
 
 import jsonschema
+
+
+class CompanyInfo(TypedDict):
+    name: str
+    cik: str
+    fiscal_year_end_month: int
 
 COMPANIES_PATH = Path(__file__).parent / "companies.json"
 
@@ -50,7 +57,7 @@ def _validate(data: dict) -> None:
         raise ValueError(f"companies.json is malformed: {e.message}") from e
 
 
-def load_companies() -> dict[str, dict[str, str]]:
+def load_companies() -> dict[str, CompanyInfo]:
     """Returns {ticker: {"name": ..., "cik": ...}}, read fresh from disk
     every call — this is a small, rarely-changing file, so there's no
     real cost to not caching it, and not caching means edits to

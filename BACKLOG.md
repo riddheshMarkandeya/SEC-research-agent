@@ -102,7 +102,38 @@ Full evidence/reasoning: `docs/decisions/2026-09-15-adopt-ruff-linter.md`.
 - [ ] **[misc, Low, TBD]** Migrate `ruff` from changed-files-scoped
   manual review to a hard pre-commit gate (alongside the existing
   pytest hook) once enough of the codebase is clean that a full-repo
-  run wouldn't be dominated by the baseline above.
+  run wouldn't be dominated by the baseline above. Migrate alongside
+  `pyright`'s own equivalent item below, not separately.
+
+### From the 2026-09-15 pyright adoption
+
+Full evidence/reasoning: `docs/decisions/2026-09-15-adopt-pyright.md`.
+
+- [ ] **[refactor, Low, Standard]** 117-error pre-existing basic-mode
+  `pyright` baseline, not fixed on adoption (deliberately — see the
+  decision file). Entirely in test files (110: `test_formulas.py`,
+  `test_xbrl_facts.py`, `test_agent.py`, `test_llm_backends.py`,
+  `test_mcp_server.py`, `test_edgar_ingest.py`) and manual verify
+  scripts (7: `verify_mcp_server.py`, `verify_tracing.py`,
+  `verify_period_labels.py`) — mostly `reportOptionalSubscript`/
+  `reportOptionalMemberAccess` noise from mocks/fixtures, not core-module
+  gaps (all 7 core modules plus `tracing.py` are clean). Fix
+  opportunistically whenever one of these test files is next touched.
+- [ ] **[misc, Low, TBD]** Migrate `pyright` from changed-files-scoped
+  manual review to a hard pre-commit gate (alongside `ruff`'s own
+  equivalent item above and the existing pytest hook) once enough of the
+  codebase is clean that a full-repo run wouldn't be dominated by the
+  baseline above.
+- [ ] **[design, Low, TBD]** Revisit Pyright **strict** mode. Rejected
+  on 2026-09-15 adoption: real baseline was 4,655 errors, ~94% Unknown-
+  type-propagation noise from this codebase's dict-shaped data flow
+  (bare `dict`/`list` returns, third-party calls with no stubs), not
+  real gaps — see the decision file's full category breakdown. Worth
+  retrying only after either (a) a real reduction in untyped-dict data
+  flow (e.g. more `TypedDict`/`dataclass` use for XBRL facts, search
+  results, tool-call args), or (b) designing a scoped-down strict
+  preset that excludes the highest-noise categories rather than
+  adopting pyright's off-the-shelf `strict` bundle wholesale.
 
 ### From the 2026-09-11 hand-rolled-complexity review
 

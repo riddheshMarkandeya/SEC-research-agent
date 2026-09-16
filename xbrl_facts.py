@@ -189,7 +189,7 @@ def _pick_entry(entries: list[dict], fiscal_year: int, fiscal_period: str) -> di
         if e.get("fy") == fiscal_year
         and e.get("fp") == fiscal_period
         and e.get("form") == expected_form
-        and (_duration_days(e) is None or lo <= _duration_days(e) <= hi)
+        and ((dd := _duration_days(e)) is None or lo <= dd <= hi)
     ]
     if not candidates:
         return None
@@ -224,11 +224,11 @@ def _pick_entry_by_end_date(entries: list[dict], period_end_date: str) -> dict |
         return None
     quarters = [
         e for e in candidates
-        if _duration_days(e) is not None and _QUARTER_DURATION_DAYS[0] <= _duration_days(e) <= _QUARTER_DURATION_DAYS[1]
+        if (dd := _duration_days(e)) is not None and _QUARTER_DURATION_DAYS[0] <= dd <= _QUARTER_DURATION_DAYS[1]
     ]
     annual = [
         e for e in candidates
-        if _duration_days(e) is not None and _ANNUAL_DURATION_DAYS[0] <= _duration_days(e) <= _ANNUAL_DURATION_DAYS[1]
+        if (dd := _duration_days(e)) is not None and _ANNUAL_DURATION_DAYS[0] <= dd <= _ANNUAL_DURATION_DAYS[1]
     ]
     instant = [e for e in candidates if _duration_days(e) is None]
     pool = quarters or annual or instant
