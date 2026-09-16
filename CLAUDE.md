@@ -8,8 +8,9 @@ points to (`design-before-building`, `tdd-live-code-carveout`,
 `independent-review-pass`, `ui-implementation-guidelines`) — read that
 first. This file covers only what's specific to this project, layered on
 top of those generic rules. For how this file got its current shape, or
-any other past decision, search `PROJECT_INDEX.md`'s index rather than
-looking here — this file describes current rules only.
+any other past decision, search `PROJECT_INDEX.md`'s `Recent` section
+(and `PROJECT_INDEX_ARCHIVE.md` if it's older) rather than looking here
+— this file describes current rules only.
 
 ## This project's live-code TDD carve-out
 
@@ -65,12 +66,20 @@ in full:
 - **`PROJECT_INDEX.md`** (repo root) — the index: a short framing blurb,
   a trimmed Project Overview (Goal/Stack/Companies-in-scope — static
   facts only, deliberately no "current status" prose, which is exactly
-  the kind of narrative that grew the old file to 5,703 lines), then one
-  reverse-chronological line per file in the three directories below.
-  Read in full at session start; follow a linked file only when it's
-  relevant to the task at hand. Formerly `PROJECT_CONTEXT.md`, the old
-  narrative changelog — renamed and repurposed, not appended to going
-  forward.
+  the kind of narrative that grew the old file to 5,703 lines), then a
+  `## Recent` section with one reverse-chronological line per file in
+  the three directories below. Read `Recent` in full at session start;
+  follow a linked file only when it's relevant to the task at hand.
+  Formerly `PROJECT_CONTEXT.md`, the old narrative changelog — renamed
+  and repurposed, not appended to going forward. `Recent` is capped at
+  **50 entries** (trimmed back to 40 whenever it's exceeded, oldest
+  entries cut verbatim into `PROJECT_INDEX_ARCHIVE.md`) so the
+  session-start read stays a fixed, small cost forever regardless of
+  total project history — the same failure mode that produced this
+  whole system, one level removed, caught before it recurred.
+  `PROJECT_INDEX_ARCHIVE.md` is **never read in full**: grep it (ticker,
+  module/file name, tool name, failure-mode phrase) when a topic might
+  be older than what's in `Recent`.
 - **`docs/decisions/YYYY-MM-DD-<slug>.md`** — one file per Standard+
   change, written once and never appended to; a later revisit writes a
   *new* file and cross-links back via its own `Related` section. Copy
@@ -85,10 +94,14 @@ in full:
   "resolved" annotation kept.
 
 **Before starting design/debugging work on a topic**: search
-`PROJECT_INDEX.md`'s index for prior work on the same module/tool/
-failure mode, and open the linked file if one looks relevant — the same
-"check prior art" discipline the `design-before-building` skill already
-applies to the outside world, extended to this project's own history.
+`PROJECT_INDEX.md`'s `Recent` section for prior work on the same
+module/tool/failure mode (free — it's already in context from the
+session-start read) and open the linked file if one looks relevant; if
+the topic might be older than what's in `Recent`, grep
+`PROJECT_INDEX_ARCHIVE.md` too rather than assuming it isn't there — the
+same "check prior art" discipline the `design-before-building` skill
+already applies to the outside world, extended to this project's own
+history.
 
 ## This project's hooks
 
