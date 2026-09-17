@@ -45,6 +45,20 @@ reference:
 
 ## Backlog
 
+### From the 2026-09-17 mandatory-plan-review-floor change
+
+Full evidence/reasoning: `docs/decisions/2026-09-17-mandatory-plan-review-floor.md`.
+
+- [ ] **[design, Low, TBD]** Consider adding a mechanical
+  `PreToolUse`/`ExitPlanMode` hook backstop for the plan-review floor if
+  instruction-only enforcement is ever caught missing (deferred at
+  user's choice, 2026-09-17). Confirmed technically feasible — the
+  harness's hooks docs show a worked `PermissionRequest`/`ExitPlanMode`
+  matcher example — but proving a review genuinely happened (not just
+  that a marker string exists in the plan text) is a weaker mechanical
+  guarantee than it looks; would need real design work, not just
+  wiring.
+
 ### From the 2026-09-15 broader ruff rule-category survey
 
 Full evidence/reasoning: `docs/decisions/2026-09-15-expand-ruff-plr-rules.md`'s

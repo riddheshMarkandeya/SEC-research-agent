@@ -12,6 +12,19 @@
 
 ## Archive
 
+- 2026-09-14 [decision] Documentation system overhaul: index + per-decision files replace the narrative changelog → `docs/decisions/2026-09-14-documentation-system-overhaul.md`
+- 2026-09-14 [plan] Documentation system overhaul design → `docs/plans/2026-09-14-documentation-system-overhaul.md`
+- 2026-09-14 [review] Documentation system overhaul review (self-check) → `docs/reviews/2026-09-14-documentation-system-overhaul.md`
+- 2026-09-14 [decision] Tool-turn-waste fix: stop re-deriving what a tool already gave → `docs/decisions/2026-09-14-tool-turn-waste.md`
+- 2026-09-14 [plan] Tool-turn-waste fix design → `docs/plans/2026-09-14-tool-turn-waste.md`
+- 2026-09-14 [review] Tool-turn-waste fix review → `docs/reviews/2026-09-14-tool-turn-waste.md`
+- 2026-09-13 [decision] Table-grounding region-scoped redesign — fixes two live eval regressions → `docs/decisions/2026-09-13-table-grounding-region-scoped-matching.md`
+- 2026-09-13 [plan] Table-grounding region-scoped redesign design → `docs/plans/2026-09-13-table-grounding-region-scoped-matching.md`
+- 2026-09-13 [review] Table-grounding region-scoped redesign review — HIGH-severity regression caught before shipping → `docs/reviews/2026-09-13-table-grounding-region-scoped-matching.md`
+- 2026-09-12 [decision] Structure-aware table quote grounding replaces the flat anchor floor → `docs/decisions/2026-09-12-structure-aware-table-quote-grounding.md`
+- 2026-09-12 [plan] Structure-aware table quote grounding design → `docs/plans/2026-09-12-structure-aware-table-quote-grounding.md`
+- 2026-09-12 [review] Structure-aware table quote grounding review → `docs/reviews/2026-09-12-structure-aware-table-quote-grounding.md`
+- 2026-09-11 [decision] Verifiable `calculate` tool, plus new citation-gate stress questions → `docs/decisions/2026-09-11-calculate-tool-and-stress-questions.md`
 - 2026-09-11 [decision] Negative-number support in the shared numeric extractor → `docs/decisions/2026-09-11-negative-number-support.md`
 - 2026-09-11 [plan] `calculate` tool and stress-questions design → `docs/plans/2026-09-11-calculate-tool-and-stress-questions.md`
 - 2026-09-11 [review] `calculate` tool and stress-questions review → `docs/reviews/2026-09-11-calculate-tool-and-stress-questions.md`

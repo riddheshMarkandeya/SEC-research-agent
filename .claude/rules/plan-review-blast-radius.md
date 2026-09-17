@@ -11,13 +11,17 @@ paths:
 
 # This project's high-blast-radius core
 
-Per `design-before-building`'s non-tier-gated exception: a change
-touching one of the functions/areas below gets the one
-independent-subagent plan-review step even at Standard tier — not the
-rest of the Substantial-tier process (no forced spec/prior-art
-write-up, no TDD/documentation-depth escalation). Every entry here is
-grounded in a real incident from this project's own history, not a
-speculative "this file feels important" argument:
+Per `design-before-building`'s review floor (unconditional since
+2026-09-17 — every plan produced in plan mode gets one
+independent-subagent review pass, regardless of tier), a change
+touching one of the functions/areas below earns *escalated* scrutiny
+from that reviewing subagent — deeper review within the floor every
+plan already gets, not a gate on whether review happens at all. It
+still doesn't pull in the rest of the Substantial-tier process (no
+forced spec/prior-art write-up, no TDD/documentation-depth
+escalation) unless the task is independently tiered Substantial.
+Every entry here is grounded in a real incident from this project's
+own history, not a speculative "this file feels important" argument:
 
 - **`agent.py`** — the tool-calling loop (`_run_agent_impl`) and its
   dispatch/backend-call sites (`_dispatch_tool_call`,

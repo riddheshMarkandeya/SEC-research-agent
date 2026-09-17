@@ -47,6 +47,9 @@ pushes this section past 50, cut the oldest entries back down to 40 and
 prepend them (verbatim, still reverse-chronological) to the top of
 `PROJECT_INDEX_ARCHIVE.md`.
 
+- 2026-09-17 [decision] Made independent-subagent plan review an unconditional floor for every plan mode produces (was conditionally gated to Substantial tier + two Standard-tier trigger conditions) — global skill, CLAUDE.md Trivial-tier exception, and blast-radius rule reframed; hook backstop considered, deferred at user's choice → `docs/decisions/2026-09-17-mandatory-plan-review-floor.md`
+- 2026-09-17 [review] Plan-review-floor plan review — independent review caught a CLAUDE.md Trivial-tier gap, an under-scoped rule-file rewrite, and missing docs/plans+docs/reviews artifacts, all fixed before approval → `docs/reviews/2026-09-17-mandatory-plan-review-floor.md`
+- 2026-09-17 [plan] Plan-review-floor design → `docs/plans/2026-09-17-mandatory-plan-review-floor.md`
 - 2026-09-17 [decision] Fixed the eval judge's "hypothetical/future date" mis-grading bug (grade_judged had no temporal grounding, so a post-training-cutoff 2026 filing date got called fabricated) — injected real wall-clock date into the judge prompt; independent review caught an over-broad system-prompt wording and a test date-race, both fixed; baseline 37/47 → 44/47 → `docs/decisions/2026-09-17-fix-judge-hypothetical-date-bug.md`
 - 2026-09-17 [decision] Fixed the uncovered_number false-refusal gap (two distinct causes: ambiguous "$34,550M" abbreviation in a worked example broke number parsing; _NON_CLAIM_PATTERN didn't exempt "N months" durations) — plan review caught a wrong first-draft diagnosis before implementation; baseline 40/47 → 37/47 but both target questions now pass, other flips are pre-existing non-determinism → `docs/decisions/2026-09-17-uncovered-number-gap-fixes.md`
 - 2026-09-16 [review] CRM fiscal-year-lookup fix review — independent plan review caught 2 root-cause/tiebreak issues before implementation; code review found 2 minor doc-accuracy nits, both fixed → `docs/reviews/2026-09-16-crm-fiscal-year-lookup-fix.md`
@@ -84,16 +87,3 @@ prepend them (verbatim, still reverse-chronological) to the top of
 - 2026-09-14 [decision] Comment audit Round 1: pointer-fixed 6 low-risk main-source files → `docs/decisions/2026-09-14-comment-audit-round1.md`
 - 2026-09-14 [plan] Comment audit Round 1 design → `docs/plans/2026-09-14-comment-audit-round1.md`
 - 2026-09-14 [review] Comment audit Round 1 review (self-check + fresh subagent) → `docs/reviews/2026-09-14-comment-audit-round1.md`
-- 2026-09-14 [decision] Documentation system overhaul: index + per-decision files replace the narrative changelog → `docs/decisions/2026-09-14-documentation-system-overhaul.md`
-- 2026-09-14 [plan] Documentation system overhaul design → `docs/plans/2026-09-14-documentation-system-overhaul.md`
-- 2026-09-14 [review] Documentation system overhaul review (self-check) → `docs/reviews/2026-09-14-documentation-system-overhaul.md`
-- 2026-09-14 [decision] Tool-turn-waste fix: stop re-deriving what a tool already gave → `docs/decisions/2026-09-14-tool-turn-waste.md`
-- 2026-09-14 [plan] Tool-turn-waste fix design → `docs/plans/2026-09-14-tool-turn-waste.md`
-- 2026-09-14 [review] Tool-turn-waste fix review → `docs/reviews/2026-09-14-tool-turn-waste.md`
-- 2026-09-13 [decision] Table-grounding region-scoped redesign — fixes two live eval regressions → `docs/decisions/2026-09-13-table-grounding-region-scoped-matching.md`
-- 2026-09-13 [plan] Table-grounding region-scoped redesign design → `docs/plans/2026-09-13-table-grounding-region-scoped-matching.md`
-- 2026-09-13 [review] Table-grounding region-scoped redesign review — HIGH-severity regression caught before shipping → `docs/reviews/2026-09-13-table-grounding-region-scoped-matching.md`
-- 2026-09-12 [decision] Structure-aware table quote grounding replaces the flat anchor floor → `docs/decisions/2026-09-12-structure-aware-table-quote-grounding.md`
-- 2026-09-12 [plan] Structure-aware table quote grounding design → `docs/plans/2026-09-12-structure-aware-table-quote-grounding.md`
-- 2026-09-12 [review] Structure-aware table quote grounding review → `docs/reviews/2026-09-12-structure-aware-table-quote-grounding.md`
-- 2026-09-11 [decision] Verifiable `calculate` tool, plus new citation-gate stress questions → `docs/decisions/2026-09-11-calculate-tool-and-stress-questions.md`
