@@ -3614,6 +3614,41 @@ def test_verify_claims_non_claim_noise_in_answer_text_is_not_flagged():
     assert verify_claims(claims, results, "q", answer_text) == []
 
 
+def test_verify_claims_hyphenated_year_and_day_durations_exempted_from_coverage():
+    # Direct regression anchor for _NON_CLAIM_PATTERN's N-year/N-day
+    # exemption, exercised through the coverage scan itself -- unlike
+    # test_verify_claims_question_echo_exempts_a_number_from_coverage
+    # above (which passes via the question-echo path and would pass
+    # even if this exemption didn't exist), this has no question-echo
+    # to fall back on.
+    results = [_fake_result(text="lease terms")]
+    claims = []
+    answer_text = "The lease has a 3-year initial term with a 30-day renewal notice period."
+    assert verify_claims(claims, results, "q", answer_text) == []
+
+
+def test_verify_claims_duration_in_months_not_flagged_as_uncovered_number():
+    # Real incident (BACKLOG.md, nvda-supply-chain-risk): a genuinely
+    # qualitative claim (no value/unit, correctly per the 2026-09-15
+    # schema) whose own quote incidentally contains a duration -- the
+    # coverage scan has no claim to match "12" against, since a
+    # qualitative claim contributes nothing to claimed_normalized.
+    results = [_fake_result(text="lead times can extend beyond 12 months due to supply constraints")]
+    claims = [_qualitative_claim(quote="lead times can extend beyond 12 months")]
+    answer_text = "NVIDIA has experienced extended lead times of more than 12 months [1]."
+    assert verify_claims(claims, results, "q", answer_text) == []
+
+
+def test_verify_claims_space_separated_and_hyphenated_month_durations_exempted():
+    # Confirms the widened _NON_CLAIM_PATTERN separator (hyphen OR
+    # whitespace) works both directions for all three nouns, not just
+    # the one evidenced "N months" shape.
+    results = [_fake_result(text="reporting periods")]
+    claims = []
+    answer_text = "Reported over a 12 month period, compared to a 6-month prior period."
+    assert verify_claims(claims, results, "q", answer_text) == []
+
+
 def test_verify_claims_does_not_duplicate_the_same_uncovered_number_twice():
     results = [_fake_result()]
     claims = []

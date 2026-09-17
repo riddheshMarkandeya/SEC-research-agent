@@ -1,0 +1,39 @@
+{
+  "backend": "gemini",
+  "answer_model": "gemini-flash-lite-latest",
+  "judge_model": "gemini-flash-lite-latest",
+  "results": [
+    {
+      "id": "nvda-supply-chain-risk",
+      "ticker": "NVDA",
+      "question": "What supply chain risks does NVIDIA describe?",
+      "type": "judged",
+      "passed": true,
+      "detail": "The answer explicitly discusses third-party suppliers, manufacturing lead times, and supply-demand mismatches, and includes proper citation markers like [1].",
+      "has_citation": true,
+      "citation_warnings": [],
+      "answer": "NVIDIA describes several key supply chain risks and challenges in its filings, including:\n\n- **Long manufacturing lead times, uncertain supply and capacity availability, and demand mismatches:** NVIDIA has long manufacturing lead times, builds finished products, and maintains inventory in advance of anticipated demand. Industry shortages or limited supply/capacity can extend lead times beyond 12 months. To secure future supply and capacity, the company has paid premiums, provided deposits, and entered into long-term supply agreements and capacity commitments, which increase product costs; despite these measures, it may still fail to secure sufficient capacity [1]. Inaccurate demand estimates or customer order changes can lead to significant mismatches, resulting in both product shortages and excess inventory [1].\n- **Trade policies, export controls, and tariffs:** The rapid evolution of global trade policies, export controls, and tariffs adds complexity and increases costs throughout the supply chain [3]. Ongoing uncertainty regarding these measures can disrupt supply chain operations and impact customer purchase timing [3].\n- **Domestic manufacturing transition risks:** NVIDIA's plans to increase U.S.-based manufacturing depend on the domestic manufacturing ecosystem's capacity to ramp production supply to the required volume and on a timely basis [3].\n- **Macroeconomic and geopolitical factors:** Macroeconomic factors\u2014such as tariffs, inflation, interest rate changes, capital market volatility, global supply chain constraints, and global economic and geopolitical developments\u2014directly and indirectly impact supply chain and manufacturing costs [3].\n- **Product architecture complexity:** The complexity of bringing up advanced product architectures and sophisticated system configurations can cause production delays, challenges in managing supply and demand, decreased product yields, higher material costs, and increased inventory provisions [4].",
+      "n_chunks_retrieved": 5,
+      "withheld_answer": null,
+      "gate_withheld_would_have_passed": null,
+      "gate_withheld_detail": null,
+      "citation_warning_details": []
+    },
+    {
+      "id": "aapl-rd-pct-gross-profit-fy2025",
+      "ticker": "AAPL",
+      "question": "What percentage of Apple's fiscal year 2025 gross profit was spent on research and development?",
+      "type": "numeric",
+      "passed": true,
+      "detail": "found matching value: 17.7 (percent)",
+      "has_citation": true,
+      "citation_warnings": [],
+      "answer": "In fiscal year 2025, Apple's gross profit was $195.20 billion [1] and its research and development expense was $34.55 billion [2]. Therefore, Apple spent 17.7% of its fiscal year 2025 gross profit on research and development (computed as $34,550,000,000 \u00f7 $195,201,000,000 = 17.7%) [3].",
+      "n_chunks_retrieved": 3,
+      "withheld_answer": null,
+      "gate_withheld_would_have_passed": null,
+      "gate_withheld_detail": null,
+      "citation_warning_details": []
+    }
+  ]
+}

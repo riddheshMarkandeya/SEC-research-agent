@@ -197,32 +197,40 @@ Full evidence/reasoning: `docs/decisions/2026-09-16-final-turn-safety-net.md`.
 - [ ] **[bug (latent), Low, Standard]** The final-turn safety net's CRM-shaped grounded-but-incomplete risk (a forced final submit answering with fewer companies than the question asks about, all correctly cited, but still substantively wrong) is mitigated by message wording, not eliminated by anything structural, and wasn't directly exercised live -- the CRM fiscal-year-lookup bug (below) didn't trigger in any post-fix live run, so the model always had all 5 companies' data when forced to submit. Revisit if a future run hits that combination and produces a confidently-wrong ranking: strengthen the message, or gate on the most recent tool call's own scope, before reaching for a structural classifier.
 - [ ] **[feature, Low, TBD]** Extend the final-turn safety net (`_should_force_final_submit`) to Ollama -- currently gated to `_FINAL_TURN_BACKENDS = {"gemini"}` only, since no live evidence exists for how Ollama responds to a directive nudge under budget pressure (matching this project's existing precedent for gating other corrective-pressure mechanisms to Gemini first). Needs its own live verification before extending.
 
-### From the 2026-09-15 qualitative-claims-schema fix
+### From the 2026-09-17 uncovered-number-gap fixes
 
-Full evidence/reasoning: `docs/decisions/2026-09-15-qualitative-claims-schema.md`.
-Surfaced by the confirmatory 47-question baseline re-run after that fix
-(37/47) -- neither question involves a qualitative claim, so these are
-unrelated to that fix, just observed in the same run.
+Full evidence/reasoning: `docs/decisions/2026-09-17-uncovered-number-gap-fixes.md`.
 
-- [ ] **[bug (latent), Low, Standard]** `nvda-supply-chain-risk` (a
-  qualitative "what risks" question, but with a real number "12"
-  mentioned in the answer prose) failed with `"claims 12.0 (raw) but no
-  claim in your submit_answer call covers it"` -- an `uncovered_number`
-  warning, the OPPOSITE problem from the placeholder-value bug that fix
-  addressed (a real number stated with no matching `claims` entry at
-  all, not a fabricated entry for a non-existent number). Single
-  observation, not yet reproduced or root-caused.
+- [ ] **[feature, Low, TBD]** `numeric_utils.NUMBER_PATTERN` still has no
+  `M`/`B`/`K`-abbreviation recognition -- deliberately not added in the
+  2026-09-17 fix (shared across `agent.py`/`table_grounding.py`/
+  `eval_harness.py`, needs its own live-verified pass per this project's
+  2026-09-12 negative-number precedent). Per that fix's own prior-art
+  research: if ever added, recognize the disambiguating `MM`/`Bn` (the
+  actual finance-industry convention for unambiguous abbreviation), not
+  bare `M`/`B` -- real competing conventions disagree on whether bare
+  `M` means thousand or million, so treating it as "always million"
+  would be unsafe regardless of implementation risk. Currently
+  unreachable in practice: the system prompt now explicitly bans
+  bare-letter abbreviations outright (rule 9), so this is latent, not
+  evidenced as a live gap.
+- [ ] **[bug (latent), Low, Trivial]** `_NON_CLAIM_PATTERN`'s duration
+  exemption (`year`/`month`/`day`) is inherently whack-a-mole --
+  evidenced only for "N months" (`nvda-supply-chain-risk`'s real
+  supply-chain lead-time language). Revisit if a different duration/count
+  noun (weeks, quarters, "N employees", "N facilities") is found causing
+  the same `uncovered_number` false-positive shape; not chased
+  speculatively per this project's practice.
 - [ ] **[bug (latent), Low, Standard]** `aapl-rd-pct-gross-profit-fy2025`
-  failed the same way on the two `calculate`-tool INPUT values
-  (`"claims 34550.0 (raw)..."`/`"claims 195201.0 (raw)..."` both
-  uncovered), despite the model's own `withheld_answer` showing a
-  correct, well-formed answer citing both values with markers `[1]`/`[2]`
-  -- suggesting the model's `claims` array was simply missing entries for
-  two of the citations it used in `answer_text`. Single observation, not
-  yet reproduced; possibly related to the existing `calculate`-tool
-  turn-budget/mislabeling interaction already tracked below, possibly a
-  distinct gap. Not investigated further this session (out of scope for
-  the qualitative-claims fix).
+  has two OTHER, unrelated live refusal modes found while tracing its
+  full trace-log history for the 2026-09-17 fix, neither touched by that
+  fix and neither previously tracked: one run got a genuine
+  `cited_claim_unsupported` refusal on the 17.7% figure itself (quoted
+  text didn't match source `[1]`); another had the model self-compute
+  17.7%/0.177 inline with no citation marker at all
+  (`uncited_claim`). A post-fix live spot-check that still sees this
+  question refuse should not be assumed to mean the fix failed --
+  confirm which failure mode actually fired first.
 
 ### From the 2026-09-07 review of the get_metric_all_companies redesign
 

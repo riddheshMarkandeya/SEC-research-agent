@@ -1,0 +1,81 @@
+{
+  "backend": "gemini",
+  "answer_model": "gemini-flash-lite-latest",
+  "judge_model": "gemini-flash-lite-latest",
+  "results": [
+    {
+      "id": "nvda-supply-chain-risk",
+      "ticker": "NVDA",
+      "question": "What supply chain risks does NVIDIA describe?",
+      "type": "judged",
+      "passed": true,
+      "detail": "The answer correctly mentions dependency on third-party suppliers, manufacturing lead times, and supply/demand mismatches, and it includes multiple citation markers like [1].",
+      "has_citation": true,
+      "citation_warnings": [],
+      "answer": "In its filings, NVIDIA describes several key supply chain risks and challenges that could harm its business, financial condition, and results of operations:\n\n* **Long Manufacturing Lead Times and Uncertain Supply/Capacity Availability:** NVIDIA maintains long manufacturing lead times and builds products and inventory in advance of anticipated demand [1]. During semiconductor shortages or limited supply chain capacity, lead times for certain supplies have extended beyond 12 months [1]. To secure future supply and capacity, NVIDIA has paid premiums, provided deposits, and entered into long-term supply agreements and capacity commitments, which increase product costs [1]. \n* **Mismatches Between Supply and Demand:** Inaccurate demand estimations or changes in customer orders can lead to significant mismatches, resulting in product shortages or excess inventory [1]. If NVIDIA underestimates demand and its foundry partners and contract manufacturers cannot increase production, NVIDIA may fail to meet customer demand, harming its reputation, customer relationships, revenue, and market share [7]. Conversely, overestimating demand or facing cancellations can leave NVIDIA with unusable on-hand inventory, non-cancellable/non-returnable purchase orders, inventory write-downs, cancellation penalties, and impairments that negatively impact gross margins [7].\n* **Component Availability and Data Center Buildouts:** Because NVIDIA's products are part of complex data center buildouts, supply constraints or availability issues with respect to any single component from third parties can impede the sale of finished products and have a broader revenue impact [7].\n* **Global Trade Policies, Tariffs, and Export Controls:** Rapid evolution of global trade policies, new export controls, tariffs, and geopolitical developments add complexity and increase costs throughout the supply chain [3]. Ongoing uncertainty can disrupt supply chain operations and impact forecasting, costs, and customer purchase timing [3].\n* **U.S.-Based Manufacturing Expansion Challenges:** Plans to increase U.S.-based manufacturing rely on the domestic manufacturing ecosystem's capacity to ramp production supply to the required volume and on a timely basis [3].\n* **Macroeconomic and Geopolitical Factors:** Macroeconomic conditions such as inflation, interest rate changes, capital market volatility, and global supply chain constraints directly and indirectly impact supply chain and manufacturing costs, as well as capital equipment costs [3].",
+      "n_chunks_retrieved": 10,
+      "withheld_answer": null,
+      "gate_withheld_would_have_passed": null,
+      "gate_withheld_detail": null,
+      "citation_warning_details": []
+    },
+    {
+      "id": "nvda-gross-margin-fy26",
+      "ticker": "NVDA",
+      "question": "What was NVIDIA's gross margin for fiscal year 2026?",
+      "type": "numeric",
+      "passed": false,
+      "detail": "agent refused to answer (hard-gated on unverified citation(s)) -- no value to grade",
+      "has_citation": false,
+      "citation_warnings": [
+        "[1] claims 71.1 (percent) but the quoted text doesn't appear in source [1]"
+      ],
+      "answer": "I can't confirm this answer against the sources I retrieved -- the following claim(s) don't hold up under citation verification:\n- [1] claims 71.1 (percent) but the quoted text doesn't appear in source [1]\n\nRather than give you a number I can't verify, I'm refusing this answer.",
+      "n_chunks_retrieved": 20,
+      "withheld_answer": "For fiscal year 2026 (ended January 25, 2026), NVIDIA's gross margin was 71.1% [1].",
+      "gate_withheld_would_have_passed": false,
+      "gate_withheld_detail": "found matching value: 71.1 (percent) but its citation isn't actually supported by the source (likely self-computed or misattributed)",
+      "citation_warning_details": [
+        {
+          "check": "quote_not_found",
+          "citation_index": 1,
+          "value": 71.1,
+          "unit": "percent",
+          "message": "[1] claims 71.1 (percent) but the quoted text doesn't appear in source [1]"
+        }
+      ]
+    },
+    {
+      "id": "msft-cash-to-assets-fy2025",
+      "ticker": "MSFT",
+      "question": "What percentage of Microsoft's total assets was held as cash and cash equivalents at the end of fiscal year 2025?",
+      "type": "numeric",
+      "passed": true,
+      "detail": "found matching value: 4.9 (percent)",
+      "has_citation": true,
+      "citation_warnings": [],
+      "answer": "At the end of fiscal year 2025, Microsoft held $30.24 billion in cash and cash equivalents [1] out of $619.00 billion in total assets [2], representing 4.9% of its total assets (computed as $30,242,000,000 \u00f7 $619,003,000,000 = 4.8856% rounded to 4.9%) [3].",
+      "n_chunks_retrieved": 3,
+      "withheld_answer": null,
+      "gate_withheld_would_have_passed": null,
+      "gate_withheld_detail": null,
+      "citation_warning_details": []
+    },
+    {
+      "id": "aapl-rd-pct-gross-profit-fy2025",
+      "ticker": "AAPL",
+      "question": "What percentage of Apple's fiscal year 2025 gross profit was spent on research and development?",
+      "type": "numeric",
+      "passed": true,
+      "detail": "found matching value: 17.7 (percent)",
+      "has_citation": true,
+      "citation_warnings": [],
+      "answer": "In fiscal year 2025, Apple spent $34.55 billion on research and development [2] out of a total gross profit of $195.20 billion [1], which amounts to 17.7% (computed as $34,550 million \u00f7 $195,201 million = 17.7%) [3].",
+      "n_chunks_retrieved": 3,
+      "withheld_answer": null,
+      "gate_withheld_would_have_passed": null,
+      "gate_withheld_detail": null,
+      "citation_warning_details": []
+    }
+  ]
+}

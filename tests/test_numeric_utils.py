@@ -18,6 +18,17 @@ def test_extract_numbers_dollar_billion():
     assert (72.4, "billion") in extract_numbers("The total was approximately $72.4 billion.")
 
 
+def test_extract_numbers_dollar_million_spelled_out():
+    # Documents the now-relied-upon correct behavior behind the
+    # agent.py system-prompt fix (BACKLOG.md, aapl-rd-pct-gross-profit-fy2025):
+    # "million" spelled out parses correctly and normalize-matches a raw
+    # claim, unlike the ambiguous "$34,550M" abbreviation the prompt used
+    # to demonstrate (extract_numbers has no "M"/"B"/"K" recognition at
+    # all -- a bare "M" parses as unit="raw", off by 1000x from the
+    # intended value).
+    assert (34550.0, "million") in extract_numbers("computed as $34,550 million / $195,201 million = 17.7%")
+
+
 def test_extract_numbers_comma_grouped_raw_count():
     assert (166000.0, "raw") in extract_numbers("Apple had 166,000 full-time equivalent employees.")
 
