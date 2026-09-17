@@ -83,6 +83,36 @@ item — not automatic, since the last attempt showed it needs either a
 real reduction in the codebase's untyped-dict data flow first, or a
 scoped-down strict preset, neither of which happened in this adoption.
 
+## This project's comment hygiene
+
+The `independent-review-pass` skill's documentation/comment-hygiene
+pass (Pass 2), named concretely: every new or edited comment is checked
+against global `CLAUDE.md`'s self-contained-reasoning rule, every
+review. Unlike lint/typecheck, no tool measures this mechanically —
+there's no analog to `ruff check`/`pyright` to run, count violations
+from, or eventually gate a commit on.
+
+**Current rollout stage: changed-files-scoped, same discipline as
+lint/typecheck, different evidence of where the baseline stands.** The
+closest thing to a measured baseline: the 2026-09-14/15 comment-audit
+initiative (`docs/decisions/2026-09-15-comment-audit-concluded.md`)
+worked through all 19 originally-flagged main-source files
+(`companies.py` through `agent.py`, all done) and 9 of 25 `tests/`
+files; the remaining 16 test files were deliberately not scheduled for
+further dedicated rounds (lower marginal value — test comments are read
+far less often than main-source ones) and instead deferred to
+opportunistic per-touch cleanup, the exact incremental-improvement
+policy this section names. A new or edited comment must be
+self-contained (see also
+`docs/decisions/2026-09-15-revoke-comment-pointer-convention.md`:
+comments must never be a pointer/link to an external doc); a
+pre-existing comment in a touched file but not itself touched by the
+current change is pre-existing debt, left alone unless the
+function/block it's attached to is otherwise meaningfully touched. No
+pre-commit gate is possible here the way lint/typecheck's own eventual
+migration is planned — there's no tool to gate on — so this rollout
+stage is permanent, not a step toward a future hard gate.
+
 ## This project's documentation system
 
 The `documentation-backlog-hygiene` skill's five-artifact template,
@@ -121,6 +151,17 @@ in full:
   item is done, delete its line entirely — no strikethrough, no
   "resolved" annotation kept.
 
+**Keeping `.claude/rules/*.md` current**: these are living lists (there
+are three as of 2026-09-16: `live-code-tdd.md`,
+`live-eval-verification.md`, `plan-review-blast-radius.md`), not
+one-time snapshots from whatever overhaul created them. When a plan or
+code review (`design-before-building`'s independent plan review,
+`independent-review-pass`'s subagent code review) finds a real issue in
+a function or file not already covered by one of these rules, add it to
+the relevant rule file as part of that same change — the identical "add
+the moment identified" discipline `BACKLOG.md` already uses above, not
+a periodic audit task to schedule separately.
+
 **Before starting design/debugging work on a topic**: search
 `PROJECT_INDEX.md`'s `Recent` section for prior work on the same
 module/tool/failure mode (free — it's already in context from the
@@ -155,6 +196,18 @@ any change, the Gemini free-tier quota-awareness note, and the
 regression-recording convention now live in
 `.claude/rules/live-eval-verification.md` — loaded automatically
 whenever `numeric_utils.py`, `agent.py`, or `retrieval.py` is touched.
+
+## Independent plan review for high-blast-radius changes
+
+Per `design-before-building`'s non-tier-gated exception: the concrete
+list of which functions count as this project's high-blast-radius core
+— where a change gets the one independent-subagent plan-review step
+even at Standard tier — now lives in
+`.claude/rules/plan-review-blast-radius.md`, loaded automatically
+whenever `agent.py`, `llm_backends.py`, `xbrl_facts.py`, `formulas.py`,
+`retrieval.py`, or `numeric_utils.py` is touched. Every entry there is
+grounded in a real incident, not a speculative "this file feels
+important" argument — see that file for which.
 
 ## This project's design principles
 

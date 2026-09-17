@@ -31,6 +31,13 @@ filter) when the change is broad, touches multiple of the modules above,
 or before considering a session's work fully done. A green test suite
 alone is not sufficient evidence of correctness for this class of change.
 
+**Keep the `paths:` list above current the same way `BACKLOG.md` keeps
+itself current** (see this project's own `CLAUDE.md`): if a live
+spot-check or baseline run ever catches a regression in a file not
+already listed there, add it in the same step, not as a deferred
+follow-up — mirroring exactly how `numeric_utils.py` earned its own
+place here in the first place.
+
 ## Gemini free-tier quota awareness
 
 The free tier caps at 500 requests/day (`RESOURCE_EXHAUSTED` past that).

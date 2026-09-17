@@ -23,3 +23,10 @@ For each of these, write the manual repro/verification script under
 `tests/manual/verify_*.py` first, confirm it reproduces the bug or
 exercises the new behavior, then implement, then re-run it — same
 red-green spirit as unit TDD, different tool.
+
+**Keep this list current the same way `BACKLOG.md` keeps itself
+current** (see this project's own `CLAUDE.md`): add a file the moment a
+change to it turns out to need a manual repro script first (a real
+network call, DB/vector-store operation, or LLM round-trip that unit
+tests alone can't safely cover) and it isn't already listed above, in
+the same step, not as a deferred follow-up.
