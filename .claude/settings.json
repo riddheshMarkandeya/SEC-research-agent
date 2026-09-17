@@ -7,6 +7,9 @@
       "Bash(tasklist)",
       "Bash(python -c ' *)",
       "Bash(grep -n \"### \\\\`agent.py\\\\`\" -A 50 \"c:/riddhesh/projects/SEC research agent/PROJECT_CONTEXT.md\")"
+    ],
+    "deny": [
+      "Read(./notes.md)"
     ]
   },
   "hooks": {
