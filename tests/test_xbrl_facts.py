@@ -10,6 +10,7 @@ from xbrl_facts import (
     _latest_entry,
     _pick_entry,
     _pick_entry_by_end_date,
+    _resolved_fiscal_year,
     fetch_concept,
     get_frame,
     get_metric,
@@ -53,6 +54,36 @@ NVDA_ASSETS_ENTRIES = [
     {"end": "2026-01-25", "val": 206803000000, "accn": "0001045810-26-000021", "fy": 2026, "fp": "FY", "form": "10-K", "filed": "2026-02-25"},
     {"end": "2026-01-25", "val": 206803000000, "accn": "0001045810-26-000052", "fy": 2027, "fp": "Q1", "form": "10-Q", "filed": "2026-05-20"},
     {"end": "2026-04-26", "val": 259474000000, "accn": "0001045810-26-000052", "fy": 2027, "fp": "Q1", "form": "10-Q", "filed": "2026-05-20"},
+]
+
+# CRM-shaped entries reproducing a real, confirmed data quirk (BACKLOG.md,
+# docs/decisions/2026-09-16-crm-fiscal-year-lookup-fix.md): Salesforce's
+# most recent 10-K (filed 2026-03-02) self-tags its annual entry's raw
+# `fy` as 2025, one year behind Salesforce's own "fiscal year 2026" label
+# for the period ending 2026-01-31 -- confirmed against the real cached
+# xbrl_cache/CRM_OperatingIncomeLoss.json. The prior year's entry (end
+# 2025-01-31) is correctly tagged fy=2025 here (matching CRM's actual
+# 2025-03-05 filing), so a "fiscal_year - 1" chain from the mislabeled
+# current entry must land on THIS one, not a further-mislabeled one --
+# that's what the get_yoy_growth chaining test below actually checks.
+# The quarterly entry is tagged correctly, per real CRM Q1 data.
+CRM_OPERATING_INCOME_ENTRIES = [
+    {"start": "2024-02-01", "end": "2025-01-31", "val": 5251000000, "accn": "crm-2025-10k", "fy": 2025, "fp": "FY", "form": "10-K", "filed": "2025-03-05"},
+    {"start": "2025-02-01", "end": "2026-01-31", "val": 8331000000, "accn": "crm-2026-10k", "fy": 2025, "fp": "FY", "form": "10-K", "filed": "2026-03-02", "frame": "CY2025"},
+    {"start": "2025-02-01", "end": "2025-04-30", "val": 1622000000, "accn": "crm-2026-q1", "fy": 2026, "fp": "Q1", "form": "10-Q", "filed": "2025-05-29"},
+]
+
+# Two entries sharing one end date but different raw `fy` tags and
+# `val`s -- reproducing the real same-end-date restatement collision
+# found in CRM's own historical OperatingIncomeLoss data (e.g. the real
+# end=2017-01-31 appears under fy=2017/2018/2019 across separate
+# filings, the last with a materially different, restated value).
+# end-date-year matching (unlike the old exact-fy match) makes both of
+# these candidates for the same fiscal_year request, so the tiebreak
+# must pick the more-recently-filed one.
+CRM_RESTATED_TIE_ENTRIES = [
+    {"start": "2016-02-01", "end": "2017-01-31", "val": 64228000, "accn": "crm-original", "fy": 2017, "fp": "FY", "form": "10-K", "filed": "2017-03-06"},
+    {"start": "2016-02-01", "end": "2017-01-31", "val": 218000000, "accn": "crm-restated", "fy": 2019, "fp": "FY", "form": "10-K", "filed": "2019-03-08"},
 ]
 
 
@@ -258,6 +289,80 @@ def test_pick_entry_returns_none_when_period_kind_mismatches_form():
     # (wrong duration/form) shouldn't accidentally match a quarter.
     entry = _pick_entry(MSFT_RD_EXPENSE_ENTRIES, fiscal_year=2026, fiscal_period="FY")
     assert entry is None
+
+
+# ---------------------------------------------------------------------------
+# _resolved_fiscal_year / CRM's off-by-one annual fiscal-year tagging
+# (BACKLOG.md, docs/decisions/2026-09-16-crm-fiscal-year-lookup-fix.md)
+# ---------------------------------------------------------------------------
+def test_resolved_fiscal_year_uses_end_date_year_for_annual_entry():
+    # The FY2026 entry's raw fy tag (2025) is wrong; its end date's
+    # calendar year (2026) is what Salesforce itself calls this period.
+    entry = CRM_OPERATING_INCOME_ENTRIES[1]
+    assert entry["fy"] == 2025
+    assert _resolved_fiscal_year(entry) == 2026
+
+
+def test_resolved_fiscal_year_uses_raw_fy_for_quarterly_entry():
+    entry = CRM_OPERATING_INCOME_ENTRIES[2]
+    assert _resolved_fiscal_year(entry) == entry["fy"] == 2026
+
+
+def test_pick_entry_finds_crm_annual_entry_despite_mislabeled_raw_fy():
+    entry = _pick_entry(CRM_OPERATING_INCOME_ENTRIES, fiscal_year=2026, fiscal_period="FY")
+    assert entry is not None
+    assert entry["val"] == 8331000000
+    assert entry["end"] == "2026-01-31"
+
+
+def test_get_metric_returns_the_requested_fiscal_year_not_the_raw_tag(monkeypatch):
+    # Direct regression test for the get_yoy_growth chaining risk: the
+    # returned "fiscal_year" must read 2026 (what was asked for and
+    # resolved), not the raw 2025 tag -- otherwise a caller anchoring on
+    # this value for "fiscal_year - 1" arithmetic would silently request
+    # the wrong prior period.
+    monkeypatch.setattr(
+        "xbrl_facts.fetch_concept",
+        lambda ticker, tag: {"units": {"USD": CRM_OPERATING_INCOME_ENTRIES}},
+    )
+    result = get_metric("CRM", "operating_income", fiscal_year=2026, fiscal_period="FY")
+    assert result is not None
+    assert result["value"] == 8331000000
+    assert result["fiscal_year"] == 2026
+
+
+def test_get_metric_fiscal_year_chaining_lands_on_correct_prior_period(monkeypatch):
+    # End-to-end proof that get_yoy_growth's own "current fiscal_year -
+    # 1" arithmetic would land on CRM's real prior year (2025), not two
+    # years back (2024), now that get_metric's returned fiscal_year is
+    # self-consistent with how _pick_entry actually resolved the entry.
+    monkeypatch.setattr(
+        "xbrl_facts.fetch_concept",
+        lambda ticker, tag: {"units": {"USD": CRM_OPERATING_INCOME_ENTRIES}},
+    )
+    current = get_metric("CRM", "operating_income", fiscal_year=2026, fiscal_period="FY")
+    assert current is not None
+    prior = get_metric("CRM", "operating_income", fiscal_year=current["fiscal_year"] - 1, fiscal_period="FY")
+    assert prior is not None
+    assert prior["value"] == 5251000000
+    assert prior["period_end"] == "2025-01-31"
+
+
+def test_pick_entry_breaks_same_end_date_tie_toward_most_recently_filed():
+    # Broadening the annual match to "end date's calendar year" (instead
+    # of an exact raw fy tag) can admit multiple candidates that share
+    # one end date but disagree on fy/val across separate filings (a
+    # real restatement collision found in CRM's own historical data) --
+    # the more-recently-filed one must win, same convention
+    # _pick_entry_by_end_date already uses for the identical situation.
+    # Both entries share end=2017-01-31, so both resolve to fiscal_year
+    # 2017 under the new end-date-year matching regardless of their raw
+    # (2017/2019) fy tags -- requesting fiscal_year=2017 is what makes
+    # them collide.
+    entry = _pick_entry(CRM_RESTATED_TIE_ENTRIES, fiscal_year=2017, fiscal_period="FY")
+    assert entry is not None
+    assert entry["val"] == 218000000
+    assert entry["accn"] == "crm-restated"
 
 
 def test_get_metric_returns_none_when_concept_not_tagged(monkeypatch):

@@ -48,6 +48,20 @@ NVDA_GROSS_PROFIT_ENTRIES = [
     {"start": "2025-01-27", "end": "2026-01-25", "val": 153463000000, "accn": "0001045810-26-000021", "fy": 2026, "fp": "FY", "form": "10-K", "filed": "2026-02-25"},
 ]
 
+# CRM-shaped entries reproducing a real, confirmed data quirk (BACKLOG.md,
+# docs/decisions/2026-09-16-crm-fiscal-year-lookup-fix.md): Salesforce's
+# most recent 10-K (filed 2026-03-02) self-tags both legs' annual entries'
+# raw `fy` as 2025, one year behind Salesforce's own "fiscal year 2026"
+# label for the period ending 2026-01-31 -- confirmed against the real
+# cached xbrl_cache/CRM_*.json. Real values, so the expected ratio
+# (20.1%) matches production data, not an arbitrary round number.
+CRM_OPERATING_INCOME_ENTRIES = [
+    {"start": "2025-02-01", "end": "2026-01-31", "val": 8331000000, "accn": "crm-2026-10k", "fy": 2025, "fp": "FY", "form": "10-K", "filed": "2026-03-02"},
+]
+CRM_REVENUE_ENTRIES = [
+    {"start": "2025-02-01", "end": "2026-01-31", "val": 41525000000, "accn": "crm-2026-10k", "fy": 2025, "fp": "FY", "form": "10-K", "filed": "2026-03-02"},
+]
+
 
 # ---------------------------------------------------------------------------
 # get_gross_margin / get_operating_margin / get_net_margin
@@ -104,6 +118,21 @@ def test_get_operating_margin_computes_ratio_from_two_metrics(monkeypatch):
 def test_get_operating_margin_returns_none_if_either_metric_missing(monkeypatch):
     monkeypatch.setattr("xbrl_facts.fetch_concept", lambda ticker, tag: None)
     assert get_operating_margin("NVDA", fiscal_year=2026, fiscal_period="FY") is None
+
+
+def test_get_operating_margin_resolves_crm_annual_despite_mislabeled_raw_fy(monkeypatch):
+    # Regression test for BACKLOG.md's CRM fiscal-year-lookup bug: both
+    # legs' raw fy tags are mislabeled (2025 instead of 2026) the same
+    # way, so this exercises the fix through the ratio-combining layer
+    # (period_end equality check included), not just the single-metric
+    # lookup already covered directly in test_xbrl_facts.py.
+    def fake_fetch(ticker, tag):
+        return {"units": {"USD": CRM_OPERATING_INCOME_ENTRIES if tag == "OperatingIncomeLoss" else CRM_REVENUE_ENTRIES}}
+
+    monkeypatch.setattr("xbrl_facts.fetch_concept", fake_fetch)
+    result = get_operating_margin("CRM", fiscal_year=2026, fiscal_period="FY")
+    assert result is not None
+    assert result["value"] == 20.1
 
 
 def test_get_net_margin_computes_ratio_from_two_metrics(monkeypatch):

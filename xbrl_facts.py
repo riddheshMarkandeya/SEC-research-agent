@@ -168,17 +168,52 @@ def _latest_entry(entries: list[dict]) -> dict | None:
     return max(entries, key=lambda e: (e["end"], -(_duration_days(e) or 0), e.get("filed") or ""))
 
 
+def _resolved_fiscal_year(entry: dict) -> int | None:
+    """The entry's own fiscal year, corrected for a real annual
+    self-tagging quirk found in this project's cached SEC data: an
+    annual (fp="FY") entry's calendar END YEAR, since every tracked
+    company names its fiscal year after the calendar year its period
+    ends in -- confirmed against real cached data for all 5 tickers. A
+    raw `fy` tag can't always be trusted for this: CRM's most recent
+    10-K (filed 2026-03-02, covering the period ending 2026-01-31) tags
+    it `fy: 2025`, one year behind Salesforce's own label -- and the
+    identical mismatch appears in CRM's own 2010-2014 filings and
+    NVDA's own 2011-2014 filings, so this isn't a CRM-only or a
+    currently-fixed-forever quirk. A non-annual entry's raw `fy` tag is
+    unaffected -- confirmed correct for all 5 tickers' quarterly
+    entries, and NVDA's own
+    (January-ending) quarters would be MISLABELED by an end-year rule
+    (a quarter's end date can fall in the calendar year before the
+    fiscal year it belongs to), so only the annual case is corrected
+    here. See docs/decisions/2026-09-16-crm-fiscal-year-lookup-fix.md."""
+    if entry.get("fp") == "FY":
+        return date.fromisoformat(entry["end"]).year
+    return entry.get("fy")
+
+
 def _pick_entry(entries: list[dict], fiscal_year: int, fiscal_period: str) -> dict | None:
     """Filter a concept's USD entries down to the one true value for
     (fiscal_year, fiscal_period), applying the duration + max(end)
     disambiguation documented above. Returns None if nothing matches.
+    Matches on _resolved_fiscal_year() rather than the raw `fy` tag
+    directly -- see that function's docstring for why the raw tag can't
+    always be trusted.
 
     An instant fact (`_duration_days()` returns None -- see its
     docstring) skips the duration-bucket check entirely: there's no
     quarter-vs-YTD-cumulative collision to disambiguate for a
     point-in-time balance, so fy/fp/form matching alone is already
     unambiguous (confirmed against real NVDA Assets data, where two
-    entries share an `end` date but differ on fy/fp/form)."""
+    entries share an `end` date but differ on fy/fp/form).
+
+    Same-`end`-date ties (a genuine restatement of one period's value
+    across separate filings -- confirmed in CRM's own historical data,
+    where trusting the end-date's calendar year instead of an exact raw
+    `fy` tag can admit more than one candidate for an older fiscal year)
+    are broken toward the most-recently-filed entry, same convention
+    _pick_entry_by_end_date() already uses for the identical situation:
+    a later filing is never less authoritative than an earlier
+    restatement of the same period."""
     is_annual = fiscal_period == "FY"
     lo, hi = _ANNUAL_DURATION_DAYS if is_annual else _QUARTER_DURATION_DAYS
     expected_form = "10-K" if is_annual else "10-Q"
@@ -186,14 +221,14 @@ def _pick_entry(entries: list[dict], fiscal_year: int, fiscal_period: str) -> di
     candidates = [
         e
         for e in entries
-        if e.get("fy") == fiscal_year
+        if _resolved_fiscal_year(e) == fiscal_year
         and e.get("fp") == fiscal_period
         and e.get("form") == expected_form
         and ((dd := _duration_days(e)) is None or lo <= dd <= hi)
     ]
     if not candidates:
         return None
-    return max(candidates, key=lambda e: e["end"])
+    return max(candidates, key=lambda e: (e["end"], e.get("filed") or ""))
 
 
 def _pick_entry_by_end_date(entries: list[dict], period_end_date: str) -> dict | None:
@@ -280,10 +315,14 @@ def get_metric(
     Returns {"value": float, "unit": "USD", "period_end": "YYYY-MM-DD",
     "form": str, "accession": str, "fiscal_year": int, "fiscal_period":
     str, ...} or None if unavailable (caller should fall back to
-    search_filings). fiscal_year/fiscal_period are read directly off the
-    matched entry's own fy/fp fields (not recomputed) -- get_yoy_growth()
-    anchors on these to find the prior-year period without doing any
-    date arithmetic itself.
+    search_filings). fiscal_period is read directly off the matched
+    entry's own fp field (not recomputed). fiscal_year goes through
+    _resolved_fiscal_year() rather than the raw fy field directly, for
+    an annual entry -- get_yoy_growth() anchors on this returned value
+    to find the prior-year period via "fiscal_year - 1", with no date
+    arithmetic of its own, so returning the SAME unreliable raw tag
+    _pick_entry() already knows not to trust for matching would silently
+    feed it back into that arithmetic and compare the wrong two years.
     """
     tag = _tag_for(ticker, metric)
     data = fetch_concept(ticker, tag)
@@ -311,7 +350,7 @@ def get_metric(
         "accession": entry["accn"],
         "filed": entry.get("filed"),
         "frame": entry.get("frame"),
-        "fiscal_year": entry.get("fy"),
+        "fiscal_year": _resolved_fiscal_year(entry),
         "fiscal_period": entry.get("fp"),
     }
 

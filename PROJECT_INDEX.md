@@ -47,6 +47,8 @@ pushes this section past 50, cut the oldest entries back down to 40 and
 prepend them (verbatim, still reverse-chronological) to the top of
 `PROJECT_INDEX_ARCHIVE.md`.
 
+- 2026-09-16 [review] CRM fiscal-year-lookup fix review — independent plan review caught 2 root-cause/tiebreak issues before implementation; code review found 2 minor doc-accuracy nits, both fixed → `docs/reviews/2026-09-16-crm-fiscal-year-lookup-fix.md`
+- 2026-09-16 [decision] Fixed CRM's off-by-one annual fiscal-year tagging in xbrl_facts (raw `fy` tag one year behind CRM's own label) — match on end-date's calendar year instead; eval spot-check 3/3 ranking questions now pass → `docs/decisions/2026-09-16-crm-fiscal-year-lookup-fix.md`
 - 2026-09-16 [review] Final-turn safety net review — independent plan review caught a dangling-function-call bug before implementation; code review found 2 minor doc/lint hygiene misses, both fixed → `docs/reviews/2026-09-16-final-turn-safety-net.md`
 - 2026-09-16 [decision] Fixed MAX_TOOL_ITERATIONS zero-slack bug (no turn left to submit after 5 dispatch calls) — added a Gemini-only reserved final-turn safety net, budget itself unchanged, baseline 37/47 → 39/47 → `docs/decisions/2026-09-16-final-turn-safety-net.md`
 - 2026-09-15 [decision] Fixed the qualitative-claims placeholder-value false-refusal bug (model invented value=1 for non-numeric citations) — made value/unit optional in SUBMIT_TOOL_SCHEMA, baseline 36/47 → 37/47 → `docs/decisions/2026-09-15-qualitative-claims-schema.md`
