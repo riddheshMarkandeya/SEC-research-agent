@@ -12,6 +12,7 @@ agent.py's verify_citations()) — see tests/test_numeric_utils.py.
 """
 
 import json
+import re
 
 import eval_harness
 from agent import AgentResult
@@ -308,6 +309,29 @@ def test_grade_judged_lowercase_pass_still_counts(monkeypatch):
     monkeypatch.setattr("eval_harness.complete", lambda backend, system_prompt, user_prompt, temperature=0.0: "pass\nfine.")
     passed, _ = grade_judged("Q?", "some answer", "some criteria")
     assert passed is True
+
+
+def test_grade_judged_user_prompt_includes_todays_real_date(monkeypatch):
+    # Regression anchor for the judge "hypothetical future date" false
+    # refusal (docs/decisions/2026-09-17-fix-judge-hypothetical-date-bug.md)
+    # -- without this grounding, a judge model trained before a filing's
+    # real date reflexively calls a correctly-cited current filing
+    # "hypothetical future data". Asserts an ISO-date-shaped string was
+    # injected rather than re-deriving "today" via a second datetime.now()
+    # call, which would race the one inside grade_judged() across a UTC
+    # day boundary.
+    captured = {}
+
+    def fake_complete(backend, system_prompt, user_prompt, temperature=0.0):
+        captured["system_prompt"] = system_prompt
+        captured["user_prompt"] = user_prompt
+        return "PASS\nfine."
+
+    monkeypatch.setattr("eval_harness.complete", fake_complete)
+    grade_judged("Q?", "some answer", "some criteria")
+
+    assert re.search(r"Today's real date is \d{4}-\d{2}-\d{2}", captured["user_prompt"])
+    assert "training cutoff" in captured["system_prompt"]
 
 
 def test_grade_judged_calls_complete_with_temperature_0(monkeypatch):

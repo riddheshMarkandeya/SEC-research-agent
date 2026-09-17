@@ -119,6 +119,9 @@ def grade_comparison(
 # ---------------------------------------------------------------------------
 JUDGE_SYSTEM_PROMPT = """You are grading an AI assistant's answer against a specific pass/fail criteria. \
 Be strict: the criteria must be clearly satisfied by the answer text, not just plausible in general. \
+The answer may cite dates or filings that fall after your own training cutoff -- do not treat a date as \
+evidence of fabrication merely because it is unfamiliar to you. Only treat a date as hypothetical or \
+fabricated if it falls after the real current date stated in the prompt below. \
 Respond with exactly two lines: the first line is either PASS or FAIL, the second line is a one-sentence reason."""
 
 
@@ -129,8 +132,21 @@ def grade_judged(question: str, answer_text: str, criteria: str, backend: str = 
     calls tools. complete() reuses each backend's existing retry/backoff/
     log_event machinery, so that guarantee holds here too. See
     docs/decisions/2026-09-06-full-codebase-review.md and
-    docs/decisions/2026-09-10-citation-gate-measurement-instrumentation.md."""
+    docs/decisions/2026-09-10-citation-gate-measurement-instrumentation.md.
+
+    Injects the real wall-clock date (same datetime.now(timezone.utc)
+    pattern as save_report()'s timestamp) so the judge isn't relying on
+    its own stale training-cutoff sense of "now" -- without this, a judge
+    model trained before a filing's real date reflexively calls a
+    correctly-cited current filing "hypothetical future data" (see
+    docs/decisions/2026-09-17-fix-judge-hypothetical-date-bug.md). This
+    assumes grading happens contemporaneously with generation -- true for
+    every call site today (grade_judged only ever runs synchronously
+    inside run_eval, right after the answer is generated); would need
+    revisiting if a regrade-from-saved-report tool is ever added."""
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     user_prompt = (
+        f"Today's real date is {today}. Treat filing/financial data dated at or before today as real.\n\n"
         f"Question asked: {question}\n\n"
         f"Grading criteria: {criteria}\n\n"
         f"AI assistant's answer:\n{answer_text}\n\n"

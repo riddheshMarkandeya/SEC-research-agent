@@ -6,6 +6,7 @@ paths:
   - "formulas.py"
   - "retrieval.py"
   - "numeric_utils.py"
+  - "eval_harness.py"
 ---
 
 # This project's high-blast-radius core
@@ -43,6 +44,15 @@ speculative "this file feels important" argument:
   expression, a Unicode minus sign) no unit test had anticipated — the
   clearest existing evidence in this project that diff size doesn't
   predict risk here.
+- **`eval_harness.py`** — `grade_judged`/`JUDGE_SYSTEM_PROMPT`. A
+  different flavor of blast radius than the other entries: this code
+  doesn't affect the agent's answers, it decides what counts as
+  PASS/FAIL across the whole eval suite, so a wrong change here corrupts
+  every before/after comparison the project relies on without ever
+  showing up as an agent regression. Incident: the 2026-09-17 judge
+  hypothetical-date fix, where the judge failed correctly-cited, cleanly
+  grounded answers (`citation_warnings: []`) as "fabricated hypothetical
+  data" purely from its own training-cutoff blind spot.
 
 **Keep this list current the same way `BACKLOG.md` keeps itself
 current** (see this project's own `CLAUDE.md`): add an entry the moment
