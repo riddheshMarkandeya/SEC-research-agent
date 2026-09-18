@@ -7,6 +7,7 @@ paths:
   - "retrieval.py"
   - "numeric_utils.py"
   - "eval_harness.py"
+  - "chunk_documents.py"
 ---
 
 # This project's high-blast-radius core
@@ -57,6 +58,17 @@ own history, not a speculative "this file feels important" argument:
   hypothetical-date fix, where the judge failed correctly-cited, cleanly
   grounded answers (`citation_warnings: []`) as "fabricated hypothetical
   data" purely from its own training-cutoff blind spot.
+- **`chunk_documents.py`** — `chunk_blocks()`. Corpus-wide code that
+  every live citation-grounding check reads from, so a subtle bug here
+  can silently corrupt table data across the whole indexed corpus
+  without ever looking like a bug in the code that surfaces the
+  failure. Incident: the 2026-09-17 orphaned-table-overlap fix, where a
+  raw-character-slice overlap carry-over could land mid-table, hiding a
+  real row from `table_grounding.py`'s paired-tag regex and causing a
+  correct answer to be citation-gate-refused — root-caused only by
+  tracing the bug back through retrieval and table-grounding to the
+  chunker, not by anything visible in the citation-verification code
+  itself.
 
 **Keep this list current the same way `BACKLOG.md` keeps itself
 current** (see this project's own `CLAUDE.md`): add an entry the moment

@@ -1,0 +1,33 @@
+{
+  "backend": "ollama",
+  "answer_model": "qwen2.5:7b-instruct",
+  "judge_model": "qwen2.5:7b-instruct",
+  "results": [
+    {
+      "id": "nvda-inventory-turnover-fy2026",
+      "ticker": "NVDA",
+      "question": "What was NVIDIA's inventory turnover ratio (cost of revenue divided by inventory) for fiscal year 2026?",
+      "type": "numeric",
+      "passed": false,
+      "detail": "agent refused to answer (hard-gated on unverified citation(s)) -- no value to grade",
+      "has_citation": false,
+      "citation_warnings": [
+        "claims 293.7 (percent) but no claim in your submit_answer call covers it"
+      ],
+      "answer": "I can't confirm this answer against the sources I retrieved -- the following claim(s) don't hold up under citation verification:\n- claims 293.7 (percent) but no claim in your submit_answer call covers it\n\nRather than give you a number I can't verify, I'm refusing this answer.",
+      "n_chunks_retrieved": 2,
+      "withheld_answer": "NVIDIA's inventory turnover ratio for fiscal year 2026 was computed as $62.5 billion \u00f7 $21.4 billion = 293.7% [1][2].",
+      "gate_withheld_would_have_passed": false,
+      "gate_withheld_detail": "no value matching 2.92 raw found in answer",
+      "citation_warning_details": [
+        {
+          "check": "uncovered_number",
+          "citation_index": null,
+          "value": 293.7,
+          "unit": "percent",
+          "message": "claims 293.7 (percent) but no claim in your submit_answer call covers it"
+        }
+      ]
+    }
+  ]
+}

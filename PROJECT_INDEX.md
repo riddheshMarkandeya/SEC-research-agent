@@ -47,6 +47,9 @@ pushes this section past 50, cut the oldest entries back down to 40 and
 prepend them (verbatim, still reverse-chronological) to the top of
 `PROJECT_INDEX_ARCHIVE.md`.
 
+- 2026-09-17 [decision] Fixed an orphaned-table-fragment chunking bug (chunk_blocks()'s raw-slice overlap could land mid-table, hiding a real row from citation grounding and causing a wrong-cell false match) — made the overlap table-boundary-aware; corpus-wide re-chunk/re-index confirms 0 unbalanced-tag chunks; full-baseline Gemini confirmation (obtained 2026-09-18) 41/47, all 3 targeted questions pass, 6 flips confirmed pre-existing flaky-question non-determinism via historical pass-rate check, not a regression → `docs/decisions/2026-09-17-fix-orphaned-table-overlap-chunking.md`
+- 2026-09-17 [review] Orphaned-table-overlap fix review — code review found a real find-vs-rfind bug (over-stripped a valid adjacent table), fixed with a proof and a third regression test; plan review caught a missing blast-radius rule entry → `docs/reviews/2026-09-17-fix-orphaned-table-overlap-chunking.md`
+- 2026-09-17 [plan] Orphaned-table-overlap fix design → `docs/plans/2026-09-17-fix-orphaned-table-overlap-chunking.md`
 - 2026-09-17 [decision] Made independent-subagent plan review an unconditional floor for every plan mode produces (was conditionally gated to Substantial tier + two Standard-tier trigger conditions) — global skill, CLAUDE.md Trivial-tier exception, and blast-radius rule reframed; hook backstop considered, deferred at user's choice → `docs/decisions/2026-09-17-mandatory-plan-review-floor.md`
 - 2026-09-17 [review] Plan-review-floor plan review — independent review caught a CLAUDE.md Trivial-tier gap, an under-scoped rule-file rewrite, and missing docs/plans+docs/reviews artifacts, all fixed before approval → `docs/reviews/2026-09-17-mandatory-plan-review-floor.md`
 - 2026-09-17 [plan] Plan-review-floor design → `docs/plans/2026-09-17-mandatory-plan-review-floor.md`

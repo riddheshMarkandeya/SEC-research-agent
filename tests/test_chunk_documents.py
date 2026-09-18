@@ -331,3 +331,63 @@ def test_chunk_blocks_keeps_short_genuine_content_closed_out_mid_document():
     chunks = chunk_blocks([short_first_paragraph, oversized_table])
 
     assert chunks == [short_first_paragraph, oversized_table]
+
+
+def test_chunk_blocks_drops_overlap_that_would_orphan_a_table_close_tag():
+    # If the flush point's raw OVERLAP_CHARS-char tail lands inside a
+    # table -- past its own <TABLE> open tag but including its
+    # </TABLE> close tag -- carrying that slice forward would present
+    # extract_table_blocks() with an unmatched </TABLE> in the next
+    # chunk, hiding a real table row from downstream grounding. This
+    # table is long enough that the last OVERLAP_CHARS chars of the
+    # flushed chunk land past its own opening tag.
+    prose = "A" * 1683
+    table = "<TABLE>\n" + ("X" * 300) + "\n</TABLE>"
+    block3 = "C" * 100
+
+    chunks = chunk_blocks([prose, table, block3])
+
+    assert len(chunks) == 2
+    assert chunks[0].endswith(table)
+    assert chunks[1] == block3
+    assert "</TABLE>" not in chunks[1]
+
+
+def test_chunk_blocks_overlap_keeps_prose_after_orphaned_table_close():
+    # Same hazard as the test above, but this time the table closes
+    # with room to spare before the tail ends, so genuine prose follows
+    # the orphaned </TABLE> within the same OVERLAP_CHARS slice. That
+    # prose carries no table state and must survive into the next
+    # chunk -- only the unpaired table fragment itself is unsafe to
+    # keep.
+    prose = "A" * 1746
+    table = "<TABLE>\n" + ("X" * 183) + "\n</TABLE>"  # 200 chars
+    trailing_prose = "P" * 50
+    block4 = "C" * 100
+
+    chunks = chunk_blocks([prose, table, trailing_prose, block4])
+
+    assert len(chunks) == 2
+    assert "</TABLE>" not in chunks[1]
+    assert "<TABLE>" not in chunks[1]
+    assert "P" * 50 in chunks[1]
+
+
+def test_chunk_blocks_overlap_preserves_complete_table_after_the_orphan():
+    # Two tables can both fall within the same OVERLAP_CHARS tail: an
+    # orphaned close from the first (whose <TABLE> stayed behind in the
+    # flushed chunk) followed by a second, fully self-contained table.
+    # The orphan is always the FIRST </TABLE> in the tail -- tables
+    # never nest, so anything after it must open fresh within the tail
+    # -- so stripping up to the first (not last) </TABLE> removes only
+    # the orphan while preserving the second table's genuinely valid,
+    # paired content.
+    prose = "A" * 1661
+    table1 = "<TABLE>\n" + ("X" * 300) + "\n</TABLE>"
+    table2 = "<TABLE>\nY\n</TABLE>"
+    block4 = "C" * 50
+
+    chunks = chunk_blocks([prose, table1, table2, block4])
+
+    assert len(chunks) == 2
+    assert chunks[1] == table2 + "\n\n" + block4

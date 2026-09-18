@@ -45,6 +45,24 @@ reference:
 
 ## Backlog
 
+### From the 2026-09-17 orphaned-table-overlap chunking fix
+
+Full evidence/reasoning: `docs/decisions/2026-09-17-fix-orphaned-table-overlap-chunking.md`
+and its paired review file.
+
+- [ ] **[design, Low, TBD]** `table_grounding.locate_value`'s
+  1%-relative-tolerance was what let the original bug silently
+  false-match a wrong-but-close cell (0.24% off) instead of failing
+  cleanly with "value not found" — a contributing factor, not itself
+  fixed by the chunking fix. Worth a future look at whether the
+  tolerance should be tighter or paired with a stronger uniqueness
+  check.
+- [ ] **[refactor, Low, TBD]** `chunk_blocks()`'s orphaned-tag fix is
+  hardcoded to the `<TABLE>`/`</TABLE>` tag pair specifically, not
+  generalized to any future atomic marker type `split_into_blocks()`
+  might grow (e.g. a `<FOOTNOTE>` or `<EXHIBIT>` block). No second
+  marker type exists in the live pipeline today, so this is debt, not a
+  live gap — revisit only if `split_into_blocks()` ever adds one.
 ### From the 2026-09-17 mandatory-plan-review-floor change
 
 Full evidence/reasoning: `docs/decisions/2026-09-17-mandatory-plan-review-floor.md`.

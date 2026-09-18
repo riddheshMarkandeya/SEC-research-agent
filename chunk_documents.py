@@ -277,6 +277,25 @@ def chunk_blocks(blocks: list[str]) -> list[str]:
     check alone can't tell the two cases apart once the loop has ended
     (e.g. a short final paragraph reached via the fresh-block branch
     below is real, never-before-emitted content, not overlap).
+
+    The raw-slice tail itself is also checked for an orphaned `</TABLE>`
+    before being kept: since `current` only ever holds complete blocks,
+    a tail containing MORE close tags than open tags can only mean the
+    slice started after a table's own `<TABLE>` was left behind in the
+    chunk just flushed. Carrying that forward would present
+    `extract_table_blocks()`'s paired-tag regex with an unmatched
+    `</TABLE>`, hiding a real table row.
+
+    There can only ever be ONE such orphaned close tag in a tail, and it
+    is always the FIRST `</TABLE>` substring in it: tables never nest or
+    overlap, so any other table appearing in the tail must open only
+    after the orphan's table has already closed, meaning that other
+    table's own open (and therefore close) comes later. So keeping
+    everything after the first `</TABLE>` strips exactly the orphaned
+    fragment -- no more -- while preserving any fully self-contained
+    table that happens to follow it in the same tail (using the LAST
+    `</TABLE>` instead would over-strip a legitimate trailing table in
+    that case).
     """
     chunks = []
     current = ""
@@ -291,8 +310,15 @@ def chunk_blocks(blocks: list[str]) -> list[str]:
             if len(current) >= TARGET_CHUNK_CHARS:
                 chunks.append(current)
                 # carry a small tail forward for continuity
-                current = current[-OVERLAP_CHARS:]
-                current_is_only_overlap = True
+                tail = current[-OVERLAP_CHARS:]
+                if tail.count("</TABLE>") > tail.count("<TABLE>"):
+                    # tail starts mid-table (past its own <TABLE> open
+                    # tag). Keep only what follows the one orphaned
+                    # close tag -- always the FIRST one, see docstring.
+                    current = tail.split("</TABLE>", 1)[-1]
+                else:
+                    current = tail
+                current_is_only_overlap = bool(current)
         else:
             # Adding this block would overflow — close out current chunk,
             # unless it's nothing but the untouched overlap tail (see

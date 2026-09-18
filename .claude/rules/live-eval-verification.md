@@ -4,6 +4,7 @@ paths:
   - "agent.py"
   - "retrieval.py"
   - "eval_harness.py"
+  - "chunk_documents.py"
 ---
 
 # Spot-check evals and live verification beyond TDD
@@ -23,10 +24,16 @@ construct by hand.
 **Rule**: after any change to `numeric_utils.py`, `agent.py`'s citation-
 verification functions (`verify_claims`, `collect_citation_warnings`,
 `_verify_one_claim`, and friends), `retrieval.py`'s ranking/rerank
-logic, or `eval_harness.py`'s `grade_judged`/`JUDGE_SYSTEM_PROMPT` (the
+logic, `eval_harness.py`'s `grade_judged`/`JUDGE_SYSTEM_PROMPT` (the
 LLM-as-judge grading itself — a prompt-wording change here can only be
 confirmed correct by a real judge call, same as any other prompt
-change; see the 2026-09-17 judge hypothetical-date fix), run a live
+change; see the 2026-09-17 judge hypothetical-date fix), or
+`chunk_documents.py`'s chunking logic (a change here reshapes the
+entire indexed corpus that every citation-grounding check reads from —
+see the 2026-09-17 orphaned-table-overlap fix, where full unit-test
+coverage confirmed the fix's logic but only a direct real-corpus
+inspection confirmed it actually repaired a live filing's chunk), run a
+live
 spot-check *in addition to* the unit-test/manual-verification-script
 step already required — at minimum a targeted
 `eval_harness.py --backend gemini --ids <affected-question-id(s)>`
