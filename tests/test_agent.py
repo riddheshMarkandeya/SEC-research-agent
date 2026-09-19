@@ -28,6 +28,7 @@ from agent import (
     call_get_financial_fact,
     collect_citation_warnings,
     _calculation_as_result,
+    _citation_header,
     _comparison_as_results,
     _normalize_for_match,
     _number_candidates,
@@ -46,6 +47,7 @@ from agent import (
     _resolve_search_args,
     _should_force_final_submit,
     _should_retry_for_citations,
+    _strip_citation_header,
     validate_tool_args,
     run_agent,
     value_is_citation_verified,
@@ -139,6 +141,16 @@ def test_format_results_block_numbers_from_start_index():
 def test_format_results_block_empty_results_returns_placeholder_text():
     block = _format_results_block([], start_index=1)
     assert "no matching filing excerpts" in block.lower()
+
+
+def test_citation_header_matches_format_results_block_output():
+    # _format_results_block and _strip_citation_header must reconstruct
+    # the identical header string, or the strip could never match what
+    # was actually shown to the model -- this pins that shared contract.
+    result = _fake_result(ticker="NVDA", form="10-Q", reportDate="2026-04-26")
+    header = _citation_header(1, result["metadata"])
+    assert header == "[1] NVDA 10-Q (reportDate=2026-04-26)"
+    assert _format_results_block([result], start_index=1) == f"{header}\n{result['text']}"
 
 
 # ---------------------------------------------------------------------------
@@ -3470,6 +3482,68 @@ def test_verify_claims_out_of_range_citation_index():
     assert warnings[0].check == "citation_out_of_range"
     assert warnings[0].citation_index == 5
     assert warnings[0].quote is None
+
+
+_NVDA_XBRL_SOURCE_TEXT = "revenue = 81615000000 USD (structured XBRL data, not filing prose)"
+
+
+def test_strip_citation_header_removes_an_exact_header_match():
+    # The real repro shape: a model's quote sometimes includes the
+    # numbered header _format_results_block() displays above each
+    # result's text, even though that header is never part of the
+    # underlying source text the quote gets grounded against.
+    meta = {"ticker": "NVDA", "form": "10-Q", "reportDate": "2026-04-26"}
+    quote = f"[1] NVDA 10-Q (reportDate=2026-04-26)\n{_NVDA_XBRL_SOURCE_TEXT}"
+    assert _strip_citation_header(quote, 1, meta) == _NVDA_XBRL_SOURCE_TEXT
+
+
+def test_strip_citation_header_leaves_a_quote_with_no_header_unchanged():
+    meta = {"ticker": "NVDA", "form": "10-Q", "reportDate": "2026-04-26"}
+    assert _strip_citation_header(_NVDA_XBRL_SOURCE_TEXT, 1, meta) == _NVDA_XBRL_SOURCE_TEXT
+
+
+def test_strip_citation_header_does_not_strip_a_similar_but_wrong_prefix():
+    # A different citation index's header, or a differently-shaped
+    # bracketed prefix, must not be mistaken for THIS citation's own
+    # header -- only an exact reconstruction is stripped.
+    meta = {"ticker": "NVDA", "form": "10-Q", "reportDate": "2026-04-26"}
+    quote = f"[2] NVDA 10-Q (reportDate=2026-04-26)\n{_NVDA_XBRL_SOURCE_TEXT}"
+    assert _strip_citation_header(quote, 1, meta) == quote
+
+
+def test_verify_claims_grounds_a_claim_whose_quote_includes_its_own_citation_header():
+    # End-to-end reproduction of the real nvda-crm-revenue-comparison
+    # baseline failure (eval/eval_results/20260919T003333Z.json): the
+    # model's quote for a get_financial_fact result included the
+    # numbered header shown above it, dragging quote-source coverage
+    # below the required threshold and causing a hard refusal on an
+    # otherwise fully-correct, fully-cited answer.
+    results = [_fake_result(ticker="NVDA", form="10-Q", reportDate="2026-04-26", text=_NVDA_XBRL_SOURCE_TEXT)]
+    claims = [_valid_submitted_claim(
+        value=81615000000, unit="raw", citation_index=1,
+        quote=f"[1] NVDA 10-Q (reportDate=2026-04-26)\n{_NVDA_XBRL_SOURCE_TEXT}",
+    )]
+    answer_text = "NVIDIA's revenue was $81,615,000,000 [1]."
+    assert verify_claims(claims, results, "q", answer_text) == []
+
+
+def test_verify_claims_records_the_raw_header_included_quote_when_grounding_still_fails():
+    # Caught in code review: the header must be stripped for the
+    # GROUNDING check, but a resulting CitationWarning must still show
+    # the model's RAW quote (header included), not the cleaned-up
+    # version -- otherwise a header-echo pattern becomes invisible in
+    # the warning trail for any case where grounding fails for some
+    # OTHER, unrelated reason, defeating the exact diagnostic purpose
+    # the earlier session's quote-capture fix (Fix B) was built for.
+    # Here the claimed value (999) genuinely isn't in the source at
+    # all, header stripped or not -- a real, unrelated grounding
+    # failure, not the header pattern itself.
+    raw_quote = f"[1] NVDA 10-Q (reportDate=2026-04-26)\n{_NVDA_XBRL_SOURCE_TEXT}"
+    results = [_fake_result(ticker="NVDA", form="10-Q", reportDate="2026-04-26", text=_NVDA_XBRL_SOURCE_TEXT)]
+    claims = [_valid_submitted_claim(value=999.0, unit="raw", citation_index=1, quote=raw_quote)]
+    warnings = verify_claims(claims, results, "q", "NVIDIA's revenue was $999 [1].")
+    assert len(warnings) == 1
+    assert warnings[0].quote == raw_quote
 
 
 def test_verify_claims_quote_too_short():

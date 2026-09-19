@@ -1,0 +1,23 @@
+{
+  "backend": "gemini",
+  "answer_model": "gemini-flash-lite-latest",
+  "judge_model": "gemini-flash-lite-latest",
+  "results": [
+    {
+      "id": "msft-segment-revenue-comparison-q3fy2026",
+      "ticker": "MSFT",
+      "question": "Which of Microsoft's three reportable segments \u2014 Productivity and Business Processes, Intelligent Cloud, or More Personal Computing \u2014 had the highest revenue for the three months ended March 31, 2026?",
+      "type": "judged",
+      "passed": false,
+      "detail": "The answer fails to identify Productivity and Business Processes as the segment with the highest revenue and incorrectly claims the data is not reported in the filing.",
+      "has_citation": true,
+      "citation_warnings": [],
+      "answer": "Based on Microsoft Corporation's Form 10-Q for the quarterly period ended March 31, 2026, the specific segment revenue figures for the three months ended March 31, 2026 are not reported as absolute dollar amounts in the segment results section of the filing (which provides percentage growth figures instead, such as Productivity and Business Processes revenue increasing 17% [2]). Therefore, the specific segment with the highest revenue for the three months ended March 31, 2026 cannot be determined from the available filing text.",
+      "n_chunks_retrieved": 25,
+      "withheld_answer": null,
+      "gate_withheld_would_have_passed": null,
+      "gate_withheld_detail": null,
+      "citation_warning_details": []
+    }
+  ]
+}

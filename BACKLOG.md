@@ -45,31 +45,30 @@ reference:
 
 ## Backlog
 
+### From the 2026-09-19 citation-header-in-quote fix
+
+Full evidence/reasoning: `docs/decisions/2026-09-19-citation-header-in-quote-fix.md`
+and its paired plan/review files.
+
+- [ ] **[bug (latent), Low, Trivial]** `_strip_citation_header`'s
+  exact-match-only design (deliberate — see the decision file) leaves
+  three related shapes unhandled, all confirmed via direct execution
+  during code review rather than merely hypothesized: (a) a doubled
+  header echo (the model repeats the header twice; only the first copy
+  is stripped, the second still drags coverage below threshold), (b) a
+  case-folded or otherwise reformatted echo (e.g. lowercased ticker,
+  `"ReportDate="` instead of `"reportDate="`), and (c) prose framing
+  before the header (e.g. `"Per [1] NVDA 10-Q (reportDate=...): ..."`)
+  — `.lstrip()` only removes whitespace, not preceding text. None
+  observed live yet; not fixed speculatively per this project's
+  practice. Revisit if any of these three shapes is ever observed in a
+  real eval failure.
+
 ### From the 2026-09-18 flaky-eval-questions three-fix session
 
 Full evidence/reasoning: `docs/decisions/2026-09-18-flaky-eval-questions-three-fixes.md`
 and its paired plan/review files.
 
-- [ ] **[bug (latent), Med, Standard]** A model's "quote" for a
-  `get_financial_fact`/`calculate` result appears to include
-  `_format_results_block`'s own display-time citation header (e.g.
-  `"[1] NVDA 10-Q (reportDate=2026-04-26)\nrevenue = 81615000000 USD
-  (structured XBRL data, not filing prose)"`) rather than just the
-  underlying source text — but the header is never part of
-  `all_results[n-1]["text"]` itself (it's added only when
-  `_format_results_block` renders results for display), so a quote
-  that includes it can never verbatim-match and gets refused as
-  `quote_not_found` even though the value is genuinely present.
-  Directly observed live on `nvda-crm-revenue-comparison`'s
-  2026-09-18 baseline failure (`eval/eval_results/20260919T003333Z.json`),
-  made visible only because Fix B (this session) added quote-text
-  capture to `CitationWarning`. Possibly a contributing factor in
-  `msft-segment-revenue-comparison-q3fy2026`'s long-unresolved history
-  too, but not confirmed there specifically — don't assume the
-  connection without a repro showing the same header-inclusion shape
-  on that question. Needs a decision: strip the header from a claim's
-  quote before grounding it against `source_text`, or instruct the
-  model (rule 9) to quote only the line after the header.
 - [ ] **[feature, Low, TBD]** The prose-fallback citation path
   (`_iter_citation_claims`/`_iter_uncited_claims`/
   `collect_citation_warnings`, Ollama's only path and Gemini's

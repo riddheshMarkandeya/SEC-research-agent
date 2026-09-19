@@ -1,0 +1,27 @@
+{
+  "backend": "gemini",
+  "answer_model": "gemini-flash-lite-latest",
+  "judge_model": "gemini-flash-lite-latest",
+  "results": [
+    {
+      "id": "msft-segment-revenue-comparison-q3fy2026",
+      "ticker": "MSFT",
+      "question": "Which of Microsoft's three reportable segments \u2014 Productivity and Business Processes, Intelligent Cloud, or More Personal Computing \u2014 had the highest revenue for the three months ended March 31, 2026?",
+      "type": "judged",
+      "passed": false,
+      "detail": "The AI assistant refused to answer the question instead of identifying the segment with the highest revenue and providing a citation.",
+      "has_citation": false,
+      "citation_warnings": [
+        "claims 35932.0 (million) but no claim in your submit_answer call covers it",
+        "claims 30705.0 (million) but no claim in your submit_answer call covers it",
+        "claims 5112.0 (million) but no claim in your submit_answer call covers it"
+      ],
+      "answer": "I can't confirm this answer against the sources I retrieved -- the following claim(s) don't hold up under citation verification:\n- claims 35932.0 (million) but no claim in your submit_answer call covers it\n- claims 30705.0 (million) but no claim in your submit_answer call covers it\n- claims 5112.0 (million) but no claim in your submit_answer call covers it\n\nRather than give you a number I can't verify, I'm refusing this answer.",
+      "n_chunks_retrieved": 25,
+      "withheld_answer": null,
+      "gate_withheld_would_have_passed": null,
+      "gate_withheld_detail": null,
+      "citation_warning_details": []
+    }
+  ]
+}

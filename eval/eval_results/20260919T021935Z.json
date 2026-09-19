@@ -1,0 +1,26 @@
+{
+  "backend": "gemini",
+  "answer_model": "gemini-flash-lite-latest",
+  "judge_model": "gemini-flash-lite-latest",
+  "results": [
+    {
+      "id": "nvda-crm-revenue-comparison",
+      "ticker": [
+        "NVDA",
+        "CRM"
+      ],
+      "question": "Compare NVIDIA's total revenue for the quarter ended April 26, 2026 to Salesforce's total revenue for the quarter ended April 30, 2026.",
+      "type": "comparison",
+      "passed": true,
+      "detail": "found matching values for all 2 entities",
+      "has_citation": true,
+      "citation_warnings": [],
+      "answer": "For the quarter ended April 26, 2026, NVIDIA reported total revenue of $81,615,000,000 [1]. For the quarter ended April 30, 2026, Salesforce reported total revenue of $11,133,000,000 [2]. NVIDIA's revenue was approximately 7.33 times that of Salesforce for their respective comparable quarters (computed as $81,615,000,000 \u00f7 $11,133,000,000 = 7.33) [3].",
+      "n_chunks_retrieved": 3,
+      "withheld_answer": null,
+      "gate_withheld_would_have_passed": null,
+      "gate_withheld_detail": null,
+      "citation_warning_details": []
+    }
+  ]
+}

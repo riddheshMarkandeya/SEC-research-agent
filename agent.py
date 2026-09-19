@@ -461,6 +461,16 @@ def _resolve_search_args(
     return args.get("query") or fallback_query, ticker
 
 
+def _citation_header(i: int, meta: dict) -> str:
+    """The exact citation header text _format_results_block() shows the
+    model above result [i]'s own text. Shared with
+    _strip_citation_header() below so the two can never independently
+    drift out of sync if this format ever changes -- the strip has to
+    reconstruct precisely what the model was actually shown, not a
+    close guess."""
+    return f"[{i}] {meta['ticker']} {meta['form']} (reportDate={meta['reportDate']})"
+
+
 def _format_results_block(results: list[dict], start_index: int) -> str:
     """Format one search call's results as numbered excerpts, continuing
     the numbering from start_index rather than restarting at [1] — so
@@ -472,8 +482,7 @@ def _format_results_block(results: list[dict], start_index: int) -> str:
     blocks = []
     for offset, r in enumerate(results):
         i = start_index + offset
-        meta = r["metadata"]
-        header = f"[{i}] {meta['ticker']} {meta['form']} (reportDate={meta['reportDate']})"
+        header = _citation_header(i, r["metadata"])
         blocks.append(f"{header}\n{r['text']}")
     return "\n\n".join(blocks)
 
@@ -1693,6 +1702,39 @@ def _quote_grounded_in_source(value: float, unit: str, quote: str, source_text: 
     return _quote_matches(quote, source_text)
 
 
+_ClaimQuote = NamedTuple("_ClaimQuote", [("raw", str), ("grounding", str)])
+# Bundles a claim's model-echoed quote with its header-stripped
+# counterpart into one value, so _verify_numeric_claim/
+# _verify_qualitative_claim (which need both -- grounding checks run
+# against `.grounding`, any returned CitationWarning records `.raw`)
+# take one parameter instead of two, keeping both under this project's
+# ruff PLR0913 argument-count limit.
+
+
+def _strip_citation_header(quote: str, n: int, meta: dict) -> str:
+    """A model's quote for a submit_answer claim sometimes includes the
+    numbered citation header _format_results_block() displays directly
+    above result [n]'s own text (e.g. "[1] NVDA 10-Q
+    (reportDate=2026-04-26)"), even though that header is never part of
+    the underlying source text (all_results[n-1]["text"]) the quote is
+    grounded against -- it's added only when results are rendered for
+    the model to read. A quote that includes it can never reach the 90%
+    coverage _quote_matches() requires, however genuinely the rest of
+    it matches, so it's stripped here before any grounding check runs.
+
+    Reconstructs the exact header from this claim's OWN citation index
+    and metadata (via _citation_header, not a generic regex), and only
+    strips an exact match -- a source chunk that coincidentally starts
+    with bracket-shaped text is never mistakenly stripped, and a
+    reformatted/case-folded copy of a real header is deliberately left
+    alone rather than guessed at (unproven live, so not chased)."""
+    header = _citation_header(n, meta)
+    stripped = quote.lstrip()
+    if not stripped.startswith(header):
+        return quote
+    return stripped.removeprefix(header).lstrip()
+
+
 def _verify_one_claim(claim: dict, all_results: list[dict]) -> "CitationWarning | None":
     """Checks one submit_answer claim against its own cited source, then
     dispatches to _verify_numeric_claim or _verify_qualitative_claim
@@ -1722,13 +1764,17 @@ def _verify_one_claim(claim: dict, all_results: list[dict]) -> "CitationWarning 
             quote=None,
         )
     source_text = all_results[n - 1]["text"]
+    grounding_quote = _strip_citation_header(quote, n, all_results[n - 1]["metadata"])
+    quote_pair = _ClaimQuote(raw=quote, grounding=grounding_quote)
     if value is None:
-        return _verify_qualitative_claim(n, quote, source_text)
+        return _verify_qualitative_claim(n, quote_pair, source_text)
     assert unit is not None  # the (value is None) != (unit is None) check above already ruled this out
-    return _verify_numeric_claim(n, value, unit, quote, source_text)
+    return _verify_numeric_claim(n, value, unit, quote_pair, source_text)
 
 
-def _verify_numeric_claim(n: int, value: float, unit: str, quote: str, source_text: str) -> "CitationWarning | None":
+def _verify_numeric_claim(
+    n: int, value: float, unit: str, quote: "_ClaimQuote", source_text: str
+) -> "CitationWarning | None":
     """Checks a claim already known to state a real (value, unit): quote
     long enough to mean anything, quote genuinely present in that source
     (_quote_grounded_in_source -- see its own docstring for the
@@ -1737,28 +1783,37 @@ def _verify_numeric_claim(n: int, value: float, unit: str, quote: str, source_te
     using the FULL source chunk as unit_source so a caption-only unit
     still resolves -- see that function's own docstring). Returns None
     when all three pass. Checked in this order deliberately: each later
-    check assumes the earlier ones already held."""
-    if not _quote_is_long_enough(_normalize_for_match(quote)):
+    check assumes the earlier ones already held.
+
+    `quote.grounding` (the model's quote, with any leading citation-
+    header echo already stripped by the caller) is what every check
+    below runs against; `quote.raw` (the model's raw, unmodified text)
+    is what gets recorded on any returned CitationWarning instead, so a
+    header-echo pattern stays visible for future debugging even when
+    grounding still fails for some unrelated reason -- silently
+    swapping in the cleaned-up version would erase the exact signal
+    this stripping logic exists to surface in the first place."""
+    if not _quote_is_long_enough(_normalize_for_match(quote.grounding)):
         return CitationWarning(
             check="quote_too_short",
             citation_index=n,
             value=value,
             unit=unit,
-            message=f"[{n}] claims {value} ({unit}) but its quote {quote!r} is too short to verify",
-            quote=quote,
+            message=f"[{n}] claims {value} ({unit}) but its quote {quote.raw!r} is too short to verify",
+            quote=quote.raw,
         )
-    if not _quote_grounded_in_source(value, unit, quote, source_text):
+    if not _quote_grounded_in_source(value, unit, quote.grounding, source_text):
         return CitationWarning(
             check="quote_not_found",
             citation_index=n,
             value=value,
             unit=unit,
             message=f"[{n}] claims {value} ({unit}) but the quoted text doesn't appear in source [{n}]",
-            quote=quote,
+            quote=quote.raw,
         )
     category, norm = normalize(value, unit)
     tolerance = max(0.01 * abs(norm), 0.05)
-    quote_candidates = _number_candidates(quote, unit_source=source_text)
+    quote_candidates = _number_candidates(quote.grounding, unit_source=source_text)
     if not any(c == category and abs(v - norm) <= tolerance for c, v in quote_candidates):
         return CitationWarning(
             check="value_not_in_quote",
@@ -1766,12 +1821,12 @@ def _verify_numeric_claim(n: int, value: float, unit: str, quote: str, source_te
             value=value,
             unit=unit,
             message=f"[{n}] claims {value} ({unit}) but that value doesn't appear in the quoted text",
-            quote=quote,
+            quote=quote.raw,
         )
     return None
 
 
-def _verify_qualitative_claim(n: int, quote: str, source_text: str) -> "CitationWarning | None":
+def _verify_qualitative_claim(n: int, quote: "_ClaimQuote", source_text: str) -> "CitationWarning | None":
     """Checks a claim with no real value to ground (a citation marker
     supporting a purely qualitative fact, e.g. a risk-factor bullet):
     quote long enough to mean anything, and quote genuinely present in
@@ -1782,24 +1837,29 @@ def _verify_qualitative_claim(n: int, quote: str, source_text: str) -> "Citation
     rubber stamp: a fabricated qualitative citation (a quote that isn't
     actually in the cited source) is caught here, which it silently
     wouldn't have been under the older `claims: []` fallback for a fully
-    qualitative answer."""
-    if not _quote_is_long_enough(_normalize_for_match(quote)):
+    qualitative answer.
+
+    `quote.grounding`/`quote.raw` split: see _verify_numeric_claim's own
+    docstring -- same reasoning, checks run against the header-stripped
+    `quote.grounding`, but the model's raw `quote.raw` is what's
+    recorded on any returned CitationWarning."""
+    if not _quote_is_long_enough(_normalize_for_match(quote.grounding)):
         return CitationWarning(
             check="quote_too_short",
             citation_index=n,
             value=None,
             unit=None,
-            message=f"[{n}]'s quote {quote!r} is too short to verify",
-            quote=quote,
+            message=f"[{n}]'s quote {quote.raw!r} is too short to verify",
+            quote=quote.raw,
         )
-    if not _quote_matches(quote, source_text):
+    if not _quote_matches(quote.grounding, source_text):
         return CitationWarning(
             check="qualitative_quote_not_found",
             citation_index=n,
             value=None,
             unit=None,
             message=f"[{n}]'s quote doesn't appear in source [{n}]",
-            quote=quote,
+            quote=quote.raw,
         )
     return None
 
