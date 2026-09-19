@@ -1,0 +1,23 @@
+{
+  "backend": "gemini",
+  "answer_model": "gemini-flash-lite-latest",
+  "judge_model": "gemini-flash-lite-latest",
+  "results": [
+    {
+      "id": "aapl-operating-margin-q3fy2026",
+      "ticker": "AAPL",
+      "question": "What was Apple's operating margin for the three months ended June 27, 2026?",
+      "type": "numeric",
+      "passed": true,
+      "detail": "found matching value: 32.6 (percent)",
+      "has_citation": false,
+      "citation_warnings": [],
+      "answer": "Apple's operating margin for the three months ended June 27, 2026, was 32.6%, computed as operating income of $35,695 million divided by total net sales of $109,417 million [2, 7].",
+      "n_chunks_retrieved": 7,
+      "withheld_answer": null,
+      "gate_withheld_would_have_passed": null,
+      "gate_withheld_detail": null,
+      "citation_warning_details": []
+    }
+  ]
+}

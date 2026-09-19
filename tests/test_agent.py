@@ -113,7 +113,7 @@ def test_resolve_search_args_empty_args_falls_back_entirely():
 # _format_results_block
 # ---------------------------------------------------------------------------
 def _fake_result(ticker="CRM", form="10-K", reportDate="2026-01-31", text="Some chunk text.",
-                  filingDate="2026-03-02", accessionNumber="0001108524-26-000060", chunk_index=95):
+                  filingDate="2026-03-02", accessionNumber="0001108524-26-000060", chunk_index: int | str = 95):
     return {
         "text": text,
         "metadata": {
@@ -2412,6 +2412,7 @@ def test_run_agent_citation_retry_exhausting_budget_returns_pre_retry_answer_not
                 value=100.0,
                 unit="raw",
                 message="[1] claims 100.0 ... doesn't appear",
+                quote=None,
             )
         ],
     )
@@ -2459,6 +2460,7 @@ def test_run_agent_citation_retry_not_attempted_for_ollama_backend(monkeypatch):
                 value=100.0,
                 unit="raw",
                 message="[1] claims 100.0 ... doesn't appear",
+                quote=None,
             )
         ],
     )
@@ -2490,6 +2492,7 @@ def test_run_agent_refuses_when_ollama_answer_has_unverified_citation(monkeypatc
                 value=100.0,
                 unit="raw",
                 message="[1] claims 100.0 ... doesn't appear",
+                quote=None,
             )
         ],
     )
@@ -2706,6 +2709,7 @@ def test_run_agent_refuses_when_gemini_retry_still_leaves_unverified_citation(mo
                 value=105.0,
                 unit="billion",
                 message=f"[1] claims from: {answer}",
+                quote=None,
             )
         ],
     )
@@ -2782,7 +2786,12 @@ def test_run_agent_submit_answer_bad_claims_retries_on_gemini_then_succeeds(monk
         [
             [
                 CitationWarning(
-                    check="quote_not_found", citation_index=1, value=100.0, unit="raw", message="[1] quote not found"
+                    check="quote_not_found",
+                    citation_index=1,
+                    value=100.0,
+                    unit="raw",
+                    message="[1] quote not found",
+                    quote=None,
                 )
             ],
             [],
@@ -2811,7 +2820,14 @@ def test_run_agent_submit_answer_bad_claims_refuses_immediately_on_ollama(monkey
     monkeypatch.setattr(
         "agent.verify_claims",
         lambda claims, all_results, question, answer_text: [
-            CitationWarning(check="quote_not_found", citation_index=1, value=100.0, unit="raw", message="[1] quote not found")
+            CitationWarning(
+                check="quote_not_found",
+                citation_index=1,
+                value=100.0,
+                unit="raw",
+                message="[1] quote not found",
+                quote=None,
+            )
         ],
     )
 
@@ -2997,7 +3013,11 @@ def test_run_agent_submit_answer_retry_exhausting_budget_reverifies_against_curr
         return (
             []
             if len(all_results) > 0
-            else [CitationWarning(check="quote_not_found", citation_index=1, value=100.0, unit="raw", message="bad")]
+            else [
+                CitationWarning(
+                    check="quote_not_found", citation_index=1, value=100.0, unit="raw", message="bad", quote=None
+                )
+            ]
         )
 
     monkeypatch.setattr("agent.verify_claims", fake_verify_claims)
@@ -3055,6 +3075,7 @@ def test_run_agent_does_not_send_withheld_answer_to_the_span(monkeypatch):
                 value=100.0,
                 unit="raw",
                 message="[1] claims 100.0 ... doesn't appear",
+                quote=None,
             )
         ],
     )
@@ -3093,6 +3114,7 @@ def test_finalize_answer_refuses_when_warnings_present():
             value=100.0,
             unit="raw",
             message="[1] claims 100.0 ... doesn't appear",
+            quote=None,
         )
     ]
     result = _finalize_answer("the answer", warnings, ["result"], backend="ollama", retried=False)
@@ -3112,7 +3134,12 @@ def test_finalize_answer_refuses_when_warnings_present():
 def test_finalize_answer_returns_the_withheld_answer_when_refusing():
     warnings = [
         CitationWarning(
-            check="uncited_claim", citation_index=None, value=4.0, unit="percent", message="claims 4.0 (percent)..."
+            check="uncited_claim",
+            citation_index=None,
+            value=4.0,
+            unit="percent",
+            message="claims 4.0 (percent)...",
+            quote=None,
         )
     ]
     result = _finalize_answer("the model's answer", warnings, [], backend="gemini", retried=True)
@@ -3146,15 +3173,30 @@ def test_finalize_answer_citation_warning_details_matches_the_actual_warnings():
     # A structured-path check value (quote_not_found) that the OLD prose
     # checker (collect_citation_warnings) could never produce -- proves
     # this field comes from the warnings _finalize_answer was actually
-    # given, not from re-deriving via the prose pipeline.
+    # given, not from re-deriving via the prose pipeline. Also the
+    # `quote` field's own presence in the resulting dict, proving it
+    # survives the CitationWarning -> _asdict() -> report JSON path
+    # unmodified (see Fix B's docstring rationale on verify_claims).
     warnings = [
         CitationWarning(
-            check="quote_not_found", citation_index=2, value=42.0, unit="million", message="[2] quote not found"
+            check="quote_not_found",
+            citation_index=2,
+            value=42.0,
+            unit="million",
+            message="[2] quote not found",
+            quote="the model's claimed quote text",
         )
     ]
     result = _finalize_answer("the answer", warnings, [], backend="gemini", retried=False)
     assert result.citation_warning_details == [
-        {"check": "quote_not_found", "citation_index": 2, "value": 42.0, "unit": "million", "message": "[2] quote not found"}
+        {
+            "check": "quote_not_found",
+            "citation_index": 2,
+            "value": 42.0,
+            "unit": "million",
+            "message": "[2] quote not found",
+            "quote": "the model's claimed quote text",
+        }
     ]
 
 
@@ -3163,10 +3205,20 @@ def test_finalize_answer_logs_citation_gate_refused_with_check_counts(monkeypatc
     monkeypatch.setattr("agent.log_event", lambda category, **fields: log_calls.append((category, fields)))
     warnings = [
         CitationWarning(
-            check="cited_claim_unsupported", citation_index=1, value=100.0, unit="raw", message="[1] claims 100.0..."
+            check="cited_claim_unsupported",
+            citation_index=1,
+            value=100.0,
+            unit="raw",
+            message="[1] claims 100.0...",
+            quote=None,
         ),
         CitationWarning(
-            check="uncited_claim", citation_index=None, value=4.0, unit="percent", message="claims 4.0 (percent)..."
+            check="uncited_claim",
+            citation_index=None,
+            value=4.0,
+            unit="percent",
+            message="claims 4.0 (percent)...",
+            quote=None,
         ),
     ]
     _finalize_answer("the model's answer", warnings, ["result"], backend="gemini", retried=True)
@@ -3417,6 +3469,7 @@ def test_verify_claims_out_of_range_citation_index():
     assert len(warnings) == 1
     assert warnings[0].check == "citation_out_of_range"
     assert warnings[0].citation_index == 5
+    assert warnings[0].quote is None
 
 
 def test_verify_claims_quote_too_short():
@@ -3425,6 +3478,7 @@ def test_verify_claims_quote_too_short():
     warnings = verify_claims(claims, results, "q", "The value was 100 [1].")
     assert len(warnings) == 1
     assert warnings[0].check == "quote_too_short"
+    assert warnings[0].quote == "100"
 
 
 def test_verify_claims_quote_not_found():
@@ -3433,6 +3487,7 @@ def test_verify_claims_quote_not_found():
     warnings = verify_claims(claims, results, "q", "The value was 100 [1].")
     assert len(warnings) == 1
     assert warnings[0].check == "quote_not_found"
+    assert warnings[0].quote == "the reported value for the period was exactly 100"
 
 
 def test_verify_claims_value_not_in_quote():
@@ -3445,6 +3500,7 @@ def test_verify_claims_value_not_in_quote():
     warnings = verify_claims(claims, results, "q", "Revenue was $200 million [1].")
     assert len(warnings) == 1
     assert warnings[0].check == "value_not_in_quote"
+    assert warnings[0].quote == "Revenue was $100 million in Q1"
 
 
 # ---------------------------------------------------------------------------
@@ -3479,6 +3535,7 @@ def test_verify_claims_qualitative_claim_with_fabricated_quote_is_caught():
     assert warnings[0].check == "qualitative_quote_not_found"
     assert warnings[0].value is None
     assert warnings[0].unit is None
+    assert warnings[0].quote == "the reported value for the period was exactly 100"
 
 
 def test_verify_claims_qualitative_claim_quote_too_short():
@@ -3488,6 +3545,7 @@ def test_verify_claims_qualitative_claim_quote_too_short():
     assert len(warnings) == 1
     assert warnings[0].check == "quote_too_short"
     assert "None" not in warnings[0].message
+    assert warnings[0].quote == "100"
 
 
 def test_verify_claims_malformed_claim_value_without_unit_does_not_crash():
@@ -3569,6 +3627,7 @@ def test_verify_claims_uncovered_number_in_answer_text():
     assert len(warnings) == 1
     assert warnings[0].check == "uncovered_number"
     assert warnings[0].value == 50.0
+    assert warnings[0].quote is None
 
 
 def test_verify_claims_multi_index_citation_bracket_digits_not_treated_as_uncovered_numbers():
@@ -3605,6 +3664,88 @@ def test_verify_claims_question_echo_exempts_a_number_from_coverage():
     question = "What was Apple's 3-year average operating margin from fiscal year 2023 through fiscal year 2025?"
     answer_text = "I can't confirm a 3-year average from the sources provided."
     assert verify_claims(claims, results, question, answer_text) == []
+
+
+def test_verify_claims_calculate_operand_exempts_a_number_from_coverage():
+    # Rule 9 tells the model to show a calculate-derived value's
+    # computation inline for readability (e.g. "computed as $35,695
+    # million ... divided by $109,417 million ... = 32.6%"), but the
+    # operands restated that way have no claims entry of their own.
+    # They shouldn't need one: _ground_operand already verified both
+    # against a real cited source at calculate-call time, and that
+    # calculation's own all_results entry (chunk_index="calculated")
+    # already records both operands in directly-extractable text -- see
+    # _calculation_as_result. The final derived value (32.6%) is
+    # covered normally via its own claim citing that same entry.
+    calculated_entry = _fake_result(
+        text=(
+            "35695 million as a percentage of 109417 million = 32.6 percent "
+            "(computed value, not directly stated in any filing; operands from results [1] and [2])"
+        ),
+        chunk_index="calculated",
+    )
+    results = [_fake_result(text="operating income"), _fake_result(text="total net sales"), calculated_entry]
+    claims = [
+        {
+            "value": 32.6,
+            "unit": "percent",
+            "citation_index": 3,
+            "quote": "35695 million as a percentage of 109417 million = 32.6 percent",
+        }
+    ]
+    answer_text = (
+        "Apple's operating margin was computed as $35,695 million in operating income divided by "
+        "$109,417 million in total net sales, resulting in an operating margin of 32.6% [3]."
+    )
+    assert verify_claims(claims, results, "q", answer_text) == []
+
+
+def test_verify_claims_calculate_entry_citation_brackets_not_treated_as_operand_values():
+    # _calculation_as_result's text always ends with "...operands from
+    # results [N] and [M])" -- those bracketed indices must NOT be
+    # extracted as operand values themselves (and, since a unit word
+    # like "million" also appears in the same text, must not get
+    # scaled up into bogus million-scale candidates either). A citation
+    # index deliberately chosen to also be a plausible raw claim value.
+    calculated_entry = _fake_result(
+        text=(
+            "35695 million as a percentage of 109417 million = 32.6 percent "
+            "(computed value, not directly stated in any filing; operands from results [3] and [5])"
+        ),
+        chunk_index="calculated",
+    )
+    results = [_fake_result(text="a"), _fake_result(text="b"), calculated_entry]
+    claims = []
+    # Genuinely uncovered claims matching the citation-index digits,
+    # bare and scaled -- must still be flagged, not swallowed by the
+    # calculated-entry exemption pool.
+    answer_text = "The filing separately mentions 3 and 5 million unrelated units."
+    warnings = verify_claims(claims, results, "q", answer_text)
+    flagged = {(w.value, w.unit) for w in warnings if w.check == "uncovered_number"}
+    assert (3.0, "raw") in flagged
+    assert (5.0, "million") in flagged
+
+
+def test_verify_claims_calculate_entry_exemption_does_not_cover_the_result_itself():
+    # Caught live in code review: an earlier version of this exemption
+    # extracted every number from the calculated entry's FULL text,
+    # which included the derived RESULT (32.6 percent), not just its
+    # two operands -- silently letting the model state the final value
+    # with no claims entry of its own at all. Only the operands (before
+    # the entry's own "=") are exempt; the result must still earn
+    # coverage through a real claims entry, same as any other value.
+    calculated_entry = _fake_result(
+        text=(
+            "35695 million as a percentage of 109417 million = 32.6 percent "
+            "(computed value, not directly stated in any filing; operands from results [1] and [2])"
+        ),
+        chunk_index="calculated",
+    )
+    results = [_fake_result(text="a"), _fake_result(text="b"), calculated_entry]
+    claims = []  # no claims entry for 32.6% at all
+    answer_text = "The operating margin was 32.6%."
+    warnings = verify_claims(claims, results, "q", answer_text)
+    assert any(w.check == "uncovered_number" and w.value == 32.6 for w in warnings)
 
 
 def test_verify_claims_non_claim_noise_in_answer_text_is_not_flagged():
@@ -3916,8 +4057,12 @@ def test_verify_claims_rejects_nvidia_graphics_mislabel_of_computes_value():
 # ---------------------------------------------------------------------------
 def test_format_claim_retry_message_includes_each_warning():
     warnings = [
-        CitationWarning(check="quote_not_found", citation_index=1, value=100.0, unit="raw", message="[1] quote missing"),
-        CitationWarning(check="value_not_in_quote", citation_index=2, value=42.0, unit="raw", message="[2] value missing"),
+        CitationWarning(
+            check="quote_not_found", citation_index=1, value=100.0, unit="raw", message="[1] quote missing", quote=None
+        ),
+        CitationWarning(
+            check="value_not_in_quote", citation_index=2, value=42.0, unit="raw", message="[2] value missing", quote=None
+        ),
     ]
     message = _format_claim_retry_message("the answer", warnings)
     assert "[1] quote missing" in message

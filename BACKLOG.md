@@ -45,6 +45,43 @@ reference:
 
 ## Backlog
 
+### From the 2026-09-18 flaky-eval-questions three-fix session
+
+Full evidence/reasoning: `docs/decisions/2026-09-18-flaky-eval-questions-three-fixes.md`
+and its paired plan/review files.
+
+- [ ] **[bug (latent), Med, Standard]** A model's "quote" for a
+  `get_financial_fact`/`calculate` result appears to include
+  `_format_results_block`'s own display-time citation header (e.g.
+  `"[1] NVDA 10-Q (reportDate=2026-04-26)\nrevenue = 81615000000 USD
+  (structured XBRL data, not filing prose)"`) rather than just the
+  underlying source text — but the header is never part of
+  `all_results[n-1]["text"]` itself (it's added only when
+  `_format_results_block` renders results for display), so a quote
+  that includes it can never verbatim-match and gets refused as
+  `quote_not_found` even though the value is genuinely present.
+  Directly observed live on `nvda-crm-revenue-comparison`'s
+  2026-09-18 baseline failure (`eval/eval_results/20260919T003333Z.json`),
+  made visible only because Fix B (this session) added quote-text
+  capture to `CitationWarning`. Possibly a contributing factor in
+  `msft-segment-revenue-comparison-q3fy2026`'s long-unresolved history
+  too, but not confirmed there specifically — don't assume the
+  connection without a repro showing the same header-inclusion shape
+  on that question. Needs a decision: strip the header from a claim's
+  quote before grounding it against `source_text`, or instruct the
+  model (rule 9) to quote only the line after the header.
+- [ ] **[feature, Low, TBD]** The prose-fallback citation path
+  (`_iter_citation_claims`/`_iter_uncited_claims`/
+  `collect_citation_warnings`, Ollama's only path and Gemini's
+  last-resort fallback) has no `quote`-equivalent to capture the way
+  the structured-claims path now does (Fix B) — it works by extracting
+  bare numbers from a text window before a `[n]` marker, never asking
+  for an explicit quote. Extending it would mean threading
+  `_iter_citation_claims`'s already-computed `window` text out through
+  a generator-signature change. Lower priority than the structured-path
+  gap Fix B closed: no currently-tracked flaky question's root cause is
+  blocked on this specifically.
+
 ### From the 2026-09-17 orphaned-table-overlap chunking fix
 
 Full evidence/reasoning: `docs/decisions/2026-09-17-fix-orphaned-table-overlap-chunking.md`

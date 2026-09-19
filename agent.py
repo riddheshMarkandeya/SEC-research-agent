@@ -1507,6 +1507,7 @@ CitationWarning = NamedTuple(
         ("value", float | None),  # None for a qualitative claim, which has no real value to report
         ("unit", str | None),  # None for a qualitative claim, which has no real unit to report
         ("message", str),  # the exact string verify_citations() has always returned for this warning
+        ("quote", str | None),  # the claimed quote text for a quote-grounding check; None otherwise
     ],
 )
 
@@ -1569,6 +1570,7 @@ def collect_citation_warnings(answer_text: str, all_results: list[dict]) -> list
                 value=value,
                 unit=unit,
                 message=f"[{n}] claims {value} ({unit}) but that value doesn't appear in the cited source",
+                quote=None,
             )
         )
     for value, unit in _iter_uncited_claims(answer_text):
@@ -1586,6 +1588,7 @@ def collect_citation_warnings(answer_text: str, all_results: list[dict]) -> list
                     f"claims {value} ({unit}) but no citation marker appears anywhere "
                     "near it to trace the claim to a source"
                 ),
+                quote=None,
             )
         )
     return warnings
@@ -1707,6 +1710,7 @@ def _verify_one_claim(claim: dict, all_results: list[dict]) -> "CitationWarning 
             value=value,
             unit=unit,
             message=f"[{n}] is not a valid citation index -- results are numbered 1-{len(all_results)}",
+            quote=None,
         )
     if (value is None) != (unit is None):
         return CitationWarning(
@@ -1715,6 +1719,7 @@ def _verify_one_claim(claim: dict, all_results: list[dict]) -> "CitationWarning 
             value=value,
             unit=unit,
             message=f"[{n}] must include BOTH value and unit for a numeric claim, or omit both for a qualitative one",
+            quote=None,
         )
     source_text = all_results[n - 1]["text"]
     if value is None:
@@ -1740,6 +1745,7 @@ def _verify_numeric_claim(n: int, value: float, unit: str, quote: str, source_te
             value=value,
             unit=unit,
             message=f"[{n}] claims {value} ({unit}) but its quote {quote!r} is too short to verify",
+            quote=quote,
         )
     if not _quote_grounded_in_source(value, unit, quote, source_text):
         return CitationWarning(
@@ -1748,6 +1754,7 @@ def _verify_numeric_claim(n: int, value: float, unit: str, quote: str, source_te
             value=value,
             unit=unit,
             message=f"[{n}] claims {value} ({unit}) but the quoted text doesn't appear in source [{n}]",
+            quote=quote,
         )
     category, norm = normalize(value, unit)
     tolerance = max(0.01 * abs(norm), 0.05)
@@ -1759,6 +1766,7 @@ def _verify_numeric_claim(n: int, value: float, unit: str, quote: str, source_te
             value=value,
             unit=unit,
             message=f"[{n}] claims {value} ({unit}) but that value doesn't appear in the quoted text",
+            quote=quote,
         )
     return None
 
@@ -1782,6 +1790,7 @@ def _verify_qualitative_claim(n: int, quote: str, source_text: str) -> "Citation
             value=None,
             unit=None,
             message=f"[{n}]'s quote {quote!r} is too short to verify",
+            quote=quote,
         )
     if not _quote_matches(quote, source_text):
         return CitationWarning(
@@ -1790,6 +1799,7 @@ def _verify_qualitative_claim(n: int, quote: str, source_text: str) -> "Citation
             value=None,
             unit=None,
             message=f"[{n}]'s quote doesn't appear in source [{n}]",
+            quote=quote,
         )
     return None
 
@@ -1823,7 +1833,33 @@ def verify_claims(claims: list[dict], all_results: list[dict], question: str, an
     accepted tradeoff, see the decision file above. `_NON_CLAIM_PATTERN`
     (dates, bare years, 10-K/10-Q, Note N, N-year/N-day) is stripped from
     both `question` and `answer_text` before extraction, same noise
-    filter collect_citation_warnings() already relies on."""
+    filter collect_citation_warnings() already relies on.
+
+    A number matching an operand of a `calculate` call that already
+    succeeded this turn is also exempt: rule 9 tells the model to show
+    a calculate-derived value's computation inline for readability
+    (e.g. "computed as $35,695 million ... divided by $109,417 million
+    ... = 32.6%"), and those restated operands were already verified
+    against a real cited source by `_ground_operand` at calculate-call
+    time -- they're not a new, unverified assertion. A successful
+    `calculate` call's own `all_results` entry (`chunk_index ==
+    "calculated"`, see `_calculation_as_result`) already renders both
+    operands in directly re-extractable text, so no new state needs to
+    be threaded in from the tool-dispatch loop -- `all_results` is
+    already this function's own parameter.
+
+    Only the text BEFORE that entry's own "=" is used, deliberately
+    excluding the RESULT value that follows it: an earlier version of
+    this exemption extracted from the entry's full text, which meant
+    the derived value itself (not just its operands) was silently
+    exempt from ever needing its own `claims` entry at all -- caught
+    live, by direct call, in code review. The result must still earn
+    coverage the normal way, same as any other claimed value. Citation-
+    bracket text is also stripped before extraction, guarding the same
+    hazard `answer_numbers`'s own `_ANY_CITATION_BRACKET` strip below
+    exists for -- belt-and-suspenders, since the bracketed "operands
+    from results [N] and [M])" text only ever appears after "=" and so
+    is already excluded by the split above on today's exact rendering."""
     warnings = [w for w in (_verify_one_claim(c, all_results) for c in claims) if w is not None]
 
     # Qualitative and malformed claims (see _verify_one_claim) have no
@@ -1839,6 +1875,15 @@ def verify_claims(claims: list[dict], all_results: list[dict], question: str, an
     # _CITATION_MARKER) specifically to also catch the multi-index form
     # -- see that constant's own comment.
     answer_numbers = extract_numbers(_NON_CLAIM_PATTERN.sub("", _ANY_CITATION_BRACKET.sub("", answer_text)))
+    calculated_candidates: list[tuple[str, float]] = [
+        candidate
+        for r in all_results
+        if r["metadata"].get("chunk_index") == "calculated"
+        # Only the portion before "=" (the two operands) -- everything
+        # from "=" onward is the RESULT itself, which must still earn
+        # its own claims entry the normal way; see docstring above.
+        for candidate in _number_candidates(_ANY_CITATION_BRACKET.sub("", r["text"].split("=", 1)[0]))
+    ]
 
     def _covered(category: str, norm: float, tolerance: float) -> bool:
         if any(c == category and abs(v - norm) <= tolerance for c, v in claimed_normalized):
@@ -1847,6 +1892,8 @@ def verify_claims(claims: list[dict], all_results: list[dict], question: str, an
             q_category, q_norm = normalize(q_value, q_unit)
             if q_category == category and abs(q_norm - norm) <= tolerance:
                 return True
+        if any(c == category and abs(v - norm) <= tolerance for c, v in calculated_candidates):
+            return True
         return False
 
     seen_uncovered: set[tuple[str, float]] = set()
@@ -1865,6 +1912,7 @@ def verify_claims(claims: list[dict], all_results: list[dict], question: str, an
                 value=value,
                 unit=unit,
                 message=f"claims {value} ({unit}) but no claim in your submit_answer call covers it",
+                quote=None,
             )
         )
     return warnings
@@ -2414,6 +2462,7 @@ def _run_agent_impl(question: str, backend: str, verbose: bool = False) -> Agent
                             value=0.0,
                             unit="raw",
                             message="your submit_answer call didn't match the required schema (answer_text/claims)",
+                            quote=None,
                         )
                     ]
                 else:
