@@ -155,23 +155,17 @@ Full evidence/reasoning: `docs/decisions/2026-09-15-claude-md-restructure.md`.
 
 Full evidence/reasoning: `docs/decisions/2026-09-15-adopt-ruff-linter.md`.
 
-- [ ] **[refactor, Low, Substantial]** 155-violation pre-existing lint
-  baseline, not fixed on adoption (deliberately — see the decision
-  file). `E501` (144) is mostly deliberate long system-prompt/tool-
-  schema strings and single-line test-fixture dicts, low value to
-  fix. The genuine modularity findings (11 total): `agent.py`'s
-  `call_get_financial_fact`/`call_calculate`/`_dispatch_tool_call`/
-  `_run_agent_impl` (all `C901` excess-complexity; the last also trips
-  `PLR0912`/`PLR0915`), `formulas.py`'s and `tests/test_agent.py`'s one
-  `PLR0913` each (too-many-arguments), and
-  `tests/manual/verify_period_labels.py`'s `main` (`C901`). Fix
-  opportunistically per the incremental-improvement policy whenever
-  one of these functions is next touched, not as a dedicated pass.
 - [ ] **[misc, Low, TBD]** Migrate `ruff` from changed-files-scoped
   manual review to a hard pre-commit gate (alongside the existing
-  pytest hook) once enough of the codebase is clean that a full-repo
-  run wouldn't be dominated by the baseline above. Migrate alongside
-  `pyright`'s own equivalent item below, not separately.
+  pytest hook). Ruff's own side is now ready — the 155-violation
+  baseline (11 complexity findings + 144 `E501`) was resolved on
+  2026-09-21 via pure-extraction refactors + a formal `E501` exception
+  (per-file-ignore for `tests/*`, file-level `# ruff: noqa: E501` on
+  `agent.py`'s prompt/schema strings); `ruff check .` is 0 errors
+  full-repo. See `docs/decisions/2026-09-21-ruff-complexity-refactor.md`.
+  Still migrate alongside `pyright`'s own equivalent item below, not
+  separately — pyright's 117-error baseline is unrelated and unchanged,
+  so the joint trigger isn't met yet.
 
 ### From the 2026-09-15 pyright adoption
 

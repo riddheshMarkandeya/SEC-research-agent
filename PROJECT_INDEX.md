@@ -39,6 +39,10 @@ add a row to `companies.json`, then run `edgar_ingest.py` →
 
 ## Recent
 
+- 2026-09-21 [decision] Implemented the ruff-complexity-refactor plan (11 complexity findings + 146 E501 violations resolved, zero mangled prompt/schema strings) — ruff check . and pyright both clean, full suite 707 passing, live baseline 39/47 (>=39/47 required, no regression vs. historical flakiness) → `docs/decisions/2026-09-21-ruff-complexity-refactor.md`
+- 2026-09-21 [review] Ruff-complexity-refactor code review — 8-angle independent review found and fixed 6 real issues (should-be-frozen dataclass, unrelated scope creep, unnecessary dict-passing in 3/4 dispatch helpers, a transposable-tuple return contract replaced with a named-field type, a doc-scope inaccuracy, a dropped comment's rationale); 2 findings explicitly deferred with reasoning → `docs/reviews/2026-09-21-ruff-complexity-refactor.md`
+- 2026-09-21 [plan] Ruff-complexity-refactor design (fix agent.py's 4 highest-complexity functions + 3 smaller ones via pure extraction; formalize the accepted E501 long-string exception via per-file-ignore/noqa instead of fixing it) — two independent review rounds, first caught a control-flow bug in the _run_agent_impl decomposition (would have broken the loop on ordinary turns), second confirmed the fix; Addendum documents the code-review round's fixes → `docs/plans/2026-09-21-ruff-complexity-refactor.md`
+
 One line per file in `docs/decisions/`, `docs/plans/`, and
 `docs/reviews/`, reverse-chronological. `TEMPLATE.md` in each directory
 is excluded. Copy the relevant `TEMPLATE.md` when starting a new file in
@@ -84,15 +88,3 @@ prepend them (verbatim, still reverse-chronological) to the top of
 - 2026-09-15 [plan] Comment audit Round 5 design → `docs/plans/2026-09-15-comment-audit-round5.md`
 - 2026-09-15 [review] Comment audit Round 5 review (self-check + fresh subagent) → `docs/reviews/2026-09-15-comment-audit-round5.md`
 - 2026-09-15 [decision] Comment audit Round 4: pointer-fixed agent.py → `docs/decisions/2026-09-15-comment-audit-round4.md`
-- 2026-09-15 [plan] Comment audit Round 4 design → `docs/plans/2026-09-15-comment-audit-round4.md`
-- 2026-09-15 [review] Comment audit Round 4 review (self-check + fresh subagent) → `docs/reviews/2026-09-15-comment-audit-round4.md`
-- 2026-09-15 [decision] Comment audit Round 3: pointer-fixed xbrl_facts.py and numeric_utils.py → `docs/decisions/2026-09-15-comment-audit-round3.md`
-- 2026-09-15 [plan] Comment audit Round 3 design → `docs/plans/2026-09-15-comment-audit-round3.md`
-- 2026-09-15 [review] Comment audit Round 3 review (self-check + fresh subagent) → `docs/reviews/2026-09-15-comment-audit-round3.md`
-- 2026-09-15 [decision] XBRL metric-tag selection methodology, extracted from xbrl_facts.py's own comments → `docs/decisions/2026-09-15-xbrl-tag-selection-methodology.md`
-- 2026-09-14 [decision] Comment audit Round 2: pointer-fixed 10 more main-source files → `docs/decisions/2026-09-14-comment-audit-round2.md`
-- 2026-09-14 [plan] Comment audit Round 2 design → `docs/plans/2026-09-14-comment-audit-round2.md`
-- 2026-09-14 [review] Comment audit Round 2 review (self-check + fresh subagent) → `docs/reviews/2026-09-14-comment-audit-round2.md`
-- 2026-09-14 [decision] Comment audit Round 1: pointer-fixed 6 low-risk main-source files → `docs/decisions/2026-09-14-comment-audit-round1.md`
-- 2026-09-14 [plan] Comment audit Round 1 design → `docs/plans/2026-09-14-comment-audit-round1.md`
-- 2026-09-14 [review] Comment audit Round 1 review (self-check + fresh subagent) → `docs/reviews/2026-09-14-comment-audit-round1.md`

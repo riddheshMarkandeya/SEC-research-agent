@@ -218,9 +218,11 @@ def verify_against_xbrl() -> tuple[int, int, list[str]]:
     return checked, confirmed, problems
 
 
-def main():
-    checked, confirmed, problems = verify()
-    print(f"Checked {checked} filings, {confirmed} confirmed against their own self-description.\n")
+def _print_problems(problems: list[str], inconclusive_reason: str) -> None:
+    """Prints one verify pass's mismatches/inconclusive/none-found
+    summary -- shared body for main()'s two otherwise-identical halves
+    (self-description check, XBRL check), which differ only in why an
+    entry counts as inconclusive rather than a real MISMATCH."""
     mismatches = [p for p in problems if "MISMATCH" in p]
     inconclusive = [p for p in problems if "MISMATCH" not in p]
     if mismatches:
@@ -228,27 +230,22 @@ def main():
         for p in mismatches:
             print(f"  {p}")
     if inconclusive:
-        print(f"\nInconclusive ({len(inconclusive)}) -- no reliable self-description found, not a red flag:")
+        print(f"\nInconclusive ({len(inconclusive)}) -- {inconclusive_reason}, not a red flag:")
         for p in inconclusive:
             print(f"  {p}")
     if not mismatches:
         print("No mismatches found.")
 
+
+def main():
+    checked, confirmed, problems = verify()
+    print(f"Checked {checked} filings, {confirmed} confirmed against their own self-description.\n")
+    _print_problems(problems, "no reliable self-description found")
+
     print("\n" + "-" * 60)
     x_checked, x_confirmed, x_problems = verify_against_xbrl()
     print(f"\nChecked {x_checked} companies, {x_confirmed} confirmed against their own XBRL 10-K data.\n")
-    x_mismatches = [p for p in x_problems if "MISMATCH" in p]
-    x_inconclusive = [p for p in x_problems if "MISMATCH" not in p]
-    if x_mismatches:
-        print(f"MISMATCHES ({len(x_mismatches)}) -- fiscal_year_end_month may be wrong:")
-        for p in x_mismatches:
-            print(f"  {p}")
-    if x_inconclusive:
-        print(f"\nInconclusive ({len(x_inconclusive)}) -- no XBRL data available, not a red flag:")
-        for p in x_inconclusive:
-            print(f"  {p}")
-    if not x_mismatches:
-        print("No mismatches found.")
+    _print_problems(x_problems, "no XBRL data available")
 
 
 if __name__ == "__main__":

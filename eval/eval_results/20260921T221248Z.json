@@ -1,0 +1,58 @@
+{
+  "backend": "gemini",
+  "answer_model": "gemini-flash-lite-latest",
+  "judge_model": "gemini-flash-lite-latest",
+  "results": [
+    {
+      "id": "aapl-msft-tax-rate-comparison",
+      "ticker": [
+        "AAPL",
+        "MSFT"
+      ],
+      "question": "Compare Apple's effective tax rate for the three months ended June 27, 2026 to Microsoft's effective tax rate for the three months ended December 31, 2025.",
+      "type": "comparison",
+      "passed": true,
+      "detail": "found matching values for all 2 entities",
+      "has_citation": true,
+      "citation_warnings": [],
+      "answer": "For the three months ended June 27, 2026, Apple's effective tax rate was 17.9% [2]. For the three months ended December 31, 2025, Microsoft's effective tax rate was 20% [12].",
+      "n_chunks_retrieved": 15,
+      "withheld_answer": null,
+      "gate_withheld_would_have_passed": null,
+      "gate_withheld_detail": null,
+      "citation_warning_details": []
+    },
+    {
+      "id": "crm-ai-risk",
+      "ticker": "CRM",
+      "question": "What risks does Salesforce describe related to artificial intelligence?",
+      "type": "judged",
+      "passed": true,
+      "detail": "The answer accurately describes reputational, legal, regulatory, competitive, and cybersecurity-related risks associated with AI and includes appropriate citation markers throughout.",
+      "has_citation": true,
+      "citation_warnings": [],
+      "answer": "Salesforce describes several risks, challenges, and considerations related to artificial intelligence (AI), generative AI, and agentic AI (such as its Agentforce and platform offerings) in its filings:\n\n* **Ethical, Social, and Regulatory Issues:** Developing and deploying AI solutions\u2014particularly those involving information regarding our customers' customers\u2014raise emerging ethical, legal, and operational considerations [9]. If Salesforce enables or offers solutions that draw controversy due to their perceived or actual impact on human rights, privacy, employment, or other social concerns, the company may experience heightened regulatory scrutiny, investigations, enforcement actions, fines, penalties, and reputational or competitive harm [9].\n* **Generative AI Risks (Accuracy, Bias, Toxicity, Security, and Provenance):** Moving from AI content classification to content generation brings additional risks, including issues related to accuracy, bias, toxicity, privacy, security, and data provenance [4]. Generative AI technologies may create content that appears correct but is factually inaccurate or flawed, or contains copyrighted or other protected material [6]. If customers or others use this flawed or protected content to their detriment, or if copyright owners seek to enforce their rights, Salesforce may be exposed to brand/reputational harm, competitive harm, and/or legal liability [6].\n* **Inadequate Development or Governance:** Inadequate or ineffective AI development, deployment, content labeling, or governance by Salesforce or others can result in controversy, impair the acceptance of AI solutions, lead to unintended performance of services, and undermine confidence in AI-generated decisions and predictions [4].\n* **Compliance, Testing, and Cost Pressures:** The rapid evolution of AI requires ongoing resources to develop, test, and maintain products to ensure ethical implementation and minimize unintended harmful impacts [4]. Uncertainty around generative AI and AI agents necessitates additional investment in compliance, governance, and the licensing or development of proprietary datasets, machine learning models, and testing systems for accuracy and bias, which are complex, costly, and can impact profit margins [4]. Furthermore, the computing costs involved in developing, testing, and deploying AI systems increase the cost profile of Salesforce's offerings [6].\n* **Global Legal and Regulatory Frameworks:** Rapidly evolving global laws and regulations related to AI, privacy, and consumer protection\u2014such as the EU AI Act and the EU Digital Services Act (DSA)\u2014could increase compliance costs, restrict features or data flows, delay product launches, and expose the company to penalties or litigation [9].\n* **Adoption and Customer Misuse:** Technical innovations and challenges in AI offerings could affect customer adoption [9]. Additionally, actions taken by customers or employees through the use or misuse of AI technologies for harmful or unlawful purposes may result in regulatory scrutiny, reputational harm, or legal liability [9].",
+      "n_chunks_retrieved": 20,
+      "withheld_answer": null,
+      "gate_withheld_would_have_passed": null,
+      "gate_withheld_detail": null,
+      "citation_warning_details": []
+    },
+    {
+      "id": "aapl-net-income-fy2025",
+      "ticker": "AAPL",
+      "question": "What was Apple's net income for fiscal year 2025?",
+      "type": "numeric",
+      "passed": true,
+      "detail": "found matching value: 112.01 (billion)",
+      "has_citation": true,
+      "citation_warnings": [],
+      "answer": "Apple's net income for fiscal year 2025 was $112.01 billion [1].",
+      "n_chunks_retrieved": 1,
+      "withheld_answer": null,
+      "gate_withheld_would_have_passed": null,
+      "gate_withheld_detail": null,
+      "citation_warning_details": []
+    }
+  ]
+}

@@ -135,7 +135,9 @@ def summarize(rows: list[dict]) -> dict:
 
 
 def format_summary(summary: dict) -> str:
-    rate = "n/a (gate never fired)" if summary["false_positive_rate"] is None else f"{summary['false_positive_rate']:.1%}"
+    rate = (
+        "n/a (gate never fired)" if summary["false_positive_rate"] is None else f"{summary['false_positive_rate']:.1%}"
+    )
     lines = [
         f"Rows: {summary['total_rows']} total "
         f"({summary['excluded_judged']} judged excluded, "

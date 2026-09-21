@@ -12,9 +12,22 @@ Usage:
     python agent.py "Compare Apple's and Microsoft's effective tax rates." --verbose
 """
 
+# ruff: noqa: E501 -- SYSTEM_PROMPT (a single triple-quoted f-string) and
+# the tool schemas' "description" values are deliberately long natural-
+# language content shown to the model; wrapping them physically would
+# either corrupt the literal string content (SYSTEM_PROMPT's own lines
+# can't carry a trailing comment without becoming part of the prompt
+# text itself) or fragment the schema descriptions for no readability
+# gain. A per-line noqa isn't mechanically possible for the former, so
+# this file-level exception covers both -- confirmed to be hiding
+# nothing else: every genuinely-fixable long line in this file was
+# wrapped for real before this directive was added. See
+# docs/decisions/2026-09-21-ruff-complexity-refactor.md.
+
 import argparse
 import re
 from collections import Counter
+from dataclasses import dataclass
 from typing import Any, NamedTuple, TypeGuard
 
 import jsonschema
@@ -773,15 +786,7 @@ def call_get_financial_fact(args: dict, question: str | None = None) -> dict | N
     if start_fiscal_year is not None or end_fiscal_year is not None:
         # Deliberately does not check plain fiscal_year here -- this
         # branch never reads it, so a value here is irrelevant.
-        if args.get("yoy_growth") or not _is_valid_int(start_fiscal_year) or not _is_valid_int(end_fiscal_year):
-            log_event(
-                "tool_call_rejected", tool="get_financial_fact", reason="invalid_multi_year_average_combo", args=args
-            )
-            return None
-        result = get_multi_year_average(ticker, metric, start_fiscal_year, end_fiscal_year)
-        if result is None:
-            record_unmet_metric_request(ticker, metric, reason="no_data_for_ticker", question=question)
-        return result
+        return _get_financial_fact_multi_year_average(ticker, metric, args, question)
     # Checked AFTER the multi-year-average branch above: that branch
     # never reads fiscal_year at all, so checking it any earlier would
     # wrongly reject a valid multi-year-average request over a stray,
@@ -791,19 +796,56 @@ def call_get_financial_fact(args: dict, question: str | None = None) -> dict | N
         return None
     fiscal_year = args.get("fiscal_year")
     if args.get("yoy_growth"):
-        if metric in RATIO_DEFINITIONS:
-            log_event(
-                "tool_call_rejected", tool="get_financial_fact", reason="yoy_growth_unsupported_for_ratio", args=args
-            )
-            return None
-        result = get_yoy_growth(ticker, metric, fiscal_year, fiscal_period, period_end_date)
-        if result is None:
-            record_unmet_metric_request(ticker, metric, reason="no_data_for_ticker", question=question)
-        return result
+        return _get_financial_fact_yoy_growth(ticker, metric, args, question)
     if metric in RATIO_DEFINITIONS:
         result = get_ratio(ticker, metric, fiscal_year, fiscal_period, period_end_date)
     else:
         result = get_metric(ticker, metric, fiscal_year, fiscal_period, period_end_date)
+    if result is None:
+        record_unmet_metric_request(ticker, metric, reason="no_data_for_ticker", question=question)
+    return result
+
+
+def _get_financial_fact_multi_year_average(
+    ticker: str, metric: str, args: dict, question: str | None
+) -> dict | None:
+    """Multi-year-average branch of call_get_financial_fact() -- pure
+    relocation (no logic change) to keep the parent's own branch/return
+    count under ruff's C901/PLR0911 thresholds. Re-derives
+    start_fiscal_year/end_fiscal_year from `args` (like the sibling
+    yoy_growth helper below re-derives its own period fields) rather
+    than taking them as separate params: the parent's own guard
+    condition already needs them as locals for its `is not None` check,
+    but passing them AND `args.get("yoy_growth")` AND `question`
+    separately would put this helper at 6 positional args, over
+    PLR0913's threshold -- bundling would only trade one opaque `dict`
+    for an equally-opaque ad hoc tuple with no real benefit here."""
+    start_fiscal_year = args.get("start_fiscal_year")
+    end_fiscal_year = args.get("end_fiscal_year")
+    if args.get("yoy_growth") or not _is_valid_int(start_fiscal_year) or not _is_valid_int(end_fiscal_year):
+        log_event("tool_call_rejected", tool="get_financial_fact", reason="invalid_multi_year_average_combo", args=args)
+        return None
+    result = get_multi_year_average(ticker, metric, start_fiscal_year, end_fiscal_year)
+    if result is None:
+        record_unmet_metric_request(ticker, metric, reason="no_data_for_ticker", question=question)
+    return result
+
+
+def _get_financial_fact_yoy_growth(ticker: str, metric: str, args: dict, question: str | None) -> dict | None:
+    """yoy_growth branch of call_get_financial_fact() -- pure relocation
+    (no logic change), same reasoning as
+    _get_financial_fact_multi_year_average() above. Re-derives
+    fiscal_year/fiscal_period/period_end_date from `args` rather than
+    taking them as separate params (kept to 4 args, under ruff's
+    PLR0913 threshold) -- identical values to the parent's own copies,
+    since `args` doesn't change between reads."""
+    fiscal_year = args.get("fiscal_year")
+    fiscal_period = args.get("fiscal_period", "FY")
+    period_end_date = args.get("period_end_date")
+    if metric in RATIO_DEFINITIONS:
+        log_event("tool_call_rejected", tool="get_financial_fact", reason="yoy_growth_unsupported_for_ratio", args=args)
+        return None
+    result = get_yoy_growth(ticker, metric, fiscal_year, fiscal_period, period_end_date)
     if result is None:
         record_unmet_metric_request(ticker, metric, reason="no_data_for_ticker", question=question)
     return result
@@ -936,7 +978,9 @@ def _comparison_as_results(data: dict[str, dict], metric: str) -> list[dict]:
 # finding that LLM arithmetic itself is unreliable even when the model
 # picks the right operation).
 # ---------------------------------------------------------------------------
-def _ground_operand(value: float, unit: str, citation_index: int, all_results: list[dict], operand_name: str) -> str | None:
+def _ground_operand(
+    value: float, unit: str, citation_index: int, all_results: list[dict], operand_name: str
+) -> str | None:
     """Checks one calculate operand actually appears in its cited source.
     Returns None if grounded, else a specific, actionable error message
     naming which operand and citation index failed -- the model can
@@ -1073,20 +1117,28 @@ def call_calculate(args: dict, all_results: list[dict]) -> tuple[dict | None, st
     if operation in ("divide", "percent_of", "percent_change") and norm_b == 0:
         return None, f"(cannot {operation.replace('_', ' ')}: operand_b is zero)"
 
-    if operation == "add":
-        value, unit = norm_a + norm_b, ("percent" if category_a == "percent" else "raw")
-    elif operation == "subtract":
-        value, unit = norm_a - norm_b, ("percent" if category_a == "percent" else "raw")
-    elif operation == "multiply":
-        value, unit = norm_a * norm_b, "raw"
-    elif operation == "divide":
-        value, unit = round(norm_a / norm_b, 2), "raw"
-    elif operation == "percent_of":
-        value, unit = round(norm_a / norm_b * 100, 1), "percent"
-    else:  # percent_change
-        value, unit = round((norm_a - norm_b) / norm_b * 100, 1), "percent"
-
+    value, unit = _apply_calculate_operation(operation, category_a, norm_a, norm_b)
     return {"value": value, "unit": unit}, None
+
+
+def _apply_calculate_operation(operation: str, category: str, norm_a: float, norm_b: float) -> tuple[float, str]:
+    """The 6-way arithmetic dispatch for call_calculate() -- pure
+    relocation (no logic change), extracted to keep the parent's own
+    branch count under ruff's C901 threshold. `category` is the shared
+    normalize() category both operands were already confirmed to share
+    (see call_calculate's own category-mismatch check above) -- only
+    needed here to decide add/subtract's result unit."""
+    if operation == "add":
+        return norm_a + norm_b, ("percent" if category == "percent" else "raw")
+    if operation == "subtract":
+        return norm_a - norm_b, ("percent" if category == "percent" else "raw")
+    if operation == "multiply":
+        return norm_a * norm_b, "raw"
+    if operation == "divide":
+        return round(norm_a / norm_b, 2), "raw"
+    if operation == "percent_of":
+        return round(norm_a / norm_b * 100, 1), "percent"
+    return round((norm_a - norm_b) / norm_b * 100, 1), "percent"  # percent_change
 
 
 def _format_computed_number(value: float) -> str:
@@ -1139,7 +1191,9 @@ def _calculation_as_result(result: dict, args: dict) -> dict:
         expression = f"{value_a} {unit_a} {operation} {value_b} {unit_b}"
 
     formatted_result_value = _format_computed_number(result["value"])
-    formatted_value = formatted_result_value if result["unit"] == "raw" else f"{formatted_result_value} {result['unit']}"
+    formatted_value = (
+        formatted_result_value if result["unit"] == "raw" else f"{formatted_result_value} {result['unit']}"
+    )
     return {
         "text": (
             f"{expression} = {formatted_value} (computed value, not directly stated in any "
@@ -1864,7 +1918,9 @@ def _verify_qualitative_claim(n: int, quote: "_ClaimQuote", source_text: str) ->
     return None
 
 
-def verify_claims(claims: list[dict], all_results: list[dict], question: str, answer_text: str) -> list["CitationWarning"]:
+def verify_claims(
+    claims: list[dict], all_results: list[dict], question: str, answer_text: str
+) -> list["CitationWarning"]:
     """Structured-claims counterpart to collect_citation_warnings() above,
     used when the model answers via submit_answer (SUBMIT_TOOL_SCHEMA)
     instead of free-text prose with [n] markers. See
@@ -2281,63 +2337,99 @@ def _dispatch_tool_call(
     inside call_get_financial_fact/call_compare_financial_metric
     (e.g. rejecting an invented `segment` argument) now protects both
     backends automatically instead of needing a second copy."""
-    name = call["name"]
-    args = call["args"]
+    name, args = call["name"], call["args"]
 
     if name == "get_financial_fact":
-        if verbose:
-            print(f"  [tool call] get_financial_fact({args!r})")
-        with traced_span("tool", name, input=args) as span:
-            fact = call_get_financial_fact(args, question=question)
-            if fact is None:
-                span.update(output={"found": False})
-                return _format_no_fact_message(args)
-            start_index = len(all_results) + 1
-            result = _fact_as_result(fact, args)
-            all_results.append(result)
-            span.update(output={"found": True, "value": fact.get("value")})
-            return _format_results_block([result], start_index)
-
+        return _dispatch_get_financial_fact(name, args, question, all_results, verbose)
     if name == "compare_financial_metric":
-        if verbose:
-            print(f"  [tool call] compare_financial_metric({args!r})")
-        with traced_span("tool", name, input=args) as span:
-            data = call_compare_financial_metric(args, question=question)
-            if not data:
-                span.update(output={"found": False})
-                return _format_no_comparison_message(args)
-            start_index = len(all_results) + 1
-            results = _comparison_as_results(data, args.get("metric", ""))
-            all_results.extend(results)
-            span.update(output={"found": True, "companies": sorted(data)})
-            return _format_results_block(results, start_index)
-
+        return _dispatch_compare_financial_metric(name, args, question, all_results, verbose)
     if name == "calculate":
-        if verbose:
-            print(f"  [tool call] calculate({args!r})")
-        with traced_span("tool", name, input=args) as span:
-            calc_result, error = call_calculate(args, all_results)
-            if calc_result is None:
-                assert error is not None  # call_calculate's contract: exactly one of the two is None
-                span.update(output={"found": False, "error": error})
-                return error
-            start_index = len(all_results) + 1
-            result = _calculation_as_result(calc_result, args)
-            all_results.append(result)
-            span.update(output={"found": True, "value": calc_result.get("value")})
-            return _format_results_block([result], start_index)
+        return _dispatch_calculate(name, args, all_results, verbose)
+    return _dispatch_search_filings(call, question, all_results, searched_tickers, verbose)
 
-    # soft_required={"query"}: query is schema-required (encourages the
-    # model to include it), but _resolve_search_args below tolerates it
-    # being absent by substituting the original question -- observed
-    # live, not a bug (see that function's own docstring) -- so a
-    # missing query must not be a hard rejection here.
-    #
-    # Checked BEFORE _resolve_search_args() runs, not after -- that
-    # function's own `ticker not in searched_tickers` (a set) would
-    # crash on a non-hashable ticker like a list, the exact unhashable-
-    # ticker crash class validate_tool_args is safe against (jsonschema's
-    # type/enum checks use plain equality, never hashing the instance).
+
+def _dispatch_get_financial_fact(name: str, args: dict, question: str, all_results: list[dict], verbose: bool) -> str:
+    """get_financial_fact branch body of _dispatch_tool_call() -- pure
+    relocation (no logic change), extracted to keep the parent's own
+    branch/return count under ruff's C901/PLR0911 thresholds. Takes
+    `name`/`args` directly (the parent already has both split out) --
+    at 5 params this doesn't need the whole-`call`-dict trick
+    _dispatch_search_filings below uses, since that one alone needs a
+    6th param (searched_tickers)."""
+    if verbose:
+        print(f"  [tool call] get_financial_fact({args!r})")
+    with traced_span("tool", name, input=args) as span:
+        fact = call_get_financial_fact(args, question=question)
+        if fact is None:
+            span.update(output={"found": False})
+            return _format_no_fact_message(args)
+        start_index = len(all_results) + 1
+        result = _fact_as_result(fact, args)
+        all_results.append(result)
+        span.update(output={"found": True, "value": fact.get("value")})
+        return _format_results_block([result], start_index)
+
+
+def _dispatch_compare_financial_metric(
+    name: str, args: dict, question: str, all_results: list[dict], verbose: bool
+) -> str:
+    """compare_financial_metric branch body of _dispatch_tool_call() --
+    same reasoning as _dispatch_get_financial_fact() above."""
+    if verbose:
+        print(f"  [tool call] compare_financial_metric({args!r})")
+    with traced_span("tool", name, input=args) as span:
+        data = call_compare_financial_metric(args, question=question)
+        if not data:
+            span.update(output={"found": False})
+            return _format_no_comparison_message(args)
+        start_index = len(all_results) + 1
+        results = _comparison_as_results(data, args.get("metric", ""))
+        all_results.extend(results)
+        span.update(output={"found": True, "companies": sorted(data)})
+        return _format_results_block(results, start_index)
+
+
+def _dispatch_calculate(name: str, args: dict, all_results: list[dict], verbose: bool) -> str:
+    """calculate branch body of _dispatch_tool_call() -- same reasoning
+    as _dispatch_get_financial_fact() above."""
+    if verbose:
+        print(f"  [tool call] calculate({args!r})")
+    with traced_span("tool", name, input=args) as span:
+        calc_result, error = call_calculate(args, all_results)
+        if calc_result is None:
+            assert error is not None  # call_calculate's contract: exactly one of the two is None
+            span.update(output={"found": False, "error": error})
+            return error
+        start_index = len(all_results) + 1
+        result = _calculation_as_result(calc_result, args)
+        all_results.append(result)
+        span.update(output={"found": True, "value": calc_result.get("value")})
+        return _format_results_block([result], start_index)
+
+
+def _dispatch_search_filings(
+    call: dict, question: str, all_results: list[dict], searched_tickers: set[str | None], verbose: bool
+) -> str:
+    """search_filings branch body of _dispatch_tool_call() -- same
+    reasoning as _dispatch_get_financial_fact() above; also absorbs the
+    validate_tool_args/ticker-rejection guard this branch runs first.
+    Unlike its three siblings, takes the whole `call` dict rather than
+    `name`/`args` split out -- this branch alone needs `searched_tickers`
+    too, which would put a split signature at 6 positional args, over
+    PLR0913's threshold.
+
+    soft_required={"query"}: query is schema-required (encourages the
+    model to include it), but _resolve_search_args below tolerates it
+    being absent by substituting the original question -- observed
+    live, not a bug (see that function's own docstring) -- so a
+    missing query must not be a hard rejection here.
+
+    Checked BEFORE _resolve_search_args() runs, not after -- that
+    function's own `ticker not in searched_tickers` (a set) would
+    crash on a non-hashable ticker like a list, the exact unhashable-
+    ticker crash class validate_tool_args is safe against (jsonschema's
+    type/enum checks use plain equality, never hashing the instance)."""
+    name, args = call["name"], call["args"]
     if validate_tool_args("search_filings", SEARCH_TOOL_SCHEMA, args, soft_required=frozenset({"query"})):
         raw_ticker = args.get("ticker")
         if raw_ticker is not None and (not isinstance(raw_ticker, str) or raw_ticker not in COMPANIES):
@@ -2347,7 +2439,10 @@ def _dispatch_tool_call(
             # compare_financial_metric's boundary rejections, this is
             # the one case validate_tool_args's caller has enough
             # schema/enum context in hand to do that cheaply.
-            return f"(ticker={raw_ticker!r} is not a recognized company — try one of {sorted(COMPANIES)} or omit the ticker filter)"
+            return (
+                f"(ticker={raw_ticker!r} is not a recognized company — "
+                f"try one of {sorted(COMPANIES)} or omit the ticker filter)"
+            )
         return "(search_filings arguments were invalid — check the tool schema)"
     query, ticker = _resolve_search_args(args, fallback_query=question, searched_tickers=searched_tickers)
     searched_tickers.add(ticker)
@@ -2409,6 +2504,255 @@ def run_agent(question: str, backend: str | None = None, verbose: bool = False) 
         return result
 
 
+@dataclass
+class _AgentLoopState:
+    """Mutable state threaded through _run_agent_impl()'s extracted
+    helper functions below, in place of loose locals ping-ponging
+    through each one's own signature. Per-field write ownership (so a
+    future reader can see at a glance which helper may touch what):
+    `calls_made` is written only by the parent loop's own central
+    increment (once per iteration, whenever a helper hands back a new
+    turn to continue with) -- no helper increments it itself.
+    `forced_submit_attempted`/`final_turn_attempted`/
+    `pre_retry_submit_args`/`pre_retry_answer` are each written by
+    exactly one owning helper. `retried_for_citations` is the one
+    deliberate exception: both _handle_submit_turn() and
+    _handle_no_tool_calls_turn() may set it, since it caps the whole
+    conversation at one retry total, not one per path (see
+    _run_agent_impl's own docstring).
+
+    `pre_retry_submit_args` deliberately caches the RAW submit_answer
+    args rather than pre-computed warnings: a pure function of
+    (submit_args, all_results) can't go stale the way a cached warnings
+    list could if all_results grows further before the budget runs out.
+    `pre_retry_answer` (the prose-fallback sibling) has no equivalent
+    staleness risk -- its answer text is already final, not re-verified
+    against a growing all_results -- so it caches the finished
+    (answer, warnings) pair directly instead."""
+
+    calls_made: int
+    retried_for_citations: bool = False
+    forced_submit_attempted: bool = False
+    final_turn_attempted: bool = False
+    pre_retry_submit_args: dict | None = None
+    pre_retry_answer: tuple[str, list[CitationWarning]] | None = None
+
+
+@dataclass(frozen=True)
+class _AgentContext:
+    """Read-mostly context shared across _run_agent_impl()'s extracted
+    helpers below, bundled purely to keep each helper's own signature
+    under ruff's PLR0913 threshold -- question/backend/verbose never
+    change during a conversation; all_results/searched_tickers are
+    mutable but already passed by reference today (mutated in place via
+    append/extend/add, never reassigned), so bundling them here doesn't
+    change that. conv_state is the backend's own conversation handle;
+    send_tool_results/send_followup are the two backend functions used
+    to send it a reply -- both obtained once from BACKENDS[backend].
+    `frozen=True` (matching this file's own CitationWarning/AgentResult
+    NamedTuples and table_grounding.py's frozen dataclasses) enforces at
+    the type level what the paragraph above already claims: no field is
+    ever reassigned after construction -- mutating all_results'/
+    searched_tickers' own contents in place is unaffected, since
+    freezing a dataclass only blocks reassigning the attribute itself,
+    not mutating the mutable object it points to."""
+
+    question: str
+    backend: str
+    verbose: bool
+    all_results: list[dict]
+    searched_tickers: set[str | None]
+    conv_state: Any
+    send_tool_results: Any
+    send_followup: Any
+
+
+@dataclass(frozen=True)
+class _LoopStep:
+    """Outcome of one _run_agent_impl() loop-body helper (currently
+    _handle_submit_turn/_handle_no_tool_calls_turn): exactly one of
+    `next_turn`/`result` is ever set -- the parent continues the loop
+    with `next_turn` if set, else returns `result` immediately. Named
+    fields instead of a positional `tuple[Any, AgentResult | None]`
+    (an earlier version of this refactor used that shape) specifically
+    so a future call site can't silently transpose the two -- code
+    review flagged that a positional swap wouldn't even crash (`turn`
+    is never `None` on the continue path, so `if result is not None`
+    firing on every call after a swap would just silently return a
+    conversation-turn object as if it were the final AgentResult)."""
+
+    next_turn: Any = None
+    result: AgentResult | None = None
+
+
+def _handle_submit_turn(args: dict, ctx: _AgentContext, loop_state: _AgentLoopState) -> _LoopStep:
+    """Body of _run_agent_impl()'s submit-answer branch -- called only
+    once its own guard (a pure submission, or a mixed submit+search
+    turn on the last allowed round trip) is already true, at which
+    point the real code always either continues or returns, never
+    falls through to a later check. Pure relocation, no logic change.
+    Exactly one of the two return values is ever non-None."""
+    with traced_span("tool", "submit_answer", input=args) as span:
+        if validate_tool_args("submit_answer", SUBMIT_TOOL_SCHEMA, args):
+            # Defensive, not expected in practice (Gemini/Ollama both
+            # called this correctly on every live run tried -- see
+            # tests/manual/verify_submit_answer.py) -- same
+            # belt-and-suspenders boundary check every other tool
+            # already gets. value/unit are sentinel-valued (0.0/raw):
+            # this warning isn't about a specific numeric claim.
+            answer_text = args.get("answer_text") or ""
+            warnings = [
+                CitationWarning(
+                    check="no_structured_answer",
+                    citation_index=None,
+                    value=0.0,
+                    unit="raw",
+                    message="your submit_answer call didn't match the required schema (answer_text/claims)",
+                    quote=None,
+                )
+            ]
+        else:
+            answer_text = args["answer_text"]
+            warnings = verify_claims(args["claims"], ctx.all_results, ctx.question, answer_text)
+        messages = [w.message for w in warnings]
+        span.update(output={"warning_count": len(warnings), "checks": [w.check for w in warnings]})
+        if (
+            _should_retry_for_citations(messages, loop_state.retried_for_citations, ctx.backend)
+            and loop_state.calls_made < MAX_TOOL_ITERATIONS
+        ):
+            loop_state.retried_for_citations = True
+            loop_state.pre_retry_submit_args = args
+            log_event("citation_retry", backend=ctx.backend, warnings=messages)
+            if ctx.verbose:
+                print(f"  [citation retry] {messages}")
+            feedback = _format_claim_retry_message(answer_text, warnings)
+            turn = ctx.send_tool_results(ctx.conv_state, [{"name": "submit_answer", "content": feedback}])
+            return _LoopStep(next_turn=turn)
+        result = _finalize_answer(
+            answer_text, warnings, ctx.all_results, backend=ctx.backend, retried=loop_state.retried_for_citations
+        )
+        return _LoopStep(result=result)
+
+
+def _handle_no_tool_calls_turn(turn: Any, ctx: _AgentContext, loop_state: _AgentLoopState) -> _LoopStep:
+    """Body of _run_agent_impl()'s `not turn.tool_calls` branch --
+    called only once that guard is already true, handling both the
+    forced-submit-attempt sub-case and the prose-fallback sub-case
+    internally (the real code's own nested `if`, unchanged). Pure
+    relocation, no logic change. Exactly one of _LoopStep's two fields
+    is ever set."""
+    if (
+        ctx.backend in _FORCED_SUBMIT_BACKENDS
+        and not loop_state.forced_submit_attempted
+        and loop_state.calls_made < MAX_TOOL_ITERATIONS
+    ):
+        loop_state.forced_submit_attempted = True
+        if ctx.verbose:
+            print("  [forcing submit_answer] model replied in text instead of calling a tool")
+        turn = ctx.send_followup(ctx.conv_state, _FORCE_SUBMIT_MESSAGE, force_tool="submit_answer")
+        return _LoopStep(next_turn=turn)
+    # Prose fallback -- the original, completely unchanged pipeline.
+    # The only path for Ollama (never forced); for Gemini, only reached
+    # if forcing itself didn't produce a clean submission (documented
+    # as occasionally possible).
+    answer = turn.text or ""
+    warnings = collect_citation_warnings(answer, ctx.all_results)
+    messages = [w.message for w in warnings]
+    if (
+        _should_retry_for_citations(messages, loop_state.retried_for_citations, ctx.backend)
+        and loop_state.calls_made < MAX_TOOL_ITERATIONS
+    ):
+        loop_state.retried_for_citations = True
+        loop_state.pre_retry_answer = (answer, warnings)
+        log_event("citation_retry", backend=ctx.backend, warnings=messages)
+        if ctx.verbose:
+            print(f"  [citation retry] {messages}")
+        turn = ctx.send_followup(ctx.conv_state, _format_citation_retry_message(answer, messages))
+        return _LoopStep(next_turn=turn)
+    result = _finalize_answer(
+        answer, warnings, ctx.all_results, backend=ctx.backend, retried=loop_state.retried_for_citations
+    )
+    return _LoopStep(result=result)
+
+
+def _force_final_submit_turn(other: list[dict], ctx: _AgentContext, loop_state: _AgentLoopState) -> Any:
+    """Body of _run_agent_impl()'s reserved, submit-only final round
+    trip (BACKLOG.md's MAX_TOOL_ITERATIONS zero-slack bug) -- called
+    only after the parent has already confirmed via
+    _should_force_final_submit() that this turn IS being forced, so it
+    always returns a new turn, never None, never a break. Pure
+    relocation, no logic change. `other` is guaranteed non-empty here
+    (an empty-tool-calls turn is already fully handled by the parent's
+    own `if not turn.tool_calls:` branch), so every pending call gets
+    answered with a synthetic "not run" result -- via send_tool_results,
+    not send_followup, since those calls are already recorded as
+    pending/unanswered in the chat history and a bare followup turn on
+    top of them is exactly the "dangling function call followed by a
+    bare user turn" shape that's historically 400'd on Gemini (see
+    _run_agent_impl's own docstring). force_tool hard-constrains the
+    model's NEXT reply to submit_answer."""
+    loop_state.final_turn_attempted = True
+    if ctx.verbose:
+        print("  [final turn] dispatch budget exhausted with tool calls still pending -- forcing final submit")
+    results = [{"name": c["name"], "content": _FINAL_TURN_SUBMIT_MESSAGE} for c in other]
+    return ctx.send_tool_results(ctx.conv_state, results, force_tool="submit_answer")
+
+
+def _dispatch_pending_calls(other: list[dict], submit: dict | None, ctx: _AgentContext) -> Any:
+    """Body of _run_agent_impl()'s ordinary tool-dispatch fallthrough --
+    always returns a new turn. Pure relocation, no logic change."""
+    results = [
+        {
+            "name": c["name"],
+            "content": _dispatch_tool_call(c, ctx.question, ctx.all_results, ctx.searched_tickers, ctx.verbose),
+        }
+        for c in other
+    ]
+    if submit is not None:
+        # Mixed turn with budget still remaining: dispatch the
+        # searches, but the submission can't be trusted yet -- it
+        # can't be grounded in results the model hasn't read.
+        results.append(
+            {
+                "name": "submit_answer",
+                "content": (
+                    "You also requested new searches in this same turn; their results are included "
+                    "above. Read them, then call submit_answer again with your final answer."
+                ),
+            }
+        )
+    return ctx.send_tool_results(ctx.conv_state, results)
+
+
+def _finalize_after_budget_exhausted(ctx: _AgentContext, loop_state: _AgentLoopState) -> AgentResult:
+    """Body of _run_agent_impl()'s post-loop fallback -- called once,
+    after the while loop's own `break` exits it. Pure relocation, no
+    logic change."""
+    if loop_state.pre_retry_submit_args is not None:
+        answer_text = loop_state.pre_retry_submit_args["answer_text"]
+        warnings = verify_claims(
+            loop_state.pre_retry_submit_args["claims"], ctx.all_results, ctx.question, answer_text
+        )
+        return _finalize_answer(
+            answer_text, warnings, ctx.all_results, backend=ctx.backend, retried=loop_state.retried_for_citations
+        )
+
+    if loop_state.pre_retry_answer is not None:
+        answer, warnings = loop_state.pre_retry_answer
+        return _finalize_answer(
+            answer, warnings, ctx.all_results, backend=ctx.backend, retried=loop_state.retried_for_citations
+        )
+
+    return _finalize_answer(
+        "I wasn't able to finish answering within the allotted number of searches. "
+        "Try asking a more specific or narrower question.",
+        [],
+        ctx.all_results,
+        backend=ctx.backend,
+        retried=loop_state.retried_for_citations,
+    )
+
+
 def _run_agent_impl(question: str, backend: str, verbose: bool = False) -> AgentResult:
     """Run the tool-calling loop until the model produces a final answer
     (no more tool calls) or MAX_TOOL_ITERATIONS is hit. `backend`
@@ -2468,32 +2812,21 @@ def _run_agent_impl(question: str, backend: str, verbose: bool = False) -> Agent
     400'd on Gemini) and needs no new plumbing, since it's exactly what
     send_tool_results already does."""
     start, send_tool_results, send_followup = BACKENDS[backend]
-    tool_schemas = [FACT_TOOL_SCHEMA, COMPARE_TOOL_SCHEMA, SEARCH_TOOL_SCHEMA, CALCULATE_TOOL_SCHEMA, SUBMIT_TOOL_SCHEMA]
-    state, turn = start(question, SYSTEM_PROMPT, tool_schemas)
-    all_results: list[dict] = []
-    searched_tickers: set[str | None] = set()
-    calls_made = 1
-    retried_for_citations = False
-    forced_submit_attempted = False
-    # Separate from forced_submit_attempted -- that flag fires when the
-    # model has already stopped calling tools and replied in prose; this
-    # one fires when the model is still actively mid-dispatch and the
-    # budget itself is what stops it. Both can legitimately fire once
-    # each in the same conversation, the same already-accepted pattern
-    # as forced_submit_attempted/retried_for_citations coexisting today.
-    final_turn_attempted = False
-    # Pending-retry snapshots for the exhausted-budget fallback at the
-    # bottom -- at most one is ever set, since retried_for_citations caps
-    # the whole conversation at one retry regardless of which path fires
-    # it. pre_retry_submit_args caches the RAW submit_answer args rather
-    # than pre-computed warnings -- a pure function of (submit_args,
-    # all_results) can't go stale the way a cached warnings list could if
-    # all_results grows before the budget runs out. See
-    # docs/reviews/2026-09-10-citation-gate-measurement-instrumentation.md.
-    # pre_retry_answer itself is UNCHANGED -- it still exists for the
-    # untouched prose-fallback path.
-    pre_retry_submit_args: dict | None = None
-    pre_retry_answer: tuple[str, list[CitationWarning]] | None = None
+    tool_schemas = [
+        FACT_TOOL_SCHEMA, COMPARE_TOOL_SCHEMA, SEARCH_TOOL_SCHEMA, CALCULATE_TOOL_SCHEMA, SUBMIT_TOOL_SCHEMA
+    ]
+    conv_state, turn = start(question, SYSTEM_PROMPT, tool_schemas)
+    ctx = _AgentContext(
+        question=question,
+        backend=backend,
+        verbose=verbose,
+        all_results=[],
+        searched_tickers=set(),
+        conv_state=conv_state,
+        send_tool_results=send_tool_results,
+        send_followup=send_followup,
+    )
+    loop_state = _AgentLoopState(calls_made=1)
 
     while True:
         submit, other = _partition_submit_call(turn.tool_calls)
@@ -2503,131 +2836,33 @@ def _run_agent_impl(question: str, backend: str, verbose: bool = False) -> Agent
         # extra searches and get a real resubmission back, so verify what
         # was actually submitted rather than discarding it below for the
         # generic timeout message.
-        if submit is not None and (not other or calls_made >= MAX_TOOL_ITERATIONS):
-            args = submit["args"]
-            with traced_span("tool", "submit_answer", input=args) as span:
-                if validate_tool_args("submit_answer", SUBMIT_TOOL_SCHEMA, args):
-                    # Defensive, not expected in practice (Gemini/Ollama
-                    # both called this correctly on every live run tried
-                    # -- see tests/manual/verify_submit_answer.py) -- same
-                    # belt-and-suspenders boundary check every other tool
-                    # already gets. value/unit are sentinel-valued
-                    # (0.0/raw): this warning isn't about a specific
-                    # numeric claim.
-                    answer_text = args.get("answer_text") or ""
-                    warnings = [
-                        CitationWarning(
-                            check="no_structured_answer",
-                            citation_index=None,
-                            value=0.0,
-                            unit="raw",
-                            message="your submit_answer call didn't match the required schema (answer_text/claims)",
-                            quote=None,
-                        )
-                    ]
-                else:
-                    answer_text = args["answer_text"]
-                    warnings = verify_claims(args["claims"], all_results, question, answer_text)
-                messages = [w.message for w in warnings]
-                span.update(output={"warning_count": len(warnings), "checks": [w.check for w in warnings]})
-                if _should_retry_for_citations(messages, retried_for_citations, backend) and calls_made < MAX_TOOL_ITERATIONS:
-                    retried_for_citations = True
-                    pre_retry_submit_args = args
-                    log_event("citation_retry", backend=backend, warnings=messages)
-                    if verbose:
-                        print(f"  [citation retry] {messages}")
-                    feedback = _format_claim_retry_message(answer_text, warnings)
-                    turn = send_tool_results(state, [{"name": "submit_answer", "content": feedback}])
-                    calls_made += 1
-                    continue
-                return _finalize_answer(answer_text, warnings, all_results, backend=backend, retried=retried_for_citations)
-
-        if not turn.tool_calls:
-            if backend in _FORCED_SUBMIT_BACKENDS and not forced_submit_attempted and calls_made < MAX_TOOL_ITERATIONS:
-                forced_submit_attempted = True
-                if verbose:
-                    print("  [forcing submit_answer] model replied in text instead of calling a tool")
-                turn = send_followup(state, _FORCE_SUBMIT_MESSAGE, force_tool="submit_answer")
-                calls_made += 1
-                continue
-            # Prose fallback -- the original, completely unchanged
-            # pipeline. The only path for Ollama (never forced); for
-            # Gemini, only reached if forcing itself didn't produce a
-            # clean submission (documented as occasionally possible).
-            answer = turn.text or ""
-            warnings = collect_citation_warnings(answer, all_results)
-            messages = [w.message for w in warnings]
-            if _should_retry_for_citations(messages, retried_for_citations, backend) and calls_made < MAX_TOOL_ITERATIONS:
-                retried_for_citations = True
-                pre_retry_answer = (answer, warnings)
-                log_event("citation_retry", backend=backend, warnings=messages)
-                if verbose:
-                    print(f"  [citation retry] {messages}")
-                turn = send_followup(state, _format_citation_retry_message(answer, messages))
-                calls_made += 1
-                continue
-            return _finalize_answer(answer, warnings, all_results, backend=backend, retried=retried_for_citations)
-
-        if calls_made >= MAX_TOOL_ITERATIONS:
-            if not _should_force_final_submit(final_turn_attempted, calls_made, backend):
-                break
-            # Reserved, submit-only final round trip (BACKLOG.md's
-            # MAX_TOOL_ITERATIONS zero-slack bug). `other` is guaranteed
-            # non-empty here (an empty-tool-calls turn is already fully
-            # handled above by `if not turn.tool_calls:`), so every
-            # pending call gets answered with a synthetic "not run"
-            # result -- via send_tool_results, not send_followup, since
-            # those calls are already recorded as pending/unanswered in
-            # the chat history and a bare followup turn on top of them
-            # is exactly the "dangling function call followed by a bare
-            # user turn" shape that's historically 400'd on Gemini (see
-            # this function's own docstring above). force_tool hard-
-            # constrains the model's NEXT reply to submit_answer.
-            final_turn_attempted = True
-            if verbose:
-                print("  [final turn] dispatch budget exhausted with tool calls still pending -- forcing final submit")
-            results = [{"name": c["name"], "content": _FINAL_TURN_SUBMIT_MESSAGE} for c in other]
-            turn = send_tool_results(state, results, force_tool="submit_answer")
-            calls_made += 1
+        if submit is not None and (not other or loop_state.calls_made >= MAX_TOOL_ITERATIONS):
+            step = _handle_submit_turn(submit["args"], ctx, loop_state)
+            if step.result is not None:
+                return step.result
+            turn = step.next_turn
+            loop_state.calls_made += 1
             continue
 
-        results = [
-            {"name": c["name"], "content": _dispatch_tool_call(c, question, all_results, searched_tickers, verbose)}
-            for c in other
-        ]
-        if submit is not None:
-            # Mixed turn with budget still remaining: dispatch the
-            # searches, but the submission can't be trusted yet -- it
-            # can't be grounded in results the model hasn't read.
-            results.append(
-                {
-                    "name": "submit_answer",
-                    "content": (
-                        "You also requested new searches in this same turn; their results are included "
-                        "above. Read them, then call submit_answer again with your final answer."
-                    ),
-                }
-            )
-        turn = send_tool_results(state, results)
-        calls_made += 1
+        if not turn.tool_calls:
+            step = _handle_no_tool_calls_turn(turn, ctx, loop_state)
+            if step.result is not None:
+                return step.result
+            turn = step.next_turn
+            loop_state.calls_made += 1
+            continue
 
-    if pre_retry_submit_args is not None:
-        answer_text = pre_retry_submit_args["answer_text"]
-        warnings = verify_claims(pre_retry_submit_args["claims"], all_results, question, answer_text)
-        return _finalize_answer(answer_text, warnings, all_results, backend=backend, retried=retried_for_citations)
+        if loop_state.calls_made >= MAX_TOOL_ITERATIONS:
+            if not _should_force_final_submit(loop_state.final_turn_attempted, loop_state.calls_made, backend):
+                break
+            turn = _force_final_submit_turn(other, ctx, loop_state)
+            loop_state.calls_made += 1
+            continue
 
-    if pre_retry_answer is not None:
-        answer, warnings = pre_retry_answer
-        return _finalize_answer(answer, warnings, all_results, backend=backend, retried=retried_for_citations)
+        turn = _dispatch_pending_calls(other, submit, ctx)
+        loop_state.calls_made += 1
 
-    return _finalize_answer(
-        "I wasn't able to finish answering within the allotted number of searches. "
-        "Try asking a more specific or narrower question.",
-        [],
-        all_results,
-        backend=backend,
-        retried=retried_for_citations,
-    )
+    return _finalize_after_budget_exhausted(ctx, loop_state)
 
 
 def main():

@@ -114,8 +114,16 @@ def test_resolve_search_args_empty_args_falls_back_entirely():
 # ---------------------------------------------------------------------------
 # _format_results_block
 # ---------------------------------------------------------------------------
-def _fake_result(ticker="CRM", form="10-K", reportDate="2026-01-31", text="Some chunk text.",
-                  filingDate="2026-03-02", accessionNumber="0001108524-26-000060", chunk_index: int | str = 95):
+# PLR0913: a test-fixture builder called almost exclusively with
+# keyword args for a subset of fields -- the same "idiomatic test
+# pattern, not a real finding" this project's pyproject.toml already
+# applies to PLR2004 in tests/*. Bundling these into a dict would
+# force-touch every one of this file's many call sites for zero
+# behavioral benefit.
+def _fake_result(  # noqa: PLR0913
+    ticker="CRM", form="10-K", reportDate="2026-01-31", text="Some chunk text.",
+    filingDate="2026-03-02", accessionNumber="0001108524-26-000060", chunk_index: int | str = 95
+):
     return {
         "text": text,
         "metadata": {

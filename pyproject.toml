@@ -33,7 +33,20 @@ max-complexity = 10
 # Test assertions comparing to literal expected values are the normal,
 # idiomatic pattern -- PLR2004 flagging them is noise, not signal (93 of
 # 97 hits repo-wide were here; see the decision file above).
-"tests/*" = ["PLR2004"]
+#
+# E501: test files are dominated by single-line XBRL/API-response
+# fixture dicts (spot-checked -- e.g. test_formulas.py/test_xbrl_facts.py's
+# longest lines) that are more readable and easier to diff against real
+# API responses kept on one line than wrapped -- wrapping them is a
+# cosmetic cost for no real readability gain. This glob matches
+# recursively (verified directly: a scratch long line dropped into
+# tests/manual/ was silenced too), so it also covers the
+# tests/manual/verify_*.py live-verification scripts -- accepted
+# alongside the fixture-dict files above, not narrowed to exclude them,
+# since those scripts are exploratory/manual by nature and not held to
+# the same line-length discipline as the main source tree either. See
+# docs/decisions/2026-09-21-ruff-complexity-refactor.md.
+"tests/*" = ["PLR2004", "E501"]
 
 # basic, not strict: strict mode's real baseline was 4,655 errors, ~94%
 # of them Unknown-type-propagation noise from this codebase's dict-

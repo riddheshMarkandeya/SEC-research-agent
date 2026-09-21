@@ -1,0 +1,58 @@
+{
+  "backend": "gemini",
+  "answer_model": "gemini-flash-lite-latest",
+  "judge_model": "gemini-flash-lite-latest",
+  "results": [
+    {
+      "id": "aapl-msft-tax-rate-comparison",
+      "ticker": [
+        "AAPL",
+        "MSFT"
+      ],
+      "question": "Compare Apple's effective tax rate for the three months ended June 27, 2026 to Microsoft's effective tax rate for the three months ended December 31, 2025.",
+      "type": "comparison",
+      "passed": true,
+      "detail": "found matching values for all 2 entities",
+      "has_citation": true,
+      "citation_warnings": [],
+      "answer": "Apple's effective tax rate for the three months ended June 27, 2026 was 17.9% [2]. Microsoft's effective tax rate for the three months ended December 31, 2025 was 20% [12]. Therefore, Apple's effective tax rate was lower than Microsoft's for their respective periods.",
+      "n_chunks_retrieved": 15,
+      "withheld_answer": null,
+      "gate_withheld_would_have_passed": null,
+      "gate_withheld_detail": null,
+      "citation_warning_details": []
+    },
+    {
+      "id": "aapl-3yr-avg-operating-margin-fy2023-fy2025",
+      "ticker": "AAPL",
+      "question": "What was Apple's 3-year average operating margin from fiscal year 2023 through fiscal year 2025?",
+      "type": "numeric",
+      "passed": true,
+      "detail": "found matching value: 31.1 (percent)",
+      "has_citation": true,
+      "citation_warnings": [],
+      "answer": "Apple's 3-year average operating margin from fiscal year 2023 through fiscal year 2025 was 31.1% [1].",
+      "n_chunks_retrieved": 1,
+      "withheld_answer": null,
+      "gate_withheld_would_have_passed": null,
+      "gate_withheld_detail": null,
+      "citation_warning_details": []
+    },
+    {
+      "id": "msft-rd-intensity-fy2025",
+      "ticker": "MSFT",
+      "question": "What was Microsoft's R&D intensity (research and development expense divided by revenue) for fiscal year 2025?",
+      "type": "numeric",
+      "passed": true,
+      "detail": "found matching value: 11.5 (percent)",
+      "has_citation": true,
+      "citation_warnings": [],
+      "answer": "Microsoft's R&D intensity (research and development expense divided by revenue) for fiscal year 2025 was 11.5% [1]. This was based on research and development expenses of $32.49 billion [2] and revenue of $281.72 billion [3].",
+      "n_chunks_retrieved": 3,
+      "withheld_answer": null,
+      "gate_withheld_would_have_passed": null,
+      "gate_withheld_detail": null,
+      "citation_warning_details": []
+    }
+  ]
+}

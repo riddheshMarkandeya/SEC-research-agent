@@ -20,14 +20,22 @@ from typing import NamedTuple
 
 from xbrl_facts import get_frame, get_metric
 
+# Bundles the 3 period-selector args every get_metric() call takes
+# together, purely so _compute_ratio_metric() (called from exactly one
+# place, get_ratio() below) can pass them as one argument instead of
+# three -- NOT a change to get_metric()'s own public signature, which
+# stays as three separate positional args everywhere else in this
+# codebase (a much larger, unwarranted-here change).
+_Period = NamedTuple(
+    "_Period", [("fiscal_year", int | None), ("fiscal_period", str), ("period_end_date", str | None)]
+)
+
 
 def _compute_ratio_metric(
     ticker: str,
     numerator_metric: str,
     denominator_metric: str,
-    fiscal_year: int | None,
-    fiscal_period: str,
-    period_end_date: str | None,
+    period: _Period,
     as_percent: bool = True,
 ) -> dict | None:
     """Shared body for gross/operating/net margin, and the return-on-
@@ -35,15 +43,16 @@ def _compute_ratio_metric(
     otherwise-identical bodies differing only in which metric is the
     numerator.
 
-    Both legs are just handed the same fiscal_year/fiscal_period/
-    period_end_date arguments and each resolves its own entry via
-    get_metric() independently -- the period_end check below is what
-    actually guarantees both legs agree, regardless of how each one got
-    there. This also means either leg can be an XBRL "instant" (point-
-    in-time balance, e.g. total_assets) or "duration" (income-statement)
-    concept, or one of each -- get_metric() already normalizes both
-    shapes to the same {"value", "period_end", ...} dict, so nothing
-    here needs to know or care which kind either metric is.
+    Both legs are just handed the same period (fiscal_year/
+    fiscal_period/period_end_date, bundled as one _Period) and each
+    resolves its own entry via get_metric() independently -- the
+    period_end check below is what actually guarantees both legs agree,
+    regardless of how each one got there. This also means either leg
+    can be an XBRL "instant" (point-in-time balance, e.g. total_assets)
+    or "duration" (income-statement) concept, or one of each --
+    get_metric() already normalizes both shapes to the same {"value",
+    "period_end", ...} dict, so nothing here needs to know or care which
+    kind either metric is.
 
     `as_percent=False` (asset_turnover's case) skips the *100 and
     reports `unit: "raw"` instead of `"percent"`, rounded to 2 decimals
@@ -51,8 +60,10 @@ def _compute_ratio_metric(
     as non-matching categories, so getting this wrong silently breaks
     eval grading. See
     docs/decisions/2026-08-25-formula-registry-roa-turnover-cash.md."""
-    numerator = get_metric(ticker, numerator_metric, fiscal_year, fiscal_period, period_end_date)
-    denominator = get_metric(ticker, denominator_metric, fiscal_year, fiscal_period, period_end_date)
+    numerator = get_metric(ticker, numerator_metric, period.fiscal_year, period.fiscal_period, period.period_end_date)
+    denominator = get_metric(
+        ticker, denominator_metric, period.fiscal_year, period.fiscal_period, period.period_end_date
+    )
     if numerator is None or denominator is None:
         return None
     if numerator["period_end"] != denominator["period_end"]:
@@ -123,7 +134,11 @@ def get_ratio(
     DEFAULT_METRIC_TAGS elsewhere."""
     d = RATIO_DEFINITIONS[ratio_name]
     return _compute_ratio_metric(
-        ticker, d.numerator_metric, d.denominator_metric, fiscal_year, fiscal_period, period_end_date, d.as_percent
+        ticker,
+        d.numerator_metric,
+        d.denominator_metric,
+        _Period(fiscal_year, fiscal_period, period_end_date),
+        d.as_percent,
     )
 
 
