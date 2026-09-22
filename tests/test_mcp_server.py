@@ -27,6 +27,7 @@ def test_text_fragment_excerpt_returns_short_text_unchanged():
 def test_text_fragment_excerpt_truncates_long_text_at_word_boundary():
     text = "word " * 40  # 200 chars, well past the 100-char default
     excerpt = mcp_server._text_fragment_excerpt(text)
+    assert excerpt is not None
     assert len(excerpt) <= 100
     assert not excerpt.endswith("wor")  # never cuts mid-word
     assert text.startswith(excerpt)
@@ -317,6 +318,7 @@ def test_main_calls_flush_after_uvicorn_run_returns(monkeypatch):
     monkeypatch.setattr(mcp_server.uvicorn, "run", lambda app, host, port: calls.append(("run", app, host, port)))
     monkeypatch.setattr(mcp_server, "flush", lambda: calls.append(("flush",)))
 
+    assert mcp_server.main.callback is not None
     mcp_server.main.callback(host="127.0.0.1", port=8765)
 
     assert calls == [("run", "fake-app", "127.0.0.1", 8765), ("flush",)]
@@ -332,6 +334,7 @@ def test_main_calls_flush_even_when_uvicorn_run_raises(monkeypatch):
     monkeypatch.setattr(mcp_server.uvicorn, "run", raising_run)
     monkeypatch.setattr(mcp_server, "flush", lambda: calls.append("flush"))
 
+    assert mcp_server.main.callback is not None
     with pytest.raises(RuntimeError):
         mcp_server.main.callback(host="127.0.0.1", port=8765)
 

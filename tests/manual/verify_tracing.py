@@ -146,6 +146,7 @@ def main():
 
     obs2, obs2_input = _wait_for_observation(client, "unmet_metric_request", marker)
     assert obs2 is not None, "unmet_metric_request event did not appear in Langfuse within the poll window"
+    assert obs2_input is not None
     assert obs2_input["reason"] == "unknown_metric", obs2_input
     print(f"  [OK] unmet_metric_request event found, reason={obs2_input['reason']!r}, metric={obs2_input['metric']!r}")
 

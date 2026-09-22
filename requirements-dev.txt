@@ -3,6 +3,12 @@
 # requirements.txt -r requirements-dev.txt
 pytest==9.1.1
 
+# Directly imported by tests/manual/verify_mcp_server.py -- mcp==2.1.1's
+# streamable_http_client() expects httpx2.AsyncClient specifically (a
+# separate package from httpx, not a typo), so pin it explicitly rather
+# than relying on it arriving as an undeclared transitive dependency.
+httpx2==2.12.0
+
 # Linter/static-analysis, run scoped to changed files as part of step 7
 # review (see docs/decisions/2026-09-15-adopt-ruff-linter.md and this
 # project's own CLAUDE.md for the current rollout stage).

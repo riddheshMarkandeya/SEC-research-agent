@@ -45,6 +45,18 @@ reference:
 
 ## Backlog
 
+### From the 2026-09-22 pyright-clean-refactor review
+
+- [ ] **[infra, Medium, TBD]** `/security-review` cannot run in this
+  repo at all: it diffs `origin/HEAD...`, but this repo has no
+  `origin` remote configured (`git remote -v` is empty). This is a
+  repo-wide gap, not specific to any one diff — every future
+  `independent-review-pass` round's pass 4 will hit the same failure
+  until this repo has a remote (even a private one, HEAD symbolic-ref
+  included) to diff against. See
+  `docs/reviews/2026-09-22-pyright-clean-refactor.md`'s Pass 4 for the
+  manual-fallback assessment used in place of it this round.
+
 ### From the 2026-09-19 citation-header-in-quote fix
 
 Full evidence/reasoning: `docs/decisions/2026-09-19-citation-header-in-quote-fix.md`
@@ -155,23 +167,13 @@ Full evidence/reasoning: `docs/decisions/2026-09-15-claude-md-restructure.md`.
 
 Full evidence/reasoning: `docs/decisions/2026-09-15-adopt-pyright.md`.
 
-- [ ] **[refactor, Low, Standard]** 117-error pre-existing basic-mode
-  `pyright` baseline, not fixed on adoption (deliberately — see the
-  decision file). Entirely in test files (110: `test_formulas.py`,
-  `test_xbrl_facts.py`, `test_agent.py`, `test_llm_backends.py`,
-  `test_mcp_server.py`, `test_edgar_ingest.py`) and manual verify
-  scripts (7: `verify_mcp_server.py`, `verify_tracing.py`,
-  `verify_period_labels.py`) — mostly `reportOptionalSubscript`/
-  `reportOptionalMemberAccess` noise from mocks/fixtures, not core-module
-  gaps (all 7 core modules plus `tracing.py` are clean). Fix
-  opportunistically whenever one of these test files is next touched.
 - [ ] **[misc, Low, TBD]** Migrate `pyright` from changed-files-scoped
   manual review to a hard pre-commit gate (alongside the existing
-  pytest hook and `ruff`'s own gate, added 2026-09-21 — see
-  `docs/decisions/2026-09-21-ruff-pre-commit-gate.md`) once the
-  117-error baseline above is cleared. No longer tied to ruff's own
-  migration timing (that joint-migration premise held only while both
-  baselines were comparable in size; ruff's is now 0).
+  pytest hook and `ruff`'s own gate). Now unblocked: the 117-error
+  basic-mode baseline was resolved on 2026-09-22 via type-narrowing
+  assertions/casts across 9 test/verify files, zero logic change —
+  `pyright .` is 0 errors full-repo. See
+  `docs/decisions/2026-09-22-pyright-clean-refactor.md`.
 - [ ] **[design, Low, TBD]** Revisit Pyright **strict** mode. Rejected
   on 2026-09-15 adoption: real baseline was 4,655 errors, ~94% Unknown-
   type-propagation noise from this codebase's dict-shaped data flow

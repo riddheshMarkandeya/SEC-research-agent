@@ -103,6 +103,7 @@ def test_pick_entry_matches_instant_entry_by_fy_fp_form_without_duration():
     # form=10-K -- fy/fp/form matching alone is already unambiguous for
     # instant facts, no duration bucket needed.
     entry = _pick_entry(NVDA_ASSETS_ENTRIES, fiscal_year=2026, fiscal_period="FY")
+    assert entry is not None
     assert entry["val"] == 206803000000
     assert entry["accn"] == "0001045810-26-000021"
 
@@ -113,12 +114,14 @@ def test_pick_entry_by_end_date_matches_instant_entry_and_breaks_tie_toward_most
     # duration to bucket by, the most-recently-filed one wins, same
     # tiebreak principle as the duration-fact case.
     entry = _pick_entry_by_end_date(NVDA_ASSETS_ENTRIES, "2026-01-25")
+    assert entry is not None
     assert entry["val"] == 206803000000
     assert entry["accn"] == "0001045810-26-000052"
 
 
 def test_latest_entry_handles_instant_entries_without_crashing():
     entry = _latest_entry(NVDA_ASSETS_ENTRIES)
+    assert entry is not None
     assert entry["end"] == "2026-04-26"
     assert entry["val"] == 259474000000
 
@@ -136,6 +139,7 @@ def test_pick_entry_by_end_date_ignores_wrong_fy_fp_labels_entirely():
         {"start": "2026-01-26", "end": "2026-04-26", "val": 222, "accn": "correct-quarter", "fy": 2027, "fp": "Q1", "form": "10-Q", "filed": "2026-05-20"},
     ]
     entry = _pick_entry_by_end_date(entries, "2026-04-26")
+    assert entry is not None
     assert entry["val"] == 222
     assert entry["accn"] == "correct-quarter"
 
@@ -146,6 +150,7 @@ def test_pick_entry_by_end_date_prefers_quarter_over_annual_at_same_end_date():
         {"start": "2025-11-01", "end": "2026-01-25", "val": 111, "accn": "quarter", "fy": 2026, "fp": "Q4", "form": "10-Q", "filed": "2026-02-20"},
     ]
     entry = _pick_entry_by_end_date(entries, "2026-01-25")
+    assert entry is not None
     assert entry["val"] == 111
     assert entry["accn"] == "quarter"
 
@@ -157,6 +162,7 @@ def test_pick_entry_by_end_date_falls_back_to_annual_when_no_quarter_exists():
         {"start": "2025-01-27", "end": "2026-01-25", "val": 999, "accn": "annual", "fy": 2026, "fp": "FY", "form": "10-K", "filed": "2026-02-25"},
     ]
     entry = _pick_entry_by_end_date(entries, "2026-01-25")
+    assert entry is not None
     assert entry["val"] == 999
 
 
@@ -166,6 +172,7 @@ def test_pick_entry_by_end_date_breaks_ties_toward_most_recently_filed():
         {"start": "2025-01-01", "end": "2025-03-31", "val": 105, "accn": "restated", "fy": 2026, "fp": "Q1", "form": "10-Q", "filed": "2026-02-15"},
     ]
     entry = _pick_entry_by_end_date(entries, "2025-03-31")
+    assert entry is not None
     assert entry["accn"] == "restated"
 
 
@@ -184,6 +191,7 @@ def test_get_metric_with_empty_string_period_end_date_falls_back_to_fiscal_args(
         lambda ticker, tag: {"units": {"USD": NVDA_GROSS_PROFIT_ENTRIES}},
     )
     result = get_metric("NVDA", "gross_profit", fiscal_year=2026, fiscal_period="FY", period_end_date="")
+    assert result is not None
     assert result["value"] == 153463000000
 
 
@@ -210,6 +218,7 @@ def test_get_metric_with_fiscal_year_end_calendar_date_returns_annual_value(monk
         lambda ticker, tag: {"units": {"USD": NVDA_GROSS_PROFIT_ENTRIES}},
     )
     result = get_metric("NVDA", "gross_profit", period_end_date="2026-01-25")
+    assert result is not None
     assert result["value"] == 153463000000
 
 
@@ -235,6 +244,7 @@ def test_get_metric_with_period_end_date_matches_equivalent_fiscal_call(monkeypa
 
 def test_latest_entry_picks_max_end_date():
     entry = _latest_entry(NVDA_GROSS_PROFIT_ENTRIES)
+    assert entry is not None
     assert entry["end"] == "2026-01-25"
     assert entry["val"] == 153463000000
 
@@ -245,6 +255,7 @@ def test_latest_entry_breaks_ties_toward_shorter_duration():
     # quarter itself. "Most recent quarter" should mean the quarter,
     # not the longer cumulative figure that happens to end the same day.
     entry = _latest_entry(MSFT_RD_EXPENSE_ENTRIES)
+    assert entry is not None
     assert entry["end"] == "2026-03-31"
     assert entry["val"] == 8915000000
 
@@ -263,18 +274,21 @@ def test_get_metric_with_no_period_given_returns_latest(monkeypatch):
         lambda ticker, tag: {"units": {"USD": NVDA_GROSS_PROFIT_ENTRIES}},
     )
     result = get_metric("NVDA", "gross_profit")
+    assert result is not None
     assert result["value"] == 153463000000
     assert result["period_end"] == "2026-01-25"
 
 
 def test_pick_entry_annual_picks_latest_end_among_comparative_years():
     entry = _pick_entry(NVDA_GROSS_PROFIT_ENTRIES, fiscal_year=2026, fiscal_period="FY")
+    assert entry is not None
     assert entry["val"] == 153463000000
     assert entry["end"] == "2026-01-25"
 
 
 def test_pick_entry_quarterly_excludes_ytd_and_prior_year_comparative():
     entry = _pick_entry(MSFT_RD_EXPENSE_ENTRIES, fiscal_year=2026, fiscal_period="Q3")
+    assert entry is not None
     assert entry["val"] == 8915000000
     assert entry["end"] == "2026-03-31"
 
@@ -401,6 +415,7 @@ def test_get_metric_resolves_total_assets_to_the_assets_tag(monkeypatch):
 
     monkeypatch.setattr("xbrl_facts.fetch_concept", fake_fetch)
     result = get_metric("NVDA", "total_assets", fiscal_year=2027, fiscal_period="Q1")
+    assert result is not None
     assert result["value"] == 259474000000
 
 
@@ -416,6 +431,7 @@ def test_get_metric_resolves_cash_and_equivalents_to_the_cash_tag(monkeypatch):
 
     monkeypatch.setattr("xbrl_facts.fetch_concept", fake_fetch)
     result = get_metric("AAPL", "cash_and_equivalents", fiscal_year=2026, fiscal_period="Q3")
+    assert result is not None
     assert result["value"] == 39544000000
 
 
@@ -434,6 +450,7 @@ def test_get_metric_resolves_inventory_to_the_inventorynet_tag(monkeypatch):
 
     monkeypatch.setattr("xbrl_facts.fetch_concept", fake_fetch)
     result = get_metric("NVDA", "inventory", fiscal_year=2027, fiscal_period="Q1")
+    assert result is not None
     assert result["value"] == 25797000000
 
 
@@ -460,6 +477,7 @@ def test_get_metric_exposes_the_matched_entrys_own_fiscal_year_and_period(monkey
         lambda ticker, tag: {"units": {"USD": MSFT_RD_EXPENSE_ENTRIES}},
     )
     result = get_metric("MSFT", "rd_expense", period_end_date="2026-03-31")
+    assert result is not None
     assert result["fiscal_year"] == 2026
     assert result["fiscal_period"] == "Q3"
 

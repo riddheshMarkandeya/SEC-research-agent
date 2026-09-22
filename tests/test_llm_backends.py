@@ -6,6 +6,7 @@ test_eval_harness.py's mocked grade_judged() test.
 """
 
 from types import SimpleNamespace
+from typing import Any, cast
 
 import pytest
 import requests
@@ -130,6 +131,7 @@ def test_to_gemini_tool_strips_additional_properties():
     # default None as long as the source dict never sets it, matching
     # how a field the SDK's own request builder would otherwise omit.
     tool = _to_gemini_tool(_search_filings_like_schema())
+    assert tool.parameters is not None
     assert tool.parameters.additional_properties is None
 
 
@@ -137,7 +139,9 @@ def test_to_gemini_tool_preserves_everything_else():
     tool = _to_gemini_tool(_search_filings_like_schema())
     assert tool.name == "search_filings"
     assert tool.description == "desc"
+    assert tool.parameters is not None
     assert tool.parameters.required == ["query"]
+    assert tool.parameters.properties is not None
     assert set(tool.parameters.properties) == {"query"}
 
 
@@ -179,8 +183,12 @@ def test_to_gemini_tool_strips_additional_properties_recursively():
     # one level deeper. See
     # docs/decisions/2026-09-10-structured-claims-citation-verification.md.
     tool = _to_gemini_tool(_nested_array_schema())
+    assert tool.parameters is not None
     assert tool.parameters.additional_properties is None
-    assert tool.parameters.properties["claims"].items.additional_properties is None
+    assert tool.parameters.properties is not None
+    claims_schema = tool.parameters.properties["claims"]
+    assert claims_schema.items is not None
+    assert claims_schema.items.additional_properties is None
 
 
 # ---------------------------------------------------------------------------
@@ -595,7 +603,7 @@ def test_gemini_send_does_not_force_when_force_tool_is_none():
 
 def test_gemini_send_forces_tool_choice_while_preserving_base_config():
     chat = _FakeChat([SimpleNamespace(candidates=[], text=None)])
-    base_config = types.GenerateContentConfig(tools=["fake-tools"], system_instruction="sys", temperature=0.1)
+    base_config = types.GenerateContentConfig(tools=cast(Any, ["fake-tools"]), system_instruction="sys", temperature=0.1)
     state = {"chat": chat, "config": base_config}
 
     try:
@@ -617,7 +625,7 @@ def test_gemini_send_forces_tool_choice_while_preserving_base_config():
 
 def test_gemini_send_followup_forces_tool_choice_while_preserving_base_config():
     chat = _FakeChat([SimpleNamespace(candidates=[], text=None)])
-    base_config = types.GenerateContentConfig(tools=["fake-tools"], system_instruction="sys", temperature=0.1)
+    base_config = types.GenerateContentConfig(tools=cast(Any, ["fake-tools"]), system_instruction="sys", temperature=0.1)
     state = {"chat": chat, "config": base_config}
 
     try:

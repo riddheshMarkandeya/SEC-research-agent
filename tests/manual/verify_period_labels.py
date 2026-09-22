@@ -197,11 +197,14 @@ def verify_against_xbrl() -> tuple[int, int, list[str]]:
         if data is None:
             problems.append(f"{ticker}: no {tag} data available (inconclusive)")
             continue
-        annual_ends = {
-            e["end"]
-            for e in data.get("units", {}).get("USD", [])
-            if e.get("form") == "10-K" and _ANNUAL_DURATION_DAYS[0] <= _duration_days(e) <= _ANNUAL_DURATION_DAYS[1]
-        }
+        annual_ends = set()
+        for e in data.get("units", {}).get("USD", []):
+            if e.get("form") != "10-K":
+                continue
+            duration = _duration_days(e)
+            assert duration is not None, f"10-K entry unexpectedly has no start/duration: {e}"
+            if _ANNUAL_DURATION_DAYS[0] <= duration <= _ANNUAL_DURATION_DAYS[1]:
+                annual_ends.add(e["end"])
         if not annual_ends:
             problems.append(f"{ticker}: no 10-K entries found for {tag} (inconclusive)")
             continue

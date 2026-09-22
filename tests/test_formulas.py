@@ -76,6 +76,7 @@ def test_get_gross_margin_with_empty_string_period_end_date_falls_back_to_fiscal
 
     monkeypatch.setattr("xbrl_facts.fetch_concept", fake_fetch)
     result = get_gross_margin("NVDA", fiscal_year=2026, fiscal_period="FY", period_end_date="")
+    assert result is not None
     assert result["value"] == 71.1
 
 
@@ -89,6 +90,7 @@ def test_get_gross_margin_computes_ratio_from_two_metrics(monkeypatch):
 
     monkeypatch.setattr("xbrl_facts.fetch_concept", fake_fetch)
     result = get_gross_margin("NVDA", fiscal_year=2026, fiscal_period="FY")
+    assert result is not None
     assert result["value"] == 71.1
     assert result["unit"] == "percent"
 
@@ -111,6 +113,7 @@ def test_get_operating_margin_computes_ratio_from_two_metrics(monkeypatch):
 
     monkeypatch.setattr("xbrl_facts.fetch_concept", fake_fetch)
     result = get_operating_margin("NVDA", fiscal_year=2026, fiscal_period="FY")
+    assert result is not None
     assert result["value"] == 25.0
     assert result["unit"] == "percent"
 
@@ -148,6 +151,7 @@ def test_get_net_margin_computes_ratio_from_two_metrics(monkeypatch):
 
     monkeypatch.setattr("xbrl_facts.fetch_concept", fake_fetch)
     result = get_net_margin("NVDA", fiscal_year=2026, fiscal_period="FY")
+    assert result is not None
     assert result["value"] == 12.5
     assert result["unit"] == "percent"
 
@@ -177,6 +181,7 @@ def test_get_return_on_assets_computes_ratio_from_duration_and_instant_metric(mo
 
     monkeypatch.setattr("xbrl_facts.fetch_concept", fake_fetch)
     result = get_return_on_assets("AAPL", fiscal_year=2025, fiscal_period="FY")
+    assert result is not None
     assert result["value"] == 31.2
     assert result["unit"] == "percent"
 
@@ -204,6 +209,7 @@ def test_get_asset_turnover_computes_raw_ratio_not_percent(monkeypatch):
 
     monkeypatch.setattr("xbrl_facts.fetch_concept", fake_fetch)
     result = get_asset_turnover("NVDA", fiscal_year=2026, fiscal_period="FY")
+    assert result is not None
     assert result["value"] == 1.04
     assert result["unit"] == "raw"
 
@@ -230,6 +236,7 @@ def test_get_cash_to_assets_computes_ratio_from_two_instant_metrics(monkeypatch)
 
     monkeypatch.setattr("xbrl_facts.fetch_concept", fake_fetch)
     result = get_cash_to_assets("MSFT", fiscal_year=2025, fiscal_period="FY")
+    assert result is not None
     assert result["value"] == 4.9
     assert result["unit"] == "percent"
 
@@ -249,6 +256,7 @@ def test_get_yoy_growth_computes_percent_change_from_prior_year(monkeypatch):
     ]
     monkeypatch.setattr("xbrl_facts.fetch_concept", lambda ticker, tag: {"units": {"USD": entries}})
     result = get_yoy_growth("NVDA", "revenue", fiscal_year=2026, fiscal_period="FY")
+    assert result is not None
     assert result["value"] == 10.0
     assert result["unit"] == "percent"
 
@@ -265,6 +273,7 @@ def test_get_yoy_growth_works_with_period_end_date_input(monkeypatch):
     ]
     monkeypatch.setattr("xbrl_facts.fetch_concept", lambda ticker, tag: {"units": {"USD": entries}})
     result = get_yoy_growth("NVDA", "revenue", period_end_date="2026-04-26")
+    assert result is not None
     assert result["value"] == 10.0
 
 
@@ -316,6 +325,7 @@ def test_get_multi_year_average_averages_margin_across_years(monkeypatch):
         lambda ticker, ratio_name, fiscal_year, fiscal_period: per_year[fiscal_year],
     )
     result = get_multi_year_average("AAPL", "operating_margin", 2023, 2025)
+    assert result is not None
     assert result["value"] == round((29.8 + 31.5 + 32.0) / 3, 1)
     assert result["unit"] == "percent"
     # Metadata comes from the most recent (end_fiscal_year) year, not an
@@ -347,6 +357,7 @@ def test_get_multi_year_average_averages_return_on_assets_across_years(monkeypat
         lambda ticker, ratio_name, fiscal_year, fiscal_period: per_year[fiscal_year],
     )
     result = get_multi_year_average("AAPL", "return_on_assets", 2024, 2025)
+    assert result is not None
     assert result["value"] == round((25.0 + 31.2) / 2, 1)
     assert result["unit"] == "percent"
 
@@ -368,6 +379,7 @@ def test_get_multi_year_average_averages_asset_turnover_across_years(monkeypatch
         lambda ticker, ratio_name, fiscal_year, fiscal_period: per_year[fiscal_year],
     )
     result = get_multi_year_average("NVDA", "asset_turnover", 2025, 2026)
+    assert result is not None
     assert result["value"] == (0.97 + 1.04) / 2
     assert result["unit"] == "raw"
 
@@ -382,6 +394,7 @@ def test_get_multi_year_average_averages_cash_to_assets_across_years(monkeypatch
         lambda ticker, ratio_name, fiscal_year, fiscal_period: per_year[fiscal_year],
     )
     result = get_multi_year_average("MSFT", "cash_to_assets", 2024, 2025)
+    assert result is not None
     assert result["value"] == round((5.5 + 4.9) / 2, 1)
     assert result["unit"] == "percent"
 
@@ -396,6 +409,7 @@ def test_get_multi_year_average_averages_raw_metric_across_years(monkeypatch):
         lambda ticker, metric, fiscal_year, fiscal_period: per_year[fiscal_year],
     )
     result = get_multi_year_average("AAPL", "revenue", 2024, 2025)
+    assert result is not None
     # Not rounded -- only percent-unit results are (matching
     # _compute_ratio_metric's own rounding convention); a dollar average
     # stays exact, like get_metric()'s own raw values do.
@@ -640,6 +654,7 @@ def test_get_ratio_computes_gross_margin_via_the_table(monkeypatch):
 
     monkeypatch.setattr("xbrl_facts.fetch_concept", fake_fetch)
     result = get_ratio("NVDA", "gross_margin", fiscal_year=2026, fiscal_period="FY")
+    assert result is not None
     assert result["value"] == 71.1
     assert result["unit"] == "percent"
 
@@ -657,6 +672,7 @@ def test_get_ratio_computes_inventory_turnover_as_raw_ratio(monkeypatch):
 
     monkeypatch.setattr("xbrl_facts.fetch_concept", fake_fetch)
     result = get_ratio("NVDA", "inventory_turnover", fiscal_year=2026, fiscal_period="FY")
+    assert result is not None
     assert result["value"] == 5.0
     assert result["unit"] == "raw"
 
@@ -789,6 +805,7 @@ def test_ratio_registration_via_table_alone_needs_no_new_function(monkeypatch):
         RatioDefinition("cash_and_equivalents", "revenue", True, False),
     )
     result = get_ratio("NVDA", "cash_to_revenue", fiscal_year=2026, fiscal_period="FY")
+    assert result is not None
     assert result["value"] == 20.0
     assert result["unit"] == "percent"
 
@@ -813,5 +830,6 @@ def test_get_multi_year_average_averages_a_ratio_added_only_via_the_table(monkey
         lambda ticker, ratio_name, fiscal_year, fiscal_period: per_year[fiscal_year],
     )
     result = get_multi_year_average("AAPL", "cash_to_revenue", 2024, 2025)
+    assert result is not None
     assert result["value"] == round((15.0 + 20.0) / 2, 1)
     assert result["unit"] == "percent"

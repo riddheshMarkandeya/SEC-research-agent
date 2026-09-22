@@ -13,6 +13,7 @@ monkeypatched BACKENDS entries instead.
 """
 
 from contextlib import contextmanager
+from typing import cast
 
 from agent import (
     CALCULATE_TOOL_SCHEMA,
@@ -1138,6 +1139,7 @@ def test_call_calculate_rejects_divide_by_zero():
     args = _valid_calculate_args(operand_a=100.0, unit_a="million", operand_b=0.0)
     result, error = call_calculate(args, all_results)
     assert result is None
+    assert error is not None
     assert "zero" in error.lower()
 
 
@@ -1146,6 +1148,7 @@ def test_call_calculate_rejects_divide_by_zero_for_plain_divide_too():
     args = _valid_calculate_args(operation="divide", operand_a=100.0, unit_a="million", operand_b=0.0)
     result, error = call_calculate(args, all_results)
     assert result is None
+    assert error is not None
     assert "zero" in error.lower()
 
 
@@ -1154,6 +1157,7 @@ def test_call_calculate_rejects_out_of_range_citation_index():
     args = _valid_calculate_args(citation_index_b=5)
     result, error = call_calculate(args, all_results)
     assert result is None
+    assert error is not None
     assert "[5]" in error or "5" in error
 
 
@@ -1164,6 +1168,7 @@ def test_call_calculate_rejects_operand_not_grounded_in_cited_source():
     ]
     result, error = call_calculate(_valid_calculate_args(), all_results)
     assert result is None
+    assert error is not None
     assert "operand_b" in error
     assert "[2]" in error
 
@@ -1175,6 +1180,7 @@ def test_call_calculate_rejects_operand_a_not_grounded_names_it_specifically():
     ]
     result, error = call_calculate(_valid_calculate_args(), all_results)
     assert result is None
+    assert error is not None
     assert "operand_a" in error
     assert "[1]" in error
 
@@ -1200,6 +1206,7 @@ def test_call_calculate_operand_wrong_unit_names_the_correct_unit_not_the_value(
     )
     result, error = call_calculate(args, all_results)
     assert result is None
+    assert error is not None
     assert "operand_a" in error
     assert "billion" in error.lower()
     assert "raw" in error.lower()
@@ -1222,6 +1229,7 @@ def test_call_calculate_operand_wrong_citation_index_names_the_correct_result():
     args = _valid_calculate_args(citation_index_a=1)
     result, error = call_calculate(args, all_results)
     assert result is None
+    assert error is not None
     assert "operand_a" in error
     assert "[2]" in error
     assert "citation index" in error.lower()
@@ -1245,6 +1253,7 @@ def test_call_calculate_operand_ungroundable_under_any_unit_says_not_retryable()
     )
     result, error = call_calculate(args, all_results)
     assert result is None
+    assert error is not None
     assert "operand_b" in error
     assert "not a retryable mistake" in error.lower() or "not retryable" in error.lower()
 
@@ -1257,6 +1266,7 @@ def test_call_calculate_rejects_mismatched_categories():
     args = _valid_calculate_args(operand_a=20.0, unit_a="percent", operand_b=100.0, unit_b="million")
     result, error = call_calculate(args, all_results)
     assert result is None
+    assert error is not None
     assert "percent" in error.lower() and "scale" in error.lower()
 
 
@@ -1285,6 +1295,7 @@ def test_calculation_as_result_text_is_directly_quotable_end_to_end():
     args = _valid_calculate_args()
     calc_result, error = call_calculate(args, all_results)
     assert error is None
+    assert calc_result is not None
     entry = _calculation_as_result(calc_result, args)
     assert "17.7" in entry["text"]
     assert "percent" in entry["text"]
@@ -1323,6 +1334,7 @@ def test_calculation_as_result_text_avoids_scientific_notation_for_large_values(
     )
     calc_result, error = call_calculate(args, all_results)
     assert error is None
+    assert calc_result is not None
     assert calc_result["value"] == 1e18  # sanity check on the premise
 
     entry = _calculation_as_result(calc_result, args)
@@ -1345,6 +1357,7 @@ def test_calculation_as_result_has_metadata_required_by_format_results_block():
     ]
     args = _valid_calculate_args()
     calc_result, _ = call_calculate(args, all_results)
+    assert calc_result is not None
     entry = _calculation_as_result(calc_result, args)
     # _format_results_block reads meta['ticker']/['form']/['reportDate'] --
     # a KeyError here would only surface live, the first time a
@@ -3137,7 +3150,7 @@ def test_finalize_answer_refuses_when_warnings_present():
             quote=None,
         )
     ]
-    result = _finalize_answer("the answer", warnings, ["result"], backend="ollama", retried=False)
+    result = _finalize_answer("the answer", warnings, cast(list[dict], ["result"]), backend="ollama", retried=False)
     assert result.answer == _format_refusal_message(["[1] claims 100.0 ... doesn't appear"])
     assert result.results == ["result"]
     assert result.citation_warnings == ["[1] claims 100.0 ... doesn't appear"]
@@ -3241,7 +3254,7 @@ def test_finalize_answer_logs_citation_gate_refused_with_check_counts(monkeypatc
             quote=None,
         ),
     ]
-    _finalize_answer("the model's answer", warnings, ["result"], backend="gemini", retried=True)
+    _finalize_answer("the model's answer", warnings, cast(list[dict], ["result"]), backend="gemini", retried=True)
 
     assert len(log_calls) == 1
     category, fields = log_calls[0]

@@ -46,7 +46,10 @@ from urllib.parse import unquote
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
-import httpx
+# Not a typo for httpx -- mcp==2.1.1's streamable_http_client() expects
+# httpx2.AsyncClient specifically, a separate package by httpx's own
+# original author, pinned in requirements-dev.txt.
+import httpx2
 import requests
 from bs4 import BeautifulSoup
 from mcp import ClientSession
@@ -167,6 +170,7 @@ class _RunningServer:
         return self
 
     def __exit__(self, *exc_info):
+        assert self._proc is not None
         self._proc.terminate()
         try:
             self._proc.wait(timeout=5)
@@ -200,7 +204,7 @@ def check_auth():
         print("  [OK] request with wrong token rejected (401)")
 
         async def _authed_round_trip():
-            async with httpx.AsyncClient(headers={"Authorization": f"Bearer {token}"}) as http_client:
+            async with httpx2.AsyncClient(headers={"Authorization": f"Bearer {token}"}) as http_client:
                 async with streamable_http_client(server.mcp_url, http_client=http_client) as (read, write):
                     async with ClientSession(read, write) as session:
                         await session.initialize()

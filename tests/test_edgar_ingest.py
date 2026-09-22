@@ -50,6 +50,7 @@ def test_get_filing_url_strips_leading_zeros_from_cik(monkeypatch, tmp_path):
 
     url = edgar_ingest.get_filing_url("NVDA", "0001045810-26-000021")
 
+    assert url is not None
     assert "/data/1045810/" in url
     assert "/data/0001045810/" not in url
 
