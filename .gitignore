@@ -4,6 +4,12 @@ __pycache__/
 .venv/
 .pytest_cache/
 
+# Coverage.py output -- regenerated on demand via pytest --cov, not
+# committed evidence like eval/eval_results/*.json.
+.coverage
+.coverage.*
+coverage.xml
+
 # Generated data — all regenerable via edgar_ingest.py -> chunk_documents.py -> index_chunks.py
 data/
 chunks/

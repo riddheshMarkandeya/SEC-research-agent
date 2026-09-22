@@ -72,21 +72,21 @@ _bm25_index = None
 _bm25_records = None  # parallel list of {"text", "metadata"} for _bm25_index
 
 
-def _get_embed_model() -> SentenceTransformer:
+def _get_embed_model() -> SentenceTransformer:  # pragma: no cover -- loads a real embedding model, live-only
     global _embed_model
     if _embed_model is None:
         _embed_model = SentenceTransformer(EMBED_MODEL_NAME)
     return _embed_model
 
 
-def _get_rerank_model() -> CrossEncoder:
+def _get_rerank_model() -> CrossEncoder:  # pragma: no cover -- loads a real cross-encoder model, live-only
     global _rerank_model
     if _rerank_model is None:
         _rerank_model = CrossEncoder(RERANK_MODEL_NAME)
     return _rerank_model
 
 
-def _get_chroma_collection():
+def _get_chroma_collection():  # pragma: no cover -- opens a real Chroma collection, live-only
     global _chroma_collection
     if _chroma_collection is None:
         client = chromadb.PersistentClient(path=CHROMA_DIR)
@@ -102,7 +102,7 @@ def _tokenize(text: str) -> list[str]:
     return re.findall(r"[a-z0-9]+", text.lower())
 
 
-def _load_bm25_index():
+def _load_bm25_index():  # pragma: no cover -- reads real chunk files from disk, live-only
     """Build the BM25 index once from the same chunk files index_chunks.py
     reads, so both retrieval paths are always in sync with the current
     ./chunks/ output."""
@@ -138,7 +138,9 @@ def _make_id(metadata: Mapping[str, object]) -> str:
 # Individual search methods — each returns an ordered list of
 # (doc_id, text, metadata), best match first.
 # ---------------------------------------------------------------------------
-def bm25_search(query: str, n: int, ticker: str | None = None) -> list[tuple[str, str, dict]]:
+def bm25_search(  # pragma: no cover -- queries the real BM25 index, live-only
+    query: str, n: int, ticker: str | None = None
+) -> list[tuple[str, str, dict]]:
     _load_bm25_index()
     assert _bm25_index is not None and _bm25_records is not None  # _load_bm25_index() always sets both
     scores = _bm25_index.get_scores(_tokenize(query))
@@ -157,7 +159,9 @@ def bm25_search(query: str, n: int, ticker: str | None = None) -> list[tuple[str
     return results
 
 
-def vector_search(query: str, n: int, ticker: str | None = None) -> list[tuple[str, str, dict]]:
+def vector_search(  # pragma: no cover -- queries the real Chroma collection, live-only
+    query: str, n: int, ticker: str | None = None
+) -> list[tuple[str, str, dict]]:
     model = _get_embed_model()
     collection = _get_chroma_collection()
     query_embedding = model.encode(QUERY_INSTRUCTION + query, normalize_embeddings=True).tolist()
@@ -281,7 +285,9 @@ def _rescue_demoted_table_chunk(
     return ranked[: top_n - 1] + [best_table]
 
 
-def rerank(query: str, candidates: list[tuple[str, str, dict, float]], top_n: int) -> list[dict]:
+def rerank(  # pragma: no cover -- scores with the real cross-encoder model, live-only
+    query: str, candidates: list[tuple[str, str, dict, float]], top_n: int
+) -> list[dict]:
     """Score each (query, passage) pair jointly with a cross-encoder, then
     combine with the fused ranking via _combine_fused_and_rerank() — see
     that function's docstring for why a straight override or sum of the
@@ -299,7 +305,7 @@ def rerank(query: str, candidates: list[tuple[str, str, dict, float]], top_n: in
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
-def hybrid_search(
+def hybrid_search(  # pragma: no cover -- orchestrates the live-only functions above
     query: str,
     ticker: str | None = None,
     top_k: int = 5,
@@ -321,7 +327,7 @@ def hybrid_search(
     ]
 
 
-def main():
+def main():  # pragma: no cover -- CLI entry point, live-only
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("query", help="question to search for")
     parser.add_argument("--ticker", default=None, help="restrict to one ticker, e.g. MSFT")

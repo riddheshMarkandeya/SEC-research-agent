@@ -45,17 +45,32 @@ reference:
 
 ## Backlog
 
-### From the 2026-09-22 pyright-clean-refactor review
+### From the 2026-09-22 pytest-coverage adoption
 
-- [ ] **[infra, Medium, TBD]** `/security-review` cannot run in this
-  repo at all: it diffs `origin/HEAD...`, but this repo has no
-  `origin` remote configured (`git remote -v` is empty). This is a
-  repo-wide gap, not specific to any one diff — every future
-  `independent-review-pass` round's pass 4 will hit the same failure
-  until this repo has a remote (even a private one, HEAD symbolic-ref
-  included) to diff against. See
-  `docs/reviews/2026-09-22-pyright-clean-refactor.md`'s Pass 4 for the
-  manual-fallback assessment used in place of it this round.
+Full evidence/reasoning: `docs/decisions/2026-09-22-adopt-pytest-coverage.md`.
+
+- [ ] **[design, Low, TBD]** Revisit **branch coverage**
+  (`[tool.coverage.run]`'s `branch = true`) — see the decision doc's
+  "Why" section for the line-vs-branch reasoning.
+- [ ] **[test-coverage, Med, Substantial]** Full-repo pytest coverage
+  baseline as measured at adoption: **90% overall** (2,111 statements,
+  210 missed) — critical-core (the 8 `plan-review-blast-radius.md`
+  files) 93%, ordinary files 83.5%. Not retroactively fixed — mirrors
+  the 155-violation ruff and 117-error pyright baselines, each closed
+  later via a dedicated pass. Notable individual gaps: `index_chunks.py`
+  0% (`load_all_chunks`/`make_id` are pure, testable, and simply never
+  tested — not live-only, a real gap), `query_chunks.py` 0% (not
+  currently in any live-code-TDD/blast-radius list — worth a look),
+  `chunk_documents.py` 78%, `mcp_server.py` 80%, `eval_harness.py` 83%.
+  Only the 90%/80% two-tier diff-coverage bar applies to new/changed
+  lines going forward; this pre-existing gap closes opportunistically,
+  file by file, as those files are next touched for other reasons.
+- [ ] **[design, Low, TBD]** Migrate the coverage-diff check to a hard
+  `githooks/pre-commit` gate, mirroring ruff's/pyright's own two-stage
+  rollout. Trigger (see decision doc for the full reasoning): baseline
+  condition already met today; still open is >=10 real diffs passing
+  the review-time check with zero false-positive blocks from the
+  live-only exclusions.
 
 ### From the 2026-09-19 citation-header-in-quote fix
 

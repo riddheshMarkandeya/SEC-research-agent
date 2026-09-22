@@ -56,6 +56,29 @@ new error anywhere, not just in touched files (see
 its own separate pyright step since the gate covers it. Revisiting
 strict mode is still tracked as its own `BACKLOG.md` item.
 
+## This project's test coverage
+
+Uses **`pytest-cov`**/**`diff-cover`** (`requirements-dev.txt`; config
+in `pyproject.toml`'s `[tool.coverage.run]`/`[tool.coverage.report]`).
+Line coverage, not branch — see
+`docs/decisions/2026-09-22-adopt-pytest-coverage.md` for why.
+
+**Current stage: changed-files-scoped, `independent-review-pass`-
+integrated check** — not a pre-commit gate yet. Run
+`pytest --cov=. --cov-report=xml`, then enforce diff coverage with
+`diff-cover coverage.xml --compare-branch=origin/master --fail-under=80`
+(ordinary files) and `--include <critical-core paths> --fail-under=90`
+(critical-core files — see `.claude/rules/plan-review-blast-radius.md`'s
+`## Coverage bar` section for the exact list, reused from that file's
+own `paths:`, not restated here). Live-only lines (real HTTP/Chroma/LLM
+calls, per `.claude/rules/live-code-tdd.md`) are marked
+`# pragma: no cover` in source and excluded from both checks — this is
+required, not optional, since without it the bar would either
+chronically fail on legitimate changes to those functions or pressure
+contributors toward mocking the network/DB itself, the exact
+anti-pattern `tdd-live-code-carveout` rejects. See `BACKLOG.md` for the
+measured baseline and the pre-commit-gate migration trigger.
+
 ## This project's comment hygiene
 
 Every new or edited comment must be self-contained, per global

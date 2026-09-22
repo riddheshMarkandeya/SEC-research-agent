@@ -74,3 +74,17 @@ own history, not a speculative "this file feels important" argument:
 current** (see this project's own `CLAUDE.md`): add an entry the moment
 a plan or code review surfaces a real issue in a function not already
 listed here, in the same step, not as a deferred follow-up.
+
+## Coverage bar
+
+A separate policy from the escalated plan-review scrutiny above —
+mechanically a numeric coverage floor, not incident-grounded review
+depth — that happens to reuse this same 8-file list rather than
+maintaining a second, identical one. Per
+`docs/decisions/2026-09-22-adopt-pytest-coverage.md`: new/changed lines
+in any file listed above must clear **90%** diff coverage (vs. 80%
+elsewhere) before a change touching it is called done, excluding
+live-only lines already marked `# pragma: no cover` per
+`.claude/rules/live-code-tdd.md`. If this file's own `paths:` list
+changes for plan-review reasons, the coverage bar's file set changes
+with it automatically — no second list to keep in sync.

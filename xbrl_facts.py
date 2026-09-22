@@ -365,7 +365,7 @@ def get_metric(
 # companyconcept entry already carries the SEC-assigned "frame" label
 # directly, so frame lookups are anchored to one company's own
 # already-verified get_metric() resolution instead.
-def fetch_frame(tag: str, frame: str) -> dict | None:
+def fetch_frame(tag: str, frame: str) -> dict | None:  # pragma: no cover -- live SEC call, never boundary-tested
     """Fetch one us-gaap concept for every SEC filer that reported it
     for a given frame (e.g. "CY2026Q1"), cached to disk indefinitely —
     same rationale as fetch_concept(). Returns None on a 404 (the tag

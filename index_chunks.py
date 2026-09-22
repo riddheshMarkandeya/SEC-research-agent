@@ -56,7 +56,7 @@ def make_id(metadata: dict) -> str:
     return f"{metadata['accessionNumber']}_{metadata['chunk_index']}"
 
 
-def main():
+def main():  # pragma: no cover -- live embedding-model + Chroma pipeline, no test file exists for this module
     print(f"Loading chunks from {CHUNKS_DIR.resolve()} ...")
     records = load_all_chunks()
     if not records:

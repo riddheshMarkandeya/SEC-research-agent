@@ -19,3 +19,9 @@ ruff==0.16.7
 # "This project's type checker" section for the current rollout stage.
 pyright==1.1.414
 lxml-stubs==0.5.1
+
+# Coverage measurement -- changed-files-scoped check via diff-cover,
+# not a pre-commit gate yet; see this project's own CLAUDE.md "This
+# project's test coverage" section for the current rollout stage.
+pytest-cov==7.1.0
+diff-cover==10.6.0

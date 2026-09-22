@@ -74,3 +74,19 @@ exclude = [
     "xbrl_cache",
     "trace_logs",
 ]
+
+# Line coverage, not branch -- mirrors pyright's own basic-vs-strict
+# "start simpler, measure the real baseline, escalate later if
+# warranted" reasoning. No coverage-blind-spot incident has been
+# documented in this project yet (coverage tooling didn't exist until
+# now) -- revisit per BACKLOG.md as a forward-looking consideration,
+# not a reaction to a specific past miss. See
+# docs/decisions/2026-09-22-adopt-pytest-coverage.md.
+[tool.coverage.run]
+branch = false
+source = ["."]
+omit = [".venv/*", "tests/*", "chroma_db/*", "chunks/*", "data/*", "xbrl_cache/*", "trace_logs/*"]
+
+[tool.coverage.report]
+show_missing = true
+exclude_lines = ["pragma: no cover", "if __name__ == .__main__.:"]

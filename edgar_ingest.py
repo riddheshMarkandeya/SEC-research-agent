@@ -50,7 +50,7 @@ REQUEST_DELAY_SECONDS = 0.3  # be polite to SEC's servers — stay under 10 req/
 # ---------------------------------------------------------------------------
 # Step 1: Get the list of filings for a company
 # ---------------------------------------------------------------------------
-def get_filing_list(cik: str) -> list[dict]:
+def get_filing_list(cik: str) -> list[dict]:  # pragma: no cover -- live SEC call, always monkeypatched in tests
     """Fetch a company's filing history from the submissions API."""
     url = f"https://data.sec.gov/submissions/CIK{cik}.json"
     resp = requests.get(url, headers=HEADERS)
@@ -84,7 +84,9 @@ def _filing_document_url(cik: str, accession: str, primary_doc: str) -> str:
     return f"https://www.sec.gov/Archives/edgar/data/{cik_nozero}/{accession_nodash}/{primary_doc}"
 
 
-def fetch_filing_html(cik: str, accession: str, primary_doc: str) -> str:
+def fetch_filing_html(  # pragma: no cover -- live SEC document fetch, always monkeypatched in tests
+    cik: str, accession: str, primary_doc: str
+) -> str:
     """Download the raw filing HTML."""
     resp = requests.get(_filing_document_url(cik, accession, primary_doc), headers=HEADERS)
     resp.raise_for_status()
@@ -176,7 +178,7 @@ def parse_filing(html: str) -> tuple[str, list[dict]]:
 # ---------------------------------------------------------------------------
 # Main ingestion loop
 # ---------------------------------------------------------------------------
-def main():
+def main():  # pragma: no cover -- live SEC ingestion orchestration loop
     if "your.email@example.com" in SEC_USER_AGENT_EMAIL:
         print("⚠️  Set SEC_USER_AGENT_EMAIL in .env before running (see .env.example) — "
               "SEC will reject requests without a real-looking User-Agent.")
