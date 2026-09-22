@@ -2,11 +2,11 @@
 testpaths = ["tests"]
 pythonpath = ["."]
 
-# See docs/decisions/2026-09-15-adopt-ruff-linter.md and this project's
-# own CLAUDE.md for the current rollout stage (changed-files-scoped for
-# now, not a full-repo pre-commit gate -- the existing codebase has a
-# real, not-yet-fixed baseline of violations, largely file-size/
-# complexity ones on a handful of already-known-large files).
+# The 155-violation adoption-time baseline (docs/decisions/2026-09-15-adopt-ruff-linter.md)
+# was resolved via pure-extraction refactors + a formal E501 exception
+# (docs/decisions/2026-09-21-ruff-complexity-refactor.md); ruff check .
+# is now 0 errors full-repo and enforced as a hard pre-commit gate
+# (githooks/pre-commit, docs/decisions/2026-09-21-ruff-pre-commit-gate.md).
 [tool.ruff]
 target-version = "py313"
 line-length = 120
@@ -51,11 +51,14 @@ max-complexity = 10
 # basic, not strict: strict mode's real baseline was 4,655 errors, ~94%
 # of them Unknown-type-propagation noise from this codebase's dict-
 # shaped data flow, not real gaps. basic mode's baseline was 154 --
-# comparable to ruff's own 155-violation baseline -- with real, fixable
-# findings. See docs/decisions/2026-09-15-adopt-pyright.md and this
-# project's own CLAUDE.md for the current rollout stage (changed-files-
-# scoped for now, mirroring ruff's own rollout -- not a pre-commit gate
-# yet).
+# comparable to ruff's own original 155-violation baseline -- with
+# real, fixable findings. See docs/decisions/2026-09-15-adopt-pyright.md.
+# Unlike ruff (now a hard pre-commit gate, see [tool.ruff] above),
+# pyright's own 117-error baseline is unrelated pre-existing test-file
+# debt that hasn't been fixed yet, so it stays changed-files-scoped
+# on its own independent timeline -- see
+# docs/decisions/2026-09-21-ruff-pre-commit-gate.md for why the two
+# tools' migrations are no longer tied together.
 [tool.pyright]
 pythonVersion = "3.13"
 typeCheckingMode = "basic"

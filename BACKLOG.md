@@ -151,22 +151,6 @@ Full evidence/reasoning: `docs/decisions/2026-09-15-claude-md-restructure.md`.
   already staged *before* that command runs (the hook fires pre-execution),
   so it can miss the mismatch in that form. Documented, not fixed.
 
-### From the 2026-09-15 ruff adoption
-
-Full evidence/reasoning: `docs/decisions/2026-09-15-adopt-ruff-linter.md`.
-
-- [ ] **[misc, Low, TBD]** Migrate `ruff` from changed-files-scoped
-  manual review to a hard pre-commit gate (alongside the existing
-  pytest hook). Ruff's own side is now ready — the 155-violation
-  baseline (11 complexity findings + 144 `E501`) was resolved on
-  2026-09-21 via pure-extraction refactors + a formal `E501` exception
-  (per-file-ignore for `tests/*`, file-level `# ruff: noqa: E501` on
-  `agent.py`'s prompt/schema strings); `ruff check .` is 0 errors
-  full-repo. See `docs/decisions/2026-09-21-ruff-complexity-refactor.md`.
-  Still migrate alongside `pyright`'s own equivalent item below, not
-  separately — pyright's 117-error baseline is unrelated and unchanged,
-  so the joint trigger isn't met yet.
-
 ### From the 2026-09-15 pyright adoption
 
 Full evidence/reasoning: `docs/decisions/2026-09-15-adopt-pyright.md`.
@@ -182,10 +166,12 @@ Full evidence/reasoning: `docs/decisions/2026-09-15-adopt-pyright.md`.
   gaps (all 7 core modules plus `tracing.py` are clean). Fix
   opportunistically whenever one of these test files is next touched.
 - [ ] **[misc, Low, TBD]** Migrate `pyright` from changed-files-scoped
-  manual review to a hard pre-commit gate (alongside `ruff`'s own
-  equivalent item above and the existing pytest hook) once enough of the
-  codebase is clean that a full-repo run wouldn't be dominated by the
-  baseline above.
+  manual review to a hard pre-commit gate (alongside the existing
+  pytest hook and `ruff`'s own gate, added 2026-09-21 — see
+  `docs/decisions/2026-09-21-ruff-pre-commit-gate.md`) once the
+  117-error baseline above is cleared. No longer tied to ruff's own
+  migration timing (that joint-migration premise held only while both
+  baselines were comparable in size; ruff's is now 0).
 - [ ] **[design, Low, TBD]** Revisit Pyright **strict** mode. Rejected
   on 2026-09-15 adoption: real baseline was 4,655 errors, ~94% Unknown-
   type-propagation noise from this codebase's dict-shaped data flow

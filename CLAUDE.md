@@ -28,165 +28,85 @@ work.
 
 ## This project's linter
 
-The `independent-review-pass` skill's static-analysis requirement, named
-concretely: this project uses **`ruff`** (`requirements-dev.txt`,
-config in `pyproject.toml`'s `[tool.ruff]`/`[tool.ruff.lint]`). Rule
-selection: `E`/`F`/`W` (standard hygiene) plus `C90`/`PLR0911`/
-`PLR0912`/`PLR0913`/`PLR0915` (the modularity-relevant categories —
-cyclomatic complexity, too-many-returns/branches/arguments/statements).
-See `docs/decisions/2026-09-15-adopt-ruff-linter.md` for the full
-rationale and the current 155-violation baseline (dominated by `E501`
-on deliberately-long system-prompt/tool-schema strings and single-line
-test-fixture dicts — low-value noise, not a real modularity signal;
-the 11 `C90`/`PLR09xx` hits are the genuine ones, concentrated in
-`agent.py`'s largest functions).
+Uses **`ruff`** (`requirements-dev.txt`; config in `pyproject.toml`'s
+`[tool.ruff]`/`[tool.ruff.lint]`). Rules: `E`/`F`/`W` plus
+`C90`/`PLR0911`/`PLR0912`/`PLR0913`/`PLR0915` (modularity/complexity).
+History: `docs/decisions/2026-09-15-adopt-ruff-linter.md`,
+`2026-09-21-ruff-complexity-refactor.md`.
 
-**Current rollout stage: changed-files-scoped, not a pre-commit gate.**
-Run `ruff check <changed files> --fix` as part of every
-`independent-review-pass` (apply safe auto-fixes; whatever remains in a
-line the current change actually added or modified must be fixed by
-hand before calling the work done; a violation in a touched file but on
-an untouched line is pre-existing debt — leave it, log it to
-`BACKLOG.md` once per file if not already tracked). Do **not** run
-`ruff check .` unscoped and try to fix everything it finds — the
-baseline is large and known, and fixing it wholesale is explicitly out
-of scope until the migration below. **Migrate to a hard pre-commit
-gate** (alongside the existing pytest hook) once enough of the codebase
-is clean that a full-repo run wouldn't be dominated by pre-existing
-debt — tracked as its own `BACKLOG.md` item until then.
+**Current stage: hard pre-commit gate** — `ruff check .` must be 0
+errors full-repo; `githooks/pre-commit` blocks any commit that
+introduces a new violation anywhere, not just in touched files (see
+`docs/decisions/2026-09-21-ruff-pre-commit-gate.md`). Run
+`ruff check . --fix` before committing; `independent-review-pass`
+doesn't need its own separate ruff step since the gate covers it.
 
 ## This project's type checker
 
-The `independent-review-pass` skill's static-analysis requirement,
-extended: this project also uses **`pyright`** in **basic mode**
-(`requirements-dev.txt`, config in `pyproject.toml`'s `[tool.pyright]`).
-Strict mode was tried first and rejected — its real baseline was 4,655
-errors, ~94% Unknown-type-propagation noise from this codebase's
-dict-shaped data flow, not real gaps. Basic mode's baseline (154 errors)
-was comparable in scale to ruff's own 155-violation baseline; see
-`docs/decisions/2026-09-15-adopt-pyright.md` for the full comparison and
-rationale. The 7 core modules named in the live-code-TDD section above,
-plus `tracing.py`, are clean under basic mode as of adoption; the
-remaining baseline (117 errors) is entirely in test files and manual
-verify scripts under `tests/`.
+Uses **`pyright`** in **basic mode** (`requirements-dev.txt`; config
+in `pyproject.toml`'s `[tool.pyright]`). Strict mode was tried and
+rejected (~94% noise from dict-shaped data flow) — see
+`docs/decisions/2026-09-15-adopt-pyright.md`.
 
-**Current rollout stage: changed-files-scoped, not a pre-commit gate** —
-same stage and same migration trigger as ruff (see above): run
+**Current stage: changed-files-scoped, not a pre-commit gate.** Run
 `pyright <changed files>` as part of every `independent-review-pass`;
-a violation in a touched file but on an untouched line is pre-existing
-debt, left in place. Do **not** run `pyright` unscoped across the whole
-repo and try to fix everything it finds. **Migrate to a hard
-pre-commit gate** alongside ruff's own eventual migration (tracked as
-one shared `BACKLOG.md` item) once enough of the codebase is clean.
-Revisiting strict mode is a separate, explicitly tracked `BACKLOG.md`
-item — not automatic, since the last attempt showed it needs either a
-real reduction in the codebase's untyped-dict data flow first, or a
-scoped-down strict preset, neither of which happened in this adoption.
+a violation on an untouched line is pre-existing debt, left in place.
+Don't run it unscoped across the whole repo. Migrating to a hard gate
+(once its 117-error baseline clears) and revisiting strict mode are
+both tracked as `BACKLOG.md` items.
 
 ## This project's comment hygiene
 
-The `independent-review-pass` skill's documentation/comment-hygiene
-pass (Pass 2), named concretely: every new or edited comment is checked
-against global `CLAUDE.md`'s self-contained-reasoning rule, every
-review. Unlike lint/typecheck, no tool measures this mechanically —
-there's no analog to `ruff check`/`pyright` to run, count violations
-from, or eventually gate a commit on.
-
-**Current rollout stage: changed-files-scoped, same discipline as
-lint/typecheck, different evidence of where the baseline stands.** The
-closest thing to a measured baseline: the 2026-09-14/15 comment-audit
-initiative (`docs/decisions/2026-09-15-comment-audit-concluded.md`)
-worked through all 19 originally-flagged main-source files
-(`companies.py` through `agent.py`, all done) and 9 of 25 `tests/`
-files; the remaining 16 test files were deliberately not scheduled for
-further dedicated rounds (lower marginal value — test comments are read
-far less often than main-source ones) and instead deferred to
-opportunistic per-touch cleanup, the exact incremental-improvement
-policy this section names. A new or edited comment must be
-self-contained (see also
-`docs/decisions/2026-09-15-revoke-comment-pointer-convention.md`:
-comments must never be a pointer/link to an external doc); a
-pre-existing comment in a touched file but not itself touched by the
-current change is pre-existing debt, left alone unless the
-function/block it's attached to is otherwise meaningfully touched. No
-pre-commit gate is possible here the way lint/typecheck's own eventual
-migration is planned — there's no tool to gate on — so this rollout
-stage is permanent, not a step toward a future hard gate.
+Every new or edited comment must be self-contained, per global
+`CLAUDE.md`'s rule (never a pointer/link to an external doc — see
+`docs/decisions/2026-09-15-revoke-comment-pointer-convention.md`). No
+tool measures this mechanically, so there's no gate to run or migrate
+to; it's changed-files-scoped permanently. A pre-existing comment in a
+touched file is left alone unless the function/block it's attached to
+is otherwise meaningfully touched. Audit history:
+`docs/decisions/2026-09-15-comment-audit-concluded.md`.
 
 ## This project's documentation system
 
 The `documentation-backlog-hygiene` skill's five-artifact template,
-named concretely here. As of the 2026-09-14 documentation-system
-overhaul, this project moved from one continuously-appended narrative
-changelog to one new dated file per decision, indexed rather than read
-in full:
+named concretely here:
 
 - **`PROJECT_INDEX.md`** (repo root) — the index: a short framing blurb,
-  a trimmed Project Overview (Goal/Stack/Companies-in-scope — static
-  facts only, deliberately no "current status" prose, which is exactly
-  the kind of narrative that grew the old file to 5,703 lines), then a
-  `## Recent` section with one reverse-chronological line per file in
-  the three directories below. Read `Recent` in full at session start;
-  follow a linked file only when it's relevant to the task at hand.
-  Formerly `PROJECT_CONTEXT.md`, the old narrative changelog — renamed
-  and repurposed, not appended to going forward. `Recent` is capped at
-  **50 entries** (trimmed back to 40 whenever it's exceeded, oldest
-  entries cut verbatim into `PROJECT_INDEX_ARCHIVE.md`) so the
-  session-start read stays a fixed, small cost forever regardless of
-  total project history — the same failure mode that produced this
-  whole system, one level removed, caught before it recurred.
-  `PROJECT_INDEX_ARCHIVE.md` is **never read in full**: grep it (ticker,
-  module/file name, tool name, failure-mode phrase) when a topic might
-  be older than what's in `Recent`.
+  a trimmed Project Overview (static facts only, no "current status"
+  prose), then a `## Recent` section with one reverse-chronological
+  line per file in the three directories below. Read `Recent` in full
+  at session start; follow a linked file only when relevant. Capped at
+  **50 entries** (trimmed to 40 when exceeded, oldest cut verbatim into
+  `PROJECT_INDEX_ARCHIVE.md`, which is grepped, never read in full).
 - **`docs/decisions/YYYY-MM-DD-<slug>.md`** — one file per Standard+
-  change, written once and never appended to; a later revisit writes a
-  *new* file and cross-links back via its own `Related` section. Copy
+  change, written once and never appended to; a revisit writes a *new*
+  file and cross-links back via `Related`. Copy
   `docs/decisions/TEMPLATE.md` to start one.
 - **`docs/plans/YYYY-MM-DD-<slug>.md`** — saved plans. Copy
-  `docs/plans/TEMPLATE.md` to start one.
+  `docs/plans/TEMPLATE.md`.
 - **`docs/reviews/YYYY-MM-DD-<slug>.md`** — saved review findings. Copy
-  `docs/reviews/TEMPLATE.md` to start one.
+  `docs/reviews/TEMPLATE.md`.
 - **`BACKLOG.md`** — open items, tagged `**[type, priority, effort]**`
-  per the skill's convention (legend at `BACKLOG.md`'s own top). When an
-  item is done, delete its line entirely — no strikethrough, no
-  "resolved" annotation kept.
+  (legend at its own top). When done, delete the line entirely.
 
-**Keeping `.claude/rules/*.md` current**: these are living lists (there
-are three as of 2026-09-16: `live-code-tdd.md`,
+**Keeping `.claude/rules/*.md` current**: living lists (`live-code-tdd.md`,
 `live-eval-verification.md`, `plan-review-blast-radius.md`), not
-one-time snapshots from whatever overhaul created them. When a plan or
-code review (`design-before-building`'s independent plan review,
-`independent-review-pass`'s subagent code review) finds a real issue in
-a function or file not already covered by one of these rules, add it to
-the relevant rule file as part of that same change — the identical "add
-the moment identified" discipline `BACKLOG.md` already uses above, not
-a periodic audit task to schedule separately.
+one-time snapshots. When a plan or code review finds a real issue not
+already covered by one of these rules, add it to the relevant rule
+file as part of that same change.
 
-**Before starting design/debugging work on a topic**: search
-`PROJECT_INDEX.md`'s `Recent` section for prior work on the same
-module/tool/failure mode (free — it's already in context from the
-session-start read) and open the linked file if one looks relevant; if
-the topic might be older than what's in `Recent`, grep
-`PROJECT_INDEX_ARCHIVE.md` too rather than assuming it isn't there — the
-same "check prior art" discipline the `design-before-building` skill
-already applies to the outside world, extended to this project's own
-history.
+**Before design/debugging work**: search `PROJECT_INDEX.md`'s `Recent`
+for prior work on the same module/tool/failure mode, and grep
+`PROJECT_INDEX_ARCHIVE.md` if it might be older.
 
 ## This project's hooks
 
 `.claude/settings.json` wires a `PreToolUse` hook
 (`scripts/check_docs_sync.py`) that **blocks** (exit code 2) a `git
 commit` when a new `docs/decisions/*.md` file is staged without
-`PROJECT_INDEX.md` also staged — a mechanical safety net for the index
-part of the documentation-hygiene convention above. Non-blocking wasn't
-achievable (`PreToolUse` can't both allow a tool call and surface a
-message to Claude in the same turn), so this is a real gate, scoped
-narrowly to that one exact mismatch. It only fires for commits made
-through Claude Code's own Bash tool, not commits run directly from a
-terminal outside a session, and only reliably catches the case where
-staging and committing are separate tool calls (a single chained
-`git add -A && git commit` is checked against whatever was already
-staged before that command ran). See
+`PROJECT_INDEX.md` also staged. Only fires for commits through Claude
+Code's own Bash tool, and only reliably catches staging/committing as
+separate tool calls. See
 `docs/decisions/2026-09-15-claude-md-restructure.md`.
 
 ## Spot-check evals and live verification beyond TDD

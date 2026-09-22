@@ -1,9 +1,23 @@
 #!/bin/sh
-# Blocks a commit if the test suite fails. Git never version-controls
-# hooks themselves (that's a git limitation, not specific to this repo),
-# so this tracked copy is the source of truth — install it by copying to
-# .git/hooks/pre-commit (see PROJECT_CONTEXT.md's Development workflow
-# section for the one-time setup command).
+# Blocks a commit if ruff or the test suite fails. Git never version-
+# controls hooks themselves (that's a git limitation, not specific to
+# this repo), so this tracked copy is the source of truth — a fresh
+# clone needs `cp githooks/pre-commit .git/hooks/pre-commit` once.
+
+RUFF=".venv/Scripts/ruff.exe"
+if [ ! -f "$RUFF" ]; then
+    RUFF="ruff"
+fi
+
+echo "Running ruff check before commit..."
+"$RUFF" check .
+ruff_status=$?
+
+if [ "$ruff_status" -ne 0 ]; then
+    echo ""
+    echo "Commit blocked: ruff check failed. Fix them, or use 'git commit --no-verify' to bypass (not recommended)."
+    exit 1
+fi
 
 echo "Running test suite before commit..."
 
