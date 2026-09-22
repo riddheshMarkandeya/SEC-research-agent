@@ -53,12 +53,13 @@ max-complexity = 10
 # shaped data flow, not real gaps. basic mode's baseline was 154 --
 # comparable to ruff's own original 155-violation baseline -- with
 # real, fixable findings. See docs/decisions/2026-09-15-adopt-pyright.md.
-# Unlike ruff (now a hard pre-commit gate, see [tool.ruff] above),
-# pyright's own 117-error baseline is unrelated pre-existing test-file
-# debt that hasn't been fixed yet, so it stays changed-files-scoped
-# on its own independent timeline -- see
-# docs/decisions/2026-09-21-ruff-pre-commit-gate.md for why the two
-# tools' migrations are no longer tied together.
+# The 117-error baseline that remained after that adoption (all in
+# pre-existing test files) was closed on 2026-09-22 via type-narrowing
+# assertions/casts, zero logic change -- see
+# docs/decisions/2026-09-22-pyright-clean-refactor.md. pyright . is now
+# 0 errors full-repo and, like ruff (see [tool.ruff] above), enforced
+# as a hard pre-commit gate (githooks/pre-commit) -- see
+# docs/decisions/2026-09-22-pyright-pre-commit-gate.md.
 [tool.pyright]
 pythonVersion = "3.13"
 typeCheckingMode = "basic"

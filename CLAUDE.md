@@ -48,12 +48,13 @@ in `pyproject.toml`'s `[tool.pyright]`). Strict mode was tried and
 rejected (~94% noise from dict-shaped data flow) — see
 `docs/decisions/2026-09-15-adopt-pyright.md`.
 
-**Current stage: changed-files-scoped, not a pre-commit gate.** Run
-`pyright <changed files>` as part of every `independent-review-pass`;
-a violation on an untouched line is pre-existing debt, left in place.
-Don't run it unscoped across the whole repo. Migrating to a hard gate
-(once its 117-error baseline clears) and revisiting strict mode are
-both tracked as `BACKLOG.md` items.
+**Current stage: hard pre-commit gate** — `pyright .` must be 0 errors
+full-repo; `githooks/pre-commit` blocks any commit that introduces a
+new error anywhere, not just in touched files (see
+`docs/decisions/2026-09-22-pyright-pre-commit-gate.md`). Run
+`pyright .` before committing; `independent-review-pass` doesn't need
+its own separate pyright step since the gate covers it. Revisiting
+strict mode is still tracked as its own `BACKLOG.md` item.
 
 ## This project's comment hygiene
 

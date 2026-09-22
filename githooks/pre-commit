@@ -1,38 +1,39 @@
 #!/bin/sh
-# Blocks a commit if ruff or the test suite fails. Git never version-
-# controls hooks themselves (that's a git limitation, not specific to
-# this repo), so this tracked copy is the source of truth — a fresh
-# clone needs `cp githooks/pre-commit .git/hooks/pre-commit` once.
+# Blocks a commit if ruff, pyright, or the test suite fails. Git never
+# version-controls hooks themselves (that's a git limitation, not
+# specific to this repo), so this tracked copy is the source of truth
+# — a fresh clone needs `cp githooks/pre-commit .git/hooks/pre-commit`
+# once.
 
-RUFF=".venv/Scripts/ruff.exe"
-if [ ! -f "$RUFF" ]; then
-    RUFF="ruff"
-fi
+find_bin() {
+    venv_path=".venv/Scripts/$1.exe"
+    if [ -f "$venv_path" ]; then
+        echo "$venv_path"
+    else
+        echo "$1"
+    fi
+}
 
-echo "Running ruff check before commit..."
-"$RUFF" check .
-ruff_status=$?
+run_check() {
+    running_label="$1"
+    fail_label="$2"
+    shift 2
+    echo "Running $running_label before commit..."
+    "$@"
+    status=$?
+    if [ "$status" -ne 0 ]; then
+        echo ""
+        echo "Commit blocked: $fail_label failed. Fix them, or use 'git commit --no-verify' to bypass (not recommended)."
+        exit 1
+    fi
+}
 
-if [ "$ruff_status" -ne 0 ]; then
-    echo ""
-    echo "Commit blocked: ruff check failed. Fix them, or use 'git commit --no-verify' to bypass (not recommended)."
-    exit 1
-fi
+RUFF=$(find_bin ruff)
+PYRIGHT=$(find_bin pyright)
+PYTHON=$(find_bin python)
 
-echo "Running test suite before commit..."
-
-PYTHON=".venv/Scripts/python.exe"
-if [ ! -f "$PYTHON" ]; then
-    PYTHON="python"
-fi
-
-"$PYTHON" -m pytest -q
-status=$?
-
-if [ "$status" -ne 0 ]; then
-    echo ""
-    echo "Commit blocked: tests failed. Fix them, or use 'git commit --no-verify' to bypass (not recommended)."
-    exit 1
-fi
+run_check "ruff check" "ruff check" "$RUFF" check .
+run_check "pyright" "pyright" "$PYRIGHT" .
+run_check "test suite" "tests" "$PYTHON" -m pytest -q
 
 exit 0

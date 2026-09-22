@@ -9,12 +9,13 @@ pytest==9.1.1
 # than relying on it arriving as an undeclared transitive dependency.
 httpx2==2.12.0
 
-# Linter/static-analysis, run scoped to changed files as part of step 7
-# review (see docs/decisions/2026-09-15-adopt-ruff-linter.md and this
-# project's own CLAUDE.md for the current rollout stage).
+# Linter/static-analysis -- hard pre-commit gate (githooks/pre-commit),
+# not just changed-files review; see this project's own CLAUDE.md
+# "This project's linter" section for the current rollout stage.
 ruff==0.16.7
 
-# Static type checker (basic mode), same changed-files-scoped rollout
-# stage as ruff -- see docs/decisions/2026-09-15-adopt-pyright.md.
+# Static type checker (basic mode) -- also a hard pre-commit gate
+# (githooks/pre-commit), same as ruff; see this project's own CLAUDE.md
+# "This project's type checker" section for the current rollout stage.
 pyright==1.1.414
 lxml-stubs==0.5.1

@@ -167,13 +167,6 @@ Full evidence/reasoning: `docs/decisions/2026-09-15-claude-md-restructure.md`.
 
 Full evidence/reasoning: `docs/decisions/2026-09-15-adopt-pyright.md`.
 
-- [ ] **[misc, Low, TBD]** Migrate `pyright` from changed-files-scoped
-  manual review to a hard pre-commit gate (alongside the existing
-  pytest hook and `ruff`'s own gate). Now unblocked: the 117-error
-  basic-mode baseline was resolved on 2026-09-22 via type-narrowing
-  assertions/casts across 9 test/verify files, zero logic change —
-  `pyright .` is 0 errors full-repo. See
-  `docs/decisions/2026-09-22-pyright-clean-refactor.md`.
 - [ ] **[design, Low, TBD]** Revisit Pyright **strict** mode. Rejected
   on 2026-09-15 adoption: real baseline was 4,655 errors, ~94% Unknown-
   type-propagation noise from this codebase's dict-shaped data flow
