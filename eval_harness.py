@@ -193,7 +193,7 @@ def _select_questions(questions: list[dict], ids: list[str] | None, include_skip
     return [q for q in questions if not q.get("skip")]
 
 
-def _grade_by_type(q: dict, answer_text: str, retrieved: list[dict]) -> tuple[bool, str]:
+def _grade_by_type(q: dict, answer_text: str, retrieved: list[dict] | None) -> tuple[bool, str]:
     """Numeric/comparison type dispatch shared between _grade() below
     (the real pass/fail verdict) and _citation_gate_evidence() (the
     "would this have passed" check on the withheld text) -- both need

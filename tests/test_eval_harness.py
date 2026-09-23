@@ -13,11 +13,14 @@ agent.py's verify_citations()) — see tests/test_numeric_utils.py.
 
 import json
 import re
+import sys
+from pathlib import Path
 
 import eval_harness
 from agent import AgentResult
 from eval_harness import (
     _grade,
+    _grade_by_type,
     _select_questions,
     grade_comparison,
     grade_judged,
@@ -272,6 +275,17 @@ def test_grade_raises_on_unknown_type():
         assert False, "expected ValueError"
     except ValueError as e:
         assert "mystery" in str(e)
+
+
+def test_grade_by_type_dispatches_comparison_questions_to_grade_comparison():
+    # Every _grade test above exercises _grade_by_type only via its
+    # "numeric" branch (or an invalid type, to hit the ValueError) --
+    # "comparison" is never dispatched through this function directly,
+    # even though grade_comparison() itself is separately well-tested.
+    q = {"type": "comparison", "expected": _TAX_RATE_COMPARISON}
+    answer = "Apple's effective tax rate was 17.9%, while Microsoft's was 20%."
+    passed, _ = _grade_by_type(q, answer, None)
+    assert passed is True
 
 
 # ---------------------------------------------------------------------------
@@ -601,3 +615,55 @@ def test_run_eval_backend_default_follows_config(monkeypatch, tmp_path):
     run_eval(questions_path)
 
     assert backends_seen == ["totally-custom-backend"]
+
+
+# ---------------------------------------------------------------------------
+# print_summary — pure aggregation/formatting over a results list
+# ---------------------------------------------------------------------------
+def test_print_summary_reports_aggregate_counts(capsys):
+    results = [
+        {"id": "q1", "type": "numeric", "passed": True, "has_citation": True, "citation_warnings": []},
+        {"id": "q2", "type": "judged", "passed": False, "has_citation": False, "citation_warnings": ["bad cite"]},
+    ]
+    eval_harness.print_summary(results)
+    out = capsys.readouterr().out
+    assert "1/2 passed" in out
+    assert "1/2 included a citation marker" in out
+    assert "1/2 had at least one unverified numeric citation" in out
+
+
+def test_print_summary_marks_no_citation_and_unverified_flags_per_row(capsys):
+    results = [
+        {"id": "q1", "type": "numeric", "passed": True, "has_citation": False, "citation_warnings": ["w"]},
+    ]
+    eval_harness.print_summary(results)
+    out = capsys.readouterr().out
+    assert "[PASS] q1 (numeric)  [no citation]  [unverified citation]" in out
+
+
+# ---------------------------------------------------------------------------
+# main — argparse + orchestration (run_eval/save_report mocked; the live
+# call itself is exercised by manual runs, per this module's own docstring)
+# ---------------------------------------------------------------------------
+def test_main_parses_ids_and_orchestrates_run_eval_then_save_report(monkeypatch, capsys):
+    calls = {}
+
+    def fake_run_eval(questions_path, ids, include_skipped, backend, judge_backend):
+        calls["run_eval_args"] = (ids, include_skipped, backend, judge_backend)
+        return [{"id": "q1", "type": "numeric", "passed": True, "has_citation": True, "citation_warnings": []}]
+
+    def fake_save_report(results, backend, judge_backend):
+        calls["save_report_args"] = (results, backend, judge_backend)
+        return Path("./eval/eval_results/fake.json")
+
+    monkeypatch.setattr(eval_harness, "run_eval", fake_run_eval)
+    monkeypatch.setattr(eval_harness, "save_report", fake_save_report)
+    monkeypatch.setattr(sys, "argv", ["eval_harness.py", "--ids", "q1, q2", "--backend", "gemini"])
+
+    eval_harness.main()
+
+    assert calls["run_eval_args"] == (["q1", "q2"], False, "gemini", None)
+    assert calls["save_report_args"][1:] == ("gemini", None)
+    out = capsys.readouterr().out
+    assert "Full report saved to" in out
+    assert "Citation-gate FP/FN breakdown: python analyze_citation_gate.py" in out

@@ -38,15 +38,15 @@ DEFAULT_BACKEND = os.getenv("DEFAULT_BACKEND", "gemini")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 GEMINI_MODEL_NAME = os.getenv("GEMINI_MODEL_NAME", "gemini-flash-lite-latest")
 
-# Persistent Chroma vector store path (index_chunks.py, retrieval.py,
-# query_chunks.py) — must be the SAME path in all three, or querying
-# silently hits an empty or unrelated store instead of erroring.
+# Persistent Chroma vector store path (index_chunks.py, retrieval.py)
+# — must be the SAME path in both, or querying silently hits an empty
+# or unrelated store instead of erroring.
 CHROMA_DIR = os.getenv("CHROMA_DIR", "./chroma_db")
 
-# Embedding + reranking models (index_chunks.py, retrieval.py,
-# query_chunks.py) — the embedding model in particular must be
-# identical between indexing and querying, since vectors produced by
-# two different models aren't comparable to each other.
+# Embedding + reranking models (index_chunks.py, retrieval.py) — the
+# embedding model in particular must be identical between indexing and
+# querying, since vectors produced by two different models aren't
+# comparable to each other.
 EMBED_MODEL_NAME = os.getenv("EMBED_MODEL_NAME", "BAAI/bge-small-en-v1.5")
 RERANK_MODEL_NAME = os.getenv("RERANK_MODEL_NAME", "cross-encoder/ms-marco-MiniLM-L-6-v2")
 

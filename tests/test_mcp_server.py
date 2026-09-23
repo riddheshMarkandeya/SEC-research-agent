@@ -3,15 +3,21 @@ Unit tests for mcp_server.py's pure logic: source-block construction
 and the text-fragment excerpt used to deep-link search_filings
 citations (Week 6). The actual MCP protocol/HTTP wiring (Server,
 streamable_http_app) is live-only -- exercised by a manual verification
-script against a real running server, documented in PROJECT_CONTEXT.md,
+script against a real running server (tests/manual/verify_mcp_server.py),
 not mocked into unit tests here (same carve-out as hybrid_search/
 Ollama/Gemini elsewhere in this project). main()'s own shutdown-flush
-control flow (below) is the one exception -- it's deterministic once
-uvicorn.run/build_app/flush are mocked, even though what it wraps is
-live-only.
+control flow, and _handle_list_tools/_handle_call_tool's request
+dispatch (below), are the exceptions -- all deterministic once their
+live dependencies (uvicorn.run/build_app/flush, or the already-tested
+_TOOL_HANDLERS/_TOOL_SCHEMAS dicts) are mocked, even though what they
+wrap or sit in front of is live-only.
 """
 
+import asyncio
+import json
+
 import pytest
+from mcp import types
 
 import mcp_server
 
@@ -339,3 +345,38 @@ def test_main_calls_flush_even_when_uvicorn_run_raises(monkeypatch):
         mcp_server.main.callback(host="127.0.0.1", port=8765)
 
     assert calls == ["flush"]
+
+
+# ---------------------------------------------------------------------------
+# _handle_list_tools / _handle_call_tool -- pure MCP request dispatch.
+# No pytest-asyncio in this project (grepped: no existing test anywhere
+# uses it), and neither coroutine has a concurrent sub-call needing an
+# event-loop fixture, so plain asyncio.run() inside an ordinary test
+# function is sufficient.
+# ---------------------------------------------------------------------------
+def test_handle_list_tools_returns_all_three_tool_schemas():
+    result = asyncio.run(mcp_server._handle_list_tools(None, None))
+    assert isinstance(result, types.ListToolsResult)
+    assert {t.name for t in result.tools} == {"search_filings", "get_financial_fact", "compare_financial_metric"}
+
+
+def test_handle_call_tool_dispatches_to_registered_handler(monkeypatch):
+    monkeypatch.setattr(mcp_server, "_TOOL_HANDLERS", {"fake_tool": lambda args: {"echo": args}})
+    params = types.CallToolRequestParams(name="fake_tool", arguments={"x": 1})
+
+    result = asyncio.run(mcp_server._handle_call_tool(None, params))
+
+    content = result.content[0]
+    assert isinstance(content, types.TextContent)
+    assert json.loads(content.text) == {"echo": {"x": 1}}
+
+
+def test_handle_call_tool_returns_error_result_for_unknown_tool_name():
+    params = types.CallToolRequestParams(name="not_a_real_tool", arguments={})
+
+    result = asyncio.run(mcp_server._handle_call_tool(None, params))
+
+    assert result.is_error is True
+    content = result.content[0]
+    assert isinstance(content, types.TextContent)
+    assert "Unknown tool: 'not_a_real_tool'" in content.text

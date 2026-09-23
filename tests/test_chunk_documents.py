@@ -139,6 +139,18 @@ def test_reconstruct_document_marker_with_missing_table_dropped_silently():
     assert "Before." in result and "After." in result
 
 
+def test_reconstruct_document_marker_dropped_when_table_has_no_rows():
+    # table_to_markdown() short-circuits to "" for a rows=[] table --
+    # replace_marker must drop the marker silently here too, same as
+    # the missing-table-index case above, not emit an empty <TABLE></TABLE>.
+    text = "Before.\n[TABLE_0]\nAfter."
+    tables = [{"table_index": 0, "rows": []}]
+    result = reconstruct_document(text, tables)
+    assert "[TABLE_0]" not in result
+    assert "<TABLE>" not in result
+    assert "Before." in result and "After." in result
+
+
 # ---------------------------------------------------------------------------
 # split_by_sentences
 # ---------------------------------------------------------------------------
@@ -159,6 +171,20 @@ def test_split_by_sentences_hard_slices_an_oversized_single_sentence():
     result = split_by_sentences(text, max_chars=10)
     assert all(len(piece) <= 10 for piece in result)
     assert "".join(result) == text
+
+
+def test_split_by_sentences_hard_slices_one_oversized_sentence_among_several():
+    # Distinct from the single-sentence case above: here there ARE
+    # multiple sentences, and only the middle one is still too long
+    # after the sentence split -- exercises the per-sentence hard-slice
+    # branch inside the for loop, not the "no boundaries at all" branch.
+    text = "First sentence. " + "b" * 25 + ". Third sentence."
+    result = split_by_sentences(text, max_chars=20)
+    assert result[0] == "First sentence."
+    assert result[-1] == "Third sentence."
+    middle = result[1:-1]
+    assert all(len(piece) <= 20 for piece in middle)
+    assert "".join(middle) == "b" * 25 + "."
 
 
 # ---------------------------------------------------------------------------
@@ -183,6 +209,20 @@ def test_split_prose_block_falls_back_to_hard_slicing_with_no_breaks_at_all():
     result = split_prose_block(text, max_chars=20)
     assert all(len(piece) <= 20 for piece in result)
     assert "".join(result) == text
+
+
+def test_split_prose_block_sentence_splits_one_oversized_line_among_several():
+    # Multiple newline-separated lines, only the middle one still too
+    # long -- exercises split_prose_block's own per-line dispatch into
+    # split_by_sentences(), distinct from the whole-text hard-slice case
+    # above (which has no line breaks at all).
+    text = "Short line one.\n" + "b" * 30 + "\nShort line three."
+    result = split_prose_block(text, max_chars=20)
+    assert result[0] == "Short line one."
+    assert result[-1] == "Short line three."
+    middle = result[1:-1]
+    assert all(len(piece) <= 20 for piece in middle)
+    assert "".join(middle) == "b" * 30
 
 
 # ---------------------------------------------------------------------------

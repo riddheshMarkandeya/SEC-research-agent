@@ -9,19 +9,19 @@ pytest==9.1.1
 # than relying on it arriving as an undeclared transitive dependency.
 httpx2==2.12.0
 
-# Linter/static-analysis -- hard pre-commit gate (githooks/pre-commit),
+# Linter/static-analysis -- hard pre-push gate (githooks/pre-push),
 # not just changed-files review; see this project's own CLAUDE.md
 # "This project's linter" section for the current rollout stage.
 ruff==0.16.7
 
-# Static type checker (basic mode) -- also a hard pre-commit gate
-# (githooks/pre-commit), same as ruff; see this project's own CLAUDE.md
+# Static type checker (basic mode) -- also a hard pre-push gate
+# (githooks/pre-push), same as ruff; see this project's own CLAUDE.md
 # "This project's type checker" section for the current rollout stage.
 pyright==1.1.414
 lxml-stubs==0.5.1
 
-# Coverage measurement -- changed-files-scoped check via diff-cover,
-# not a pre-commit gate yet; see this project's own CLAUDE.md "This
-# project's test coverage" section for the current rollout stage.
+# Coverage measurement -- also a hard pre-push gate (githooks/pre-push),
+# same as ruff/pyright; see this project's own CLAUDE.md "This project's
+# test coverage" section for the current rollout stage.
 pytest-cov==7.1.0
 diff-cover==10.6.0

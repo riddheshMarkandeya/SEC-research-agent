@@ -47,30 +47,28 @@ reference:
 
 ### From the 2026-09-22 pytest-coverage adoption
 
-Full evidence/reasoning: `docs/decisions/2026-09-22-adopt-pytest-coverage.md`.
+Full evidence/reasoning: `docs/decisions/2026-09-22-adopt-pytest-coverage.md`,
+`docs/decisions/2026-09-22-coverage-baseline-close-and-hard-gate.md`.
 
-- [ ] **[design, Low, TBD]** Revisit **branch coverage**
-  (`[tool.coverage.run]`'s `branch = true`) — see the decision doc's
-  "Why" section for the line-vs-branch reasoning.
-- [ ] **[test-coverage, Med, Substantial]** Full-repo pytest coverage
-  baseline as measured at adoption: **90% overall** (2,111 statements,
-  210 missed) — critical-core (the 8 `plan-review-blast-radius.md`
-  files) 93%, ordinary files 83.5%. Not retroactively fixed — mirrors
-  the 155-violation ruff and 117-error pyright baselines, each closed
-  later via a dedicated pass. Notable individual gaps: `index_chunks.py`
-  0% (`load_all_chunks`/`make_id` are pure, testable, and simply never
-  tested — not live-only, a real gap), `query_chunks.py` 0% (not
-  currently in any live-code-TDD/blast-radius list — worth a look),
-  `chunk_documents.py` 78%, `mcp_server.py` 80%, `eval_harness.py` 83%.
+- [ ] **[test-coverage, Low, Standard]** Full-repo pytest coverage
+  baseline mostly closed on 2026-09-22 (94% overall, up from 90%) — see
+  `docs/decisions/2026-09-22-coverage-baseline-close-and-hard-gate.md`.
+  `query_chunks.py` deleted (superseded), `index_chunks.py`/
+  `eval_harness.py` fully closed. Still open: `chunk_documents.py`'s
+  `process_filing`/`main` (81% under branch mode, real file-I/O logic,
+  testable but not live-only — deliberately not pragma-excluded) and
+  `mcp_server.py`'s ASGI middleware/`build_app` (84% under branch mode
+  — genuinely live wiring, but currently just uncovered, not
+  pragma-excluded: `mcp_server.py` carries zero `# pragma: no cover`
+  markers and isn't in `.claude/rules/live-code-tdd.md`'s list either —
+  add both if this gap is closed via exclusion rather than new tests).
   Only the 90%/80% two-tier diff-coverage bar applies to new/changed
-  lines going forward; this pre-existing gap closes opportunistically,
+  lines going forward; these two remaining gaps close opportunistically,
   file by file, as those files are next touched for other reasons.
-- [ ] **[design, Low, TBD]** Migrate the coverage-diff check to a hard
-  `githooks/pre-commit` gate, mirroring ruff's/pyright's own two-stage
-  rollout. Trigger (see decision doc for the full reasoning): baseline
-  condition already met today; still open is >=10 real diffs passing
-  the review-time check with zero false-positive blocks from the
-  live-only exclusions.
+- [ ] **[design, Low, TBD]** Revisit `diff-cover`'s own `--branch-coverage`
+  flag now that `[tool.coverage.run]`'s `branch = true` is on — deferred
+  since no diff-scoped (only repo-wide) partial-branch data has been
+  measured yet; see the decision doc's reasoning.
 
 ### From the 2026-09-19 citation-header-in-quote fix
 
@@ -153,10 +151,12 @@ file pending which (if any) get adopted. Reproduce with
   `S113` found 5 real production HTTP calls with no timeout at all
   (`discover_tags.py:62`, `edgar_ingest.py:56,89`,
   `xbrl_facts.py:127,341`) — a stalled SEC EDGAR response could hang the
-  agent indefinitely; `B905` found 3 real `zip()` calls in the retrieval
-  path (`query_chunks.py:97`, `retrieval.py:166,219`) that would
-  silently truncate instead of erroring if Chroma ever returned
-  mismatched-length document/metadata/distance lists. Rejected from the
+  agent indefinitely; `B905` found 2 real `zip()` calls in the retrieval
+  path (`retrieval.py:166,219`; a third, `query_chunks.py:97`, no
+  longer exists — that file was deleted as superseded duplicate code,
+  see `docs/decisions/2026-09-22-coverage-baseline-close-and-hard-gate.md`)
+  that would silently truncate instead of erroring if Chroma ever
+  returned mismatched-length document/metadata/distance lists. Rejected from the
   same survey, each for a specific reason rather than by category
   reputation: `S101`/`ARG001`/`ARG005`/`RUF059`/`B011` are 96-100%
   idiomatic test-file noise (asserts, mock-signature params, tuple
@@ -304,7 +304,6 @@ All numbered findings from this review are resolved — see
 (§11/§12/§13). The two genuinely open, lower-priority findings this
 review also surfaced remain below.
 
-- [ ] **[refactor, Low, Standard]** `query_chunks.py` duplicates `retrieval.py`'s query logic instead of reusing it
 - [ ] **[design, Low, Standard]** `tracing.py` has two overlapping "record an instantaneous fact" primitives (`record_unmet_metric_request` vs `log_event`) with no documented decision rule for which to use
 
 ### From the 2026-09-08 layered review of the §5/§7/§9 fixes

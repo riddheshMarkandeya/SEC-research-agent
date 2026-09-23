@@ -12,7 +12,7 @@ requests==2.34.2
 beautifulsoup4==4.15.0
 lxml==6.1.1
 
-# Embeddings + vector store (index_chunks.py, query_chunks.py)
+# Embeddings + vector store (index_chunks.py, retrieval.py)
 sentence-transformers==5.7.0
 chromadb==1.5.9
 

@@ -5,8 +5,9 @@ pythonpath = ["."]
 # The 155-violation adoption-time baseline (docs/decisions/2026-09-15-adopt-ruff-linter.md)
 # was resolved via pure-extraction refactors + a formal E501 exception
 # (docs/decisions/2026-09-21-ruff-complexity-refactor.md); ruff check .
-# is now 0 errors full-repo and enforced as a hard pre-commit gate
-# (githooks/pre-commit, docs/decisions/2026-09-21-ruff-pre-commit-gate.md).
+# is now 0 errors full-repo and enforced as a hard pre-push gate
+# (githooks/pre-push, docs/decisions/2026-09-21-ruff-pre-commit-gate.md,
+# docs/decisions/2026-09-22-coverage-baseline-close-and-hard-gate.md).
 [tool.ruff]
 target-version = "py313"
 line-length = 120
@@ -58,8 +59,9 @@ max-complexity = 10
 # assertions/casts, zero logic change -- see
 # docs/decisions/2026-09-22-pyright-clean-refactor.md. pyright . is now
 # 0 errors full-repo and, like ruff (see [tool.ruff] above), enforced
-# as a hard pre-commit gate (githooks/pre-commit) -- see
-# docs/decisions/2026-09-22-pyright-pre-commit-gate.md.
+# as a hard pre-push gate (githooks/pre-push) -- see
+# docs/decisions/2026-09-22-pyright-pre-commit-gate.md,
+# docs/decisions/2026-09-22-coverage-baseline-close-and-hard-gate.md.
 [tool.pyright]
 pythonVersion = "3.13"
 typeCheckingMode = "basic"
@@ -75,15 +77,20 @@ exclude = [
     "trace_logs",
 ]
 
-# Line coverage, not branch -- mirrors pyright's own basic-vs-strict
-# "start simpler, measure the real baseline, escalate later if
-# warranted" reasoning. No coverage-blind-spot incident has been
-# documented in this project yet (coverage tooling didn't exist until
-# now) -- revisit per BACKLOG.md as a forward-looking consideration,
-# not a reaction to a specific past miss. See
-# docs/decisions/2026-09-22-adopt-pytest-coverage.md.
+# Branch coverage, enabled 2026-09-22 after measuring the real impact
+# first (mirrors this project's own "measure before escalating"
+# habit): repo-wide, branch mode added only 30 partial branches out of
+# 714 total, aggregate barely moved (~90% either way) -- no
+# pyright-strict-style noise blowup. diff-cover's own separate
+# --branch-coverage flag is deliberately NOT enabled yet -- that's a
+# second, independent escalation (penalizing partial branches on a
+# diff specifically), and no diff-scoped data exists to justify it, only
+# this repo-wide historical measurement. See
+# docs/decisions/2026-09-22-coverage-baseline-close-and-hard-gate.md
+# (amends docs/decisions/2026-09-22-adopt-pytest-coverage.md's original
+# line-coverage choice).
 [tool.coverage.run]
-branch = false
+branch = true
 source = ["."]
 omit = [".venv/*", "tests/*", "chroma_db/*", "chunks/*", "data/*", "xbrl_cache/*", "trace_logs/*"]
 

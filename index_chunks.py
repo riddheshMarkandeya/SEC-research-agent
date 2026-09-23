@@ -27,7 +27,7 @@ COLLECTION_NAME = "sec_filings"
 
 # bge-small is trained for asymmetric retrieval (short query -> long
 # passage). Queries need an instruction prefix at search time (see
-# query_chunks.py's QUERY_INSTRUCTION) but passages being indexed do
+# retrieval.py's own QUERY_INSTRUCTION) but passages being indexed do
 # NOT -- encode them raw, as below; getting this backwards measurably
 # hurts retrieval. See
 # docs/decisions/2026-08-13-embedding-indexing-and-query-cli.md.

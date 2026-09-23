@@ -1,0 +1,46 @@
+#!/bin/sh
+# Blocks a push if ruff, pyright, the test suite, or the coverage-diff
+# check fails. Runs at push time, not commit time, so local commits
+# stay fast -- checks apply once, right before code reaches the remote.
+# Git never version-controls hooks themselves (a git limitation, not
+# specific to this repo), so this tracked copy is the source of truth
+# -- a fresh clone needs `cp githooks/pre-push .git/hooks/pre-push` once.
+
+find_bin() {
+    venv_path=".venv/Scripts/$1.exe"
+    if [ -f "$venv_path" ]; then
+        echo "$venv_path"
+    else
+        echo "$1"
+    fi
+}
+
+run_check() {
+    running_label="$1"
+    fail_label="$2"
+    shift 2
+    echo "Running $running_label before push..."
+    "$@"
+    status=$?
+    if [ "$status" -ne 0 ]; then
+        echo ""
+        echo "Push blocked: $fail_label failed. Fix them, or use 'git push --no-verify' to bypass (not recommended)."
+        exit 1
+    fi
+}
+
+RUFF=$(find_bin ruff)
+PYRIGHT=$(find_bin pyright)
+PYTHON=$(find_bin python)
+DIFF_COVER=$(find_bin diff-cover)
+
+run_check "ruff check" "ruff check" "$RUFF" check .
+run_check "pyright" "pyright" "$PYRIGHT" .
+run_check "test suite" "tests" "$PYTHON" -m pytest --cov=. --cov-report=xml -q
+run_check "diff-cover (ordinary files, 80%)" "diff coverage on changed lines" \
+    "$DIFF_COVER" coverage.xml --compare-branch=origin/master --fail-under=80
+run_check "diff-cover (critical-core, 90%)" "diff coverage on changed lines in critical-core files" \
+    "$DIFF_COVER" coverage.xml --compare-branch=origin/master --fail-under=90 \
+    --include agent.py llm_backends.py xbrl_facts.py formulas.py retrieval.py numeric_utils.py eval_harness.py chunk_documents.py
+
+exit 0
