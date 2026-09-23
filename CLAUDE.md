@@ -39,8 +39,8 @@ errors full-repo; `githooks/pre-push` blocks any push that introduces a
 new violation anywhere, not just in touched files (see
 `docs/decisions/2026-09-21-ruff-pre-commit-gate.md`,
 `docs/decisions/2026-09-22-coverage-baseline-close-and-hard-gate.md`
-for the pre-commit-to-pre-push move). Nothing enforces `ruff check . --fix`
-before committing anymore — run it manually as a matter of discipline;
+for the pre-commit-to-pre-push move). Nothing enforces `ruff check .`
+before committing anymore — see "Manual checks before committing" below.
 `independent-review-pass` doesn't need its own separate ruff step
 since the gate covers it, just later than a commit now.
 
@@ -56,11 +56,11 @@ full-repo; `githooks/pre-push` blocks any push that introduces a new
 error anywhere, not just in touched files (see
 `docs/decisions/2026-09-22-pyright-pre-commit-gate.md`,
 `docs/decisions/2026-09-22-coverage-baseline-close-and-hard-gate.md`
-for the pre-commit-to-pre-push move). Run `pyright .` manually before
-committing as a matter of discipline — nothing enforces it until push
-time anymore. `independent-review-pass` doesn't need its own separate
-pyright step since the gate covers it. Revisiting strict mode is still
-tracked as its own `BACKLOG.md` item.
+for the pre-commit-to-pre-push move). Nothing enforces `pyright .`
+before committing anymore — see "Manual checks before committing" below.
+`independent-review-pass` doesn't need its own separate pyright step
+since the gate covers it. Revisiting strict mode is still tracked as
+its own `BACKLOG.md` item.
 
 ## This project's test coverage
 
@@ -78,9 +78,9 @@ then `diff-cover coverage.xml --compare-branch=origin/master --fail-under=80`
 (critical-core files — see `.claude/rules/plan-review-blast-radius.md`'s
 `## Coverage bar` section for the exact list, reused from that file's
 own `paths:`, not restated here) all run in `githooks/pre-push`,
-blocking any push below either threshold. Run these manually before
-committing as a matter of discipline — nothing enforces them until
-push time anymore. Live-only lines (real HTTP/Chroma/LLM calls, per
+blocking any push below either threshold. Nothing enforces these before
+committing anymore — see "Manual checks before committing" below.
+Live-only lines (real HTTP/Chroma/LLM calls, per
 `.claude/rules/live-code-tdd.md`) are marked
 `# pragma: no cover` in source and excluded from both checks — this is
 required, not optional, since without it the bar would either
@@ -88,6 +88,29 @@ chronically fail on legitimate changes to those functions or pressure
 contributors toward mocking the network/DB itself, the exact
 anti-pattern `tdd-live-code-carveout` rejects. See `BACKLOG.md` for the
 remaining pre-existing gap tracked for opportunistic closure.
+
+## Manual checks before committing
+
+Since `docs/decisions/2026-09-22-coverage-baseline-close-and-hard-gate.md`
+moved every check to `githooks/pre-push`, nothing runs at commit time
+anymore — a broken commit is only caught the next time someone pushes,
+possibly several commits later, across a batch that's harder to bisect.
+Run all four manually before every commit, as a matter of discipline,
+not because anything currently enforces it:
+
+- `ruff check .` (add `--fix` to auto-apply the mechanical subset)
+- `pyright .`
+- `pytest --cov=. --cov-report=term-missing -q`
+- Compare the printed per-file coverage against the 80%/90% diff-scoped
+  bar `githooks/pre-push` enforces at push time (ordinary files vs. the
+  critical-core list above) — `diff-cover` itself only runs at push, but
+  a rough read of which lines you just added/changed against the
+  `Missing` column catches most shortfalls before they reach that gate.
+
+`git push --no-verify` bypasses `githooks/pre-push` the same way
+`--no-verify` used to bypass the old pre-commit hook — same rule as
+before: fix the issue, or bypass and file a `BACKLOG.md` item for a
+genuine tooling false positive, never as a routine habit.
 
 ## This project's comment hygiene
 
