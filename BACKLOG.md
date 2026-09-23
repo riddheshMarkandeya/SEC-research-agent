@@ -45,6 +45,22 @@ reference:
 
 ## Backlog
 
+### From the 2026-09-22 eval-question-classification change
+
+Full evidence/reasoning: `docs/plans/2026-09-22-eval-question-classification.md`'s
+"Prior art" section.
+
+- [ ] **[feature, Low, Substantial]** Adopting Meta-style same-commit
+  burst reruns (rerun each eval question N times on one fixed code
+  version before/after a change) would let a future version compute a
+  true probabilistic flakiness score instead of `classify_history()`'s
+  windowed streak/transitions proxy — holding code constant is what
+  actually isolates "flaky" from "a real regression," which the current
+  heuristic can only approximate from single-run-per-code-era history.
+  Needs a new eval-harness feature (a same-version rerun mode), not just
+  an analysis-script change — deliberately out of proportion to the
+  2026-09-22 classification change itself.
+
 ### From the 2026-09-22 pytest-coverage adoption
 
 Full evidence/reasoning: `docs/decisions/2026-09-22-adopt-pytest-coverage.md`,
