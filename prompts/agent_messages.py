@@ -22,6 +22,9 @@ RESULT_BLOCK_TEMPLATE = "{header}\n{text}"
 RESULT_BLOCK_SEPARATOR = "\n\n"
 NO_SEARCH_RESULTS_MESSAGE = "(no matching filing excerpts found for this search)"
 
+# A fact or calculate value with its unit. A "raw" value (a plain ratio
+# or count) is shown bare instead, since "raw" is an internal label.
+VALUE_WITH_UNIT_TEMPLATE = "{value} {unit}"
 FACT_RESULT_TEMPLATE = "{metric} = {value} (structured XBRL data, not filing prose)"
 COMPARISON_RESULT_TEMPLATE = "{ticker} {metric} = {value} (structured XBRL data, not filing prose)"
 # Stands in for the form type of a compare_financial_metric row that
@@ -36,8 +39,6 @@ COMPARISON_FRAME_FORM = "XBRL frame data"
 CALCULATION_PERCENT_CHANGE_EXPRESSION = "percentage change from {value_b} {unit_b} to {value_a} {unit_a}"
 CALCULATION_PERCENT_OF_EXPRESSION = "{value_a} {unit_a} as a percentage of {value_b} {unit_b}"
 CALCULATION_BINARY_EXPRESSION = "{value_a} {unit_a} {operation} {value_b} {unit_b}"
-# Appended to a non-"raw" result value; a "raw" result is shown bare.
-CALCULATION_VALUE_WITH_UNIT = "{value} {unit}"
 CALCULATION_RESULT_TEMPLATE = (
     "{expression} = {value} (computed value, not directly stated in any "
     "filing; operands from results [{idx_a}] and [{idx_b}])"

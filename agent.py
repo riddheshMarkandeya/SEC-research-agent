@@ -449,7 +449,7 @@ def _format_fact_value(fact: dict) -> str:
     plain ratio reads as "1.04", not the internal-sounding "1.04 raw"."""
     if fact["unit"] == "raw":
         return str(fact["value"])
-    return f"{fact['value']} {fact['unit']}"
+    return msg.VALUE_WITH_UNIT_TEMPLATE.format(value=fact["value"], unit=fact["unit"])
 
 
 def _fact_as_result(fact: dict, args: dict) -> dict:
@@ -787,7 +787,7 @@ def _calculation_as_result(result: dict, args: dict) -> dict:
     formatted_value = (
         formatted_result_value
         if result["unit"] == "raw"
-        else msg.CALCULATION_VALUE_WITH_UNIT.format(value=formatted_result_value, unit=result["unit"])
+        else msg.VALUE_WITH_UNIT_TEMPLATE.format(value=formatted_result_value, unit=result["unit"])
     )
     return {
         "text": msg.CALCULATION_RESULT_TEMPLATE.format(
