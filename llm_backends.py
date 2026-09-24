@@ -271,14 +271,24 @@ def _to_gemini_tool(schema: dict) -> types.FunctionDeclaration:
     `validate_tool_args()` both still see the real, unmodified dict --
     this only narrows what's advertised to Gemini's stricter dialect,
     not what's enforced at the boundary."""
-    fn = schema["function"]
-    parameters = _strip_additional_properties(fn["parameters"])
+    fields = _gemini_declaration_fields(schema)
     # google-genai's own pydantic model coerces a plain dict into a Schema at
     # runtime (verified live, per this function's docstring) -- its type stub
     # only advertises the stricter `Schema | None`, not the dict shorthand.
-    return types.FunctionDeclaration(
-        name=fn["name"], description=fn["description"], parameters=parameters  # pyright: ignore[reportArgumentType]
-    )
+    return types.FunctionDeclaration(**fields)  # pyright: ignore[reportArgumentType]
+
+
+def _gemini_declaration_fields(schema: dict) -> dict:
+    """The plain name/description/parameters data _to_gemini_tool() hands
+    to the SDK -- kept separate so the model-input snapshot can record
+    exactly what this project sends, independent of the SDK's own
+    pydantic representation."""
+    fn = schema["function"]
+    return {
+        "name": fn["name"],
+        "description": fn["description"],
+        "parameters": _strip_additional_properties(fn["parameters"]),
+    }
 
 
 def _send_with_retry(chat, message, config=None):

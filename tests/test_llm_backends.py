@@ -25,6 +25,7 @@ from llm_backends import (
     _gemini_response_to_turn,
     _get_gemini_client,
     _send_with_retry,
+    _gemini_declaration_fields,
     _to_gemini_tool,
 )
 
@@ -190,6 +191,30 @@ def test_to_gemini_tool_strips_additional_properties_recursively():
     assert claims_schema.items is not None
     assert claims_schema.items.additional_properties is None
 
+
+
+def test_gemini_declaration_fields_is_the_plain_data_to_gemini_tool_sends():
+    # The model-input snapshot records these plain fields rather than the
+    # SDK's pydantic dump, so a library upgrade that only adds default
+    # fields can't change what the snapshot (and the prompt fingerprint)
+    # says Gemini receives.
+    fields = _gemini_declaration_fields(_nested_array_schema())
+    assert fields == {
+        "name": "submit_answer",
+        "description": "desc",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "claims": {
+                    "type": "array",
+                    "items": {"type": "object", "properties": {"value": {"type": "number"}}, "required": ["value"]},
+                },
+            },
+            "required": ["claims"],
+        },
+    }
+    tool = _to_gemini_tool(_nested_array_schema())
+    assert (tool.name, tool.description) == (fields["name"], fields["description"])
 
 # ---------------------------------------------------------------------------
 # Response-shape validation: both _ollama_message_to_turn and
