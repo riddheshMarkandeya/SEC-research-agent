@@ -42,18 +42,24 @@ from dataclasses import dataclass
 from pathlib import Path
 
 
-def load_rows(paths: list[Path]) -> list[dict]:
-    """Concatenates the "results" list from each report JSON file, in
-    the order given. Tolerates two on-disk shapes: the current
-    dict-wrapper ({"backend": ..., "results": [...]}) and this
-    project's older bare-list reports (pre-2026-08-21) -- see this
+def load_reports(paths: list[Path]) -> list[dict]:
+    """Each report JSON file as a dict, in the order given. Tolerates two
+    on-disk shapes: the current dict-wrapper ({"backend": ...,
+    "results": [...]}) and this project's older bare-list reports
+    (pre-2026-08-21), which become {"results": [...]} -- see this
     module's own docstring."""
-    rows = []
+    reports = []
     for path in paths:
         with path.open(encoding="utf-8") as f:
             report = json.load(f)
-        rows.extend(report if isinstance(report, list) else report["results"])
-    return rows
+        reports.append({"results": report} if isinstance(report, list) else report)
+    return reports
+
+
+def load_rows(paths: list[Path]) -> list[dict]:
+    """Concatenates the "results" list from each report, in the order
+    given."""
+    return [row for report in load_reports(paths) for row in report["results"]]
 
 
 def is_infra_error(row: dict) -> bool:
@@ -188,8 +194,10 @@ def classify_history(history: list[bool], thresholds: ClassificationThresholds) 
     weeks of pre-fix runs baked in forever.
 
     "regression" here means "currently in a persistent failing streak
-    observed within the window" -- no commit/version field exists in
-    eval report data to confirm what code change (if any) caused it.
+    observed within the window" -- it is not tied to any code change.
+    Reports from 2026-09-24 on carry a "provenance" block (git SHA and
+    prompt fingerprint); compare_prompt_versions.py uses it to compare
+    one prompt version against another.
     "solid" is reached via either of two independent paths: a sustained
     high windowed pass rate, or a strong-enough recent run of
     consecutive passes overriding a worse-looking full-window aggregate
@@ -354,8 +362,8 @@ def format_summary(summary: dict, thresholds: ClassificationThresholds = Classif
         lines.append("")
 
     lines.append(
-        "Note: 'regression' means an active failing streak observed in eval_results/ history -- "
-        "no commit metadata exists in eval reports to confirm what code change (if any) caused it."
+        "Note: 'regression' means an active failing streak observed in eval_results/ history, "
+        "not a comparison between versions -- use compare_prompt_versions.py for that."
     )
 
     return "\n".join(lines)

@@ -18,6 +18,7 @@ from analyze_flakiness import (
     classify_history,
     format_summary,
     is_infra_error,
+    load_reports,
     load_rows,
     summarize,
 )
@@ -494,3 +495,28 @@ def test_load_rows_concatenates_mixed_formats_across_files(tmp_path):
     rows = load_rows([old, new])
 
     assert [r["id"] for r in rows] == ["old1", "new1"]
+
+
+# ---------------------------------------------------------------------------
+# load_reports -- whole reports, keeping the report-level fields (backend,
+# models, provenance) that load_rows drops; compare_prompt_versions.py
+# groups by them.
+# ---------------------------------------------------------------------------
+def test_load_reports_keeps_report_level_fields(tmp_path):
+    report = tmp_path / "a.json"
+    report.write_text(
+        json.dumps({"backend": "gemini", "provenance": {"git_sha": "abc"}, "results": [_row(id="a1")]}),
+        encoding="utf-8",
+    )
+
+    [loaded] = load_reports([report])
+
+    assert loaded["provenance"] == {"git_sha": "abc"}
+    assert [r["id"] for r in loaded["results"]] == ["a1"]
+
+
+def test_load_reports_wraps_a_bare_list_report(tmp_path):
+    report = tmp_path / "old.json"
+    report.write_text(json.dumps([_row(id="old1")]), encoding="utf-8")
+
+    assert load_reports([report]) == [{"results": [_row(id="old1")]}]
