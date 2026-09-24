@@ -43,7 +43,7 @@ spot-check *in addition to* the unit-test/manual-verification-script
 step already required — at minimum a targeted
 `eval_harness.py --backend gemini --ids <affected-question-id(s)>`
 re-run of whatever eval question(s) exercise the changed path; the full
-41-question baseline (`eval_harness.py --backend gemini`, no `--ids`
+48-question baseline (`eval_harness.py --backend gemini`, no `--ids`
 filter) when the change is broad, touches multiple of the modules above,
 or before considering a session's work fully done. A green test suite
 alone is not sufficient evidence of correctness for this class of change.
@@ -55,12 +55,46 @@ already listed there, add it in the same step, not as a deferred
 follow-up — mirroring exactly how `numeric_utils.py` earned its own
 place here in the first place.
 
+## Prompt changes
+
+Every eval report records `provenance`: git SHA, dirty state, the
+`prompts/` fingerprint, whether the model-input snapshot was verified,
+and the `.env` model settings. `compare_prompt_versions.py` compares
+runs by that fingerprint. For any change to what a model reads:
+
+- **One commit per change.** A `git revert` of that commit is then the
+  undo, and a panel comparison attributes a pass-rate change to exactly
+  one edit.
+- **Regenerate the model-input snapshot in the same commit.** Any change
+  that alters what a model receives, whether a `prompts/` constant or the
+  logic that picks, fills or converts it (`agent.py`, `llm_backends.py`,
+  `eval_harness.grade_judged`, `mcp_server.py`), fails
+  `tests/test_model_input_snapshot.py`. Read the diff it prints, then run
+  `UPDATE_SNAPSHOT=1 pytest tests/test_model_input_snapshot.py`. The
+  fingerprint hashes the snapshot, so this is what gives the change a
+  new fingerprint. When a new code path starts sending model text, add a
+  scenario for it there, or the snapshot can't see it. Editing
+  `companies.json` also changes the fingerprint, which is intended: the
+  model sees different text.
+- **Run the panel protocol, not a single question.** The panel, the
+  screen → replicate → attribute decision rule and the thresholds are in
+  `docs/plans/2026-09-24-prompt-audit-roadmap.md` ("Decision rule").
+  Screen with `python compare_prompt_versions.py` (fingerprint mode).
+  For the replicate and attribute steps, always use explicit mode
+  (`--base-files` / `--candidate-files`): a revert restores the base
+  fingerprint, so fingerprint mode would pool reverted runs with the
+  original base.
+- **Only clean runs count.** Evaluate on a committed tree. The compare
+  script excludes reports whose tree was dirty or whose snapshot wasn't
+  verified, unless `--include-dirty` is given.
+
 ## Gemini free-tier quota awareness
 
-The free tier caps at 500 requests/day (`RESOURCE_EXHAUSTED` past that).
+The free tier caps at 500 requests/day per model (`RESOURCE_EXHAUSTED` past
+that); the day resets at midnight Pacific time.
 This has been hit twice in one week from over-running full baselines
 during active debugging. Prefer targeted `--ids` re-runs to confirm one
-specific fix live; reserve full 41-question runs for a genuine final
+specific fix live; reserve full 48-question runs for a genuine final
 confirmation, not exploratory checks while still iterating on a fix. If
 a full run partway-fails with `RESOURCE_EXHAUSTED` errors, that report is
 invalid for any before/after comparison — say so explicitly, keep the
