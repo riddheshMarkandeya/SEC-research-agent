@@ -10,7 +10,13 @@ clients by mcp_server."""
 
 from companies import COMPANIES
 from formulas import RATIO_DEFINITIONS
-from prompts.agent_system import CROSS_COMPANY_RATIOS, DECIMAL_RATIOS, PERCENT_RATIOS, SINGLE_COMPANY_ONLY_RATIOS
+from prompts.agent_system import (
+    CROSS_COMPANY_RATIOS,
+    DECIMAL_RATIOS,
+    FACT_METRICS,
+    PERCENT_RATIOS,
+    SINGLE_COMPANY_ONLY_RATIOS,
+)
 from xbrl_facts import DEFAULT_METRIC_TAGS
 
 SEARCH_TOOL_SCHEMA = {
@@ -60,7 +66,7 @@ FACT_TOOL_SCHEMA = {
                 "ticker": {"type": "string", "enum": list(COMPANIES.keys())},
                 "metric": {
                     "type": "string",
-                    "enum": sorted(DEFAULT_METRIC_TAGS) + sorted(RATIO_DEFINITIONS),
+                    "enum": list(FACT_METRICS),
                     "description": (
                         f"Which metric to fetch. {', '.join(PERCENT_RATIOS)} are each computed as a ratio and "
                         f"returned as a percent; {', '.join(DECIMAL_RATIOS)} are also computed as a ratio but "
@@ -250,30 +256,15 @@ SUBMIT_TOOL_SCHEMA = {
 # meaningful within one agent._run_agent_impl run's own all_results, not to a
 # standalone MCP caller with no such list.
 #
-# Built after finding that system-prompt rule 9's original guidance for a
-# hand-computed value ("quote the result(s) it came from, not the number
-# itself") was structurally unverifiable: agent._verify_one_claim's value-
-# attribution check always requires the claimed VALUE to appear as a
-# number candidate inside the quote, so a claim quoting two raw inputs for
-# their ratio could never pass. Prior art (FinQA/ConvFinQA/TAT-QA
-# financial numerical-reasoning benchmarks) solves this with an explicit
-# PROGRAM -- an operation over operands that trace back to real extracted
-# data, mechanically re-executed and checked -- and PAL/Toolformer add the
-# separate finding that LLM arithmetic itself is unreliable, so the
-# calculation should run in real code, not the model's head. This tool
-# combines both: operand grounding (each operand must actually appear in
-# its cited source, via the same agent._number_candidates() primitive
-# agent._verify_one_claim already uses) and arithmetic correctness (the
-# operation runs in Python, never trusted from the model). Its result
-# becomes a normal all_results entry the model cites like any other tool
-# output -- zero changes needed to verify_claims/_verify_one_claim/
-# CitationWarning, since a calculate result is directly quotable the same
-# way get_financial_fact's yoy_growth output already is.
+# A hand-computed value can never pass agent._verify_one_claim, which
+# requires the claimed value to appear inside the quote. This tool is the
+# route for derived numbers instead: each operand must appear in its cited
+# source (agent._number_candidates, the same check claims use) and the
+# operation runs in Python, never in the model's head. Its result is an
+# ordinary all_results entry the model cites like any other tool output.
 #
-# Strictly binary (no N-ary sum) -- composable instead: a 3-way total is
-# calculate twice, citing the first call's own result as an operand of the
-# second, mirroring how FinQA's own programs chain binary operations
-# rather than using N-ary ops.
+# Strictly binary (no N-ary sum): a 3-way total is two calls, the second
+# citing the first call's result as an operand.
 CALCULATE_TOOL_SCHEMA = {
     "type": "function",
     "function": {

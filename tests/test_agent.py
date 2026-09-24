@@ -50,7 +50,12 @@ from agent import (
     verify_claims,
 )
 from llm_backends import ModelTurn
-from prompts.agent_messages import CITATION_RETRY_GUIDANCE, FINAL_TURN_SUBMIT_MESSAGE, Q4_NOT_DISCLOSED_HINT
+from prompts.agent_messages import (
+    CITATION_RETRY_GUIDANCE,
+    FINAL_TURN_SUBMIT_MESSAGE,
+    Q4_NOT_DISCLOSED_HINT,
+    SEARCH_INVALID_ARGS_MESSAGE,
+)
 from prompts.agent_system import SYSTEM_PROMPT
 from prompts.agent_tools import (
     AGENT_TOOL_SCHEMAS,
@@ -1317,6 +1322,28 @@ def test_calculation_as_result_text_is_directly_quotable_end_to_end():
     assert _verify_one_claim(claim, all_results_with_calc) is None
 
 
+def test_calculation_as_result_renders_percent_change_as_from_b_to_a():
+    # percent_change reads operand_b as the old value and operand_a as the
+    # new one, so the expression names them in that order.
+    all_results = [
+        _fake_result(text="Revenue was $81,615 million for the current quarter."),
+        _fake_result(text="Revenue was $44,062 million for the prior-year quarter."),
+    ]
+    args = _valid_calculate_args(
+        operation="percent_change", operand_a=81615.0, unit_a="million", operand_b=44062.0, unit_b="million"
+    )
+    calc_result, error = call_calculate(args, all_results)
+    assert error is None
+    assert calc_result is not None
+
+    entry = _calculation_as_result(calc_result, args)
+
+    assert entry["text"] == (
+        "percentage change from 44062 million to 81615 million = 85.2 percent "
+        "(computed value, not directly stated in any filing; operands from results [1] and [2])"
+    )
+
+
 def test_calculation_as_result_text_avoids_scientific_notation_for_large_values():
     # Found in code review, 2026-09-11: str()'s default formatting
     # switches to scientific notation ("1e+18") outside roughly
@@ -2309,6 +2336,20 @@ def test_dispatch_tool_call_search_filings_rejects_non_hashable_ticker_without_c
     assert category == "tool_call_rejected"
     assert fields["reason"] == "ticker_wrong_type"
     assert "not a recognized company" in content
+
+
+def test_dispatch_tool_call_search_filings_rejects_other_invalid_args_generically(monkeypatch):
+    # Only a bad ticker gets the tailored message; any other schema
+    # violation (here an invented `segment` filter) gets the generic one.
+    monkeypatch.setattr(
+        "agent.hybrid_search", lambda *a, **k: (_ for _ in ()).throw(AssertionError("should not be called"))
+    )
+    monkeypatch.setattr("agent.log_event", lambda category, **fields: None)
+    call = {"name": "search_filings", "args": {"query": "revenue", "segment": "cloud"}}
+
+    content = _dispatch_tool_call(call, "q", [], set(), verbose=False)
+
+    assert content == SEARCH_INVALID_ARGS_MESSAGE
 
 
 def test_dispatch_tool_call_search_filings_allows_no_ticker_filter(monkeypatch):
@@ -4179,8 +4220,7 @@ def test_verify_claims_rejects_nvidia_graphics_mislabel_of_computes_value():
 # ---------------------------------------------------------------------------
 # _format_claim_retry_message (2026-09-10) -- structured-claims retry
 # wording, sharing CITATION_RETRY_GUIDANCE with the old prose retry
-# message so the two can't drift apart. See
-# docs/plans/2026-09-10-structured-claims-citation-verification.md.
+# message so the two can't drift apart.
 # ---------------------------------------------------------------------------
 def test_format_claim_retry_message_includes_each_warning():
     warnings = [

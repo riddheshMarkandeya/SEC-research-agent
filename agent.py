@@ -441,15 +441,20 @@ def _get_financial_fact_yoy_growth(ticker: str, metric: str, args: dict, questio
     return result
 
 
-def _format_fact_value(fact: dict) -> str:
-    """Renders a fact's value for citation text. "raw" (the unit for any
-    RATIO_DEFINITIONS entry with as_percent=False, e.g. asset_turnover/
+def _with_unit(value: float | int | str, unit: str) -> str:
+    """Renders a value with its unit for citation text. "raw" (the unit for
+    any RATIO_DEFINITIONS entry with as_percent=False, e.g. asset_turnover/
     inventory_turnover) is an internal normalize()-category label from
     numeric_utils.py, not a natural-language unit -- omitted here so a
     plain ratio reads as "1.04", not the internal-sounding "1.04 raw"."""
-    if fact["unit"] == "raw":
-        return str(fact["value"])
-    return msg.VALUE_WITH_UNIT_TEMPLATE.format(value=fact["value"], unit=fact["unit"])
+    if unit == "raw":
+        return str(value)
+    return msg.VALUE_WITH_UNIT_TEMPLATE.format(value=value, unit=unit)
+
+
+def _format_fact_value(fact: dict) -> str:
+    """Renders a fact's value for citation text, via _with_unit."""
+    return _with_unit(fact["value"], fact["unit"])
 
 
 def _fact_as_result(fact: dict, args: dict) -> dict:
@@ -482,13 +487,12 @@ def call_compare_financial_metric(args: dict, question: str | None = None) -> di
     passes this function's own boundary check (it's a real, known ratio
     name -- COMPARE_TOOL_SCHEMA's own metric enum is narrower, only
     prompts.agent_system.CROSS_COMPANY_RATIOS, but validate_tool_args
-    lets any metric-enum
-    violation through regardless of which schema declared it, deferring
-    to this same broader RATIO_DEFINITIONS check), but
-    get_ratio_all_companies() checks the flag internally and returns the
-    same graceful `{}` any other unsupported metric gets -- see
-    RATIO_DEFINITIONS' own comment for why there's no cross-company
-    version of those five yet.
+    lets any metric-enum violation through regardless of which schema
+    declared it, deferring to this same broader RATIO_DEFINITIONS
+    check), but get_ratio_all_companies() checks the flag internally
+    and returns the same graceful `{}` any other unsupported metric
+    gets -- see RATIO_DEFINITIONS' own comment for why there's no
+    cross-company version of those five yet.
 
     Same unmet-metric-request tracing as call_get_financial_fact -- see
     that function's docstring. The
@@ -561,15 +565,12 @@ def _comparison_as_results(data: dict[str, dict], metric: str) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
-# calculate tool -- see prompts.agent_tools.CALCULATE_TOOL_SCHEMA's own comment and
-# docs/decisions/2026-09-11-calculate-tool-and-stress-questions.md for
-# the full design reasoning. Two independent guarantees: operand GROUNDING
+# calculate tool -- two independent guarantees: operand GROUNDING
 # (_ground_operand, reusing _number_candidates -- the same primitive
 # _verify_one_claim already trusts for a submit_answer claim) and
 # arithmetic CORRECTNESS (call_calculate runs the operation in real
-# Python, never the model's own mental math, per the PAL/Toolformer
-# finding that LLM arithmetic itself is unreliable even when the model
-# picks the right operation).
+# Python, never the model's own mental math, since LLM arithmetic is
+# unreliable even when the model picks the right operation).
 # ---------------------------------------------------------------------------
 def _ground_operand(
     value: float, unit: str, citation_index: int, all_results: list[dict], operand_name: str
@@ -783,12 +784,7 @@ def _calculation_as_result(result: dict, args: dict) -> dict:
         value_a=value_a, unit_a=unit_a, value_b=value_b, unit_b=unit_b, operation=operation
     )
 
-    formatted_result_value = _format_computed_number(result["value"])
-    formatted_value = (
-        formatted_result_value
-        if result["unit"] == "raw"
-        else msg.VALUE_WITH_UNIT_TEMPLATE.format(value=formatted_result_value, unit=result["unit"])
-    )
+    formatted_value = _with_unit(_format_computed_number(result["value"]), result["unit"])
     return {
         "text": msg.CALCULATION_RESULT_TEMPLATE.format(
             expression=expression, value=formatted_value, idx_a=idx_a, idx_b=idx_b
@@ -1688,10 +1684,9 @@ def _bulleted(warnings: list[str]) -> str:
 
 def _format_citation_retry_message(answer: str, citation_warnings: list[str]) -> str:
     """Builds the corrective follow-up message for a one-time citation
-    retry (see run_agent() and
-    docs/decisions/2026-08-18-citation-retry-loop-v1-tried-reverted.md).
-    The wording (prompts.agent_messages.CITATION_RETRY_GUIDANCE) directly targets the two
-    live failure modes that caused the v1 revert -- removing either
+    retry (see run_agent()). The wording
+    (prompts.agent_messages.CITATION_RETRY_GUIDANCE) directly targets two
+    live failure modes of an earlier retry design -- removing either
     property from the wording would silently reopen the failure mode it
     exists to prevent:
 
@@ -1713,8 +1708,7 @@ def _format_citation_retry_message(answer: str, citation_warnings: list[str]) ->
 
 def _format_claim_retry_message(answer_text: str, warnings: list["CitationWarning"]) -> str:
     """Structured-claims counterpart to _format_citation_retry_message
-    above, used for a submit_answer retry instead of a prose one -- see
-    docs/decisions/2026-09-10-structured-claims-citation-verification.md.
+    above, used for a submit_answer retry instead of a prose one.
     Reuses the exact same hard-won guidance via CITATION_RETRY_GUIDANCE
     so both retry flavors stay consistent by construction, not by
     copy-paste discipline. Delivered as a submit_answer tool RESULT
@@ -1754,7 +1748,6 @@ def _format_refusal_message(warnings: list[str]) -> str:
 # `force_tool` is still accepted by Ollama's *_send* functions for
 # interface uniformity, it just has no effect there.
 _FORCED_SUBMIT_BACKENDS = {"gemini"}
-
 
 
 def _partition_submit_call(tool_calls: list[dict]) -> tuple[dict | None, list[dict]]:

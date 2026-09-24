@@ -26,10 +26,13 @@ construct by hand.
 verification functions (`verify_claims`, `collect_citation_warnings`,
 `_verify_one_claim`, and friends), `retrieval.py`'s ranking/rerank
 logic, `eval_harness.py`'s `grade_judged` and the judge prompts it
-sends (`prompts/judge.py`'s `JUDGE_SYSTEM_PROMPT`/`JUDGE_USER_TEMPLATE`) (the
-LLM-as-judge grading itself — a prompt-wording change here can only be
-confirmed correct by a real judge call, same as any other prompt
-change; see the 2026-09-17 judge hypothetical-date fix), or
+sends (`prompts/judge.py`; the LLM-as-judge grading itself — a
+prompt-wording change here can only be confirmed correct by a real judge
+call, same as any other prompt change; see the 2026-09-17 judge
+hypothetical-date fix), any other text in `prompts/` (every string the
+agent model reads: system prompt, tool schemas, tool-result, warning and
+retry messages — a wording change there changes model behaviour with no
+code change, and only a live run confirms its effect), or
 `chunk_documents.py`'s chunking logic (a change here reshapes the
 entire indexed corpus that every citation-grounding check reads from —
 see the 2026-09-17 orphaned-table-overlap fix, where full unit-test

@@ -255,11 +255,12 @@ def _strip_additional_properties(value):
 
 
 def _to_gemini_tool(schema: dict) -> types.FunctionDeclaration:
-    """agent.py's tool schemas are plain, lowercase JSON-schema dicts
-    (OpenAI/Ollama wire-format style) -- Gemini's SDK accepts most of
-    that shape directly for `parameters` (verified live in the original
-    spike), so this just unwraps the {"function": {...}} envelope rather
-    than re-describing each tool a second time.
+    """The agent's tool schemas (prompts.agent_tools) are plain,
+    lowercase JSON-schema dicts (OpenAI/Ollama wire-format style) --
+    Gemini's SDK accepts most of that shape directly for `parameters`
+    (verified live in the original spike), so this just unwraps the
+    {"function": {...}} envelope rather than re-describing each tool a
+    second time.
 
     "additionalProperties" is the one exception, stripped here (via
     _strip_additional_properties(), recursively -- see that function's
@@ -269,8 +270,7 @@ def _to_gemini_tool(schema: dict) -> types.FunctionDeclaration:
     own wire format and agent.py's/mcp_server.py's runtime
     `validate_tool_args()` both still see the real, unmodified dict --
     this only narrows what's advertised to Gemini's stricter dialect,
-    not what's enforced at the boundary. See
-    docs/decisions/2026-09-09-schema-driven-arg-validation.md."""
+    not what's enforced at the boundary."""
     fn = schema["function"]
     parameters = _strip_additional_properties(fn["parameters"])
     # google-genai's own pydantic model coerces a plain dict into a Schema at
