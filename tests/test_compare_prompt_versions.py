@@ -79,6 +79,7 @@ def test_legacy_list_reports_load_as_unstamped(tmp_path):
         (_provenance(dirty=True), True),
         (_provenance(snapshot_verified=False), True),
         (_provenance(snapshot_verified=None), True),
+        (_provenance(sha="unknown"), True),
         (None, False),
     ],
 )
@@ -133,7 +134,8 @@ def test_default_pair_is_the_two_most_recent_fingerprints(tmp_path):
     assert cpv.default_pair(groups) == ("fpB", "fpC")
     # One side given: the other is filled relative to it.
     assert cpv.default_pair(groups, candidate="fpB") == ("fpA", "fpB")
-    assert cpv.default_pair(groups, base="fpC") == ("fpC", "fpB")
+    assert cpv.default_pair(groups, base="fpA") == ("fpA", "fpC")
+    assert cpv.default_pair(groups, base="fpC") == ("fpC", None)
     assert cpv.default_pair(groups, candidate="fpA") == (None, "fpA")
 
 
@@ -356,8 +358,9 @@ def test_main_explicit_mode_needs_both_sides(tmp_path, capsys):
 def test_warns_when_the_judge_model_differs(tmp_path):
     base = cpv.load([_write(tmp_path, "b0", [_row("q", True)], _provenance("fpA"))])
     [cand] = cpv.load([_write(tmp_path, "c0", [_row("q", True)], _provenance("fpB"))])
-    cand = [dataclasses.replace(cand, judge_model="other")]
-    assert any("judge_model" in w for w in cpv.compare(base, cand).warnings)
+    cand = [dataclasses.replace(cand, judge_model="other", backend="ollama")]
+    warnings = "\n".join(cpv.compare(base, cand).warnings)
+    assert "judge_model" in warnings and "backend" in warnings
 
 
 def test_main_with_one_flag_compares_against_a_different_fingerprint(tmp_path, capsys):
@@ -368,6 +371,9 @@ def test_main_with_one_flag_compares_against_a_different_fingerprint(tmp_path, c
     assert "base fpA" in capsys.readouterr().out
     assert cpv.main([*paths, "--base", "fpB", "--candidate", "fpB"]) == 2
     assert "two different fingerprints" in capsys.readouterr().out
+    # Nothing is older than fpA or newer than fpC to pair with.
+    assert cpv.main([*paths, "--candidate", "fpA"]) == 2
+    assert cpv.main([*paths, "--base", "fpC"]) == 2
 
 
 def test_main_with_only_the_base_group_has_nothing_to_compare(tmp_path, capsys):

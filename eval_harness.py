@@ -454,7 +454,8 @@ REPO_ROOT = Path(__file__).resolve().parent
 # Uncommitted edits to these make a report's git SHA misleading: code,
 # prompt text and its snapshot, the company list rendered into the
 # prompt, and the questions. `*.py` matches at any depth, so a tests-only
-# edit counts as dirty too.
+# edit, or a stray untracked script anywhere not gitignored, counts as
+# dirty too: the safe side, and the files are named in dirty_files.
 PROVENANCE_PATHSPECS = ("*.py", "prompts", "companies.json", "eval/eval_questions.jsonl")
 SNAPSHOT_TEST = "tests/test_model_input_snapshot.py::test_model_input_matches_committed_snapshot"
 # The check normally takes about 20s; a hang (a locked model cache, a

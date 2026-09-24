@@ -751,6 +751,16 @@ def test_snapshot_test_node_id_names_a_real_test():
     assert name in {node.name for node in tree.body if isinstance(node, ast.FunctionDef)}
 
 
+def test_git_state_keeps_the_dirty_state_when_only_rev_parse_fails(monkeypatch):
+    # Each fact is recorded as found; compare_prompt_versions excludes a
+    # report with no SHA on its own.
+    monkeypatch.setattr(
+        eval_harness, "_git", _fake_git({_REV_PARSE: eval_harness.GitError("unborn"), _STATUS: " M agent.py\0"})
+    )
+    monkeypatch.setattr(eval_harness, "log_event", lambda category, **fields: None)
+    assert eval_harness._git_state() == {"git_sha": "unknown", "git_dirty": True, "dirty_files": ["agent.py"]}
+
+
 def test_git_state_keeps_the_sha_when_only_the_status_call_fails(monkeypatch):
     monkeypatch.setattr(
         eval_harness, "_git", _fake_git({_REV_PARSE: "abc1234\n", _STATUS: eval_harness.GitError("index.lock")})

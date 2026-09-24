@@ -43,7 +43,7 @@ FLOOR_RATE = 1 / 3
 # REGRESSED-TOTAL: expected passes lost across shared questions reach
 # this percentage of the candidate's question-runs (6 of a 13x3 panel).
 TOTAL_DROP_PERCENT = 14
-# Below this many candidate question-runs, ceil(0.14 x N) is so small
+# Below this many candidate question-runs, 14% of N rounded up is so small
 # that a single lost pass trips the total; it is reported but can't fail.
 MIN_RUNS_FOR_TOTAL = 20
 # "Within 1 pass": the candidate lost at most one pass against what the
@@ -141,12 +141,17 @@ def agent_fingerprint(report: Report) -> str | None:
 
 
 def is_excluded(report: Report, include_dirty: bool) -> bool:
-    """A stamped report whose tree had uncommitted changes, or whose
-    model-input snapshot wasn't verified, doesn't reliably describe its
-    commit. Unstamped (older) reports have nothing to check."""
+    """A stamped report with no known commit, uncommitted changes, or an
+    unverified model-input snapshot doesn't reliably describe a commit.
+    Unstamped (older) reports have nothing to check."""
     if include_dirty or report.provenance is None:
         return False
-    return report.provenance.get("git_dirty") is not False or report.provenance.get("snapshot_verified") is not True
+    provenance = report.provenance
+    return (
+        provenance.get("git_sha") == "unknown"
+        or provenance.get("git_dirty") is not False
+        or provenance.get("snapshot_verified") is not True
+    )
 
 
 def select(
@@ -154,9 +159,12 @@ def select(
 ) -> tuple[list[Report], list[Report]]:
     """(kept, excluded) among the reports named at or after `since` (a
     UTC timestamp, like report names)."""
-    window = [r for r in reports if not since or r.name >= since]
-    excluded = [r for r in window if is_excluded(r, include_dirty)]
-    return [r for r in window if r not in excluded], excluded
+    kept: list[Report] = []
+    excluded: list[Report] = []
+    for report in reports:
+        if not since or report.name >= since:
+            (excluded if is_excluded(report, include_dirty) else kept).append(report)
+    return kept, excluded
 
 
 def group_by_fingerprint(reports: list[Report]) -> dict[str, list[Report]]:
@@ -173,13 +181,14 @@ def group_by_fingerprint(reports: list[Report]) -> dict[str, list[Report]]:
 def default_pair(
     groups: dict[str, list[Report]], base: str | None = None, candidate: str | None = None
 ) -> tuple[str | None, str | None]:
-    """(base, candidate), filling whichever wasn't given: the candidate
-    defaults to the most recent fingerprint other than the base, the base
-    to the latest fingerprint before the candidate. Either is None when
-    no such fingerprint exists."""
+    """(base, candidate), filling whichever wasn't given so the
+    comparison runs forward in time: the candidate defaults to the most
+    recent fingerprint after the base, the base to the latest fingerprint
+    before the candidate. Either is None when no such fingerprint exists."""
     by_recency = sorted(groups, key=lambda fp: groups[fp][-1].name)
     if candidate is None:
-        candidate = next((fp for fp in reversed(by_recency) if fp != base), None)
+        newer = by_recency[by_recency.index(base) + 1 :] if base in by_recency else by_recency
+        candidate = newer[-1] if newer else None
     if base is None and candidate in by_recency:
         older = by_recency[: by_recency.index(candidate)]
         base = older[-1] if older else None
@@ -358,8 +367,8 @@ def format_single_group(reports: list[Report]) -> str:
 def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("reports", nargs="*", type=Path, help="report files (default: every eval_results report)")
-    parser.add_argument("--base", help="base agent fingerprint (default: the second most recent)")
-    parser.add_argument("--candidate", help="candidate agent fingerprint (default: the most recent)")
+    parser.add_argument("--base", help="base agent fingerprint (default: the latest before the candidate)")
+    parser.add_argument("--candidate", help="candidate agent fingerprint (default: the most recent after the base)")
     parser.add_argument("--base-files", nargs="+", type=Path, help="explicit mode: the base runs")
     parser.add_argument("--candidate-files", nargs="+", type=Path, help="explicit mode: the candidate runs")
     parser.add_argument("--since", help="ignore reports named before this UTC timestamp, e.g. 20260925T000000Z")
@@ -367,7 +376,9 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-def _kept(label: str, reports: list[Report], include_dirty: bool, since: str | None = None) -> list[Report]:
+def _select_and_report(
+    label: str, reports: list[Report], include_dirty: bool, since: str | None = None
+) -> list[Report]:
     """select()'s kept reports, printing any exclusions so no report is
     dropped quietly."""
     kept, excluded = select(reports, include_dirty, since)
@@ -378,8 +389,8 @@ def _kept(label: str, reports: list[Report], include_dirty: bool, since: str | N
 
 
 def _explicit(args: argparse.Namespace) -> int:
-    base = _kept("base", load(args.base_files), args.include_dirty)
-    candidate = _kept("candidate", load(args.candidate_files), args.include_dirty)
+    base = _select_and_report("base", load(args.base_files), args.include_dirty)
+    candidate = _select_and_report("candidate", load(args.candidate_files), args.include_dirty)
     if not (base and candidate):
         print("Nothing to compare: every file on one side was excluded.")
         return 2
@@ -390,7 +401,7 @@ def _explicit(args: argparse.Namespace) -> int:
 
 def _by_fingerprint(args: argparse.Namespace) -> int:
     paths = args.reports or sorted(RESULTS_DIR.glob("*.json"))
-    groups = group_by_fingerprint(_kept("fingerprint mode", load(paths), args.include_dirty, args.since))
+    groups = group_by_fingerprint(_select_and_report("fingerprint mode", load(paths), args.include_dirty, args.since))
     if not groups:
         print("No stamped, clean reports to compare (see --include-dirty and --since).")
         return 0
@@ -398,13 +409,13 @@ def _by_fingerprint(args: argparse.Namespace) -> int:
     if unknown:
         print(f"Unknown fingerprint(s): {', '.join(unknown)}. Known: {', '.join(sorted(groups))}")
         return 2
+    if len(groups) == 1 and not (args.base or args.candidate):
+        print(format_single_group(next(iter(groups.values()))))
+        return 0
     base_fp, candidate_fp = default_pair(groups, args.base, args.candidate)
-    if candidate_fp is None or base_fp == candidate_fp:
+    if base_fp is None or candidate_fp is None or base_fp == candidate_fp:
         print("A comparison needs two different fingerprints.")
         return 2
-    if base_fp is None:
-        print(format_single_group(groups[candidate_fp]))
-        return 0
     comparison = compare(groups[base_fp], groups[candidate_fp])
     print(format_comparison(comparison, groups[base_fp], groups[candidate_fp]))
     return exit_code(comparison)
