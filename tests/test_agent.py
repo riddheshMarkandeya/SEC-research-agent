@@ -18,8 +18,6 @@ from typing import cast
 from agent import (
     AgentResult,
     CitationWarning,
-    _CITATION_RETRY_GUIDANCE,
-    _FINAL_TURN_SUBMIT_MESSAGE,
     call_calculate,
     call_compare_financial_metric,
     call_get_financial_fact,
@@ -52,6 +50,7 @@ from agent import (
     verify_claims,
 )
 from llm_backends import ModelTurn
+from prompts.agent_messages import CITATION_RETRY_GUIDANCE, FINAL_TURN_SUBMIT_MESSAGE, Q4_NOT_DISCLOSED_HINT
 from prompts.agent_system import SYSTEM_PROMPT
 from prompts.agent_tools import (
     AGENT_TOOL_SCHEMAS,
@@ -592,13 +591,11 @@ def test_verify_citations_ignores_non_claim_text_with_no_citation_at_all():
 
 
 def test_verify_citations_q4_not_disclosed_hint_text_does_not_trip_uncited_check():
-    # The Q4-refusal hint text (agent.py's _Q4_NOT_DISCLOSED_HINT) can end
+    # The Q4-refusal hint text (prompts.agent_messages.Q4_NOT_DISCLOSED_HINT) can end
     # up echoed/paraphrased into a final answer -- confirm its own
     # wording contains nothing the new check would misread as an uncited
     # numeric claim.
-    from agent import _Q4_NOT_DISCLOSED_HINT
-
-    assert verify_citations(_Q4_NOT_DISCLOSED_HINT, []) == []
+    assert verify_citations(Q4_NOT_DISCLOSED_HINT, []) == []
 
 
 def test_format_refusal_message_renders_an_uncited_only_warning_list():
@@ -2737,13 +2734,13 @@ def test_run_agent_final_turn_safety_net_not_applied_on_ollama(monkeypatch):
 
 def test_final_turn_submit_message_contains_no_deadline_pressure_language():
     # Regression guard against reintroducing the documented fabrication
-    # scar (agent.py's _CITATION_RETRY_GUIDANCE docstring): a prior
+    # scar (prompts.agent_messages.CITATION_RETRY_GUIDANCE's comment): a prior
     # "final attempt" framing pushed the model to fabricate an estimate
     # on nvda-rd-expense-q4fy26-refusal instead of refusing honestly.
-    lowered = _FINAL_TURN_SUBMIT_MESSAGE.lower()
+    lowered = FINAL_TURN_SUBMIT_MESSAGE.lower()
     assert "final attempt" not in lowered
     assert "last chance" not in lowered
-    assert "acceptable outcome" in lowered  # mirrors _CITATION_RETRY_GUIDANCE's proven phrasing
+    assert "acceptable outcome" in lowered  # mirrors CITATION_RETRY_GUIDANCE's proven phrasing
 
 
 def test_run_agent_refuses_when_gemini_retry_still_leaves_unverified_citation(monkeypatch):
@@ -4181,7 +4178,7 @@ def test_verify_claims_rejects_nvidia_graphics_mislabel_of_computes_value():
 
 # ---------------------------------------------------------------------------
 # _format_claim_retry_message (2026-09-10) -- structured-claims retry
-# wording, sharing _CITATION_RETRY_GUIDANCE with the old prose retry
+# wording, sharing CITATION_RETRY_GUIDANCE with the old prose retry
 # message so the two can't drift apart. See
 # docs/plans/2026-09-10-structured-claims-citation-verification.md.
 # ---------------------------------------------------------------------------
@@ -4209,8 +4206,8 @@ def test_format_claim_retry_message_shares_guidance_with_prose_retry_message():
     # extracted specifically so they can't drift apart independently.
     prose = _format_citation_retry_message("answer", ["warning"])
     claim = _format_claim_retry_message("answer", [])
-    assert _CITATION_RETRY_GUIDANCE in prose
-    assert _CITATION_RETRY_GUIDANCE in claim
+    assert CITATION_RETRY_GUIDANCE in prose
+    assert CITATION_RETRY_GUIDANCE in claim
 
 
 def test_format_claim_retry_message_tells_model_to_call_submit_answer_again():

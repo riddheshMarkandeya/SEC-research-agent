@@ -40,6 +40,7 @@ from numeric_utils import (
     normalize_for_match,
     text_coverage,
 )
+from prompts import agent_messages as msg
 from prompts.agent_system import SYSTEM_PROMPT
 from prompts.agent_tools import (
     AGENT_TOOL_SCHEMAS,
@@ -88,7 +89,9 @@ def _citation_header(i: int, meta: dict) -> str:
     drift out of sync if this format ever changes -- the strip has to
     reconstruct precisely what the model was actually shown, not a
     close guess."""
-    return f"[{i}] {meta['ticker']} {meta['form']} (reportDate={meta['reportDate']})"
+    return msg.CITATION_HEADER_TEMPLATE.format(
+        i=i, ticker=meta["ticker"], form=meta["form"], report_date=meta["reportDate"]
+    )
 
 
 def _format_results_block(results: list[dict], start_index: int) -> str:
@@ -97,25 +100,14 @@ def _format_results_block(results: list[dict], start_index: int) -> str:
     citation numbers stay globally consistent across multiple tool calls
     within the same conversation."""
     if not results:
-        return "(no matching filing excerpts found for this search)"
+        return msg.NO_SEARCH_RESULTS_MESSAGE
 
     blocks = []
     for offset, r in enumerate(results):
         i = start_index + offset
         header = _citation_header(i, r["metadata"])
-        blocks.append(f"{header}\n{r['text']}")
-    return "\n\n".join(blocks)
-
-
-_Q4_NOT_DISCLOSED_HINT = (
-    "No company files a separate quarterly report for Q4 -- only Q1-Q3 get a "
-    "standalone 10-Q, so a discrete Q4 figure is never independently disclosed "
-    "via XBRL; it only exists implicitly as FY minus Q1-Q3. Tell the user this "
-    "figure isn't reported as a standalone figure, and stop there -- do not "
-    "state, estimate, or mention ANY dollar amount in your answer, not for Q4, "
-    "not the full fiscal year total, not from search results or any other "
-    "period. Simply explain that quarterly figures aren't broken out this way."
-)
+        blocks.append(msg.RESULT_BLOCK_TEMPLATE.format(header=header, text=r["text"]))
+    return msg.RESULT_BLOCK_SEPARATOR.join(blocks)
 
 
 def _never_tagged_hint(ticker: str | None, metric: str | None) -> str | None:
@@ -134,14 +126,7 @@ def _never_tagged_hint(ticker: str | None, metric: str | None) -> str | None:
     assert isinstance(ticker, str) and isinstance(metric, str)
     if is_metric_tagged(ticker, metric):
         return None
-    return (
-        f"{ticker} does not report {metric!r} in its financial statements at all -- for some "
-        "metrics (e.g. inventory) this is because it genuinely doesn't apply to the company's "
-        "business model (a software/services company with no physical goods has nothing to "
-        "report there), not because this specific period is missing. Do not fabricate, "
-        "estimate, or infer a value for it; state plainly that this metric isn't reported for "
-        "this company, and explain why if the reason is evident (e.g. the business model)."
-    )
+    return msg.NEVER_TAGGED_HINT_TEMPLATE.format(ticker=ticker, metric=metric)
 
 
 def _format_no_fact_message(args: dict) -> str:
@@ -152,16 +137,17 @@ def _format_no_fact_message(args: dict) -> str:
     results and fabricate instead of refusing. See
     docs/decisions/2026-08-18-q4-refusal-fix.md and
     docs/decisions/2026-08-19-fixing-6-accumulated-eval-findings.md."""
-    message = (
-        f"(no structured data found for metric={args.get('metric')!r} "
-        f"ticker={args.get('ticker')!r} {args.get('fiscal_period')!r} "
-        f"FY{args.get('fiscal_year')!r} — try search_filings instead)"
+    message = msg.NO_FACT_TEMPLATE.format(
+        metric=args.get("metric"),
+        ticker=args.get("ticker"),
+        fiscal_period=args.get("fiscal_period"),
+        fiscal_year=args.get("fiscal_year"),
     )
     if args.get("fiscal_period") == "Q4":
-        message += f" {_Q4_NOT_DISCLOSED_HINT}"
+        message += msg.NO_DATA_HINT_SEPARATOR + msg.Q4_NOT_DISCLOSED_HINT
     never_tagged = _never_tagged_hint(args.get("ticker"), args.get("metric"))
     if never_tagged:
-        message += f" {never_tagged}"
+        message += msg.NO_DATA_HINT_SEPARATOR + never_tagged
     return message
 
 
@@ -173,15 +159,12 @@ def _format_no_comparison_message(args: dict) -> str:
     company (args' `anchor_ticker`, this tool's ticker key), not every
     company in the comparison -- same scoping limit _never_tagged_hint()
     itself already documents, not a new one introduced here."""
-    message = (
-        f"(no structured data found for metric={args.get('metric')!r} "
-        "across companies for this period — try search_filings per company instead)"
-    )
+    message = msg.NO_COMPARISON_TEMPLATE.format(metric=args.get("metric"))
     if args.get("fiscal_period") == "Q4":
-        message += f" {_Q4_NOT_DISCLOSED_HINT}"
+        message += msg.NO_DATA_HINT_SEPARATOR + msg.Q4_NOT_DISCLOSED_HINT
     never_tagged = _never_tagged_hint(args.get("anchor_ticker"), args.get("metric"))
     if never_tagged:
-        message += f" {never_tagged}"
+        message += msg.NO_DATA_HINT_SEPARATOR + never_tagged
     return message
 
 
@@ -475,7 +458,7 @@ def _fact_as_result(fact: dict, args: dict) -> dict:
     handling uniformly with search_filings results instead of needing a
     parallel code path."""
     return {
-        "text": f"{args['metric']} = {_format_fact_value(fact)} (structured XBRL data, not filing prose)",
+        "text": msg.FACT_RESULT_TEMPLATE.format(metric=args["metric"], value=_format_fact_value(fact)),
         "metadata": {
             "ticker": args["ticker"],
             "form": fact["form"],
@@ -561,10 +544,12 @@ def _comparison_as_results(data: dict[str, dict], metric: str) -> list[dict]:
     for ticker, fact in sorted(data.items()):
         results.append(
             {
-                "text": f"{ticker} {metric} = {_format_fact_value(fact)} (structured XBRL data, not filing prose)",
+                "text": msg.COMPARISON_RESULT_TEMPLATE.format(
+                    ticker=ticker, metric=metric, value=_format_fact_value(fact)
+                ),
                 "metadata": {
                     "ticker": ticker,
-                    "form": fact.get("form", "XBRL frame data"),
+                    "form": fact.get("form", msg.COMPARISON_FRAME_FORM),
                     "filingDate": fact["period_end"],
                     "reportDate": fact["period_end"],
                     "accessionNumber": fact["accession"],
@@ -625,9 +610,8 @@ def _ground_operand(
       prompt rule 9 for the actual fix (state a unit-converted value
       directly, no calculate call needed at all)."""
     if not (1 <= citation_index <= len(all_results)):
-        return (
-            f"(operand {operand_name}: [{citation_index}] is not a valid citation index -- "
-            f"results are numbered 1-{len(all_results)})"
+        return msg.OPERAND_BAD_CITATION_INDEX_TEMPLATE.format(
+            operand_name=operand_name, citation_index=citation_index, result_count=len(all_results)
         )
     source_text = all_results[citation_index - 1]["text"]
     category, norm = normalize(value, unit)
@@ -642,10 +626,12 @@ def _ground_operand(
         other_category, other_norm = normalize(value, other_unit)
         other_tolerance = max(0.01 * abs(other_norm), 0.05)
         if any(c == other_category and abs(v - other_norm) <= other_tolerance for c, v in candidates):
-            return (
-                f"({operand_name}={value} is not a {unit} value in result [{citation_index}] -- "
-                f"that result's own number matches {value} interpreted as {other_unit} instead; "
-                f"double check {operand_name}'s UNIT specifically)"
+            return msg.OPERAND_WRONG_UNIT_TEMPLATE.format(
+                operand_name=operand_name,
+                value=value,
+                unit=unit,
+                citation_index=citation_index,
+                other_unit=other_unit,
             )
 
     for other_index, other_result in enumerate(all_results, start=1):
@@ -653,19 +639,16 @@ def _ground_operand(
             continue
         other_candidates = _number_candidates(other_result["text"])
         if any(c == category and abs(v - norm) <= tolerance for c, v in other_candidates):
-            return (
-                f"({operand_name}={value} ({unit}) is not in result [{citation_index}] -- "
-                f"it matches result [{other_index}] instead; double check {operand_name}'s "
-                "CITATION INDEX specifically, not its value or unit)"
+            return msg.OPERAND_WRONG_CITATION_INDEX_TEMPLATE.format(
+                operand_name=operand_name,
+                value=value,
+                unit=unit,
+                citation_index=citation_index,
+                other_index=other_index,
             )
 
-    return (
-        f"({operand_name}={value} ({unit}) does not appear under ANY unit in result [{citation_index}], "
-        "nor under this same unit in any other result you've retrieved -- this is not a retryable mistake. "
-        "If this is a unit-conversion constant (e.g. dividing by 1,000,000,000 to convert to billions), do "
-        "not use calculate for that at all -- state the converted value directly instead, citing the same "
-        "source, per system-prompt rule 9. Otherwise, this operand simply isn't grounded in anything you've "
-        "retrieved.)"
+    return msg.OPERAND_UNGROUNDABLE_TEMPLATE.format(
+        operand_name=operand_name, value=value, unit=unit, citation_index=citation_index
     )
 
 
@@ -701,7 +684,7 @@ def call_calculate(args: dict, all_results: list[dict]) -> tuple[dict | None, st
     definition, rounded to 1 decimal matching formulas.py's
     RatioDefinition(as_percent=True) convention."""
     if validate_tool_args("calculate", CALCULATE_TOOL_SCHEMA, args):
-        return None, "(your calculate call didn't match the required schema)"
+        return None, msg.CALCULATE_INVALID_ARGS_MESSAGE
 
     operation = args["operation"]
     value_a, unit_a, idx_a = args["operand_a"], args["unit_a"], args["citation_index_a"]
@@ -717,13 +700,12 @@ def call_calculate(args: dict, all_results: list[dict]) -> tuple[dict | None, st
     category_a, norm_a = normalize(value_a, unit_a)
     category_b, norm_b = normalize(value_b, unit_b)
     if category_a != category_b:
-        return None, (
-            f"(cannot {operation} a {category_a} value and a {category_b} value -- "
-            "both operands must be the same kind of quantity)"
+        return None, msg.CALCULATE_CATEGORY_MISMATCH_TEMPLATE.format(
+            operation=operation, category_a=category_a, category_b=category_b
         )
 
     if operation in ("divide", "percent_of", "percent_change") and norm_b == 0:
-        return None, f"(cannot {operation.replace('_', ' ')}: operand_b is zero)"
+        return None, msg.CALCULATE_ZERO_DIVISOR_TEMPLATE.format(operation=operation.replace("_", " "))
 
     value, unit = _apply_calculate_operation(operation, category_a, norm_a, norm_b)
     return {"value": value, "unit": unit}, None
@@ -792,27 +774,31 @@ def _calculation_as_result(result: dict, args: dict) -> dict:
     idx_a, idx_b = args["citation_index_a"], args["citation_index_b"]
 
     if operation == "percent_change":
-        expression = f"percentage change from {value_b} {unit_b} to {value_a} {unit_a}"
+        expression_template = msg.CALCULATION_PERCENT_CHANGE_EXPRESSION
     elif operation == "percent_of":
-        expression = f"{value_a} {unit_a} as a percentage of {value_b} {unit_b}"
+        expression_template = msg.CALCULATION_PERCENT_OF_EXPRESSION
     else:
-        expression = f"{value_a} {unit_a} {operation} {value_b} {unit_b}"
+        expression_template = msg.CALCULATION_BINARY_EXPRESSION
+    expression = expression_template.format(
+        value_a=value_a, unit_a=unit_a, value_b=value_b, unit_b=unit_b, operation=operation
+    )
 
     formatted_result_value = _format_computed_number(result["value"])
     formatted_value = (
-        formatted_result_value if result["unit"] == "raw" else f"{formatted_result_value} {result['unit']}"
+        formatted_result_value
+        if result["unit"] == "raw"
+        else msg.CALCULATION_VALUE_WITH_UNIT.format(value=formatted_result_value, unit=result["unit"])
     )
     return {
-        "text": (
-            f"{expression} = {formatted_value} (computed value, not directly stated in any "
-            f"filing; operands from results [{idx_a}] and [{idx_b}])"
+        "text": msg.CALCULATION_RESULT_TEMPLATE.format(
+            expression=expression, value=formatted_value, idx_a=idx_a, idx_b=idx_b
         ),
         "metadata": {
-            "ticker": "N/A",
-            "form": "computed value",
-            "filingDate": "N/A",
-            "reportDate": "N/A",
-            "accessionNumber": "N/A",
+            "ticker": msg.CALCULATION_PLACEHOLDER,
+            "form": msg.CALCULATION_FORM,
+            "filingDate": msg.CALCULATION_PLACEHOLDER,
+            "reportDate": msg.CALCULATION_PLACEHOLDER,
+            "accessionNumber": msg.CALCULATION_PLACEHOLDER,
             "chunk_index": "calculated",
         },
     }
@@ -1240,7 +1226,7 @@ def collect_citation_warnings(answer_text: str, all_results: list[dict]) -> list
                 citation_index=n,
                 value=value,
                 unit=unit,
-                message=f"[{n}] claims {value} ({unit}) but that value doesn't appear in the cited source",
+                message=msg.CITED_CLAIM_UNSUPPORTED_TEMPLATE.format(n=n, value=value, unit=unit),
                 quote=None,
             )
         )
@@ -1255,10 +1241,7 @@ def collect_citation_warnings(answer_text: str, all_results: list[dict]) -> list
                 citation_index=None,
                 value=value,
                 unit=unit,
-                message=(
-                    f"claims {value} ({unit}) but no citation marker appears anywhere "
-                    "near it to trace the claim to a source"
-                ),
+                message=msg.UNCITED_CLAIM_TEMPLATE.format(value=value, unit=unit),
                 quote=None,
             )
         )
@@ -1413,7 +1396,7 @@ def _verify_one_claim(claim: dict, all_results: list[dict]) -> "CitationWarning 
             citation_index=n,
             value=value,
             unit=unit,
-            message=f"[{n}] is not a valid citation index -- results are numbered 1-{len(all_results)}",
+            message=msg.CITATION_OUT_OF_RANGE_TEMPLATE.format(n=n, result_count=len(all_results)),
             quote=None,
         )
     if (value is None) != (unit is None):
@@ -1422,7 +1405,7 @@ def _verify_one_claim(claim: dict, all_results: list[dict]) -> "CitationWarning 
             citation_index=n,
             value=value,
             unit=unit,
-            message=f"[{n}] must include BOTH value and unit for a numeric claim, or omit both for a qualitative one",
+            message=msg.MALFORMED_CLAIM_TEMPLATE.format(n=n),
             quote=None,
         )
     source_text = all_results[n - 1]["text"]
@@ -1461,7 +1444,7 @@ def _verify_numeric_claim(
             citation_index=n,
             value=value,
             unit=unit,
-            message=f"[{n}] claims {value} ({unit}) but its quote {quote.raw!r} is too short to verify",
+            message=msg.NUMERIC_QUOTE_TOO_SHORT_TEMPLATE.format(n=n, value=value, unit=unit, quote=quote.raw),
             quote=quote.raw,
         )
     if not _quote_grounded_in_source(value, unit, quote.grounding, source_text):
@@ -1470,7 +1453,7 @@ def _verify_numeric_claim(
             citation_index=n,
             value=value,
             unit=unit,
-            message=f"[{n}] claims {value} ({unit}) but the quoted text doesn't appear in source [{n}]",
+            message=msg.QUOTE_NOT_FOUND_TEMPLATE.format(n=n, value=value, unit=unit),
             quote=quote.raw,
         )
     category, norm = normalize(value, unit)
@@ -1482,7 +1465,7 @@ def _verify_numeric_claim(
             citation_index=n,
             value=value,
             unit=unit,
-            message=f"[{n}] claims {value} ({unit}) but that value doesn't appear in the quoted text",
+            message=msg.VALUE_NOT_IN_QUOTE_TEMPLATE.format(n=n, value=value, unit=unit),
             quote=quote.raw,
         )
     return None
@@ -1511,7 +1494,7 @@ def _verify_qualitative_claim(n: int, quote: "_ClaimQuote", source_text: str) ->
             citation_index=n,
             value=None,
             unit=None,
-            message=f"[{n}]'s quote {quote.raw!r} is too short to verify",
+            message=msg.QUALITATIVE_QUOTE_TOO_SHORT_TEMPLATE.format(n=n, quote=quote.raw),
             quote=quote.raw,
         )
     if not _quote_matches(quote.grounding, source_text):
@@ -1520,7 +1503,7 @@ def _verify_qualitative_claim(n: int, quote: "_ClaimQuote", source_text: str) ->
             citation_index=n,
             value=None,
             unit=None,
-            message=f"[{n}]'s quote doesn't appear in source [{n}]",
+            message=msg.QUALITATIVE_QUOTE_NOT_FOUND_TEMPLATE.format(n=n),
             quote=quote.raw,
         )
     return None
@@ -1635,7 +1618,7 @@ def verify_claims(
                 citation_index=None,
                 value=value,
                 unit=unit,
-                message=f"claims {value} ({unit}) but no claim in your submit_answer call covers it",
+                message=msg.UNCOVERED_NUMBER_TEMPLATE.format(value=value, unit=unit),
                 quote=None,
             )
         )
@@ -1697,30 +1680,17 @@ def _should_force_final_submit(already_attempted: bool, calls_made: int, backend
     return not already_attempted and calls_made >= MAX_TOOL_ITERATIONS and backend in _FINAL_TURN_BACKENDS
 
 
-# Shared wording so the prose-retry message below and the structured-
-# claims retry message (_format_claim_retry_message, for submit_answer)
-# can't drift apart -- both target the same two live failure modes
-# documented on _format_citation_retry_message below, and there's no
-# reason a future wording tweak to one should silently leave the other
-# behind.
-_CITATION_RETRY_GUIDANCE = (
-    "Before answering again, check whether any of the search results ALREADY "
-    "shown earlier in this conversation actually support each flagged claim -- "
-    "the right source may already be there under a different citation number. "
-    "If you find proper support, restate the claim with the correct citation. "
-    "If, after checking, a value genuinely isn't supported by any result shown, "
-    "say so plainly and refuse that specific claim instead of guessing -- an "
-    "honest answer that the sources don't support it is a completely acceptable "
-    "outcome here. Do not invent, estimate, or approximate a number to replace "
-    "an unverified one."
-)
+def _bulleted(warnings: list[str]) -> str:
+    """One WARNING_BULLET_TEMPLATE line per warning -- the list format
+    shared by both retry messages and the refusal."""
+    return "\n".join(msg.WARNING_BULLET_TEMPLATE.format(warning=w) for w in warnings)
 
 
 def _format_citation_retry_message(answer: str, citation_warnings: list[str]) -> str:
     """Builds the corrective follow-up message for a one-time citation
     retry (see run_agent() and
     docs/decisions/2026-08-18-citation-retry-loop-v1-tried-reverted.md).
-    The wording (_CITATION_RETRY_GUIDANCE above) directly targets the two
+    The wording (prompts.agent_messages.CITATION_RETRY_GUIDANCE) directly targets the two
     live failure modes that caused the v1 revert -- removing either
     property from the wording would silently reopen the failure mode it
     exists to prevent:
@@ -1736,13 +1706,8 @@ def _format_citation_retry_message(answer: str, citation_warnings: list[str]) ->
        deliberately contains NO deadline/final-attempt language, states
        an honest refusal is a fully acceptable outcome, and explicitly
        forbids inventing or estimating a replacement number."""
-    warnings_block = "\n".join(f"- {w}" for w in citation_warnings)
-    return (
-        "Your previous answer had at least one citation that doesn't hold up:\n"
-        f"{warnings_block}\n\n"
-        "Your previous answer was:\n"
-        f"{answer}\n\n"
-        f"{_CITATION_RETRY_GUIDANCE}"
+    return msg.CITATION_RETRY_TEMPLATE.format(
+        warnings_block=_bulleted(citation_warnings), answer=answer, guidance=msg.CITATION_RETRY_GUIDANCE
     )
 
 
@@ -1750,20 +1715,16 @@ def _format_claim_retry_message(answer_text: str, warnings: list["CitationWarnin
     """Structured-claims counterpart to _format_citation_retry_message
     above, used for a submit_answer retry instead of a prose one -- see
     docs/decisions/2026-09-10-structured-claims-citation-verification.md.
-    Reuses the exact same hard-won guidance via _CITATION_RETRY_GUIDANCE
+    Reuses the exact same hard-won guidance via CITATION_RETRY_GUIDANCE
     so both retry flavors stay consistent by construction, not by
     copy-paste discipline. Delivered as a submit_answer tool RESULT
     (types.Part.from_function_response), not a plain follow-up turn --
     see the loop's own comment for why a dangling function call followed
     by a bare user turn is worth avoiding."""
-    warnings_block = "\n".join(f"- {w.message}" for w in warnings)
-    return (
-        "Your previous submit_answer call had at least one claim that doesn't hold up:\n"
-        f"{warnings_block}\n\n"
-        "Your previous answer_text was:\n"
-        f"{answer_text}\n\n"
-        f"{_CITATION_RETRY_GUIDANCE}\n\n"
-        "Call submit_answer again with the corrected answer_text and claims."
+    return msg.CLAIM_RETRY_TEMPLATE.format(
+        warnings_block=_bulleted([w.message for w in warnings]),
+        answer_text=answer_text,
+        guidance=msg.CITATION_RETRY_GUIDANCE,
     )
 
 
@@ -1776,12 +1737,7 @@ def _format_refusal_message(warnings: list[str]) -> str:
     the agent refuses" -- previously verify_citations()'s findings were
     only ever surfaced as warnings alongside the (still-returned)
     answer; this is what actually withholds it."""
-    warnings_block = "\n".join(f"- {w}" for w in warnings)
-    return (
-        "I can't confirm this answer against the sources I retrieved -- "
-        f"the following claim(s) don't hold up under citation verification:\n{warnings_block}\n\n"
-        "Rather than give you a number I can't verify, I'm refusing this answer."
-    )
+    return msg.REFUSAL_TEMPLATE.format(warnings_block=_bulleted(warnings))
 
 
 # Backends allowed to FORCE a submit_answer call when the model replies
@@ -1799,36 +1755,6 @@ def _format_refusal_message(warnings: list[str]) -> str:
 # interface uniformity, it just has no effect there.
 _FORCED_SUBMIT_BACKENDS = {"gemini"}
 
-_FORCE_SUBMIT_MESSAGE = "Please provide your final answer now by calling submit_answer."
-
-# Delivered as the `content` of a synthetic tool-result answering each
-# pending call on the final-turn safety net's one reserved round trip
-# (see _should_force_final_submit above) -- worded to read sensibly as
-# such ("this request was not run"), not as a plain followup message.
-# Deliberately NOT _FORCE_SUBMIT_MESSAGE: that message is for a model
-# that already believes it's done (replied in prose); this situation is
-# different in kind -- mid-flow, the budget cut it off, most likely to
-# NOT have separately reasoned about coverage. Deliberately no "final
-# attempt"/deadline-pressure language, per the documented scar on
-# _CITATION_RETRY_GUIDANCE above: that exact framing previously
-# pushed the model to fabricate an estimate on
-# nvda-rd-expense-q4fy26-refusal -- the same canary question this fix
-# targets. Mirrors _CITATION_RETRY_GUIDANCE's already-proven phrasing
-# ("completely acceptable outcome," explicit prohibition on
-# inventing/estimating) rather than inventing new wording under pressure.
-_FINAL_TURN_SUBMIT_MESSAGE = (
-    "No more tool calls are available for this question -- nothing else will be "
-    "dispatched, so this request was not run. Call submit_answer now using only what "
-    "you've already retrieved above.\n\n"
-    "Before you do, check rule 6: did you actually get data for every company, "
-    "period, or quantity this question asks about? If something is missing or came "
-    "back unavailable, do not present a partial result as if it fully answers the "
-    "question -- name what's missing per rule 7, or refuse per rule 2 if the missing "
-    "piece could change the answer (e.g. you can't rank or compare without it). An "
-    "honest refusal, or an answer that explicitly says what you could and couldn't "
-    "verify, is a completely acceptable outcome here -- do not guess, estimate, or "
-    "invent a value for anything you didn't actually retrieve."
-)
 
 
 def _partition_submit_call(tool_calls: list[dict]) -> tuple[dict | None, list[dict]]:
@@ -2047,11 +1973,8 @@ def _dispatch_search_filings(
             # compare_financial_metric's boundary rejections, this is
             # the one case validate_tool_args's caller has enough
             # schema/enum context in hand to do that cheaply.
-            return (
-                f"(ticker={raw_ticker!r} is not a recognized company — "
-                f"try one of {sorted(COMPANIES)} or omit the ticker filter)"
-            )
-        return "(search_filings arguments were invalid — check the tool schema)"
+            return msg.SEARCH_INVALID_TICKER_TEMPLATE.format(ticker=raw_ticker, valid_tickers=sorted(COMPANIES))
+        return msg.SEARCH_INVALID_ARGS_MESSAGE
     query, ticker = _resolve_search_args(args, fallback_query=question, searched_tickers=searched_tickers)
     searched_tickers.add(ticker)
     if verbose:
@@ -2215,7 +2138,7 @@ def _handle_submit_turn(args: dict, ctx: _AgentContext, loop_state: _AgentLoopSt
                     citation_index=None,
                     value=0.0,
                     unit="raw",
-                    message="your submit_answer call didn't match the required schema (answer_text/claims)",
+                    message=msg.SUBMIT_INVALID_ARGS_WARNING,
                     quote=None,
                 )
             ]
@@ -2257,7 +2180,7 @@ def _handle_no_tool_calls_turn(turn: Any, ctx: _AgentContext, loop_state: _Agent
         loop_state.forced_submit_attempted = True
         if ctx.verbose:
             print("  [forcing submit_answer] model replied in text instead of calling a tool")
-        turn = ctx.send_followup(ctx.conv_state, _FORCE_SUBMIT_MESSAGE, force_tool="submit_answer")
+        turn = ctx.send_followup(ctx.conv_state, msg.FORCE_SUBMIT_MESSAGE, force_tool="submit_answer")
         return _LoopStep(next_turn=turn)
     # Prose fallback -- the original, completely unchanged pipeline.
     # The only path for Ollama (never forced); for Gemini, only reached
@@ -2318,7 +2241,7 @@ def _force_final_submit_turn(other: list[dict], ctx: _AgentContext, loop_state: 
         calls_made=loop_state.calls_made,
         pending_tools=pending_tool_names,
     )
-    results = [{"name": name, "content": _FINAL_TURN_SUBMIT_MESSAGE} for name in pending_tool_names]
+    results = [{"name": name, "content": msg.FINAL_TURN_SUBMIT_MESSAGE} for name in pending_tool_names]
     return ctx.send_tool_results(ctx.conv_state, results, force_tool="submit_answer")
 
 
@@ -2336,15 +2259,7 @@ def _dispatch_pending_calls(other: list[dict], submit: dict | None, ctx: _AgentC
         # Mixed turn with budget still remaining: dispatch the
         # searches, but the submission can't be trusted yet -- it
         # can't be grounded in results the model hasn't read.
-        results.append(
-            {
-                "name": "submit_answer",
-                "content": (
-                    "You also requested new searches in this same turn; their results are included "
-                    "above. Read them, then call submit_answer again with your final answer."
-                ),
-            }
-        )
+        results.append({"name": "submit_answer", "content": msg.MIXED_TURN_RESUBMIT_MESSAGE})
     return ctx.send_tool_results(ctx.conv_state, results)
 
 
@@ -2368,8 +2283,7 @@ def _finalize_after_budget_exhausted(ctx: _AgentContext, loop_state: _AgentLoopS
         )
 
     return _finalize_answer(
-        "I wasn't able to finish answering within the allotted number of searches. "
-        "Try asking a more specific or narrower question.",
+        msg.BUDGET_EXHAUSTED_ANSWER,
         [],
         ctx.all_results,
         backend=ctx.backend,
