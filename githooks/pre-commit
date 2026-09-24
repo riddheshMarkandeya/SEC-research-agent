@@ -1,0 +1,21 @@
+#!/bin/sh
+# Blocks a commit when the docs index and the docs folders disagree: a
+# docs/{decisions,plans,reviews} file with no PROJECT_INDEX.md entry, or an
+# entry naming a missing file. Deliberately the only commit-time check -- it
+# takes well under a second, while ruff, pyright and the tests run at push
+# time in the pre-push hook, so commits stay fast.
+# Git doesn't version-control installed hooks; a fresh clone runs
+# `git config core.hooksPath githooks` once to use this tracked copy.
+
+# Any candidate can be broken, a placeholder (the Windows Store stub) or too
+# old for the script, so accept only one that actually runs 3.10+.
+for candidate in .venv/Scripts/python.exe python python3; do
+    if "$candidate" -c "import sys; sys.exit(sys.version_info < (3, 10))" >/dev/null 2>&1; then
+        exec "$candidate" scripts/check_docs_health.py
+    fi
+done
+
+# Fail open, like the script itself: a missing interpreter shouldn't block
+# every commit.
+echo "docs-index check skipped: no Python 3.10+ interpreter found." >&2
+exit 0

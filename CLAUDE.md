@@ -92,11 +92,12 @@ remaining pre-existing gap tracked for opportunistic closure.
 ## Manual checks before committing
 
 Since `docs/decisions/2026-09-22-coverage-baseline-close-and-hard-gate.md`
-moved every check to `githooks/pre-push`, nothing runs at commit time
-anymore — a broken commit is only caught the next time someone pushes,
-possibly several commits later, across a batch that's harder to bisect.
-Run all four manually before every commit, as a matter of discipline,
-not because anything currently enforces it:
+moved every code check to `githooks/pre-push`, only the docs-index check
+(see "This project's hooks" below) runs at commit time — a commit that
+fails lint, type checks or tests is only caught the next time someone
+pushes, possibly several commits later, across a batch that's harder to
+bisect. Run all four manually before every commit, as a matter of
+discipline, not because anything currently enforces it:
 
 - `ruff check .` (add `--fix` to auto-apply the mechanical subset)
 - `pyright .`
@@ -107,10 +108,10 @@ not because anything currently enforces it:
   a rough read of which lines you just added/changed against the
   `Missing` column catches most shortfalls before they reach that gate.
 
-`git push --no-verify` bypasses `githooks/pre-push` the same way
-`--no-verify` used to bypass the old pre-commit hook — same rule as
-before: fix the issue, or bypass and file a `BACKLOG.md` item for a
-genuine tooling false positive, never as a routine habit.
+`--no-verify` bypasses either hook (`git push --no-verify` for pre-push,
+`git commit --no-verify` for pre-commit). Same rule for both: fix the
+issue, or bypass and file a `BACKLOG.md` item for a genuine tooling
+false positive, never as a routine habit.
 
 ## This project's comment hygiene
 
@@ -158,22 +159,24 @@ for prior work on the same module/tool/failure mode, and grep
 
 ## This project's hooks
 
-`.claude/settings.json` wires a `PreToolUse` hook
-(`scripts/check_docs_sync.py`) that **blocks** (exit code 2) a `git
-commit` when a new `docs/decisions/*.md` file is staged without
-`PROJECT_INDEX.md` also staged. Only fires for commits through Claude
-Code's own Bash tool, and only reliably catches staging/committing as
-separate tool calls. See
-`docs/decisions/2026-09-15-claude-md-restructure.md`.
+Git hooks live in `githooks/`. A fresh clone runs
+`git config core.hooksPath githooks` once. No Claude Code hooks are used.
 
-A `SessionStart` hook (`scripts/check_docs_health.py`, on `startup`,
-`resume`, `clear`) audits the index. It flags any
-`docs/decisions|plans|reviews/*.md` file with no entry (a line ending
-`` → `<path>` ``) in `PROJECT_INDEX.md` or its archive, and a
-`## Recent` section over its 50-entry cap. It prints nothing when both are clean. This catches the
-chained `git add && git commit` case the commit-time hook misses, at the
-next session start. See
-`docs/decisions/2026-09-23-context-management-hooks.md`.
+`githooks/pre-commit` runs `scripts/check_docs_health.py` against the
+staged tree:
+
+- **Blocks** when a `docs/decisions|plans|reviews/*.md` file has no
+  entry (a line ending `` → `<path>` ``) in `PROJECT_INDEX.md` or its
+  archive.
+- **Blocks** when an entry names a file that doesn't exist.
+- **Warns** when `## Recent` is over its 50-entry cap.
+- **Fails open**, with a warning, if git or the index can't be read, or
+  no Python 3.10+ interpreter is found.
+
+It checks the whole staged tree, so a miss committed by a path that
+skips pre-commit (`--no-verify`, merge, rebase, cherry-pick) is caught
+by the next ordinary commit. `githooks/pre-push` runs the code checks
+above. See `docs/decisions/2026-09-23-docs-index-pre-commit.md`.
 
 ## Context management (trial)
 

@@ -56,14 +56,6 @@ Full evidence/reasoning: `docs/decisions/2026-09-23-context-management-hooks.md`
   `~/.claude/CLAUDE.md` and user settings. Trigger: about 3 Standard+
   tasks run under them without friction. Drop or rework them instead if
   they get in the way.
-- [ ] **[design, Low, Standard]** Consider a `githooks/pre-commit` that
-  runs `check_docs_health.unindexed_docs` on staged docs files, replacing
-  `check_docs_sync.py`'s PreToolUse check. It would catch chained
-  `git add && git commit` and commits made outside Claude Code at commit
-  time rather than next session, and give "indexed" one definition
-  instead of two (the PreToolUse check covers decisions only and accepts
-  any staged index). Weigh against the 2026-09-22 move of every check to
-  pre-push. From the implementation review's `/simplify` altitude pass.
 
 ### From the 2026-09-22 eval-question-classification change
 

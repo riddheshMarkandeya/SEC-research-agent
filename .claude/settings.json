@@ -12,30 +12,5 @@
       "Read(./notes.md)"
     ]
   },
-  "showClearContextOnPlanAccept": true,
-  "hooks": {
-    "PreToolUse": [
-      {
-        "matcher": "Bash",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "python scripts/check_docs_sync.py"
-          }
-        ]
-      }
-    ],
-    "SessionStart": [
-      {
-        "matcher": "startup|resume|clear",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "python \"${CLAUDE_PROJECT_DIR}/scripts/check_docs_health.py\"",
-            "timeout": 10
-          }
-        ]
-      }
-    ]
-  }
+  "showClearContextOnPlanAccept": true
 }

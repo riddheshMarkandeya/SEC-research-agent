@@ -48,6 +48,10 @@ prepend them (verbatim, still reverse-chronological) to the top of
 
 ## Recent
 
+- 2026-09-23 [review] Docs-index pre-commit implementation review — 4 rounds; prose-arrow matches, fail-closed interpreter lookup, non-ASCII paths and non-docs dangling entries fixed → `docs/reviews/2026-09-23-docs-index-pre-commit.md`
+- 2026-09-23 [decision] One docs-index check as a git pre-commit hook (blocks unindexed docs and dangling entries, warns on Recent over cap); PreToolUse and SessionStart hooks removed; hooks installed via core.hooksPath → `docs/decisions/2026-09-23-docs-index-pre-commit.md`
+- 2026-09-23 [review] Docs-index pre-commit plan review — 2 must-fix (cp1252 decoding of git output, --dry-run skips hooks) → `docs/reviews/2026-09-23-docs-index-pre-commit-plan-review.md`
+- 2026-09-23 [plan] Docs-index pre-commit hook replacing the PreToolUse and SessionStart checks → `docs/plans/2026-09-23-docs-index-pre-commit.md`
 - 2026-09-23 [review] Context-management hooks implementation review — non-UTF-8 crash and prose-backtick false-index fixed; pre-commit consolidation deferred → `docs/reviews/2026-09-23-context-management-hooks.md`
 - 2026-09-23 [decision] Context-management trial: plan-accept clear setting, two project-local CLAUDE.md rules, and a SessionStart docs-health audit (`scripts/check_docs_health.py`) closing the chained-commit BACKLOG gap → `docs/decisions/2026-09-23-context-management-hooks.md`
 - 2026-09-23 [review] Context-management hooks plan review — 4 must-fix; PostToolUse post-commit check dropped → `docs/reviews/2026-09-23-context-management-hooks-plan-review.md`

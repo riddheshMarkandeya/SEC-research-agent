@@ -2,9 +2,8 @@
 # Blocks a push if ruff, pyright, the test suite, or the coverage-diff
 # check fails. Runs at push time, not commit time, so local commits
 # stay fast -- checks apply once, right before code reaches the remote.
-# Git never version-controls hooks themselves (a git limitation, not
-# specific to this repo), so this tracked copy is the source of truth
-# -- a fresh clone needs `cp githooks/pre-push .git/hooks/pre-push` once.
+# Git doesn't version-control installed hooks; a fresh clone runs
+# `git config core.hooksPath githooks` once to use this tracked copy.
 
 find_bin() {
     venv_path=".venv/Scripts/$1.exe"
