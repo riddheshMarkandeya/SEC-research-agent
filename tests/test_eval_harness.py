@@ -20,6 +20,7 @@ from pathlib import Path
 
 import pytest
 
+import compare_prompt_versions
 import eval_harness
 from agent import AgentResult
 from eval_harness import (
@@ -908,6 +909,27 @@ def test_provenance_warnings_name_a_dirty_tree_and_an_unverified_snapshot():
     for sha in ("unknown", "", None):
         assert any("records no commit" in w for w in eval_harness._provenance_warnings({**clean, "git_sha": sha}))
     assert any("status unknown" in w for w in eval_harness._provenance_warnings({**clean, "git_dirty": None}))
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {},
+        {"git_sha": "unknown"},
+        {"git_sha": ""},
+        {"git_sha": None},
+        {"git_dirty": True, "dirty_files": ["agent.py"]},
+        {"git_dirty": None},
+        {"snapshot_verified": False},
+        {"snapshot_verified": None},
+    ],
+)
+def test_every_report_the_compare_script_excludes_is_warned_about_at_eval_start(change):
+    provenance = {"git_sha": "abc1234", "git_dirty": False, "snapshot_verified": True, "prompts": {"agent": "fp"}}
+    provenance.update(change)
+    report = compare_prompt_versions.Report("r", provenance, "gemini", "m", "m", [], 0)
+    excluded = compare_prompt_versions.is_excluded(report, include_dirty=False)
+    assert bool(eval_harness._provenance_warnings(provenance)) is excluded
 
 
 def test_save_report_writes_provenance_when_given(monkeypatch, tmp_path):
