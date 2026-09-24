@@ -587,11 +587,16 @@ def _collect_provenance() -> dict:
 
 def _provenance_warnings(provenance: dict) -> list[str]:
     """One line per reason this run's report can't be trusted to describe
-    the committed code and prompts."""
+    the committed code and prompts: the same conditions under which
+    compare_prompt_versions leaves the report out of comparisons, so a run
+    that will be excluded always says so when it starts."""
     warnings = []
-    if provenance.get("git_sha") == "unknown":
+    sha = provenance.get("git_sha")
+    if not sha or sha == "unknown":
         warnings.append("git state unknown, so the report records no commit")
-    if provenance.get("git_dirty"):
+    if provenance.get("git_dirty") is None:
+        warnings.append("git status unknown, so the tree can't be shown to be clean")
+    elif provenance.get("git_dirty"):
         files = ", ".join(provenance.get("dirty_files", []))
         warnings.append(f"uncommitted changes, so the git SHA doesn't describe this run: {files}")
     if provenance.get("snapshot_verified") is not True:

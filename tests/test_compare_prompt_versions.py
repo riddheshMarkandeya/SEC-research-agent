@@ -377,6 +377,7 @@ def test_main_with_one_flag_compares_against_a_different_fingerprint(tmp_path, c
     assert cpv.main([*paths, "--candidate", "fpA"]) == 2
     assert "base: none older" in capsys.readouterr().out
     assert cpv.main([*paths, "--base", "fpC"]) == 2
+    assert "candidate: none newer" in capsys.readouterr().out
 
 
 def test_main_with_only_the_base_group_has_nothing_to_compare(tmp_path, capsys):

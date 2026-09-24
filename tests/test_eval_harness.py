@@ -897,15 +897,17 @@ def test_collect_provenance_records_a_fingerprint_failure_without_raising(monkey
 
 
 def test_provenance_warnings_name_a_dirty_tree_and_an_unverified_snapshot():
-    clean = {"git_dirty": False, "snapshot_verified": True, "prompts": {"agent": "fp"}}
+    clean = {"git_sha": "abc1234", "git_dirty": False, "snapshot_verified": True, "prompts": {"agent": "fp"}}
     assert eval_harness._provenance_warnings(clean) == []
     warnings = eval_harness._provenance_warnings(
-        {"git_dirty": True, "dirty_files": ["agent.py"], "snapshot_verified": False, "prompts": "error"}
+        {**clean, "git_dirty": True, "dirty_files": ["agent.py"], "snapshot_verified": False, "prompts": "error"}
     )
     assert len(warnings) == 3
     assert any("agent.py" in w for w in warnings)
-    unknown = {"git_sha": "unknown", "git_dirty": None, "snapshot_verified": True, "prompts": {"agent": "fp"}}
-    assert eval_harness._provenance_warnings(unknown) == ["git state unknown, so the report records no commit"]
+    # Every state compare_prompt_versions excludes is warned about.
+    for sha in ("unknown", "", None):
+        assert any("records no commit" in w for w in eval_harness._provenance_warnings({**clean, "git_sha": sha}))
+    assert any("status unknown" in w for w in eval_harness._provenance_warnings({**clean, "git_dirty": None}))
 
 
 def test_save_report_writes_provenance_when_given(monkeypatch, tmp_path):
