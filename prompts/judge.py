@@ -21,3 +21,8 @@ JUDGE_USER_TEMPLATE = (
     "AI assistant's answer:\n{answer}\n\n"
     "Does the answer satisfy the grading criteria?"
 )
+
+
+# Hashed into prompts.prompt_fingerprint().
+FINGERPRINTED = ("JUDGE_SYSTEM_PROMPT", "JUDGE_USER_TEMPLATE")
+NOT_FINGERPRINTED = ()
