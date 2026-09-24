@@ -26,14 +26,13 @@ Usage:
 """
 
 import argparse
-import math
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from analyze_flakiness import is_infra_error, load_reports
 
-RESULTS_DIR = Path("./eval/eval_results")
+RESULTS_DIR = Path(__file__).resolve().parent / "eval" / "eval_results"
 
 # A question whose pass rate drops by at least this much is REGRESSED;
 # any smaller drop is only "watch".
@@ -42,8 +41,8 @@ REGRESSED_DROP = 0.5
 # question sitting there is marked "floor": it can't show a regression.
 FLOOR_RATE = 1 / 3
 # REGRESSED-TOTAL: expected passes lost across shared questions reach
-# this fraction of the candidate's question-runs (6 of a 13x3 panel).
-TOTAL_DROP_FRACTION = 0.14
+# this percentage of the candidate's question-runs (6 of a 13x3 panel).
+TOTAL_DROP_PERCENT = 14
 # Below this many candidate question-runs, ceil(0.14 x N) is so small
 # that a single lost pass trips the total; it is reported but can't fail.
 MIN_RUNS_FOR_TOTAL = 20
@@ -57,7 +56,9 @@ _EPSILON = 1e-9
 class Report:
     name: str
     provenance: dict | None
+    backend: str | None
     answer_model: str | None
+    judge_model: str | None
     rows: list[dict]
     dropped: int
 
@@ -120,7 +121,17 @@ def load(paths: list[Path]) -> list[Report]:
     reports = []
     for path, data in zip(paths, load_reports(paths), strict=True):
         rows, dropped = truncate_at_infra_error(data["results"])
-        reports.append(Report(path.stem, data.get("provenance"), data.get("answer_model"), rows, dropped))
+        reports.append(
+            Report(
+                name=path.stem,
+                provenance=data.get("provenance"),
+                backend=data.get("backend"),
+                answer_model=data.get("answer_model"),
+                judge_model=data.get("judge_model"),
+                rows=rows,
+                dropped=dropped,
+            )
+        )
     return sorted(reports, key=lambda r: r.name)
 
 
@@ -138,25 +149,41 @@ def is_excluded(report: Report, include_dirty: bool) -> bool:
     return report.provenance.get("git_dirty") is not False or report.provenance.get("snapshot_verified") is not True
 
 
-def group_by_fingerprint(
+def select(
     reports: list[Report], include_dirty: bool, since: str | None = None
-) -> dict[str, list[Report]]:
-    """Stamped, non-excluded reports grouped by agent fingerprint.
-    `since` (a report name, i.e. a UTC timestamp) drops older reports."""
+) -> tuple[list[Report], list[Report]]:
+    """(kept, excluded) among the reports named at or after `since` (a
+    UTC timestamp, like report names)."""
+    window = [r for r in reports if not since or r.name >= since]
+    excluded = [r for r in window if is_excluded(r, include_dirty)]
+    return [r for r in window if r not in excluded], excluded
+
+
+def group_by_fingerprint(reports: list[Report]) -> dict[str, list[Report]]:
+    """Stamped reports grouped by agent fingerprint; unstamped ones are
+    skipped."""
     groups: dict[str, list[Report]] = {}
     for report in reports:
         fingerprint = agent_fingerprint(report)
-        if fingerprint is None or is_excluded(report, include_dirty) or (since and report.name < since):
-            continue
-        groups.setdefault(fingerprint, []).append(report)
+        if fingerprint is not None:
+            groups.setdefault(fingerprint, []).append(report)
     return groups
 
 
-def default_pair(groups: dict[str, list[Report]]) -> tuple[str | None, str]:
-    """(base, candidate): the two fingerprints with the most recent
-    reports. The base is None when only one fingerprint exists."""
+def default_pair(
+    groups: dict[str, list[Report]], base: str | None = None, candidate: str | None = None
+) -> tuple[str | None, str | None]:
+    """(base, candidate), filling whichever wasn't given: the candidate
+    defaults to the most recent fingerprint other than the base, the base
+    to the latest fingerprint before the candidate. Either is None when
+    no such fingerprint exists."""
     by_recency = sorted(groups, key=lambda fp: groups[fp][-1].name)
-    return (by_recency[-2] if len(by_recency) > 1 else None), by_recency[-1]
+    if candidate is None:
+        candidate = next((fp for fp in reversed(by_recency) if fp != base), None)
+    if base is None and candidate in by_recency:
+        older = by_recency[: by_recency.index(candidate)]
+        base = older[-1] if older else None
+    return base, candidate
 
 
 # ---------------------------------------------------------------------------
@@ -199,10 +226,16 @@ def _question_row(qid: str, base: Tally, candidate: Tally) -> QuestionRow:
     )
 
 
+def total_threshold(runs: int) -> int:
+    """ceil(14% of runs), in integers: 0.14 * 50 is 7.000000000000001 in
+    floating point, which a float ceil turns into 8."""
+    return -(-TOTAL_DROP_PERCENT * runs // 100)
+
+
 def _total(rows: list[QuestionRow]) -> Total:
     runs = sum(r.candidate.runs for r in rows)
     expected_loss = sum((r.base.rate - r.candidate.rate) * r.candidate.runs for r in rows)
-    threshold = math.ceil(TOTAL_DROP_FRACTION * runs)
+    threshold = total_threshold(runs)
     return Total(
         expected_loss=expected_loss,
         runs=runs,
@@ -221,7 +254,9 @@ def _distinct(reports: list[Report], key) -> set[str]:
 _CONSISTENCY_CHECKS = {
     "git SHA": lambda r: (r.provenance or {}).get("git_sha"),
     "judge fingerprint": lambda r: ((r.provenance or {}).get("prompts") or {}).get("judge"),
+    "backend": lambda r: r.backend,
     "answer_model": lambda r: r.answer_model,
+    "judge_model": lambda r: r.judge_model,
     "config": lambda r: (r.provenance or {}).get("config"),
 }
 
@@ -332,9 +367,22 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
+def _kept(label: str, reports: list[Report], include_dirty: bool, since: str | None = None) -> list[Report]:
+    """select()'s kept reports, printing any exclusions so no report is
+    dropped quietly."""
+    kept, excluded = select(reports, include_dirty, since)
+    if excluded:
+        names = ", ".join(r.name for r in excluded)
+        print(f"{label}: {len(excluded)} dirty or unverified report(s) excluded (see --include-dirty): {names}")
+    return kept
+
+
 def _explicit(args: argparse.Namespace) -> int:
-    base = [r for r in load(args.base_files) if not is_excluded(r, args.include_dirty)]
-    candidate = [r for r in load(args.candidate_files) if not is_excluded(r, args.include_dirty)]
+    base = _kept("base", load(args.base_files), args.include_dirty)
+    candidate = _kept("candidate", load(args.candidate_files), args.include_dirty)
+    if not (base and candidate):
+        print("Nothing to compare: every file on one side was excluded.")
+        return 2
     comparison = compare(base, candidate)
     print(format_comparison(comparison, base, candidate))
     return exit_code(comparison)
@@ -342,15 +390,17 @@ def _explicit(args: argparse.Namespace) -> int:
 
 def _by_fingerprint(args: argparse.Namespace) -> int:
     paths = args.reports or sorted(RESULTS_DIR.glob("*.json"))
-    groups = group_by_fingerprint(load(paths), args.include_dirty, args.since)
+    groups = group_by_fingerprint(_kept("fingerprint mode", load(paths), args.include_dirty, args.since))
     if not groups:
         print("No stamped, clean reports to compare (see --include-dirty and --since).")
         return 0
-    default_base, default_candidate = default_pair(groups)
-    base_fp, candidate_fp = args.base or default_base, args.candidate or default_candidate
-    unknown = [fp for fp in (base_fp, candidate_fp) if fp is not None and fp not in groups]
+    unknown = [fp for fp in (args.base, args.candidate) if fp is not None and fp not in groups]
     if unknown:
         print(f"Unknown fingerprint(s): {', '.join(unknown)}. Known: {', '.join(sorted(groups))}")
+        return 2
+    base_fp, candidate_fp = default_pair(groups, args.base, args.candidate)
+    if candidate_fp is None or base_fp == candidate_fp:
+        print("A comparison needs two different fingerprints.")
         return 2
     if base_fp is None:
         print(format_single_group(groups[candidate_fp]))

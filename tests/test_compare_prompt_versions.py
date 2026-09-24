@@ -3,6 +3,7 @@ against another, implementing the prompt-audit roadmap's decision rule:
 screen with fingerprint mode, replicate and attribute with explicit mode.
 All tests use synthetic report files; no network or LLM calls."""
 
+import dataclasses
 import json
 from pathlib import Path
 
@@ -90,7 +91,7 @@ def test_dirty_or_unverified_reports_are_excluded_unless_asked(tmp_path, provena
 # ---------------------------------------------------------------------------
 # Grouping (fingerprint mode)
 # ---------------------------------------------------------------------------
-def test_grouping_skips_unstamped_and_dirty_reports(tmp_path):
+def test_select_and_grouping_skip_unstamped_and_dirty_reports(tmp_path):
     reports = _reports(
         tmp_path,
         [
@@ -99,7 +100,9 @@ def test_grouping_skips_unstamped_and_dirty_reports(tmp_path):
             ("20260924T030000Z", {"a": True}, _provenance("fpB", dirty=True)),
         ],
     )
-    groups = cpv.group_by_fingerprint(reports, include_dirty=False)
+    kept, excluded = cpv.select(reports, include_dirty=False)
+    assert [r.name for r in excluded] == ["20260924T030000Z"]
+    groups = cpv.group_by_fingerprint(kept)
     assert {k: [r.name for r in v] for k, v in groups.items()} == {"fpA": ["20260924T010000Z"]}
 
 
@@ -113,8 +116,8 @@ def test_since_drops_older_reports_from_a_shared_fingerprint(tmp_path):
             ("20260926T010000Z", {"a": True}, _provenance("fpA")),
         ],
     )
-    groups = cpv.group_by_fingerprint(reports, include_dirty=False, since="20260925T000000Z")
-    assert [r.name for r in groups["fpA"]] == ["20260926T010000Z"]
+    kept, _ = cpv.select(reports, include_dirty=False, since="20260925T000000Z")
+    assert [r.name for r in kept] == ["20260926T010000Z"]
 
 
 def test_default_pair_is_the_two_most_recent_fingerprints(tmp_path):
@@ -126,13 +129,19 @@ def test_default_pair_is_the_two_most_recent_fingerprints(tmp_path):
             ("20260924T030000Z", {"a": True}, _provenance("fpC")),
         ],
     )
-    groups = cpv.group_by_fingerprint(reports, include_dirty=False)
+    groups = cpv.group_by_fingerprint(reports)
     assert cpv.default_pair(groups) == ("fpB", "fpC")
+    # One side given: the other is filled relative to it.
+    assert cpv.default_pair(groups, candidate="fpB") == ("fpA", "fpB")
+    assert cpv.default_pair(groups, base="fpC") == ("fpC", "fpB")
+    assert cpv.default_pair(groups, candidate="fpA") == (None, "fpA")
 
 
 def test_default_pair_with_one_group_has_no_base(tmp_path):
     reports = _reports(tmp_path, [("20260924T010000Z", {"a": True}, _provenance("fpA"))])
-    assert cpv.default_pair(cpv.group_by_fingerprint(reports, include_dirty=False)) == (None, "fpA")
+    groups = cpv.group_by_fingerprint(reports)
+    assert cpv.default_pair(groups) == (None, "fpA")
+    assert cpv.default_pair(groups, base="fpA") == ("fpA", None)
 
 
 # ---------------------------------------------------------------------------
@@ -343,3 +352,51 @@ def test_main_explicit_mode_needs_both_sides(tmp_path, capsys):
     assert cpv.main(["--base-files", str(base)]) == 2
     assert "both" in capsys.readouterr().out
 
+
+def test_warns_when_the_judge_model_differs(tmp_path):
+    base = cpv.load([_write(tmp_path, "b0", [_row("q", True)], _provenance("fpA"))])
+    [cand] = cpv.load([_write(tmp_path, "c0", [_row("q", True)], _provenance("fpB"))])
+    cand = [dataclasses.replace(cand, judge_model="other")]
+    assert any("judge_model" in w for w in cpv.compare(base, cand).warnings)
+
+
+def test_main_with_one_flag_compares_against_a_different_fingerprint(tmp_path, capsys):
+    for name, fp in (("20260924T000000Z", "fpA"), ("20260925T000000Z", "fpB"), ("20260926T000000Z", "fpC")):
+        _write(tmp_path, name, [_row("q", True)], _provenance(fp))
+    paths = [str(p) for p in sorted(tmp_path.glob("*.json"))]
+    assert cpv.main([*paths, "--candidate", "fpB"]) == 0
+    assert "base fpA" in capsys.readouterr().out
+    assert cpv.main([*paths, "--base", "fpB", "--candidate", "fpB"]) == 2
+    assert "two different fingerprints" in capsys.readouterr().out
+
+
+def test_main_with_only_the_base_group_has_nothing_to_compare(tmp_path, capsys):
+    _write(tmp_path, "r", [_row("q", True)], _provenance("fpA"))
+    assert cpv.main([str(tmp_path / "r.json"), "--base", "fpA"]) == 2
+    assert "two different fingerprints" in capsys.readouterr().out
+
+
+def test_main_explicit_mode_names_excluded_files_and_fails_on_an_empty_side(tmp_path, capsys):
+    base = _write(tmp_path, "b0", [_row("q", True)], _provenance("fpA"))
+    cand = _write(tmp_path, "c0", [_row("q", True)], _provenance("fpB", dirty=True))
+    assert cpv.main(["--base-files", str(base), "--candidate-files", str(cand)]) == 2
+    out = capsys.readouterr().out
+    assert "c0" in out and "excluded" in out
+    assert cpv.main(["--base-files", str(base), "--candidate-files", str(cand), "--include-dirty"]) == 0
+
+
+def test_results_dir_does_not_depend_on_the_working_directory():
+    assert cpv.RESULTS_DIR.is_absolute()
+    assert cpv.RESULTS_DIR.parts[-2:] == ("eval", "eval_results")
+
+
+@pytest.mark.parametrize(("runs", "threshold"), [(39, 6), (50, 7), (100, 14), (150, 21), (1, 1)])
+def test_total_threshold_is_an_exact_ceiling(runs, threshold):
+    assert cpv.total_threshold(runs) == threshold
+
+
+def test_main_fingerprint_mode_names_excluded_reports(tmp_path, capsys):
+    _write(tmp_path, "20260924T000000Z", [_row("q", True)], _provenance("fpA"))
+    _write(tmp_path, "20260924T000001Z", [_row("q", True)], _provenance("fpA", dirty=True))
+    assert cpv.main([str(p) for p in sorted(tmp_path.glob("*.json"))]) == 0
+    assert "1 dirty or unverified report(s) excluded" in capsys.readouterr().out

@@ -58,7 +58,8 @@ from prompts import prompt_fingerprint
 from prompts.judge import JUDGE_SYSTEM_PROMPT, JUDGE_USER_TEMPLATE
 
 QUESTIONS_PATH = Path("./eval/eval_questions.jsonl")
-RESULTS_DIR = Path("./eval/eval_results")
+# Anchored to this file, matching compare_prompt_versions.py, which reads it.
+RESULTS_DIR = Path(__file__).resolve().parent / "eval" / "eval_results"
 
 CITATION_PATTERN = re.compile(r"\[\d+\]")
 
@@ -167,12 +168,14 @@ def grade_judged(question: str, answer_text: str, criteria: str, backend: str = 
 
 
 def _lenient_verdict(verdict_text: str) -> bool | None:
-    """PASS or FAIL read as a whole word anywhere in the judge's output;
-    None when neither word appears, or both do."""
-    words = set(re.findall(r"\b(PASS|FAIL)\b", verdict_text.upper()))
-    if len(words) != 1:
-        return None
-    return words == {"PASS"}
+    """PASS or FAIL read as a whole word from the first line naming
+    either, so a reason line mentioning the other word doesn't cancel it.
+    None when no line names one, or that line names both."""
+    for line in verdict_text.upper().splitlines():
+        words = set(re.findall(r"\b(PASS|FAIL)\b", line))
+        if words:
+            return words == {"PASS"} if len(words) == 1 else None
+    return None
 
 
 def _nonstandard_output_prefix(verdict_text: str, first_line: str, passed: bool) -> str | None:
@@ -453,7 +456,10 @@ REPO_ROOT = Path(__file__).resolve().parent
 # prompt, and the questions. `*.py` matches at any depth, so a tests-only
 # edit counts as dirty too.
 PROVENANCE_PATHSPECS = ("*.py", "prompts", "companies.json", "eval/eval_questions.jsonl")
-SNAPSHOT_TEST = "tests/test_model_input_snapshot.py"
+SNAPSHOT_TEST = "tests/test_model_input_snapshot.py::test_model_input_matches_committed_snapshot"
+# The check normally takes about 20s; a hang (a locked model cache, a
+# stuck import) must not stop the eval from starting.
+SNAPSHOT_CHECK_TIMEOUT = 300
 
 
 class GitError(Exception):
@@ -485,22 +491,32 @@ def _porcelain_paths(output: str) -> set[str]:
     return paths
 
 
+def _try_git(*args: str) -> str | None:
+    """_git's output, or None (logged) if git failed."""
+    try:
+        return _git(*args)
+    except (OSError, GitError, UnicodeDecodeError) as e:
+        log_event("eval_provenance_git_failed", error=f"{type(e).__name__}: {e}")
+        return None
+
+
 def _git_state() -> dict:
     """The HEAD SHA and any uncommitted changes to PROVENANCE_PATHSPECS.
-    On failure: git_sha "unknown", logged, never raised."""
-    status = ("--no-optional-locks", "status", "--porcelain", "-z")
-    try:
-        sha = _git("rev-parse", "--short", "HEAD").strip()
-        tracked = _git(*status, "--untracked-files=no", "--", *PROVENANCE_PATHSPECS)
-        # A new prompts/ file that code imports but nobody `git add`ed
-        # would otherwise leave the tree looking clean while the SHA
-        # can't reproduce the run.
-        unadded = _git(*status, "--untracked-files=all", "--", "prompts")
-    except (OSError, GitError) as e:
-        log_event("eval_provenance_git_failed", error=f"{type(e).__name__}: {e}")
-        return {"git_sha": "unknown", "git_dirty": None, "dirty_files": []}
-    dirty = sorted(_porcelain_paths(tracked) | _porcelain_paths(unadded))
-    return {"git_sha": sha, "git_dirty": bool(dirty), "dirty_files": dirty}
+    A failed git call gives git_sha "unknown" or git_dirty None; never
+    raises."""
+    sha = _try_git("rev-parse", "--short", "HEAD")
+    # Untracked files count: a new module that code imports but nobody
+    # `git add`ed would otherwise leave the tree looking clean while the
+    # SHA can't reproduce the run.
+    status = _try_git(
+        "--no-optional-locks", "status", "--porcelain", "-z", "--untracked-files=all", "--", *PROVENANCE_PATHSPECS
+    )
+    dirty = None if status is None else sorted(_porcelain_paths(status))
+    return {
+        "git_sha": "unknown" if sha is None else sha.strip(),
+        "git_dirty": None if dirty is None else bool(dirty),
+        "dirty_files": dirty or [],
+    }
 
 
 def _run_snapshot_check() -> int:
@@ -510,20 +526,22 @@ def _run_snapshot_check() -> int:
     compare, never rewrite the committed file."""
     env = {k: v for k, v in os.environ.items() if k != "UPDATE_SNAPSHOT"}
     command = [sys.executable, "-m", "pytest", SNAPSHOT_TEST, "-q", "-p", "no:cacheprovider"]
-    command += ["-k", "matches_committed_snapshot"]
-    return subprocess.run(command, capture_output=True, check=False, cwd=REPO_ROOT, env=env).returncode
+    run = subprocess.run(
+        command, capture_output=True, check=False, cwd=REPO_ROOT, env=env, timeout=SNAPSHOT_CHECK_TIMEOUT
+    )
+    return run.returncode
 
 
 def _snapshot_verified() -> bool | None:
     """Whether prompts/model_input_snapshot.json matches what the current
     code sends a model. The fingerprint hashes that committed file, so a
     stale one would mislabel this run. True or False when the check ran;
-    None when it couldn't (pytest missing, or the run itself errored)."""
+    None when it couldn't (pytest missing, or the run errored or hung)."""
     if importlib.util.find_spec("pytest") is None:
         return None
     try:
         returncode = _run_snapshot_check()
-    except OSError as e:
+    except (OSError, subprocess.TimeoutExpired) as e:
         log_event("eval_provenance_snapshot_check_failed", error=f"{type(e).__name__}: {e}")
         return None
     if returncode in (0, 1):

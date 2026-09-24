@@ -348,8 +348,8 @@ AGENT_TOOL_SCHEMAS = (
 # Hashed into prompts.prompt_fingerprint(). AGENT_TOOL_SCHEMAS holds all
 # five schemas in the order the agent model receives them, so the
 # individual schemas and CLAIM_UNITS (rendered into SUBMIT_TOOL_SCHEMA)
-# are covered through it. mcp_server's own tool order isn't hashed; MCP
-# clients aren't evaluated.
+# are covered through it. What MCP clients see of these schemas,
+# including their order, is covered by the snapshot's mcp section.
 FINGERPRINTED = ("AGENT_TOOL_SCHEMAS",)
 NOT_FINGERPRINTED = (
     "SEARCH_TOOL_SCHEMA",

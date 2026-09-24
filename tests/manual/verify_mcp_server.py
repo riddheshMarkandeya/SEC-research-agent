@@ -23,7 +23,7 @@ with the real `mcp` client over genuine HTTP, and checks:
    token is rejected (401) and one with the correct token succeeds
    end-to-end. With a tiny MCP_RATE_LIMIT_REQUESTS, a request beyond
    the limit is rejected (429, with Retry-After) and requests succeed
-   again once the window elapses. Checks 1-4 above run against a
+   again once the window elapses. Checks 1-4 and 6 run against a
    server with default config (no MCP_AUTH_TOKEN) to also confirm this
    stays backward compatible by default.
 6. (2026-09-24) The model-facing text MCP clients receive is exactly what

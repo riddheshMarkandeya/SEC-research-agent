@@ -70,7 +70,9 @@ runs by that fingerprint. For any change to what a model reads:
   logic that picks, fills or converts it (`agent.py`, `llm_backends.py`,
   `eval_harness.grade_judged`, `mcp_server.py`), fails
   `tests/test_model_input_snapshot.py`. Read the diff it prints, then run
-  `UPDATE_SNAPSHOT=1 pytest tests/test_model_input_snapshot.py`. The
+  `UPDATE_SNAPSHOT=1 pytest tests/test_model_input_snapshot.py` (PowerShell:
+  `$env:UPDATE_SNAPSHOT=1; pytest tests/test_model_input_snapshot.py;
+  Remove-Item Env:UPDATE_SNAPSHOT`). The
   fingerprint hashes the snapshot, so this is what gives the change a
   new fingerprint. When a new code path starts sending model text, add a
   scenario for it there, or the snapshot can't see it. Editing

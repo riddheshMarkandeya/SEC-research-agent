@@ -11,8 +11,10 @@ extract_numbers()/normalize() moved to numeric_utils.py (shared with
 agent.py's verify_citations()) — see tests/test_numeric_utils.py.
 """
 
+import ast
 import json
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -693,23 +695,14 @@ def _fake_git(outputs: dict):
 
 
 _REV_PARSE = ("rev-parse", "--short", "HEAD")
-_STATUS_TRACKED = (
-    "--no-optional-locks",
-    "status",
-    "--porcelain",
-    "-z",
-    "--untracked-files=no",
-    "--",
-    *eval_harness.PROVENANCE_PATHSPECS,
-)
-_STATUS_UNTRACKED_PROMPTS = (
+_STATUS = (
     "--no-optional-locks",
     "status",
     "--porcelain",
     "-z",
     "--untracked-files=all",
     "--",
-    "prompts",
+    *eval_harness.PROVENANCE_PATHSPECS,
 )
 
 
@@ -717,37 +710,53 @@ def test_git_state_clean_tree(monkeypatch):
     monkeypatch.setattr(
         eval_harness,
         "_git",
-        _fake_git({_REV_PARSE: "abc1234\n", _STATUS_TRACKED: "", _STATUS_UNTRACKED_PROMPTS: ""}),
+        _fake_git({_REV_PARSE: "abc1234\n", _STATUS: ""}),
     )
     assert eval_harness._git_state() == {"git_sha": "abc1234", "git_dirty": False, "dirty_files": []}
 
 
-def test_git_state_lists_modified_renamed_and_unadded_prompt_files(monkeypatch):
+def test_git_state_lists_modified_renamed_and_unadded_files(monkeypatch):
     # -z output: NUL-separated "XY path" entries; a rename carries its
-    # original path as a separate following entry.
-    rename = "R  prompts/new.py\0prompts/old.py\0"
-    monkeypatch.setattr(
-        eval_harness,
-        "_git",
-        _fake_git(
-            {
-                _REV_PARSE: "abc1234\n",
-                _STATUS_TRACKED: " M agent.py\0" + rename,
-                _STATUS_UNTRACKED_PROMPTS: "?? prompts/extra.py\0" + rename,
-            }
-        ),
-    )
+    # original path as a separate following entry. An un-added module
+    # counts: code can import it while the SHA doesn't contain it.
+    status = " M agent.py\0R  prompts/new.py\0prompts/old.py\0?? helpers.py\0?? prompts/extra.py\0"
+    monkeypatch.setattr(eval_harness, "_git", _fake_git({_REV_PARSE: "abc1234\n", _STATUS: status}))
     state = eval_harness._git_state()
     assert state["git_dirty"] is True
-    assert state["dirty_files"] == ["agent.py", "prompts/extra.py", "prompts/new.py"]
+    assert state["dirty_files"] == ["agent.py", "helpers.py", "prompts/extra.py", "prompts/new.py"]
 
 
 def test_git_state_failure_records_unknown_and_logs_without_raising(monkeypatch):
     events = []
-    monkeypatch.setattr(eval_harness, "_git", _fake_git({_REV_PARSE: OSError("no git")}))
+    monkeypatch.setattr(
+        eval_harness, "_git", _fake_git({_REV_PARSE: OSError("no git"), _STATUS: OSError("no git")})
+    )
     monkeypatch.setattr(eval_harness, "log_event", lambda category, **fields: events.append((category, fields)))
     assert eval_harness._git_state() == {"git_sha": "unknown", "git_dirty": None, "dirty_files": []}
     assert events[0][0] == "eval_provenance_git_failed"
+
+
+def test_git_state_treats_undecodable_output_as_a_git_failure(monkeypatch):
+    error = UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte")
+    monkeypatch.setattr(eval_harness, "_git", _fake_git({_REV_PARSE: "abc1234\n", _STATUS: error}))
+    monkeypatch.setattr(eval_harness, "log_event", lambda category, **fields: None)
+    assert eval_harness._git_state()["git_dirty"] is None
+
+
+def test_snapshot_test_node_id_names_a_real_test():
+    # If the test were renamed, pytest would find no such node and every
+    # report would be marked unverified.
+    path, name = eval_harness.SNAPSHOT_TEST.split("::")
+    tree = ast.parse((eval_harness.REPO_ROOT / path).read_text(encoding="utf-8"))
+    assert name in {node.name for node in tree.body if isinstance(node, ast.FunctionDef)}
+
+
+def test_git_state_keeps_the_sha_when_only_the_status_call_fails(monkeypatch):
+    monkeypatch.setattr(
+        eval_harness, "_git", _fake_git({_REV_PARSE: "abc1234\n", _STATUS: eval_harness.GitError("index.lock")})
+    )
+    monkeypatch.setattr(eval_harness, "log_event", lambda category, **fields: None)
+    assert eval_harness._git_state() == {"git_sha": "abc1234", "git_dirty": None, "dirty_files": []}
 
 
 class _CompletedProcess:
@@ -788,6 +797,7 @@ def test_run_snapshot_check_compares_only_and_never_rewrites(monkeypatch):
     assert eval_harness.SNAPSHOT_TEST in command
     assert "UPDATE_SNAPSHOT" not in kwargs["env"]
     assert kwargs["cwd"] == eval_harness.REPO_ROOT
+    assert kwargs["timeout"] == eval_harness.SNAPSHOT_CHECK_TIMEOUT
 
 
 def test_git_helper_raises_on_a_nonzero_exit(monkeypatch):
@@ -816,11 +826,13 @@ def test_snapshot_verified_is_none_when_pytest_is_not_installed(monkeypatch):
     assert eval_harness._snapshot_verified() is None
 
 
-def test_snapshot_verified_is_none_when_the_subprocess_cannot_start(monkeypatch):
+@pytest.mark.parametrize("error", [OSError("cannot start"), subprocess.TimeoutExpired("pytest", 1)])
+def test_snapshot_verified_is_none_when_the_subprocess_fails_or_hangs(monkeypatch, error):
     def broken():
-        raise OSError("cannot start")
+        raise error
 
     monkeypatch.setattr(eval_harness, "_run_snapshot_check", broken)
+    monkeypatch.setattr(eval_harness, "log_event", lambda category, **fields: None)
     assert eval_harness._snapshot_verified() is None
 
 
@@ -914,6 +926,14 @@ def test_save_report_omits_provenance_when_not_given(monkeypatch, tmp_path):
         ("**PASS**\nfine.", False, "[nonstandard judge output; lenient parse disagrees: '**PASS**']"),
         ("PASSED\nfine.", True, "[nonstandard judge output: 'PASSED']"),
         ("PASS/FAIL: FAIL\nhmm.", True, "[nonstandard judge output: 'PASS/FAIL: FAIL']"),
+        # The verdict is read from the first line naming PASS or FAIL, so
+        # a reason that mentions the other word doesn't hide a misgrade.
+        (
+            "**PASS**\nIt would FAIL only without a citation.",
+            False,
+            "[nonstandard judge output; lenient parse disagrees: '**PASS**']",
+        ),
+        ("Verdict:\nPASS", False, "[nonstandard judge output; lenient parse disagrees: 'VERDICT:']"),
         ("", False, "[nonstandard judge output: '']"),
     ],
 )

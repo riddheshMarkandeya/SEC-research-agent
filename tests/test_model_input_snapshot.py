@@ -482,22 +482,20 @@ def test_model_input_matches_committed_snapshot():
 
 def test_render_is_identical_across_hash_seeds():
     # Two renders in one process share a hash seed, so an unsorted set
-    # join would only show up across processes.
+    # join would only show up across processes. One child with a seed
+    # different from this process's is enough.
     script = (
         "import sys; sys.path[:0] = [sys.argv[1], sys.argv[2]]; "
         "import test_model_input_snapshot as t; "
         "sys.stdout.buffer.write(t.canonical_json(t.render_model_inputs()).encode('utf-8'))"
     )
-    outputs = []
-    for seed in ("1", "2"):
-        env = dict(os.environ, PYTHONHASHSEED=seed)
-        proc = subprocess.run(
-            [sys.executable, "-c", script, str(REPO_ROOT), str(REPO_ROOT / "tests")],
-            capture_output=True,
-            env=env,
-            cwd=REPO_ROOT,
-            check=False,
-        )
-        assert proc.returncode == 0, proc.stderr.decode("utf-8", errors="replace")
-        outputs.append(proc.stdout)
-    assert outputs[0] == outputs[1]
+    seed = "1" if os.environ.get("PYTHONHASHSEED") == "0" else "0"
+    proc = subprocess.run(
+        [sys.executable, "-c", script, str(REPO_ROOT), str(REPO_ROOT / "tests")],
+        capture_output=True,
+        env=dict(os.environ, PYTHONHASHSEED=seed),
+        cwd=REPO_ROOT,
+        check=False,
+    )
+    assert proc.returncode == 0, proc.stderr.decode("utf-8", errors="replace")
+    assert proc.stdout.decode("utf-8") == canonical_json(render_model_inputs())
