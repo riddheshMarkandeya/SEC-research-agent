@@ -46,7 +46,7 @@ _COMPANIES_SCHEMA = {
 def _validate(data: dict) -> None:
     """Raises ValueError, naming companies.json and the specific
     violation, if data doesn't match _COMPANIES_SCHEMA -- one clear
-    failure at load/import time (agent.py imports COMPANIES at module
+    failure at load/import time (COMPANIES below is built at module
     level) instead of a mystery KeyError deep in an unrelated lookup
     later. Catches the specific jsonschema.ValidationError type, not a
     broad `except Exception`, since that's the only exception this call
@@ -61,7 +61,15 @@ def load_companies() -> dict[str, CompanyInfo]:
     """Returns {ticker: {"name": ..., "cik": ...}}, read fresh from disk
     every call — this is a small, rarely-changing file, so there's no
     real cost to not caching it, and not caching means edits to
-    companies.json take effect without restarting anything."""
+    companies.json take effect without restarting anything. COMPANIES
+    below is the exception: an import-time snapshot, since it's baked
+    into the agent's system prompt and tool schemas at import anyway."""
     data = json.loads(COMPANIES_PATH.read_text(encoding="utf-8"))
     _validate(data)
     return data
+
+
+# Ticker -> company name for the covered companies, in companies.json's
+# order. Shared by agent.py's own logic and the prompts/ text built from
+# it, so both see the same snapshot.
+COMPANIES = {ticker: info["name"] for ticker, info in load_companies().items()}

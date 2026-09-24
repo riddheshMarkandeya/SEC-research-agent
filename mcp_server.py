@@ -25,15 +25,13 @@ from starlette.responses import JSONResponse
 
 from agent import (
     CHUNKS_PER_SEARCH,
-    COMPARE_TOOL_SCHEMA,
-    FACT_TOOL_SCHEMA,
-    SEARCH_TOOL_SCHEMA,
     call_compare_financial_metric,
     call_get_financial_fact,
     validate_tool_args,
 )
 from config import MCP_AUTH_TOKEN, MCP_RATE_LIMIT_REQUESTS, MCP_RATE_LIMIT_WINDOW_SECONDS
 from edgar_ingest import get_filing_url
+from prompts.agent_tools import COMPARE_TOOL_SCHEMA, FACT_TOOL_SCHEMA, SEARCH_TOOL_SCHEMA
 from retrieval import hybrid_search
 from tracing import flush, log_event, traced_span
 

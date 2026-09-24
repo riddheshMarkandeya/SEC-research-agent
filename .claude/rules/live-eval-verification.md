@@ -5,6 +5,7 @@ paths:
   - "retrieval.py"
   - "eval_harness.py"
   - "chunk_documents.py"
+  - "prompts/**"
 ---
 
 # Spot-check evals and live verification beyond TDD

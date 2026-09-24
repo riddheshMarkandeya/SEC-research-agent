@@ -16,10 +16,6 @@ from contextlib import contextmanager
 from typing import cast
 
 from agent import (
-    CALCULATE_TOOL_SCHEMA,
-    FACT_TOOL_SCHEMA,
-    SEARCH_TOOL_SCHEMA,
-    SUBMIT_TOOL_SCHEMA,
     AgentResult,
     CitationWarning,
     _CITATION_RETRY_GUIDANCE,
@@ -56,6 +52,15 @@ from agent import (
     verify_claims,
 )
 from llm_backends import ModelTurn
+from prompts.agent_system import SYSTEM_PROMPT
+from prompts.agent_tools import (
+    AGENT_TOOL_SCHEMAS,
+    CALCULATE_TOOL_SCHEMA,
+    COMPARE_TOOL_SCHEMA,
+    FACT_TOOL_SCHEMA,
+    SEARCH_TOOL_SCHEMA,
+    SUBMIT_TOOL_SCHEMA,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -2390,6 +2395,29 @@ def test_should_force_final_submit_false_for_ollama_even_with_budget_exhausted()
 # module docstring for why this is fair game for a unit test despite
 # run_agent() otherwise being live-only)
 # ---------------------------------------------------------------------------
+def test_run_agent_sends_the_system_prompt_and_tool_schemas_in_order(monkeypatch):
+    # Pins what the model is actually given at conversation start --
+    # the exact SYSTEM_PROMPT object and the five schemas in the order
+    # Gemini receives them -- so a prompt/schema move or reorder can't
+    # silently change the model's input without this failing.
+    captured = {}
+
+    def fake_start(question, system_prompt, tool_schemas):
+        captured["system_prompt"] = system_prompt
+        captured["tool_schemas"] = tool_schemas
+        return {}, ModelTurn(tool_calls=[], text="done")
+
+    monkeypatch.setattr("agent.BACKENDS", {"ollama": (fake_start, None, None)})
+
+    run_agent("What was Apple's revenue?", backend="ollama")
+
+    assert captured["system_prompt"] is SYSTEM_PROMPT
+    assert captured["tool_schemas"] == list(AGENT_TOOL_SCHEMAS)
+    assert list(AGENT_TOOL_SCHEMAS) == [
+        FACT_TOOL_SCHEMA, COMPARE_TOOL_SCHEMA, SEARCH_TOOL_SCHEMA, CALCULATE_TOOL_SCHEMA, SUBMIT_TOOL_SCHEMA
+    ]
+
+
 def test_run_agent_citation_retry_exhausting_budget_returns_pre_retry_answer_not_timeout(monkeypatch):
     # Regression test for a real bug found in code review (2026-08-25):
     # if the citation retry fires on the second-to-last iteration and

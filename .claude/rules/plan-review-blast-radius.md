@@ -8,6 +8,7 @@ paths:
   - "numeric_utils.py"
   - "eval_harness.py"
   - "chunk_documents.py"
+  - "prompts/**"
 ---
 
 # This project's high-blast-radius core
@@ -58,6 +59,13 @@ own history, not a speculative "this file feels important" argument:
   hypothetical-date fix, where the judge failed correctly-cited, cleanly
   grounded answers (`citation_warnings: []`) as "fabricated hypothetical
   data" purely from its own training-cutoff blind spot.
+- **`prompts/`** — every piece of static text a model reads (the agent
+  model's system prompt, tool schemas and tool-result/retry/warning
+  messages, the eval judge's prompts, the MCP error strings). A wording
+  change here changes model behaviour with no code change at all, so it
+  gets the same scrutiny as the code that used to hold this text.
+  Incident: the 2026-09-24 prompt audit found description/behaviour
+  mismatches and a rule 3 / rule 9 contradiction living in this text.
 - **`chunk_documents.py`** — `chunk_blocks()`. Corpus-wide code that
   every live citation-grounding check reads from, so a subtle bug here
   can silently corrupt table data across the whole indexed corpus
@@ -79,12 +87,15 @@ listed here, in the same step, not as a deferred follow-up.
 
 A separate policy from the escalated plan-review scrutiny above —
 mechanically a numeric coverage floor, not incident-grounded review
-depth — that happens to reuse this same 8-file list rather than
-maintaining a second, identical one. Per
+depth — that reuses this same list of files. `githooks/pre-push` keeps
+its own copy of the list in its critical-core `--include` arguments
+(git hooks can't read this file's front matter), so a change to
+`paths:` above must be mirrored there in the same change. Per
 `docs/decisions/2026-09-22-adopt-pytest-coverage.md`: new/changed lines
 in any file listed above must clear **90%** diff coverage (vs. 80%
 elsewhere) before a change touching it is called done, excluding
 live-only lines already marked `# pragma: no cover` per
 `.claude/rules/live-code-tdd.md`. If this file's own `paths:` list
 changes for plan-review reasons, the coverage bar's file set changes
-with it automatically — no second list to keep in sync.
+with it only once `githooks/pre-push`'s `--include` list is updated to
+match.

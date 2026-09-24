@@ -12,18 +12,6 @@ Usage:
     python agent.py "Compare Apple's and Microsoft's effective tax rates." --verbose
 """
 
-# ruff: noqa: E501 -- SYSTEM_PROMPT (a single triple-quoted f-string) and
-# the tool schemas' "description" values are deliberately long natural-
-# language content shown to the model; wrapping them physically would
-# either corrupt the literal string content (SYSTEM_PROMPT's own lines
-# can't carry a trailing comment without becoming part of the prompt
-# text itself) or fragment the schema descriptions for no readability
-# gain. A per-line noqa isn't mechanically possible for the former, so
-# this file-level exception covers both -- confirmed to be hiding
-# nothing else: every genuinely-fixable long line in this file was
-# wrapped for real before this directive was added. See
-# docs/decisions/2026-09-21-ruff-complexity-refactor.md.
-
 import argparse
 import re
 from collections import Counter
@@ -33,7 +21,7 @@ from typing import Any, NamedTuple, TypeGuard
 import jsonschema
 import jsonschema.exceptions
 
-from companies import load_companies
+from companies import COMPANIES
 from config import DEFAULT_BACKEND
 from formulas import (
     RATIO_DEFINITIONS,
@@ -52,6 +40,16 @@ from numeric_utils import (
     normalize_for_match,
     text_coverage,
 )
+from prompts.agent_system import SYSTEM_PROMPT
+from prompts.agent_tools import (
+    AGENT_TOOL_SCHEMAS,
+    CALCULATE_TOOL_SCHEMA,
+    CLAIM_UNITS,
+    COMPARE_TOOL_SCHEMA,
+    FACT_TOOL_SCHEMA,
+    SEARCH_TOOL_SCHEMA,
+    SUBMIT_TOOL_SCHEMA,
+)
 from retrieval import hybrid_search
 from table_grounding import extract_table_blocks, locate_value, quote_is_grounded
 from tracing import flush, log_event, record_unmet_metric_request, traced_span
@@ -59,397 +57,6 @@ from xbrl_facts import DEFAULT_METRIC_TAGS, get_metric, get_metric_all_companies
 
 MAX_TOOL_ITERATIONS = 6
 CHUNKS_PER_SEARCH = 5
-
-# Tool-computed ratio metrics -- none of these are a single GAAP tag
-# (see formulas.py's _compute_ratio_metric()), so each is computed from
-# two raw metrics instead of returned raw for the model to divide.
-# RATIO_DEFINITIONS (formulas.py) is the single source of truth for
-# which ratios exist and how each is computed; get_ratio()/
-# get_ratio_all_companies() (also formulas.py) dispatch through it
-# generically -- see
-# docs/decisions/2026-08-28-ratio-definitions-table-driven-registry.md
-# for why this replaced two separate hand-maintained dicts. A ratio's
-# `supports_cross_company` flag (in RATIO_DEFINITIONS) is what
-# compare_financial_metric's dispatch below relies on to fall through to
-# the same graceful "not supported" result any other unrecognized metric
-# gets, for ratios like return_on_assets/asset_turnover/cash_to_assets/
-# inventory_turnover/rd_intensity that don't have one.
-#
-# Derived once here rather than inline below, so the system prompt and
-# both tool schemas stay accurate automatically as RATIO_DEFINITIONS
-# grows -- the whole point of the table (see the decision file above) is
-# a new ratio needing no prompt/schema text updated by hand.
-_CROSS_COMPANY_RATIOS = sorted(name for name, d in RATIO_DEFINITIONS.items() if d.supports_cross_company)
-_SINGLE_COMPANY_ONLY_RATIOS = sorted(name for name, d in RATIO_DEFINITIONS.items() if not d.supports_cross_company)
-_PERCENT_RATIOS = sorted(name for name, d in RATIO_DEFINITIONS.items() if d.as_percent)
-_DECIMAL_RATIOS = sorted(name for name, d in RATIO_DEFINITIONS.items() if not d.as_percent)
-
-# The companies this agent is scoped to, read from companies.json (see
-# companies.py) rather than hardcoded here — this used to be its own
-# ticker->name dict, duplicating edgar_ingest.py's separate ticker->CIK
-# dict under the same COMPANIES name, which is exactly the kind of
-# two-copies-of-the-truth setup that drifts silently. Baked into the
-# system prompt below rather than exposed as a "list_companies" tool —
-# a handful of static facts don't justify a round trip, and every model
-# tested so far already knows "Salesforce" -> CRM without help; this
-# just makes explicit which companies are actually indexed.
-COMPANIES = {ticker: info["name"] for ticker, info in load_companies().items()}
-
-SYSTEM_PROMPT = f"""You are a financial research assistant answering questions about SEC filings for five companies:
-{chr(10).join(f"- {ticker}: {name}" for ticker, name in COMPANIES.items())}
-
-You have five tools:
-- `get_financial_fact` searches structured XBRL data for a small set of standard financial metrics: {", ".join(sorted(DEFAULT_METRIC_TAGS) + sorted(RATIO_DEFINITIONS))}. Prefer this tool FIRST whenever the question asks for one of these specific metrics for a specific fiscal year or fiscal quarter, for ONE company — it returns an exact, unambiguous reported value instead of relying on you to find the right sentence in a filing excerpt. This tool ONLY returns a company's consolidated, company-wide total — it has NO way to get one segment's or one product line's figure (e.g. Microsoft's "Intelligent Cloud" segment, NVIDIA's "Compute & Networking" segment). If a question asks about a specific segment or product line, do NOT call this tool at all, not even to try — go straight to `search_filings` instead. It only works for the metrics listed above and returns "not available" if the company doesn't tag it or the period wasn't recognized — fall back to `search_filings` when that happens, or for anything else this tool doesn't cover (risk factors, narrative discussion, any metric not in the list above). Only pass the arguments this tool actually defines — never invent an extra filter argument (e.g. there is no `segment` parameter); an unrecognized argument is rejected outright, so search_filings instead if you need something this tool doesn't support. To ask for year-over-year growth of one of the raw metrics (not the ratios) instead of its plain value, add `yoy_growth: true` — never compute a growth percentage yourself from two separate calls to this tool, always use this flag; the returned growth value IS the answer, so once you have it, do not also fetch the current and prior-year raw values afterward to re-derive or double-check it. To ask for a multi-year average (e.g. "3-year average operating margin"), pass `start_fiscal_year` and `end_fiscal_year` instead of `fiscal_year`/`fiscal_period`/`period_end_date` — never average multiple years yourself from separate calls, always use these; likewise, the returned average IS the answer, so do not also fetch each individual year's value afterward to show your work.
-- `compare_financial_metric` gets the SAME metric for ALL FIVE companies at once, for one period. Use this instead of calling `get_financial_fact` five times when a question asks you to compare or rank companies against each other (e.g. "which company had the highest gross margin", "compare revenue across all five companies") — one call instead of five. A company can be missing from the result if it doesn't tag that metric for that period; that's not an error, just note it's unavailable for that company. Note: {", ".join(_SINGLE_COMPANY_ONLY_RATIOS)} are NOT available on this tool (no cross-company version exists) — use `get_financial_fact` once per company for those instead.
-- `search_filings` searches these companies' 10-K/10-Q filings for anything else. Call it once per company if a question spans more than one, and call it again with a different query if your first search doesn't turn up what you need.
-- `calculate` performs ONE arithmetic operation (add, subtract, multiply, divide, percent_of, percent_change) over two numbers you've already seen in a result, and returns a new citable result with the computed value. Use this for ANY number you would otherwise have to work out yourself — never state a self-computed value directly, it will be refused, since there is nothing that states it for you to quote. Prefer a named ratio first when one exists (`get_financial_fact` with `yoy_growth: true`, or a registered ratio metric) — use `calculate` only for arithmetic those don't cover. Do NOT use it for a plain unit conversion (e.g. dividing by 1,000,000,000 to turn a raw dollar amount into billions) — the divisor is a bare constant with no citation to ground it against, so that call can never succeed; see rule 9 for how to restate a value in a different unit with no tool call at all. When you cite its result in your final answer, state the computation inline (e.g. "computed as $34,550 million ÷ $195,201 million = 17.7%") rather than presenting it as though the filing stated it directly.
-- `submit_answer` delivers your final answer -- this is the ONLY way to answer; never reply with plain text instead. See rule 9 below.
-
-Do not answer from prior knowledge about these companies; every answer must come from what a tool returns.
-
-Rules:
-1. Every factual or numeric claim in your final answer must end with a citation marker like [1] or [2] referring to a search result.
-2. If your searches don't turn up enough information to answer, say so explicitly rather than guessing.
-3. Do not combine or infer numbers that don't appear directly in a search result (e.g. don't compute a total unless a result states it) — this does not apply to `get_financial_fact`'s or `calculate`'s own output, both of which are already a single reported or tool-computed value.
-4. Resolve company names to the right ticker yourself (e.g. "Salesforce" -> CRM) — don't ask the user to clarify.
-5. Search results often report the same metric for several different periods in one excerpt — not just in tables, but within a single sentence, e.g. "the rate was 20% for the current quarter, and 18% for the same quarter last year." Before citing a number, check that its stated period exactly matches the period asked about, even when both numbers appear right next to each other in the same sentence — do not substitute a prior-year or prior-quarter value just because it's nearby.
-6. For a question spanning multiple companies, you must query EVERY company mentioned — with `search_filings` if `get_financial_fact` didn't cover it — before writing your final answer. A `get_financial_fact` call returning "not available" for one company is not a reason to stop; it means try `search_filings` for that same company next, and you must still go on to query every other company the question asks about. Do not conclude a company's data is unavailable unless you have actually searched for it.
-7. If `compare_financial_metric` returns fewer than all five companies, your final answer must explicitly name which companies were and weren't covered (e.g. "data was only available for AAPL and PLTR; the others hadn't filed a matching quarter yet") — do not phrase a conclusion as if it covers "all five companies" or similar when it only covers the ones that were actually returned.
-8. ONLY when a single sentence combines facts from two or more DIFFERENT companies (e.g. comparing NVIDIA and Salesforce), put each citation marker immediately after the specific fact it supports, not bundled together at the end — write "NVIDIA's revenue was $81.6 billion [1], while Salesforce's was $11.1 billion [2]." not "NVIDIA's revenue was $81.6 billion, while Salesforce's was $11.1 billion [1][2]." This rule does not add any new requirement to single-company answers or to a refusal under rule 2 — never search for extra facts just to have something to cite per-sentence; a plain, single citation at the end of a normal sentence is already correct and needs no change.
-9. Deliver your final answer ONLY by calling `submit_answer` -- never as plain text. Put the reader-facing answer in `answer_text` (citation markers there are for the reader, same as rules 1 and 8 above). For EVERY number in `answer_text`, add a matching entry to `claims`: the value, its unit, which numbered search result it comes from, and the exact supporting text copied verbatim from that result -- do not paraphrase or summarize the quote. A citation marker supporting a purely QUALITATIVE fact with no number at all (e.g. a bullet point describing a risk factor) still needs a `claims` entry -- citation_index and quote -- but OMIT value and unit together; never invent a placeholder number just to fill them in. A tool's own computed output (e.g. `get_financial_fact` with `yoy_growth: true`, `calculate`, or any ratio metric) is still a single, directly reported value -- quote that result's own text, the same as any other directly-stated number, per rule 3. If you need to combine, compare, or derive a number from values you've already seen (a difference, a ratio, a percentage change) despite rule 3 telling you not to work this out yourself -- call `calculate` FIRST and cite ITS result the same way as any other; never state a self-computed value directly, since there is nothing that states it for you to quote, and it will be refused. When `answer_text` includes a value derived via `calculate`, show the computation inline (e.g. "computed as $34,550 million ÷ $195,201 million = 17.7%") rather than presenting it as though the filing stated it directly. Restating an already-cited value in a DIFFERENT UNIT (e.g. a raw dollar amount as billions) is NOT a derivation and needs no `calculate` call at all -- state it directly with the new unit, citing the same result with the same verbatim quote as before; keep enough significant figures that the restated value stays within about 1% of the source figure (e.g. state $4,475,446,000 as "$4.48 billion", not "$4.4 billion" or "$4 billion" -- too coarse a rounding will be treated as an unsupported value and the whole answer refused). Never abbreviate a unit to a bare letter glued directly onto the number (e.g. "$34,550M") -- that notation is genuinely ambiguous in finance (M means thousand under one real convention, million under another) and will not be recognized as a valid unit, so the number will be treated as unsupported and the answer refused; always spell the unit out in full (million/billion) instead. A number with no matching claim at all will be treated as ungrounded and the whole answer refused, so it is better to omit a number you can't support than to state it without a claim."""
-
-SEARCH_TOOL_SCHEMA = {
-    "type": "function",
-    "function": {
-        "name": "search_filings",
-        "description": "Search SEC 10-K/10-Q filing excerpts for one of the five covered companies.",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "query": {
-                    "type": "string",
-                    "description": "What to search for, as a natural-language question or phrase. Only used for a follow-up search against a company you've already searched — the first search against each company always uses the user's original question.",
-                },
-                "ticker": {
-                    "type": "string",
-                    "enum": list(COMPANIES.keys()),
-                    "description": "Restrict the search to one company's filings. Omit only if genuinely unsure which company the question is about.",
-                },
-            },
-            "required": ["query"],
-            "additionalProperties": False,
-        },
-    },
-}
-
-FACT_TOOL_SCHEMA = {
-    "type": "function",
-    "function": {
-        "name": "get_financial_fact",
-        "description": (
-            "Look up an exact structured value for one standard financial metric, for one "
-            "company and one period. Specify the period ONE of two ways: (a) if the question "
-            "gives a specific calendar date (e.g. 'the quarter ended April 26, 2026'), pass "
-            "period_end_date and leave fiscal_year/fiscal_period out -- the tool converts it to "
-            "the company's own fiscal labeling for you, which you should NOT try to compute "
-            "yourself (a calendar date can fall in a different fiscal year than its calendar "
-            "year for these companies). (b) if the question already states the period in fiscal "
-            "terms (e.g. 'fiscal year 2026', 'the third quarter of fiscal year 2026'), pass "
-            "fiscal_year and fiscal_period directly instead. Returns null if the company doesn't "
-            "tag this metric or the period isn't recognized -- fall back to search_filings when "
-            "that happens."
-        ),
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "ticker": {"type": "string", "enum": list(COMPANIES.keys())},
-                "metric": {
-                    "type": "string",
-                    "enum": sorted(DEFAULT_METRIC_TAGS) + sorted(RATIO_DEFINITIONS),
-                    "description": (
-                        f"Which metric to fetch. {', '.join(_PERCENT_RATIOS)} are each computed as a ratio and "
-                        f"returned as a percent; {', '.join(_DECIMAL_RATIOS)} are also computed as a ratio but "
-                        "returned as a plain decimal (e.g. 1.04), NOT a percent -- do not multiply it by 100 or "
-                        "add a % sign; the rest are returned in USD."
-                    ),
-                },
-                "period_end_date": {
-                    "type": "string",
-                    "description": "A calendar date 'YYYY-MM-DD' from the question (e.g. the quarter- or fiscal-year-end date stated). Preferred whenever the question states an actual date -- do not convert it to a fiscal year yourself.",
-                },
-                "fiscal_year": {
-                    "type": "integer",
-                    "description": "Only use this when the question states a fiscal year directly instead of a calendar date. The fiscal year as the company itself labels it -- do not guess this from a calendar date, use period_end_date instead.",
-                },
-                "fiscal_period": {
-                    "type": "string",
-                    "enum": ["FY", "Q1", "Q2", "Q3", "Q4"],
-                    "description": "Only used together with fiscal_year. FY for a full fiscal year (from the 10-K), or Q1/Q2/Q3 for a quarter (from a 10-Q). Q4 is not separately available for most of these companies -- fall back to search_filings for Q4-specific figures.",
-                },
-                "yoy_growth": {
-                    "type": "boolean",
-                    "description": (
-                        "Set true to get year-over-year percent growth of `metric` instead of its plain value "
-                        "(e.g. 'revenue growth' questions). Only valid for the raw metrics, NOT for any ratio "
-                        f"metric ({', '.join(sorted(RATIO_DEFINITIONS))}) -- returns null for that combination. "
-                        "Compares the requested period to the SAME fiscal_period one year earlier automatically; "
-                        "never compute growth yourself from two separate calls. The returned value IS the "
-                        "answer -- do not also fetch the current and prior-period raw values afterward to "
-                        "re-derive or double-check it."
-                    ),
-                },
-                "start_fiscal_year": {
-                    "type": "integer",
-                    "description": "Only for a multi-year-average question (e.g. '3-year average operating margin from fiscal year 2023 through 2025'). Set together with end_fiscal_year, and leave fiscal_year/fiscal_period/period_end_date out -- averages `metric` across every fiscal year in the range (always full-year, FY). Never average multiple years yourself from separate calls, always use this. The returned average IS the answer -- do not also fetch each individual year's value afterward to show your work.",
-                },
-                "end_fiscal_year": {
-                    "type": "integer",
-                    "description": "The last fiscal year of a multi-year-average range -- see start_fiscal_year.",
-                },
-            },
-            "required": ["ticker", "metric"],
-            "additionalProperties": False,
-        },
-    },
-}
-
-COMPARE_TOOL_SCHEMA = {
-    "type": "function",
-    "function": {
-        "name": "compare_financial_metric",
-        "description": (
-            "Get one financial metric for ALL FIVE covered companies at once, for the same "
-            "period -- use this instead of calling get_financial_fact once per company for a "
-            "comparison/ranking question. Anchor the period on whichever company the question "
-            "mentions (or any one of the five if it doesn't specify a particular company's "
-            "date) using the SAME period_end_date OR fiscal_year+fiscal_period rules as "
-            "get_financial_fact; every other company's value for the closest matching period is "
-            "returned automatically -- do not try to compute each company's own fiscal period "
-            "yourself. A company may be missing from the result if it doesn't tag this metric "
-            "for that period; that's not an error, just note it wasn't available for that one."
-        ),
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "anchor_ticker": {
-                    "type": "string",
-                    "enum": list(COMPANIES.keys()),
-                    "description": "Whichever company's date/period you're anchoring on.",
-                },
-                "metric": {
-                    "type": "string",
-                    "enum": sorted(DEFAULT_METRIC_TAGS) + _CROSS_COMPANY_RATIOS,
-                    "description": (
-                        f"Which metric to fetch for every company. {', '.join(_CROSS_COMPANY_RATIOS)} are each "
-                        "computed as a ratio and returned as a percent; the rest are returned in USD. "
-                        f"({', '.join(_SINGLE_COMPANY_ONLY_RATIOS)} are NOT available here -- no cross-company "
-                        "version exists yet; use get_financial_fact per company instead.)"
-                    ),
-                },
-                "period_end_date": {
-                    "type": "string",
-                    "description": "A calendar date 'YYYY-MM-DD' from the question, for the anchor company. Preferred whenever the question states an actual date.",
-                },
-                "fiscal_year": {
-                    "type": "integer",
-                    "description": "Only use this when the question states a fiscal year directly instead of a calendar date, in the anchor company's own fiscal labeling.",
-                },
-                "fiscal_period": {
-                    "type": "string",
-                    "enum": ["FY", "Q1", "Q2", "Q3", "Q4"],
-                    "description": "Only used together with fiscal_year. FY for a full fiscal year, or Q1/Q2/Q3 for a quarter. Q4 is not separately available for most of these companies.",
-                },
-            },
-            "required": ["anchor_ticker", "metric"],
-            "additionalProperties": False,
-        },
-    },
-}
-
-# See docs/decisions/2026-09-10-structured-claims-citation-verification.md.
-# Deliberately NOT in mcp_server.py's _TOOL_SCHEMAS: this is a final-answer
-# mechanism internal to agent.py's own tool-calling loop (the model's
-# structured "here is my answer" instead of free text), not something an
-# external MCP client would ever want to call itself.
-#
-# `unit`'s enum is exactly numeric_utils.normalize()'s vocabulary --
-# "raw" and "percent" pass through normalize() unchanged (multiplier 1.0,
-# UNIT_MULTIPLIERS.get(unit, 1.0)), "thousand"/"million"/"billion" are its
-# declared keys. Keeping this list explicit rather than deriving it from
-# UNIT_MULTIPLIERS.keys() because "raw"/"percent" aren't IN that dict (they're
-# normalize()'s two special-cased categories) -- deriving would silently
-# drop them, not add them.
-_CLAIM_UNITS = ["raw", "thousand", "million", "billion", "percent"]
-
-SUBMIT_TOOL_SCHEMA = {
-    "type": "function",
-    "function": {
-        "name": "submit_answer",
-        "description": (
-            "Deliver your final answer. This is the ONLY way to answer -- do not reply with plain "
-            "text instead. `answer_text` is what the user reads; `claims` is a structured list, one "
-            "entry per citation marker in it, each tied to the specific search result it comes from. "
-            "A claim that states a real number includes `value`/`unit`; a claim supporting a purely "
-            "qualitative fact with no number (e.g. a risk-factor bullet) omits both -- either way, "
-            "`citation_index` and `quote` are always required. A number with no matching claim will "
-            "be treated as ungrounded and the whole answer refused. `claims` may be empty only for a "
-            "refusal answer with nothing to cite at all."
-        ),
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "answer_text": {
-                    "type": "string",
-                    "description": (
-                        "The full final answer, formatted for the user. You may still include [n] "
-                        "citation markers here for readability, matching the search result numbering "
-                        "-- they are for the reader, not for grounding, which claims below handles."
-                    ),
-                },
-                "claims": {
-                    "type": "array",
-                    "description": "One entry per citation marker in answer_text, numeric or qualitative.",
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "value": {
-                                "type": "number",
-                                "description": (
-                                    "The numeric value, e.g. 72.4 for $72.4 billion. Omit entirely "
-                                    "(along with `unit`) for a qualitative claim with no real number."
-                                ),
-                            },
-                            "unit": {
-                                "type": "string",
-                                "enum": _CLAIM_UNITS,
-                                "description": (
-                                    "raw (a plain count/dollar amount with no scale word), thousand, "
-                                    "million, billion, or percent. Omit entirely (along with `value`) "
-                                    "for a qualitative claim with no real number."
-                                ),
-                            },
-                            "citation_index": {
-                                "type": "integer",
-                                "description": "Which numbered search result (as shown to you, 1-based) this value comes from.",
-                            },
-                            "quote": {
-                                "type": "string",
-                                "description": (
-                                    "The exact text from that search result supporting this value -- "
-                                    "copy it verbatim, do not paraphrase or summarize it."
-                                ),
-                            },
-                        },
-                        "required": ["citation_index", "quote"],
-                        "additionalProperties": False,
-                    },
-                },
-            },
-            "required": ["answer_text", "claims"],
-            "additionalProperties": False,
-        },
-    },
-}
-
-# See docs/decisions/2026-09-11-calculate-tool-and-stress-questions.md.
-# Deliberately NOT in mcp_server.py's _TOOL_SCHEMAS, same reasoning as
-# SUBMIT_TOOL_SCHEMA above: citation_index_a/citation_index_b are only
-# meaningful within one _run_agent_impl run's own all_results, not to a
-# standalone MCP caller with no such list.
-#
-# Built after finding that system-prompt rule 9's original guidance for a
-# hand-computed value ("quote the result(s) it came from, not the number
-# itself") was structurally unverifiable: _verify_one_claim's value-
-# attribution check always requires the claimed VALUE to appear as a
-# number candidate inside the quote, so a claim quoting two raw inputs for
-# their ratio could never pass. Prior art (FinQA/ConvFinQA/TAT-QA
-# financial numerical-reasoning benchmarks) solves this with an explicit
-# PROGRAM -- an operation over operands that trace back to real extracted
-# data, mechanically re-executed and checked -- and PAL/Toolformer add the
-# separate finding that LLM arithmetic itself is unreliable, so the
-# calculation should run in real code, not the model's head. This tool
-# combines both: operand grounding (each operand must actually appear in
-# its cited source, via the same _number_candidates() primitive
-# _verify_one_claim already uses) and arithmetic correctness (the
-# operation runs in Python, never trusted from the model). Its result
-# becomes a normal all_results entry the model cites like any other tool
-# output -- zero changes needed to verify_claims/_verify_one_claim/
-# CitationWarning, since a calculate result is directly quotable the same
-# way get_financial_fact's yoy_growth output already is.
-#
-# Strictly binary (no N-ary sum) -- composable instead: a 3-way total is
-# calculate twice, citing the first call's own result as an operand of the
-# second, mirroring how FinQA's own programs chain binary operations
-# rather than using N-ary ops.
-CALCULATE_TOOL_SCHEMA = {
-    "type": "function",
-    "function": {
-        "name": "calculate",
-        "description": (
-            "Performs ONE arithmetic operation over two numbers you have already seen in a "
-            "prior result, and returns a new citable result with the computed value. Use this "
-            "for any number you would otherwise have to work out yourself -- never state a "
-            "self-computed value directly, it will be refused. Prefer a named ratio first when "
-            "one exists (get_financial_fact with yoy_growth: true, or a registered ratio metric "
-            "via compare_financial_metric) -- use calculate only for arithmetic those don't "
-            "cover. When you cite the result of a calculate call in your final answer, state the "
-            "computation inline (e.g. 'computed as $34,550 million / $195,201 million = 17.7%') rather than "
-            "presenting it as if the filing stated it directly. "
-            "Do NOT use this for a plain unit conversion (e.g. dividing a raw dollar amount by "
-            "1,000,000,000 to express it in billions) -- both operands must come from a result "
-            "you've already seen and cited, and a bare conversion constant like 1,000,000,000 has "
-            "no citation to ground it against, so that call can never succeed. Converting a value "
-            "you already have to a different unit needs no tool call at all: just state it "
-            "directly with the new unit (e.g. state $4,475,446,000 as '$4.48 billion'), citing the "
-            "same result with the same verbatim quote as before -- see system-prompt rule 9."
-        ),
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "operation": {
-                    "type": "string",
-                    "enum": ["add", "subtract", "multiply", "divide", "percent_of", "percent_change"],
-                    "description": (
-                        "add/subtract/multiply/divide: the plain arithmetic operation, a op b. "
-                        "percent_of: operand_a as a percentage of operand_b (a/b*100). "
-                        "percent_change: percentage change FROM operand_b (the baseline/prior "
-                        "value) TO operand_a (the new/current value) -- (a-b)/b*100."
-                    ),
-                },
-                "operand_a": {"type": "number", "description": "The first operand, taken directly from a result you've already seen."},
-                "citation_index_a": {
-                    "type": "integer",
-                    "description": "Which numbered result (1-based) operand_a came from.",
-                },
-                "unit_a": {
-                    "type": "string",
-                    "enum": _CLAIM_UNITS,
-                    "description": "operand_a's unit: raw, thousand, million, billion, or percent.",
-                },
-                "operand_b": {"type": "number", "description": "The second operand, taken directly from a result you've already seen."},
-                "citation_index_b": {
-                    "type": "integer",
-                    "description": "Which numbered result (1-based) operand_b came from.",
-                },
-                "unit_b": {
-                    "type": "string",
-                    "enum": _CLAIM_UNITS,
-                    "description": "operand_b's unit: raw, thousand, million, billion, or percent.",
-                },
-            },
-            "required": [
-                "operation",
-                "operand_a",
-                "citation_index_a",
-                "unit_a",
-                "operand_b",
-                "citation_index_b",
-                "unit_b",
-            ],
-            "additionalProperties": False,
-        },
-    },
-}
 
 
 def _resolve_search_args(
@@ -891,7 +498,8 @@ def call_compare_financial_metric(args: dict, question: str | None = None) -> di
     asset_turnover/cash_to_assets/inventory_turnover/rd_intensity) still
     passes this function's own boundary check (it's a real, known ratio
     name -- COMPARE_TOOL_SCHEMA's own metric enum is narrower, only
-    _CROSS_COMPANY_RATIOS, but validate_tool_args lets any metric-enum
+    prompts.agent_system.CROSS_COMPANY_RATIOS, but validate_tool_args
+    lets any metric-enum
     violation through regardless of which schema declared it, deferring
     to this same broader RATIO_DEFINITIONS check), but
     get_ratio_all_companies() checks the flag internally and returns the
@@ -968,7 +576,7 @@ def _comparison_as_results(data: dict[str, dict], metric: str) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
-# calculate tool -- see CALCULATE_TOOL_SCHEMA's own comment and
+# calculate tool -- see prompts.agent_tools.CALCULATE_TOOL_SCHEMA's own comment and
 # docs/decisions/2026-09-11-calculate-tool-and-stress-questions.md for
 # the full design reasoning. Two independent guarantees: operand GROUNDING
 # (_ground_operand, reusing _number_candidates -- the same primitive
@@ -1028,7 +636,7 @@ def _ground_operand(
     if any(c == category and abs(v - norm) <= tolerance for c, v in candidates):
         return None
 
-    for other_unit in _CLAIM_UNITS:
+    for other_unit in CLAIM_UNITS:
         if other_unit == unit:
             continue
         other_category, other_norm = normalize(value, other_unit)
@@ -2828,10 +2436,7 @@ def _run_agent_impl(question: str, backend: str, verbose: bool = False) -> Agent
     400'd on Gemini) and needs no new plumbing, since it's exactly what
     send_tool_results already does."""
     start, send_tool_results, send_followup = BACKENDS[backend]
-    tool_schemas = [
-        FACT_TOOL_SCHEMA, COMPARE_TOOL_SCHEMA, SEARCH_TOOL_SCHEMA, CALCULATE_TOOL_SCHEMA, SUBMIT_TOOL_SCHEMA
-    ]
-    conv_state, turn = start(question, SYSTEM_PROMPT, tool_schemas)
+    conv_state, turn = start(question, SYSTEM_PROMPT, list(AGENT_TOOL_SCHEMAS))
     ctx = _AgentContext(
         question=question,
         backend=backend,
