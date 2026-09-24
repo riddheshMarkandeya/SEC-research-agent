@@ -26,6 +26,10 @@ with the real `mcp` client over genuine HTTP, and checks:
    again once the window elapses. Checks 1-4 above run against a
    server with default config (no MCP_AUTH_TOKEN) to also confirm this
    stays backward compatible by default.
+6. (2026-09-24) The model-facing text MCP clients receive is exactly what
+   prompts/ defines: each listed tool's description and input schema,
+   the two "not available" errors for a real no-data call, and the
+   unknown-tool error.
 
 Re-run this after any change to mcp_server.py's source-block/excerpt
 logic, its auth/rate-limit logic, or the underlying tool schemas/
@@ -56,6 +60,8 @@ from mcp import ClientSession
 from mcp.client.streamable_http import streamable_http_client
 
 from config import SEC_USER_AGENT, TRACE_LOG_PATH
+from prompts.agent_tools import COMPARE_TOOL_SCHEMA, FACT_TOOL_SCHEMA, SEARCH_TOOL_SCHEMA
+from prompts.mcp import COMPARISON_NOT_AVAILABLE_ERROR, FACT_NOT_AVAILABLE_ERROR, UNKNOWN_TOOL_TEMPLATE
 
 PORT = 8799
 BASE_URL = f"http://127.0.0.1:{PORT}"
@@ -96,6 +102,7 @@ async def run_checks():
             names = {t.name for t in tools.tools}
             assert names == {"search_filings", "get_financial_fact", "compare_financial_metric"}, names
             print("[OK] list_tools ->", sorted(names))
+            await _check_model_facing_text(session, tools.tools)
 
             print("\n[get_financial_fact] AAPL revenue FY2025")
             result = await session.call_tool(
@@ -142,6 +149,34 @@ async def run_checks():
                 break
             if not fragment_checked:
                 print("  [INFO] no result had a text-fragment sec_url to check (all table-only excerpts or no filing match)")
+
+
+async def _check_model_facing_text(session, listed_tools):
+    print("\n[model-facing text] tool descriptions, schemas and error strings match prompts/")
+    expected = [SEARCH_TOOL_SCHEMA, FACT_TOOL_SCHEMA, COMPARE_TOOL_SCHEMA]
+    assert [t.name for t in listed_tools] == [s["function"]["name"] for s in expected], listed_tools
+    for tool, schema in zip(listed_tools, expected, strict=True):
+        assert tool.description == schema["function"]["description"], tool.name
+        assert tool.input_schema == schema["function"]["parameters"], tool.name
+    print("  [OK] all 3 tools' descriptions and input schemas are exactly prompts.agent_tools'")
+
+    # FY1990 predates every covered company's XBRL data, so both calls
+    # reach the real no-data path rather than a validation rejection.
+    result = await session.call_tool(
+        "get_financial_fact", {"ticker": "AAPL", "metric": "revenue", "fiscal_year": 1990, "fiscal_period": "FY"}
+    )
+    assert _get_text(result) == {"error": FACT_NOT_AVAILABLE_ERROR}, result.content
+    result = await session.call_tool(
+        "compare_financial_metric",
+        {"anchor_ticker": "AAPL", "metric": "gross_margin", "fiscal_year": 1990, "fiscal_period": "FY"},
+    )
+    assert _get_text(result) == {"error": COMPARISON_NOT_AVAILABLE_ERROR}, result.content
+    print("  [OK] no-data calls return prompts.mcp's exact error strings")
+
+    result = await session.call_tool("no_such_tool", {})
+    assert result.is_error, result
+    assert result.content[0].text == UNKNOWN_TOOL_TEMPLATE.format(name="no_such_tool"), result.content
+    print(f"  [OK] unknown tool -> {result.content[0].text}")
 
 
 class _RunningServer:
