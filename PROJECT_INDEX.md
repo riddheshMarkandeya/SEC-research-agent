@@ -48,6 +48,9 @@ prepend them (verbatim, still reverse-chronological) to the top of
 
 ## Recent
 
+- 2026-09-24 [review] Prompt-audit roadmap plan review — 3 rounds; biased revert rule, contradicting rule-3 rewrite, false MCP descriptions, fragile fingerprint rule and a mis-targeted Step 7 (138 fiscal_year-string rejections, not extra arguments) all fixed before approval → `docs/reviews/2026-09-24-prompt-audit-roadmap-plan-review.md`
+- 2026-09-24 [review] Prompt-surface audit and model-facing-text survey — 13 findings (description/behaviour mismatches, rule 3/9 contradiction, "None FYNone" no-data text, 138 silent fiscal_year rejections); judge-format change deferred until evidence appears; target Gemini, Claude-only rows excluded → `docs/reviews/2026-09-24-prompt-audit.md`
+- 2026-09-24 [plan] Prompt-audit roadmap: `prompts/` package, fingerprinted eval provenance + compare script, panel-screened one-commit-per-finding rollout, split into BACKLOG work packages WP1–WP8 → `docs/plans/2026-09-24-prompt-audit-roadmap.md`
 - 2026-09-23 [review] Docs-index pre-commit implementation review — 4 rounds; prose-arrow matches, fail-closed interpreter lookup, non-ASCII paths and non-docs dangling entries fixed → `docs/reviews/2026-09-23-docs-index-pre-commit.md`
 - 2026-09-23 [decision] One docs-index check as a git pre-commit hook (blocks unindexed docs and dangling entries, warns on Recent over cap); PreToolUse and SessionStart hooks removed; hooks installed via core.hooksPath → `docs/decisions/2026-09-23-docs-index-pre-commit.md`
 - 2026-09-23 [review] Docs-index pre-commit plan review — 2 must-fix (cp1252 decoding of git output, --dry-run skips hooks) → `docs/reviews/2026-09-23-docs-index-pre-commit-plan-review.md`
