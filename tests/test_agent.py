@@ -2617,6 +2617,8 @@ def test_run_agent_final_turn_safety_net_rescues_a_clean_refusal(monkeypatch):
         lambda call, question, all_results, searched_tickers, verbose: "search result",
     )
     monkeypatch.setattr("agent.verify_claims", lambda claims, all_results, question, answer_text: [])
+    log_calls = []
+    monkeypatch.setattr("agent.log_event", lambda category, **fields: log_calls.append((category, fields)))
 
     answer, all_results, warnings, withheld_answer, _ = run_agent("What was the value?", backend="gemini")
 
@@ -2634,6 +2636,11 @@ def test_run_agent_final_turn_safety_net_rescues_a_clean_refusal(monkeypatch):
     )
     assert warnings == []
     assert withheld_answer is None
+    # Local-only debug event: the safety net engaging is now directly
+    # queryable instead of only inferable from counting trace spans.
+    assert ("final_turn_forced", {"backend": "gemini", "calls_made": 2, "pending_tools": ["search_filings"]}) in (
+        log_calls
+    )
 
 
 def test_run_agent_final_turn_safety_net_fires_at_most_once(monkeypatch):

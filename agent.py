@@ -2680,21 +2680,37 @@ def _force_final_submit_turn(other: list[dict], ctx: _AgentContext, loop_state: 
     trip (BACKLOG.md's MAX_TOOL_ITERATIONS zero-slack bug) -- called
     only after the parent has already confirmed via
     _should_force_final_submit() that this turn IS being forced, so it
-    always returns a new turn, never None, never a break. Pure
-    relocation, no logic change. `other` is guaranteed non-empty here
-    (an empty-tool-calls turn is already fully handled by the parent's
-    own `if not turn.tool_calls:` branch), so every pending call gets
-    answered with a synthetic "not run" result -- via send_tool_results,
-    not send_followup, since those calls are already recorded as
-    pending/unanswered in the chat history and a bare followup turn on
-    top of them is exactly the "dangling function call followed by a
-    bare user turn" shape that's historically 400'd on Gemini (see
-    _run_agent_impl's own docstring). force_tool hard-constrains the
-    model's NEXT reply to submit_answer."""
+    always returns a new turn, never None, never a break. `other` is
+    guaranteed non-empty here (an empty-tool-calls turn is already fully
+    handled by the parent's own `if not turn.tool_calls:` branch), so
+    every pending call gets answered with a synthetic "not run" result --
+    via send_tool_results, not send_followup, since those calls are
+    already recorded as pending/unanswered in the chat history and a
+    bare followup turn on top of them is exactly the "dangling function
+    call followed by a bare user turn" shape that's historically 400'd
+    on Gemini (see _run_agent_impl's own docstring). force_tool
+    hard-constrains the model's NEXT reply to submit_answer.
+
+    Fires a `final_turn_forced` log event (local JSONL only, mirroring
+    `_finalize_answer`'s `citation_gate_refused` -- diagnostic loop
+    mechanics, not conversation content) whenever this safety net
+    engages, since that was previously only visible under --verbose or
+    inferable by counting trace spans. No `question` field: log_event()
+    already tags every call with the current run's run_id, and
+    run_agent()'s own outermost span already records the question under
+    that same run_id, so repeating it here would just duplicate data
+    already joinable through run_id."""
     loop_state.final_turn_attempted = True
     if ctx.verbose:
         print("  [final turn] dispatch budget exhausted with tool calls still pending -- forcing final submit")
-    results = [{"name": c["name"], "content": _FINAL_TURN_SUBMIT_MESSAGE} for c in other]
+    pending_tool_names = [c["name"] for c in other]
+    log_event(
+        "final_turn_forced",
+        backend=ctx.backend,
+        calls_made=loop_state.calls_made,
+        pending_tools=pending_tool_names,
+    )
+    results = [{"name": name, "content": _FINAL_TURN_SUBMIT_MESSAGE} for name in pending_tool_names]
     return ctx.send_tool_results(ctx.conv_state, results, force_tool="submit_answer")
 
 

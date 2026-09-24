@@ -1,0 +1,23 @@
+{
+  "backend": "gemini",
+  "answer_model": "gemini-flash-lite-latest",
+  "judge_model": "gemini-flash-lite-latest",
+  "results": [
+    {
+      "id": "nvda-revenue-yoy-growth-q1fy27",
+      "ticker": "NVDA",
+      "question": "According to NVIDIA's quarterly filing commentary, what was the year-over-year percentage growth in total revenue for the quarter ended April 26, 2026?",
+      "type": "numeric",
+      "passed": true,
+      "detail": "found matching value: 85.0 (percent)",
+      "has_citation": true,
+      "citation_warnings": [],
+      "answer": "According to NVIDIA's quarterly filing commentary and financial statements for the quarter ended April 26, 2026, total revenue was $81,615 million for the three months ended April 26, 2026, compared to $44,062 million for the three months ended April 27, 2025 [14]. Based on these figures, total revenue grew year-over-year by 85% [14].",
+      "n_chunks_retrieved": 21,
+      "withheld_answer": null,
+      "gate_withheld_would_have_passed": null,
+      "gate_withheld_detail": null,
+      "citation_warning_details": []
+    }
+  ]
+}
