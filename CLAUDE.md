@@ -166,6 +166,30 @@ Code's own Bash tool, and only reliably catches staging/committing as
 separate tool calls. See
 `docs/decisions/2026-09-15-claude-md-restructure.md`.
 
+A `SessionStart` hook (`scripts/check_docs_health.py`, on `startup`,
+`resume`, `clear`) audits the index. It flags any
+`docs/decisions|plans|reviews/*.md` file with no entry (a line ending
+`` → `<path>` ``) in `PROJECT_INDEX.md` or its archive, and a
+`## Recent` section over its 50-entry cap. It prints nothing when both are clean. This catches the
+chained `git add && git commit` case the commit-time hook misses, at the
+next session start. See
+`docs/decisions/2026-09-23-context-management-hooks.md`.
+
+## Context management (trial)
+
+Project-local trial; promotion to global `CLAUDE.md` is tracked in
+`BACKLOG.md`. `showClearContextOnPlanAccept` is on, so an approved plan
+can be implemented from a cleared context holding only the plan text:
+
+- **Plans are self-contained.** Before `ExitPlanMode`, fold the
+  plan-review findings and the user's decisions into the plan. Step 1 of
+  every approved plan saves it to `docs/plans/` from `TEMPLATE.md`.
+- **Implementation → review boundary.** In interactive Standard+ tasks,
+  once implementation is done and the full suite passes, stop before
+  `independent-review-pass` and give the user a ready-to-paste
+  `/compact Keep: plan file path, decisions and why, files changed, review passes done/pending. Drop: exploration, dead ends.`
+  In `/goal` or other autonomous runs, note the line and continue.
+
 ## Spot-check evals and live verification beyond TDD
 
 The concrete rule for which files require a live eval spot-check after

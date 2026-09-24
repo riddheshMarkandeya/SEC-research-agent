@@ -45,6 +45,26 @@ reference:
 
 ## Backlog
 
+### From the 2026-09-23 context-management hooks change
+
+Full evidence/reasoning: `docs/decisions/2026-09-23-context-management-hooks.md`.
+
+- [ ] **[design, Low, Trivial]** Promote project `CLAUDE.md`'s "Context
+  management (trial)" rules (self-contained plans saved first;
+  stop-and-suggest-`/compact` at the implementation→review boundary),
+  and possibly `showClearContextOnPlanAccept`, to the global
+  `~/.claude/CLAUDE.md` and user settings. Trigger: about 3 Standard+
+  tasks run under them without friction. Drop or rework them instead if
+  they get in the way.
+- [ ] **[design, Low, Standard]** Consider a `githooks/pre-commit` that
+  runs `check_docs_health.unindexed_docs` on staged docs files, replacing
+  `check_docs_sync.py`'s PreToolUse check. It would catch chained
+  `git add && git commit` and commits made outside Claude Code at commit
+  time rather than next session, and give "indexed" one definition
+  instead of two (the PreToolUse check covers decisions only and accepts
+  any staged index). Weigh against the 2026-09-22 move of every check to
+  pre-push. From the implementation review's `/simplify` altitude pass.
+
 ### From the 2026-09-22 eval-question-classification change
 
 Full evidence/reasoning: `docs/plans/2026-09-22-eval-question-classification.md`'s
@@ -182,17 +202,6 @@ file pending which (if any) get adopted. Reproduce with
   dead code to satisfy the linter, contradicting the project's own
   error-handling philosophy; `RUF003` and a dozen other 1-4-hit codes
   weren't worth the selected-rule overhead at that volume.
-
-### From the 2026-09-15 CLAUDE.md restructure
-
-Full evidence/reasoning: `docs/decisions/2026-09-15-claude-md-restructure.md`.
-
-- [ ] **[bug, Low, Standard]** `scripts/check_docs_sync.py`'s `PreToolUse`
-  hook only reliably catches the docs/index staging mismatch when `git
-  add` and `git commit` are separate tool calls — a single chained
-  `git add -A && git commit -m "..."` is checked against whatever was
-  already staged *before* that command runs (the hook fires pre-execution),
-  so it can miss the mismatch in that form. Documented, not fixed.
 
 ### From the 2026-09-15 pyright adoption
 

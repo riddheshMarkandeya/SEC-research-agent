@@ -12,6 +12,21 @@
 
 ## Archive
 
+- 2026-09-15 [decision] Revoked the comment→decision-file pointer convention (comments must now be self-contained, no file-path links) — amends the 2026-09-14 documentation-system overhaul and comment-audit rounds → `docs/decisions/2026-09-15-revoke-comment-pointer-convention.md`
+- 2026-09-15 [decision] Expanded ruff's PLR selection (added PLR0402, scoped PLR2004 away from tests/) after surveying the full PLR family with real hit counts → `docs/decisions/2026-09-15-expand-ruff-plr-rules.md`
+- 2026-09-15 [review] Ruff PLR-expansion review — clean, no findings → `docs/reviews/2026-09-15-expand-ruff-plr-rules.md`
+- 2026-09-15 [decision] Restructured CLAUDE.md (global + project) into personal skills, path-scoped `.claude/rules/`, and a docs-sync hook → `docs/decisions/2026-09-15-claude-md-restructure.md`
+- 2026-09-15 [plan] CLAUDE.md restructure design → `docs/plans/2026-09-15-claude-md-restructure.md`
+- 2026-09-15 [review] CLAUDE.md restructure review — found/fixed a doc inconsistency, a hook false-positive, a crash edge case, and a test-coverage gap → `docs/reviews/2026-09-15-claude-md-restructure.md`
+- 2026-09-15 [decision] Adopt ruff as this project's linter, changed-files-scoped for now → `docs/decisions/2026-09-15-adopt-ruff-linter.md`
+- 2026-09-15 [decision] Comment-audit initiative concluded (19/19 main-source, 9/25 tests/ files done; rest deferred to opportunistic per-touch cleanup) → `docs/decisions/2026-09-15-comment-audit-concluded.md`
+- 2026-09-15 [decision] Comment audit Round 6: pointer-fixed 4 large unit-test files → `docs/decisions/2026-09-15-comment-audit-round6.md`
+- 2026-09-15 [plan] Comment audit Round 6 design → `docs/plans/2026-09-15-comment-audit-round6.md`
+- 2026-09-15 [review] Comment audit Round 6 review (self-check + fresh subagent) → `docs/reviews/2026-09-15-comment-audit-round6.md`
+- 2026-09-15 [decision] Comment audit Round 5: pointer-fixed 5 small tests/ files → `docs/decisions/2026-09-15-comment-audit-round5.md`
+- 2026-09-15 [plan] Comment audit Round 5 design → `docs/plans/2026-09-15-comment-audit-round5.md`
+- 2026-09-15 [review] Comment audit Round 5 review (self-check + fresh subagent) → `docs/reviews/2026-09-15-comment-audit-round5.md`
+- 2026-09-15 [decision] Comment audit Round 4: pointer-fixed agent.py → `docs/decisions/2026-09-15-comment-audit-round4.md`
 - 2026-09-15 [plan] Comment audit Round 4 design → `docs/plans/2026-09-15-comment-audit-round4.md`
 - 2026-09-15 [review] Comment audit Round 4 review (self-check + fresh subagent) → `docs/reviews/2026-09-15-comment-audit-round4.md`
 - 2026-09-15 [decision] Comment audit Round 3: pointer-fixed xbrl_facts.py and numeric_utils.py → `docs/decisions/2026-09-15-comment-audit-round3.md`

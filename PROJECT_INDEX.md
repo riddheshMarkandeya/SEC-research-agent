@@ -37,8 +37,21 @@ not a duplicate of it). Last 5 10-K/10-Q filings each. To add a company:
 add a row to `companies.json`, then run `edgar_ingest.py` →
 `chunk_documents.py` → `index_chunks.py` for it.
 
+`## Recent` below holds one line per file in `docs/decisions/`,
+`docs/plans/`, and `docs/reviews/`, reverse-chronological, newest
+directly under the heading. `TEMPLATE.md` in each directory
+is excluded. Copy the relevant `TEMPLATE.md` when starting a new file in
+any of the three directories. **Capped at 50 entries**: when adding one
+pushes it past 50, cut the oldest entries back down to 40 and
+prepend them (verbatim, still reverse-chronological) to the top of
+`PROJECT_INDEX_ARCHIVE.md`.
+
 ## Recent
 
+- 2026-09-23 [review] Context-management hooks implementation review — non-UTF-8 crash and prose-backtick false-index fixed; pre-commit consolidation deferred → `docs/reviews/2026-09-23-context-management-hooks.md`
+- 2026-09-23 [decision] Context-management trial: plan-accept clear setting, two project-local CLAUDE.md rules, and a SessionStart docs-health audit (`scripts/check_docs_health.py`) closing the chained-commit BACKLOG gap → `docs/decisions/2026-09-23-context-management-hooks.md`
+- 2026-09-23 [review] Context-management hooks plan review — 4 must-fix; PostToolUse post-commit check dropped → `docs/reviews/2026-09-23-context-management-hooks-plan-review.md`
+- 2026-09-23 [plan] Context-management workflow design: plan-accept clear-context setting, two trial CLAUDE.md rules (self-contained plans saved first; stop-and-suggest-/compact before review), and a SessionStart docs-health audit hook → `docs/plans/2026-09-23-context-management-hooks.md`
 - 2026-09-23 [decision] Restored nvda-revenue-yoy-growth-q1fy27 to eval_questions.jsonl (48 questions; designed 2026-09-11, dropped after 2x budget-exhaustion, retried since the 2026-09-16 final-turn safety net targets that exact failure) and added a final_turn_forced log event to agent.py so the safety net's own triggering is directly queryable — 3 live Gemini runs all passed, one directly confirmed the safety net rescuing a real budget-exhaustion mid-run, but only 1/3 demonstrably exercised the target two-nearby-percentages citation risk (2/3 passed via a safer table-cell citation instead); BACKLOG.md item kept open with this evidence, not closed on a superficial 3/3 pass rate → `docs/decisions/2026-09-23-restore-nvda-yoy-stress-question.md`
 - 2026-09-22 [decision] Extended analyze_flakiness.py to classify eval questions as solid/flaky/regression/insufficient-data via a capped 20-run trailing window (streak/transition-based, not unbounded all-time pass rate), researched against real prior art (Google's bounded-window mitigation, academic flaky-test literature, Wilson score intervals, Meta's probabilistic flakiness score) — plan review caught 2 real algorithmic bugs pre-implementation, a 3-round post-implementation review caught 6 more (missing threshold validation, a hardcoded CI label, a cross-field validation gap); 766 tests passing, live-verified against all 127 historical reports → `docs/decisions/2026-09-22-eval-question-classification.md`
 - 2026-09-22 [review] Eval-question-classification review — 3 rounds (code-review, architecture/doc-hygiene, security, /simplify x2) fixed 10 total findings across validation gaps, a duplicated helper, a hardcoded lookup table, and doc-hygiene pointer violations; converged clean on round 3 → `docs/reviews/2026-09-22-eval-question-classification.md`
@@ -54,15 +67,6 @@ add a row to `companies.json`, then run `edgar_ingest.py` →
 - 2026-09-21 [decision] Implemented the ruff-complexity-refactor plan (11 complexity findings + 146 E501 violations resolved, zero mangled prompt/schema strings) — ruff check . and pyright both clean, full suite 707 passing, live baseline 39/47 (>=39/47 required, no regression vs. historical flakiness) → `docs/decisions/2026-09-21-ruff-complexity-refactor.md`
 - 2026-09-21 [review] Ruff-complexity-refactor code review — 8-angle independent review found and fixed 6 real issues (should-be-frozen dataclass, unrelated scope creep, unnecessary dict-passing in 3/4 dispatch helpers, a transposable-tuple return contract replaced with a named-field type, a doc-scope inaccuracy, a dropped comment's rationale); 2 findings explicitly deferred with reasoning → `docs/reviews/2026-09-21-ruff-complexity-refactor.md`
 - 2026-09-21 [plan] Ruff-complexity-refactor design (fix agent.py's 4 highest-complexity functions + 3 smaller ones via pure extraction; formalize the accepted E501 long-string exception via per-file-ignore/noqa instead of fixing it) — two independent review rounds, first caught a control-flow bug in the _run_agent_impl decomposition (would have broken the loop on ordinary turns), second confirmed the fix; Addendum documents the code-review round's fixes → `docs/plans/2026-09-21-ruff-complexity-refactor.md`
-
-One line per file in `docs/decisions/`, `docs/plans/`, and
-`docs/reviews/`, reverse-chronological. `TEMPLATE.md` in each directory
-is excluded. Copy the relevant `TEMPLATE.md` when starting a new file in
-any of the three directories. **Capped at 50 entries**: when adding one
-pushes this section past 50, cut the oldest entries back down to 40 and
-prepend them (verbatim, still reverse-chronological) to the top of
-`PROJECT_INDEX_ARCHIVE.md`.
-
 - 2026-09-19 [decision] Fixed a citation-header-in-quote grounding bug (a model's quote sometimes echoed _format_results_block's display-only header, dragging quote-source coverage below threshold) — strip the header via a shared _citation_header helper before grounding, while preserving the raw quote on any CitationWarning via a new _ClaimQuote(raw, grounding) pairing (a real regression against the prior session's own Fix B, caught by code review); live-confirmed 3/3 on the repro question → `docs/decisions/2026-09-19-citation-header-in-quote-fix.md`
 - 2026-09-19 [review] Citation-header-in-quote fix review — found a raw-quote-preservation regression and its resulting PLR0913 arg-count violation, both fixed; 3 other findings confirmed as the plan's already-accepted exact-match-only limitation → `docs/reviews/2026-09-19-citation-header-in-quote-fix.md`
 - 2026-09-19 [plan] Citation-header-in-quote fix design → `docs/plans/2026-09-19-citation-header-in-quote-fix.md`
@@ -85,18 +89,3 @@ prepend them (verbatim, still reverse-chronological) to the top of
 - 2026-09-15 [decision] Adopted pyright in basic mode (strict mode's real baseline was 4,655 errors, ~94% noise; basic was 154) — fixed all core-module findings live-verified → `docs/decisions/2026-09-15-adopt-pyright.md`
 - 2026-09-15 [decision] Evaluated pytest-archon/import-linter for architecture-boundary enforcement — rejected, doesn't fit this project's flat (no-package) module layout → `docs/decisions/2026-09-15-evaluate-architecture-linters.md`
 - 2026-09-15 [decision] Capped PROJECT_INDEX.md's session-read cost — split into a 50-entry-capped Recent section plus PROJECT_INDEX_ARCHIVE.md, generalizing the 2026-09-14 overhaul recursively → `docs/decisions/2026-09-15-cap-project-index-growth.md`
-- 2026-09-15 [decision] Revoked the comment→decision-file pointer convention (comments must now be self-contained, no file-path links) — amends the 2026-09-14 documentation-system overhaul and comment-audit rounds → `docs/decisions/2026-09-15-revoke-comment-pointer-convention.md`
-- 2026-09-15 [decision] Expanded ruff's PLR selection (added PLR0402, scoped PLR2004 away from tests/) after surveying the full PLR family with real hit counts → `docs/decisions/2026-09-15-expand-ruff-plr-rules.md`
-- 2026-09-15 [review] Ruff PLR-expansion review — clean, no findings → `docs/reviews/2026-09-15-expand-ruff-plr-rules.md`
-- 2026-09-15 [decision] Restructured CLAUDE.md (global + project) into personal skills, path-scoped `.claude/rules/`, and a docs-sync hook → `docs/decisions/2026-09-15-claude-md-restructure.md`
-- 2026-09-15 [plan] CLAUDE.md restructure design → `docs/plans/2026-09-15-claude-md-restructure.md`
-- 2026-09-15 [review] CLAUDE.md restructure review — found/fixed a doc inconsistency, a hook false-positive, a crash edge case, and a test-coverage gap → `docs/reviews/2026-09-15-claude-md-restructure.md`
-- 2026-09-15 [decision] Adopt ruff as this project's linter, changed-files-scoped for now → `docs/decisions/2026-09-15-adopt-ruff-linter.md`
-- 2026-09-15 [decision] Comment-audit initiative concluded (19/19 main-source, 9/25 tests/ files done; rest deferred to opportunistic per-touch cleanup) → `docs/decisions/2026-09-15-comment-audit-concluded.md`
-- 2026-09-15 [decision] Comment audit Round 6: pointer-fixed 4 large unit-test files → `docs/decisions/2026-09-15-comment-audit-round6.md`
-- 2026-09-15 [plan] Comment audit Round 6 design → `docs/plans/2026-09-15-comment-audit-round6.md`
-- 2026-09-15 [review] Comment audit Round 6 review (self-check + fresh subagent) → `docs/reviews/2026-09-15-comment-audit-round6.md`
-- 2026-09-15 [decision] Comment audit Round 5: pointer-fixed 5 small tests/ files → `docs/decisions/2026-09-15-comment-audit-round5.md`
-- 2026-09-15 [plan] Comment audit Round 5 design → `docs/plans/2026-09-15-comment-audit-round5.md`
-- 2026-09-15 [review] Comment audit Round 5 review (self-check + fresh subagent) → `docs/reviews/2026-09-15-comment-audit-round5.md`
-- 2026-09-15 [decision] Comment audit Round 4: pointer-fixed agent.py → `docs/decisions/2026-09-15-comment-audit-round4.md`
