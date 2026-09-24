@@ -26,13 +26,25 @@ Usage:
 """
 
 import argparse
+import importlib.metadata
+import importlib.util
 import json
+import os
 import re
+import subprocess
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
 from agent import run_agent, value_is_citation_verified
-from config import DEFAULT_BACKEND, GEMINI_MODEL_NAME, OLLAMA_MODEL_NAME
+from config import (
+    CHROMA_DIR,
+    DEFAULT_BACKEND,
+    EMBED_MODEL_NAME,
+    GEMINI_MODEL_NAME,
+    OLLAMA_MODEL_NAME,
+    RERANK_MODEL_NAME,
+)
 
 # OLLAMA_MODEL_NAME/GEMINI_MODEL_NAME record which specific model actually
 # answered/judged a report (see save_report()'s own docstring).
@@ -40,8 +52,9 @@ from config import DEFAULT_BACKEND, GEMINI_MODEL_NAME, OLLAMA_MODEL_NAME
 # that lets grade_judged() honor --judge-backend. See
 # docs/decisions/2026-09-10-citation-gate-measurement-instrumentation.md.
 from llm_backends import BACKENDS, complete
-from tracing import flush
+from tracing import flush, log_event
 from numeric_utils import extract_numbers, normalize
+from prompts import prompt_fingerprint
 from prompts.judge import JUDGE_SYSTEM_PROMPT, JUDGE_USER_TEMPLATE
 
 QUESTIONS_PATH = Path("./eval/eval_questions.jsonl")
@@ -123,20 +136,22 @@ def grade_judged(question: str, answer_text: str, criteria: str, backend: str = 
     backend) picks which one actually grades, at the same temperature=0.0
     (stricter than generation's 0.1) and no tool_schemas -- grading never
     calls tools. complete() reuses each backend's existing retry/backoff/
-    log_event machinery, so that guarantee holds here too. See
-    docs/decisions/2026-09-06-full-codebase-review.md and
-    docs/decisions/2026-09-10-citation-gate-measurement-instrumentation.md.
+    log_event machinery, so that guarantee holds here too.
 
     Injects the real wall-clock date (same datetime.now(timezone.utc)
     pattern as save_report()'s timestamp) so the judge isn't relying on
     its own stale training-cutoff sense of "now" -- without this, a judge
     model trained before a filing's real date reflexively calls a
-    correctly-cited current filing "hypothetical future data" (see
-    docs/decisions/2026-09-17-fix-judge-hypothetical-date-bug.md). This
+    correctly-cited current filing "hypothetical future data". This
     assumes grading happens contemporaneously with generation -- true for
     every call site today (grade_judged only ever runs synchronously
     inside run_eval, right after the answer is generated); would need
-    revisiting if a regrade-from-saved-report tool is ever added."""
+    revisiting if a regrade-from-saved-report tool is ever added.
+
+    Output whose first line isn't exactly PASS or FAIL is graded exactly
+    as before, but its reason is prefixed so reports show how often the
+    judge strays from the format -- and whether a lenient reading would
+    have graded it differently."""
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     user_prompt = JUDGE_USER_TEMPLATE.format(today=today, question=question, criteria=criteria, answer=answer_text)
     verdict_text = complete(backend, JUDGE_SYSTEM_PROMPT, user_prompt, temperature=0.0)
@@ -144,7 +159,34 @@ def grade_judged(question: str, answer_text: str, criteria: str, backend: str = 
     first_line = verdict_text.splitlines()[0].strip().upper() if verdict_text else ""
     passed = first_line.startswith("PASS")
     reason = verdict_text.splitlines()[1].strip() if len(verdict_text.splitlines()) > 1 else verdict_text
+    prefix = _nonstandard_output_prefix(verdict_text, first_line, passed)
+    if prefix is not None:
+        log_event("judge_nonstandard_output", prefix=prefix, passed=passed)
+        reason = f"{prefix} {reason}"
     return passed, reason
+
+
+def _lenient_verdict(verdict_text: str) -> bool | None:
+    """PASS or FAIL read as a whole word anywhere in the judge's output;
+    None when neither word appears, or both do."""
+    words = set(re.findall(r"\b(PASS|FAIL)\b", verdict_text.upper()))
+    if len(words) != 1:
+        return None
+    return words == {"PASS"}
+
+
+def _nonstandard_output_prefix(verdict_text: str, first_line: str, passed: bool) -> str | None:
+    """None for the expected format (a first line of exactly PASS or
+    FAIL). Otherwise a prefix quoting the first line; "lenient parse
+    disagrees" marks output a whole-word reading would have graded the
+    other way (e.g. "**PASS**", which the startswith check grades FAIL)."""
+    if first_line in ("PASS", "FAIL"):
+        return None
+    evidence = repr(first_line)[:60]
+    lenient = _lenient_verdict(verdict_text)
+    if lenient is not None and lenient != passed:
+        return f"[nonstandard judge output; lenient parse disagrees: {evidence}]"
+    return f"[nonstandard judge output: {evidence}]"
 
 
 # ---------------------------------------------------------------------------
@@ -400,7 +442,152 @@ def _model_name_for(backend: str) -> str:
     return OLLAMA_MODEL_NAME if backend == "ollama" else GEMINI_MODEL_NAME
 
 
-def save_report(results: list[dict], backend: str, judge_backend: str | None = None) -> Path:
+# ---------------------------------------------------------------------------
+# Provenance -- what a report needs to be tied to the exact code and prompt
+# version that produced it. Collected before any quota is spent, and never
+# allowed to raise: a provenance failure must not cost the eval run.
+# ---------------------------------------------------------------------------
+REPO_ROOT = Path(__file__).resolve().parent
+# Uncommitted edits to these make a report's git SHA misleading: code,
+# prompt text and its snapshot, the company list rendered into the
+# prompt, and the questions. `*.py` matches at any depth, so a tests-only
+# edit counts as dirty too.
+PROVENANCE_PATHSPECS = ("*.py", "prompts", "companies.json", "eval/eval_questions.jsonl")
+SNAPSHOT_TEST = "tests/test_model_input_snapshot.py"
+
+
+class GitError(Exception):
+    """A git command exited non-zero."""
+
+
+def _git(*args: str) -> str:
+    # Binary mode plus an explicit UTF-8 decode: text mode would decode
+    # with the Windows code page and garble non-ASCII paths.
+    result = subprocess.run(["git", *args], capture_output=True, check=False, cwd=REPO_ROOT)
+    if result.returncode != 0:
+        stderr = result.stderr.decode("utf-8", errors="replace").strip()
+        raise GitError(f"git {' '.join(args)} failed: {stderr}")
+    return result.stdout.decode("utf-8")
+
+
+def _porcelain_paths(output: str) -> set[str]:
+    """Paths from `git status --porcelain -z` output. A rename or copy
+    entry is followed by a separate entry holding the original path,
+    which is skipped."""
+    paths = set()
+    entries = iter(output.split("\0"))
+    for entry in entries:
+        if not entry:
+            continue
+        paths.add(entry[3:])
+        if "R" in entry[:2] or "C" in entry[:2]:
+            next(entries, None)
+    return paths
+
+
+def _git_state() -> dict:
+    """The HEAD SHA and any uncommitted changes to PROVENANCE_PATHSPECS.
+    On failure: git_sha "unknown", logged, never raised."""
+    status = ("--no-optional-locks", "status", "--porcelain", "-z")
+    try:
+        sha = _git("rev-parse", "--short", "HEAD").strip()
+        tracked = _git(*status, "--untracked-files=no", "--", *PROVENANCE_PATHSPECS)
+        # A new prompts/ file that code imports but nobody `git add`ed
+        # would otherwise leave the tree looking clean while the SHA
+        # can't reproduce the run.
+        unadded = _git(*status, "--untracked-files=all", "--", "prompts")
+    except (OSError, GitError) as e:
+        log_event("eval_provenance_git_failed", error=f"{type(e).__name__}: {e}")
+        return {"git_sha": "unknown", "git_dirty": None, "dirty_files": []}
+    dirty = sorted(_porcelain_paths(tracked) | _porcelain_paths(unadded))
+    return {"git_sha": sha, "git_dirty": bool(dirty), "dirty_files": dirty}
+
+
+def _run_snapshot_check() -> int:
+    """Runs the model-input snapshot comparison in a subprocess, keeping
+    its fake backend and monkeypatching out of this process, and returns
+    pytest's exit code. UPDATE_SNAPSHOT is removed so the check can only
+    compare, never rewrite the committed file."""
+    env = {k: v for k, v in os.environ.items() if k != "UPDATE_SNAPSHOT"}
+    command = [sys.executable, "-m", "pytest", SNAPSHOT_TEST, "-q", "-p", "no:cacheprovider"]
+    command += ["-k", "matches_committed_snapshot"]
+    return subprocess.run(command, capture_output=True, check=False, cwd=REPO_ROOT, env=env).returncode
+
+
+def _snapshot_verified() -> bool | None:
+    """Whether prompts/model_input_snapshot.json matches what the current
+    code sends a model. The fingerprint hashes that committed file, so a
+    stale one would mislabel this run. True or False when the check ran;
+    None when it couldn't (pytest missing, or the run itself errored)."""
+    if importlib.util.find_spec("pytest") is None:
+        return None
+    try:
+        returncode = _run_snapshot_check()
+    except OSError as e:
+        log_event("eval_provenance_snapshot_check_failed", error=f"{type(e).__name__}: {e}")
+        return None
+    if returncode in (0, 1):
+        return returncode == 0
+    log_event("eval_provenance_snapshot_check_failed", returncode=returncode)
+    return None
+
+
+def _run_config() -> dict:
+    """Settings that change what the model sees but that git can't
+    record: .env values (untracked) and the versions of the libraries
+    that build its requests."""
+    versions = {}
+    for key, distribution in (("google_genai", "google-genai"), ("mcp", "mcp")):
+        try:
+            versions[key] = importlib.metadata.version(distribution)
+        except importlib.metadata.PackageNotFoundError:
+            versions[key] = None
+    return {
+        "gemini_model": GEMINI_MODEL_NAME,
+        "embed_model": EMBED_MODEL_NAME,
+        "rerank_model": RERANK_MODEL_NAME,
+        "chroma_dir": CHROMA_DIR,
+        **versions,
+    }
+
+
+def _collect_provenance() -> dict:
+    """{git_sha, git_dirty, dirty_files, snapshot_verified, config,
+    prompts}. Never raises: each part degrades to a marker value."""
+    provenance = {**_git_state(), "snapshot_verified": _snapshot_verified(), "config": _run_config()}
+    try:
+        provenance["prompts"] = prompt_fingerprint()
+    except Exception as e:
+        # Broad on purpose: whatever breaks the fingerprint (a missing or
+        # malformed snapshot, a new non-JSON constant), the run should go
+        # ahead with the failure recorded rather than stop before it starts.
+        log_event("eval_provenance_fingerprint_failed", error=f"{type(e).__name__}: {e}")
+        provenance["prompts"] = "error"
+    return provenance
+
+
+def _provenance_warnings(provenance: dict) -> list[str]:
+    """One line per reason this run's report can't be trusted to describe
+    the committed code and prompts."""
+    warnings = []
+    if provenance.get("git_sha") == "unknown":
+        warnings.append("git state unknown, so the report records no commit")
+    if provenance.get("git_dirty"):
+        files = ", ".join(provenance.get("dirty_files", []))
+        warnings.append(f"uncommitted changes, so the git SHA doesn't describe this run: {files}")
+    if provenance.get("snapshot_verified") is not True:
+        warnings.append(
+            "prompts/model_input_snapshot.json isn't verified against the current code "
+            f"(snapshot_verified={provenance.get('snapshot_verified')}), so the prompt fingerprint may be wrong"
+        )
+    if provenance.get("prompts") == "error":
+        warnings.append("the prompt fingerprint couldn't be computed")
+    return warnings
+
+
+def save_report(
+    results: list[dict], backend: str, judge_backend: str | None = None, provenance: dict | None = None
+) -> Path:
     """`backend` ("ollama"/"gemini") alone doesn't say which specific
     model answered -- OLLAMA_MODEL_NAME/GEMINI_MODEL_NAME are both
     configurable via .env and can change over time, which would make an
@@ -408,22 +595,22 @@ def save_report(results: list[dict], backend: str, judge_backend: str | None = N
     records whichever one actually ran; `judge_model` records whichever
     backend actually judged -- `judge_backend` defaults to `backend`
     itself, same reasoning as run_eval()'s own default (see that
-    function's docstring)."""
+    function's docstring). `provenance` (see _collect_provenance()) is
+    written only when given."""
     judge_backend = judge_backend or backend
     RESULTS_DIR.mkdir(exist_ok=True)
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     out_path = RESULTS_DIR / f"{timestamp}.json"
+    report: dict = {
+        "backend": backend,
+        "answer_model": _model_name_for(backend),
+        "judge_model": _model_name_for(judge_backend),
+    }
+    if provenance is not None:
+        report["provenance"] = provenance
+    report["results"] = results
     with out_path.open("w", encoding="utf-8") as f:
-        json.dump(
-            {
-                "backend": backend,
-                "answer_model": _model_name_for(backend),
-                "judge_model": _model_name_for(judge_backend),
-                "results": results,
-            },
-            f,
-            indent=2,
-        )
+        json.dump(report, f, indent=2)
     return out_path
 
 
@@ -451,6 +638,11 @@ def main():
         help="which LLM backend grades judged-type questions (default: same as --backend)",
     )
     args = parser.parse_args()
+    # Before run_eval, so it records the code as it was when the run
+    # started and costs nothing if it fails.
+    provenance = _collect_provenance()
+    for warning in _provenance_warnings(provenance):
+        print(f"WARNING: {warning}")
 
     ids = [i.strip() for i in args.ids.split(",")] if args.ids else None
     results = run_eval(
@@ -461,7 +653,7 @@ def main():
         judge_backend=args.judge_backend,
     )
     print_summary(results)
-    out_path = save_report(results, backend=args.backend, judge_backend=args.judge_backend)
+    out_path = save_report(results, backend=args.backend, judge_backend=args.judge_backend, provenance=provenance)
     print(f"\nFull report saved to {out_path}")
     # A print, not an import -- analyze_citation_gate.py stays a
     # standalone reader of the report file, not coupled to this module.

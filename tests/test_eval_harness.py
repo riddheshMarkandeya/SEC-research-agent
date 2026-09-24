@@ -16,6 +16,8 @@ import re
 import sys
 from pathlib import Path
 
+import pytest
+
 import eval_harness
 from agent import AgentResult
 from eval_harness import (
@@ -652,18 +654,279 @@ def test_main_parses_ids_and_orchestrates_run_eval_then_save_report(monkeypatch,
         calls["run_eval_args"] = (ids, include_skipped, backend, judge_backend)
         return [{"id": "q1", "type": "numeric", "passed": True, "has_citation": True, "citation_warnings": []}]
 
-    def fake_save_report(results, backend, judge_backend):
+    def fake_save_report(results, backend, judge_backend, provenance):
         calls["save_report_args"] = (results, backend, judge_backend)
+        calls["provenance"] = provenance
         return Path("./eval/eval_results/fake.json")
 
     monkeypatch.setattr(eval_harness, "run_eval", fake_run_eval)
     monkeypatch.setattr(eval_harness, "save_report", fake_save_report)
+    monkeypatch.setattr(eval_harness, "_collect_provenance", lambda: {"git_sha": "abc1234"})
     monkeypatch.setattr(sys, "argv", ["eval_harness.py", "--ids", "q1, q2", "--backend", "gemini"])
 
     eval_harness.main()
 
     assert calls["run_eval_args"] == (["q1", "q2"], False, "gemini", None)
     assert calls["save_report_args"][1:] == ("gemini", None)
+    assert calls["provenance"] == {"git_sha": "abc1234"}
     out = capsys.readouterr().out
     assert "Full report saved to" in out
     assert "Citation-gate FP/FN breakdown: python analyze_citation_gate.py" in out
+
+
+# ---------------------------------------------------------------------------
+# Provenance -- ties a report to the code and prompt version that produced
+# it. Collected before any quota is spent, and never allowed to raise: a
+# provenance failure must not cost a whole eval run.
+# ---------------------------------------------------------------------------
+def _fake_git(outputs: dict):
+    """A stand-in for eval_harness._git: returns outputs[args], or raises
+    the stored exception."""
+
+    def fake(*args):
+        result = outputs[args]
+        if isinstance(result, Exception):
+            raise result
+        return result
+
+    return fake
+
+
+_REV_PARSE = ("rev-parse", "--short", "HEAD")
+_STATUS_TRACKED = (
+    "--no-optional-locks",
+    "status",
+    "--porcelain",
+    "-z",
+    "--untracked-files=no",
+    "--",
+    *eval_harness.PROVENANCE_PATHSPECS,
+)
+_STATUS_UNTRACKED_PROMPTS = (
+    "--no-optional-locks",
+    "status",
+    "--porcelain",
+    "-z",
+    "--untracked-files=all",
+    "--",
+    "prompts",
+)
+
+
+def test_git_state_clean_tree(monkeypatch):
+    monkeypatch.setattr(
+        eval_harness,
+        "_git",
+        _fake_git({_REV_PARSE: "abc1234\n", _STATUS_TRACKED: "", _STATUS_UNTRACKED_PROMPTS: ""}),
+    )
+    assert eval_harness._git_state() == {"git_sha": "abc1234", "git_dirty": False, "dirty_files": []}
+
+
+def test_git_state_lists_modified_renamed_and_unadded_prompt_files(monkeypatch):
+    # -z output: NUL-separated "XY path" entries; a rename carries its
+    # original path as a separate following entry.
+    rename = "R  prompts/new.py\0prompts/old.py\0"
+    monkeypatch.setattr(
+        eval_harness,
+        "_git",
+        _fake_git(
+            {
+                _REV_PARSE: "abc1234\n",
+                _STATUS_TRACKED: " M agent.py\0" + rename,
+                _STATUS_UNTRACKED_PROMPTS: "?? prompts/extra.py\0" + rename,
+            }
+        ),
+    )
+    state = eval_harness._git_state()
+    assert state["git_dirty"] is True
+    assert state["dirty_files"] == ["agent.py", "prompts/extra.py", "prompts/new.py"]
+
+
+def test_git_state_failure_records_unknown_and_logs_without_raising(monkeypatch):
+    events = []
+    monkeypatch.setattr(eval_harness, "_git", _fake_git({_REV_PARSE: OSError("no git")}))
+    monkeypatch.setattr(eval_harness, "log_event", lambda category, **fields: events.append((category, fields)))
+    assert eval_harness._git_state() == {"git_sha": "unknown", "git_dirty": None, "dirty_files": []}
+    assert events[0][0] == "eval_provenance_git_failed"
+
+
+class _CompletedProcess:
+    def __init__(self, returncode, stdout=b"", stderr=b""):
+        self.returncode, self.stdout, self.stderr = returncode, stdout, stderr
+
+
+def test_git_helper_decodes_stdout_as_utf8(monkeypatch):
+    # Binary mode plus an explicit decode: a non-ASCII path must survive
+    # regardless of the Windows code page.
+    calls = []
+
+    def fake_run(command, **kwargs):
+        calls.append((command, kwargs))
+        return _CompletedProcess(0, stdout=" M prompts/caf\u00e9.py\0".encode("utf-8"))
+
+    monkeypatch.setattr(eval_harness.subprocess, "run", fake_run)
+    assert eval_harness._git("status") == " M prompts/caf\u00e9.py\0"
+    command, kwargs = calls[0]
+    assert command == ["git", "status"]
+    assert kwargs["cwd"] == eval_harness.REPO_ROOT
+    assert "text" not in kwargs
+
+
+def test_run_snapshot_check_compares_only_and_never_rewrites(monkeypatch):
+    # With UPDATE_SNAPSHOT inherited, the check would overwrite the
+    # committed snapshot and then trivially "verify" it.
+    calls = []
+
+    def fake_run(command, **kwargs):
+        calls.append((command, kwargs))
+        return _CompletedProcess(1)
+
+    monkeypatch.setenv("UPDATE_SNAPSHOT", "1")
+    monkeypatch.setattr(eval_harness.subprocess, "run", fake_run)
+    assert eval_harness._run_snapshot_check() == 1
+    command, kwargs = calls[0]
+    assert eval_harness.SNAPSHOT_TEST in command
+    assert "UPDATE_SNAPSHOT" not in kwargs["env"]
+    assert kwargs["cwd"] == eval_harness.REPO_ROOT
+
+
+def test_git_helper_raises_on_a_nonzero_exit(monkeypatch):
+    class Result:
+        returncode = 128
+        stdout = b""
+        stderr = "fatal: not a git repository".encode("utf-8")
+
+    monkeypatch.setattr(eval_harness.subprocess, "run", lambda *a, **k: Result())
+    with pytest.raises(eval_harness.GitError, match="not a git repository"):
+        eval_harness._git("rev-parse", "HEAD")
+
+
+@pytest.mark.parametrize(("returncode", "expected"), [(0, True), (1, False), (2, None), (5, None)])
+def test_snapshot_verified_maps_pytest_exit_codes(monkeypatch, returncode, expected):
+    # 0: the snapshot matches; 1: a test failed, so the snapshot is stale;
+    # anything else means the check itself couldn't run, which is not
+    # the same as the snapshot being wrong.
+    monkeypatch.setattr(eval_harness, "_run_snapshot_check", lambda: returncode)
+    assert eval_harness._snapshot_verified() is expected
+
+
+def test_snapshot_verified_is_none_when_pytest_is_not_installed(monkeypatch):
+    monkeypatch.setattr(eval_harness.importlib.util, "find_spec", lambda name: None)
+    monkeypatch.setattr(eval_harness, "_run_snapshot_check", lambda: pytest.fail("should not run"))
+    assert eval_harness._snapshot_verified() is None
+
+
+def test_snapshot_verified_is_none_when_the_subprocess_cannot_start(monkeypatch):
+    def broken():
+        raise OSError("cannot start")
+
+    monkeypatch.setattr(eval_harness, "_run_snapshot_check", broken)
+    assert eval_harness._snapshot_verified() is None
+
+
+def test_run_config_records_model_settings_and_library_versions():
+    config = eval_harness._run_config()
+    assert set(config) == {"gemini_model", "embed_model", "rerank_model", "chroma_dir", "google_genai", "mcp"}
+    assert config["gemini_model"] == eval_harness.GEMINI_MODEL_NAME
+    assert config["google_genai"]
+
+
+def test_run_config_records_none_for_a_missing_library(monkeypatch):
+    def missing(name):
+        raise eval_harness.importlib.metadata.PackageNotFoundError(name)
+
+    monkeypatch.setattr(eval_harness.importlib.metadata, "version", missing)
+    config = eval_harness._run_config()
+    assert config["google_genai"] is None and config["mcp"] is None
+
+
+def _stub_provenance_parts(monkeypatch):
+    monkeypatch.setattr(
+        eval_harness, "_git_state", lambda: {"git_sha": "abc1234", "git_dirty": False, "dirty_files": []}
+    )
+    monkeypatch.setattr(eval_harness, "_snapshot_verified", lambda: True)
+    monkeypatch.setattr(eval_harness, "_run_config", lambda: {"gemini_model": "m"})
+
+
+def test_collect_provenance_combines_every_part(monkeypatch):
+    _stub_provenance_parts(monkeypatch)
+    monkeypatch.setattr(eval_harness, "prompt_fingerprint", lambda: {"agent": "fp"})
+    assert eval_harness._collect_provenance() == {
+        "git_sha": "abc1234",
+        "git_dirty": False,
+        "dirty_files": [],
+        "snapshot_verified": True,
+        "config": {"gemini_model": "m"},
+        "prompts": {"agent": "fp"},
+    }
+
+
+def test_collect_provenance_records_a_fingerprint_failure_without_raising(monkeypatch):
+    events = []
+
+    def broken_fingerprint():
+        raise ValueError("bad snapshot")
+
+    _stub_provenance_parts(monkeypatch)
+    monkeypatch.setattr(eval_harness, "prompt_fingerprint", broken_fingerprint)
+    monkeypatch.setattr(eval_harness, "log_event", lambda category, **fields: events.append((category, fields)))
+    assert eval_harness._collect_provenance()["prompts"] == "error"
+    assert events[0][0] == "eval_provenance_fingerprint_failed"
+
+
+def test_provenance_warnings_name_a_dirty_tree_and_an_unverified_snapshot():
+    clean = {"git_dirty": False, "snapshot_verified": True, "prompts": {"agent": "fp"}}
+    assert eval_harness._provenance_warnings(clean) == []
+    warnings = eval_harness._provenance_warnings(
+        {"git_dirty": True, "dirty_files": ["agent.py"], "snapshot_verified": False, "prompts": "error"}
+    )
+    assert len(warnings) == 3
+    assert any("agent.py" in w for w in warnings)
+    unknown = {"git_sha": "unknown", "git_dirty": None, "snapshot_verified": True, "prompts": {"agent": "fp"}}
+    assert eval_harness._provenance_warnings(unknown) == ["git state unknown, so the report records no commit"]
+
+
+def test_save_report_writes_provenance_when_given(monkeypatch, tmp_path):
+    monkeypatch.setattr(eval_harness, "RESULTS_DIR", tmp_path)
+    out_path = save_report([], backend="gemini", provenance={"git_sha": "abc1234"})
+    with out_path.open(encoding="utf-8") as f:
+        assert json.load(f)["provenance"] == {"git_sha": "abc1234"}
+
+
+def test_save_report_omits_provenance_when_not_given(monkeypatch, tmp_path):
+    monkeypatch.setattr(eval_harness, "RESULTS_DIR", tmp_path)
+    with save_report([], backend="gemini").open(encoding="utf-8") as f:
+        assert "provenance" not in json.load(f)
+
+
+# ---------------------------------------------------------------------------
+# Judge nonstandard-output flag -- evidence for whether the judge's verdict
+# format needs changing. `passed` is computed exactly as before; only the
+# reason gains a prefix, and "disagrees" marks the one case that matters:
+# a lenient reading of the output would have graded it differently.
+# ---------------------------------------------------------------------------
+@pytest.mark.parametrize(
+    ("verdict", "passed", "prefix"),
+    [
+        ("PASS\nfine.", True, None),
+        ("fail\nmissing.", False, None),
+        ("PASS.\nfine.", True, "[nonstandard judge output: 'PASS.']"),
+        ("**PASS**\nfine.", False, "[nonstandard judge output; lenient parse disagrees: '**PASS**']"),
+        ("PASSED\nfine.", True, "[nonstandard judge output: 'PASSED']"),
+        ("PASS/FAIL: FAIL\nhmm.", True, "[nonstandard judge output: 'PASS/FAIL: FAIL']"),
+        ("", False, "[nonstandard judge output: '']"),
+    ],
+)
+def test_grade_judged_flags_nonstandard_output_without_changing_the_verdict(monkeypatch, verdict, passed, prefix):
+    events = []
+    monkeypatch.setattr("eval_harness.complete", lambda backend, system_prompt, user_prompt, temperature=0.0: verdict)
+    monkeypatch.setattr(eval_harness, "log_event", lambda category, **fields: events.append((category, fields)))
+    got_passed, reason = grade_judged("Q?", "some answer", "some criteria")
+    assert got_passed is passed
+    if prefix is None:
+        assert not reason.startswith("[nonstandard")
+        assert events == []
+    else:
+        assert reason.startswith(prefix)
+        assert events[0][0] == "judge_nonstandard_output"
+
