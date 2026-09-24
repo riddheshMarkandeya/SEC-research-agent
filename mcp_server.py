@@ -32,6 +32,7 @@ from agent import (
 from config import MCP_AUTH_TOKEN, MCP_RATE_LIMIT_REQUESTS, MCP_RATE_LIMIT_WINDOW_SECONDS
 from edgar_ingest import get_filing_url
 from prompts.agent_tools import COMPARE_TOOL_SCHEMA, FACT_TOOL_SCHEMA, SEARCH_TOOL_SCHEMA
+from prompts.mcp import COMPARISON_NOT_AVAILABLE_ERROR, FACT_NOT_AVAILABLE_ERROR, UNKNOWN_TOOL_TEMPLATE
 from retrieval import hybrid_search
 from tracing import flush, log_event, traced_span
 
@@ -137,7 +138,7 @@ def _get_financial_fact(args: dict) -> dict:
         fact = call_get_financial_fact(args)
         if fact is None:
             span.update(output={"found": False})
-            return {"error": "not available for this company/metric/period"}
+            return {"error": FACT_NOT_AVAILABLE_ERROR}
         span.update(output={"found": True, "value": fact.get("value")})
         return {"value": fact["value"], "unit": fact["unit"], "source": _fact_source(args["ticker"], fact)}
 
@@ -147,7 +148,7 @@ def _compare_financial_metric(args: dict) -> dict:
         data = call_compare_financial_metric(args)
         if not data:
             span.update(output={"found": False})
-            return {"error": "not available for this metric/period"}
+            return {"error": COMPARISON_NOT_AVAILABLE_ERROR}
         span.update(output={"found": True, "companies": sorted(data)})
         return {
             ticker: {"value": fact["value"], "unit": fact["unit"], "source": _fact_source(ticker, fact)}
@@ -181,7 +182,7 @@ async def _handle_call_tool(ctx, params: types.CallToolRequestParams) -> types.C
     handler = _TOOL_HANDLERS.get(params.name)
     if handler is None:
         return types.CallToolResult(
-            content=[types.TextContent(type="text", text=f"Unknown tool: {params.name!r}")],
+            content=[types.TextContent(type="text", text=UNKNOWN_TOOL_TEMPLATE.format(name=params.name))],
             is_error=True,
         )
     result = handler(params.arguments or {})

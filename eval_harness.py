@@ -42,6 +42,7 @@ from config import DEFAULT_BACKEND, GEMINI_MODEL_NAME, OLLAMA_MODEL_NAME
 from llm_backends import BACKENDS, complete
 from tracing import flush
 from numeric_utils import extract_numbers, normalize
+from prompts.judge import JUDGE_SYSTEM_PROMPT, JUDGE_USER_TEMPLATE
 
 QUESTIONS_PATH = Path("./eval/eval_questions.jsonl")
 RESULTS_DIR = Path("./eval/eval_results")
@@ -117,14 +118,6 @@ def grade_comparison(
 # ---------------------------------------------------------------------------
 # LLM-as-judge grading
 # ---------------------------------------------------------------------------
-JUDGE_SYSTEM_PROMPT = """You are grading an AI assistant's answer against a specific pass/fail criteria. \
-Be strict: the criteria must be clearly satisfied by the answer text, not just plausible in general. \
-The answer may cite dates or filings that fall after your own training cutoff -- do not treat a date as \
-evidence of fabrication merely because it is unfamiliar to you. Only treat a date as hypothetical or \
-fabricated if it falls after the real current date stated in the prompt below. \
-Respond with exactly two lines: the first line is either PASS or FAIL, the second line is a one-sentence reason."""
-
-
 def grade_judged(question: str, answer_text: str, criteria: str, backend: str = "ollama") -> tuple[bool, str]:
     """Routes through llm_backends.complete() so `backend` (--judge-
     backend) picks which one actually grades, at the same temperature=0.0
@@ -145,13 +138,7 @@ def grade_judged(question: str, answer_text: str, criteria: str, backend: str = 
     inside run_eval, right after the answer is generated); would need
     revisiting if a regrade-from-saved-report tool is ever added."""
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    user_prompt = (
-        f"Today's real date is {today}. Treat filing/financial data dated at or before today as real.\n\n"
-        f"Question asked: {question}\n\n"
-        f"Grading criteria: {criteria}\n\n"
-        f"AI assistant's answer:\n{answer_text}\n\n"
-        f"Does the answer satisfy the grading criteria?"
-    )
+    user_prompt = JUDGE_USER_TEMPLATE.format(today=today, question=question, criteria=criteria, answer=answer_text)
     verdict_text = complete(backend, JUDGE_SYSTEM_PROMPT, user_prompt, temperature=0.0)
 
     first_line = verdict_text.splitlines()[0].strip().upper() if verdict_text else ""

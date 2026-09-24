@@ -50,7 +50,8 @@ own history, not a speculative "this file feels important" argument:
   expression, a Unicode minus sign) no unit test had anticipated — the
   clearest existing evidence in this project that diff size doesn't
   predict risk here.
-- **`eval_harness.py`** — `grade_judged`/`JUDGE_SYSTEM_PROMPT`. A
+- **`eval_harness.py`** — `grade_judged`, and the judge prompts it
+  sends (`prompts/judge.py`). A
   different flavor of blast radius than the other entries: this code
   doesn't affect the agent's answers, it decides what counts as
   PASS/FAIL across the whole eval suite, so a wrong change here corrupts
