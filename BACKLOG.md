@@ -49,7 +49,6 @@ reference:
 
 Design: `docs/plans/2026-09-24-prompt-audit-roadmap.md` (read its "How this roadmap is executed" section first). Findings: `docs/reviews/2026-09-24-prompt-audit.md`. Work packages run strictly in order. Each one is planned in its own plan-mode session that points at its roadmap section rather than restating it.
 
-- [ ] **[refactor, Med, Substantial]** WP1: move all model-facing text (agent system prompt, tool schemas, tool-result/retry/warning messages, judge prompts, MCP strings) into a `prompts/` package (5 modules), proven unchanged by before/after hashes and golden rendered output. No eval quota. Roadmap: Step 1, commits 1a–1c.
 - [ ] **[feature, Med, Standard]** WP2: per-surface prompt fingerprint, eval-report provenance (git SHA + fingerprint), `compare_prompt_versions.py`, judge nonstandard-output flag, Gemini model pin, and a 13-question panel baseline (3 runs). Depends on WP1. Roadmap: Step 1 commit 1d, Step 2.
 - [ ] **[bug, Med, Standard]** WP3: Group A wording fixes, audit findings 1, 2, 5, 6 (MCP-side `search_filings` description, agent-side description, calculate "via compare_financial_metric", "exists yet"). Depends on WP2. Roadmap: Step 3.
 - [ ] **[design, Med, Standard]** WP4: resolve the rule 3 / rule 9 contradiction in SYSTEM_PROMPT (finding 3). Depends on WP3. Roadmap: Step 4.
@@ -57,6 +56,8 @@ Design: `docs/plans/2026-09-24-prompt-audit-roadmap.md` (read its "How this road
 - [ ] **[bug, Med, Standard]** WP6: no-data message renders "None FYNone" (finding 11), and the "not available"/"Returns null" descriptions don't match what either surface actually returns (finding 12). Depends on WP5. Roadmap: Step 6.
 - [ ] **[bug, Med, Standard]** WP7: accept digit-only `fiscal_year` strings (138 live silent rejections), and fix SYSTEM_PROMPT's "rejected outright" wording (finding 13). Depends on WP6. Roadmap: Step 7.
 - [ ] **[misc, Med, Standard]** WP8: final full 48-question run compared against the last two full runs, unpin the Gemini model, write the summary decision file, and file the deferred items (finding 7 judge change, notes 8–10, Step 7 follow-ups). Depends on WP7. Roadmap: Steps 8–9.
+- [ ] **[bug, Low, Standard]** A calculate result's expression pastes each operand's unit in as-is, so a `"raw"` operand (a plain ratio or count) reaches the model as e.g. "1.04 raw". The result value itself already omits "raw" via `agent._with_unit`. Found in the WP1 code review (`docs/reviews/2026-09-24-wp1-prompts-package.md`); left unchanged because WP1 had to be byte-identical. It changes model-visible text, so it goes through the roadmap's panel-screened process: fit it in after WP2.
+- [ ] **[refactor, Low, Trivial]** Duplicated enum values in `prompts/agent_tools.py`, all copied as-is from `agent.py` by WP1: the period list `["FY", "Q1", "Q2", "Q3", "Q4"]` twice, `list(COMPANIES.keys())` three times, and `CLAIM_UNITS` restating `numeric_utils.UNIT_MULTIPLIERS`'s keys by hand. Hoist each into one constant; the schemas' bytes must stay identical (check with the WP2 fingerprint). Found in the WP1 code review.
 
 ### From the 2026-09-23 context-management hooks change
 
