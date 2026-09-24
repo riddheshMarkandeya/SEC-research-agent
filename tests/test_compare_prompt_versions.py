@@ -80,6 +80,8 @@ def test_legacy_list_reports_load_as_unstamped(tmp_path):
         (_provenance(snapshot_verified=False), True),
         (_provenance(snapshot_verified=None), True),
         (_provenance(sha="unknown"), True),
+        ({k: v for k, v in _provenance().items() if k != "git_sha"}, True),
+        (_provenance(sha=""), True),
         (None, False),
     ],
 )
@@ -373,6 +375,7 @@ def test_main_with_one_flag_compares_against_a_different_fingerprint(tmp_path, c
     assert "two different fingerprints" in capsys.readouterr().out
     # Nothing is older than fpA or newer than fpC to pair with.
     assert cpv.main([*paths, "--candidate", "fpA"]) == 2
+    assert "base: none older" in capsys.readouterr().out
     assert cpv.main([*paths, "--base", "fpC"]) == 2
 
 

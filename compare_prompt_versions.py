@@ -16,8 +16,9 @@ script implements the decision rule used for every prompt change:
    mode would pool the reverted runs with the original B.
 
 Rows from a report's first infra error onward are dropped (a quota error
-or crash, not a graded answer). Reports with uncommitted changes or an
-unverified model-input snapshot are excluded unless --include-dirty.
+or crash, not a graded answer). Reports with no known commit, uncommitted
+changes or an unverified model-input snapshot are excluded unless
+--include-dirty.
 
 Usage:
     python compare_prompt_versions.py
@@ -147,8 +148,10 @@ def is_excluded(report: Report, include_dirty: bool) -> bool:
     if include_dirty or report.provenance is None:
         return False
     provenance = report.provenance
+    sha = provenance.get("git_sha")
     return (
-        provenance.get("git_sha") == "unknown"
+        not sha
+        or sha == "unknown"
         or provenance.get("git_dirty") is not False
         or provenance.get("snapshot_verified") is not True
     )
@@ -414,7 +417,10 @@ def _by_fingerprint(args: argparse.Namespace) -> int:
         return 0
     base_fp, candidate_fp = default_pair(groups, args.base, args.candidate)
     if base_fp is None or candidate_fp is None or base_fp == candidate_fp:
-        print("A comparison needs two different fingerprints.")
+        print(
+            "A comparison needs two different fingerprints "
+            f"(base: {base_fp or 'none older'}, candidate: {candidate_fp or 'none newer'})."
+        )
         return 2
     comparison = compare(groups[base_fp], groups[candidate_fp])
     print(format_comparison(comparison, groups[base_fp], groups[candidate_fp]))
