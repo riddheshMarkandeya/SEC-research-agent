@@ -1,0 +1,45 @@
+{
+  "backend": "gemini",
+  "answer_model": "gemini-3.5-flash-lite",
+  "judge_model": "gemini-3.5-flash-lite",
+  "provenance": {
+    "git_sha": "d204b5b",
+    "git_dirty": false,
+    "dirty_files": [],
+    "snapshot_verified": true,
+    "config": {
+      "gemini_model": "gemini-3.5-flash-lite",
+      "embed_model": "BAAI/bge-small-en-v1.5",
+      "rerank_model": "cross-encoder/ms-marco-MiniLM-L-6-v2",
+      "chroma_dir": "./chroma_db",
+      "google_genai": "2.18.1",
+      "mcp": "2.1.1"
+    },
+    "prompts": {
+      "agent_system": "03649381869f",
+      "agent_tools": "7bec1d85d9ce",
+      "agent_messages": "f7c7eae639bd",
+      "judge": "2ee29f234c91",
+      "mcp": "3f183b31ab70",
+      "agent": "d2131f5d5aae"
+    }
+  },
+  "results": [
+    {
+      "id": "nvda-rd-expense-q4fy26-refusal",
+      "ticker": "NVDA",
+      "question": "What were NVIDIA's research and development expenses for the fourth quarter of fiscal year 2026?",
+      "type": "judged",
+      "passed": true,
+      "detail": "The answer correctly states that NVIDIA's fourth-quarter research and development expenses are not provided as a standalone figure in the filings and refrains from fabricating or misrepresenting the data.",
+      "has_citation": false,
+      "citation_warnings": [],
+      "answer": "NVIDIA does not report discrete quarterly financial statements for the fourth quarter of its fiscal year (as Q4 figures are only filed as part of the full-year 10-K and are not broken out as a standalone quarterly XBRL reporting period), so a distinct Q4 research and development expense figure is not independently disclosed.",
+      "n_chunks_retrieved": 5,
+      "withheld_answer": null,
+      "gate_withheld_would_have_passed": null,
+      "gate_withheld_detail": null,
+      "citation_warning_details": []
+    }
+  ]
+}
