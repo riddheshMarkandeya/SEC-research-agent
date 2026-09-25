@@ -48,6 +48,9 @@ prepend them (verbatim, still reverse-chronological) to the top of
 
 ## Recent
 
+- 2026-09-25 [decision] Read/diff/cache habits in global §6, reviewer agents get diff commands not pasted diffs, effort default medium, new status line (context tokens + cache expiry), BACKLOG: eval summary mode, agent.py/test_agent.py split, Recurring workflow retro due 2026-10-09 → `docs/decisions/2026-09-25-read-diff-cache-habits.md`
+- 2026-09-25 [review] Read/diff/cache habits — plan review 8 findings; statusline.js 2 rounds (1.0M rounding bug fixed test-first), closed clean; `/simplify` ~210k tokens/round on a 60-line script flagged for retro → `docs/reviews/2026-09-25-read-diff-cache-habits.md`
+- 2026-09-25 [plan] Read/grep/cache audit of 23 sessions (Read 59% of tool output, agent.py read 847×, idle-cache rebuilds ~11%) → habits, status line, retro → `docs/plans/2026-09-25-read-diff-cache-habits.md`
 - 2026-09-25 [decision] Context-management trial promoted to global CLAUDE.md §6 + global `# Compact instructions` (verified honored from user-level file via a PINEAPPLE compaction test); `showClearContextOnPlanAccept` moved to user settings; midpoint `/compact` offer for 4+-step plans → `docs/decisions/2026-09-25-promote-context-management.md`
 - 2026-09-25 [review] Promote-context-management plan review (first `plan-reviewer` agent run) — 7 findings: observable earlier-break trigger, verify user-level Compact instructions, project-neutral list → `docs/reviews/2026-09-25-promote-context-management-plan-review.md`
 - 2026-09-25 [plan] Promote the context-management trial (7 boundary compactions over 6 tasks, no friction) to the global workflow → `docs/plans/2026-09-25-promote-context-management.md`
