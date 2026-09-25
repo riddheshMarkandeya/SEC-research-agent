@@ -48,6 +48,8 @@ prepend them (verbatim, still reverse-chronological) to the top of
 
 ## Recent
 
+- 2026-09-25 [review] WP6 plan review — 1 round; Q4 hint kept with an ignored period, `fiscal_period` read as the lookup reads it, multi-year snapshot scenario, `nvda-revenue-two-quarter-comparison` named in the trace check, 3 notes filed for WP7 → `docs/reviews/2026-09-25-wp6-no-data-message-plan-review.md`
+- 2026-09-25 [plan] WP6: no-data message renders the period the lookup actually used (finding 11), "finds no data" wording on both surfaces (finding 12); waits for WP5's replicate, with each WP5 outcome's effect on WP6 → `docs/plans/2026-09-25-wp6-no-data-message.md`
 - 2026-09-25 [decision] WP4: rule 3 rewritten as the real number contract (derived numbers no tool reports come from `calculate`), rule 9's "despite rule 3" dropped (audit finding 3); screen accepted, 33/39 vs 37/39, 4 watch flags, Q4 override replicated as noise; agent `4f36a2b026cf` → `d2131f5d5aae` → `docs/decisions/2026-09-25-wp4-rule3-rule9.md`
 - 2026-09-24 [review] WP4 code review — 4 rounds, docstring-only fixes (narrated incident, dangling "second", example placement); rule 9 qualifier and triplicated calculate guidance kept → `docs/reviews/2026-09-24-wp4-rule3-rule9.md`
 - 2026-09-24 [review] WP4 plan review — 1 round; Q4-refusal override, ratio tension resolved by the "no tool reports directly" qualifier, explicit-mode attribute, trace record shape → `docs/reviews/2026-09-24-wp4-rule3-rule9-plan-review.md`
