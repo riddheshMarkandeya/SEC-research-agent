@@ -49,7 +49,6 @@ reference:
 
 Design: `docs/plans/2026-09-24-prompt-audit-roadmap.md` (read its "How this roadmap is executed" section first). Findings: `docs/reviews/2026-09-24-prompt-audit.md`. Work packages run strictly in order. Each one is planned in its own plan-mode session that points at its roadmap section rather than restating it.
 
-- [ ] **[feature, Med, Standard]** WP2: per-surface prompt fingerprint, eval-report provenance (git SHA + fingerprint), `compare_prompt_versions.py`, judge nonstandard-output flag, Gemini model pin, and a 13-question panel baseline (3 runs). Depends on WP1. Roadmap: Step 1 commit 1d, Step 2.
 - [ ] **[bug, Med, Standard]** WP3: Group A wording fixes, audit findings 1, 2, 5, 6 (MCP-side `search_filings` description, agent-side description, calculate "via compare_financial_metric", "exists yet"). Depends on WP2. Roadmap: Step 3.
 - [ ] **[design, Med, Standard]** WP4: resolve the rule 3 / rule 9 contradiction in SYSTEM_PROMPT (finding 3). Depends on WP3. Roadmap: Step 4.
 - [ ] **[design, Low, Standard]** WP5: plain wording for the segment-rule emphasis (finding 4), with a trace check on segment questions. Depends on WP4. Roadmap: Step 5.

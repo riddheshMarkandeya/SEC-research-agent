@@ -48,6 +48,10 @@ prepend them (verbatim, still reverse-chronological) to the top of
 
 ## Recent
 
+- 2026-09-24 [decision] WP2: committed model-input snapshot folded into per-consumer prompt fingerprints (agent/judge/mcp), eval-report provenance, `compare_prompt_versions.py`, judge nonstandard-output flag, Gemini pinned to `gemini-3.5-flash-lite`; panel baseline 37/39 at agent `cc984387c3e8` → `docs/decisions/2026-09-24-wp2-prompt-provenance.md`
+- 2026-09-24 [review] WP2 code review — 5 rounds; float ceil in REGRESSED-TOTAL, self-comparison and backwards defaults, silent exclusions, un-added files not counted dirty, snapshot-check timeout and warning/exclusion drift fixed; judge parse left unchanged (evidence-gated) → `docs/reviews/2026-09-24-wp2-prompt-provenance.md`
+- 2026-09-24 [review] WP2 plan review — 2 rounds; totals over shared questions, within-1-pass, re-baseline grouping, lenient-parse cases; snapshot: pure render, no repr, hash-seed check, own declarations → `docs/reviews/2026-09-24-wp2-prompt-provenance-plan-review.md`
+- 2026-09-24 [plan] WP2: prompt fingerprint, eval provenance, compare script, judge flag, model pin and 13-question panel baseline (roadmap Step 1 commit 1d, Step 2) → `docs/plans/2026-09-24-wp2-prompt-provenance.md`
 - 2026-09-24 [review] WP1 prompts-package code review — 3 rounds; no model-facing byte changed (hashes + 44-entry golden identical each round); doc pointers, stale docstrings, duplicated metric list and raw-unit rule fixed, pre-push glob widened to `prompts/**/*.py`; raw-unit calculate text and enum duplication filed → `docs/reviews/2026-09-24-wp1-prompts-package.md`
 - 2026-09-24 [decision] All model-facing text moved into `prompts/` (agent_system, agent_tools, agent_messages, judge, mcp), byte-identical; pre-push keeps its own critical-core list; live-eval exemption for a provably pure move → `docs/decisions/2026-09-24-wp1-prompts-package.md`
 - 2026-09-24 [review] WP1 plan review — no blockers; golden capture moved to the backend boundary, formatters kept in agent.py (tests monkeypatch them), judge-location wording moved to 1c → `docs/reviews/2026-09-24-wp1-prompts-package-plan-review.md`
