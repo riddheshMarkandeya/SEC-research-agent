@@ -1252,12 +1252,9 @@ def verify_citations(answer_text: str, all_results: list[dict]) -> list[str]:
     numeric grading already does (now in numeric_utils.py), applied to
     the cited result's text instead of a ground-truth expected value.
 
-    Motivated by a real, observed case (aapl-revenue-growth-q3fy2026):
-    asked for a computed ratio with no supporting tool, the model
-    self-computed a percentage from two raw dollar figures (a number no
-    tool result states) and cited both dollar-figure sources for a
-    percentage that appears in NEITHER of them. Built to catch exactly
-    that shape of problem.
+    Catches a derived value cited to sources that state only its inputs
+    -- e.g. a percentage self-computed from two dollar figures and cited
+    to both, though it appears in neither (aapl-revenue-growth-q3fy2026).
 
     Also flags a numeric claim with NO citation marker anywhere near it
     at all -- see _iter_uncited_claims()'s own docstring for the second
