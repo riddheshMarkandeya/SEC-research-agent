@@ -23,7 +23,13 @@ SEARCH_TOOL_SCHEMA = {
     "type": "function",
     "function": {
         "name": "search_filings",
-        "description": "Search SEC 10-K/10-Q filing excerpts for one of the five covered companies.",
+        "description": (
+            "Search SEC 10-K/10-Q filing excerpts from the five covered companies. Returns the most "
+            "relevant excerpts, each headed with a citation number, ticker, form type and report date. "
+            "Use it for narrative content (risk factors, MD&A, segment or product-line figures) and for "
+            "any metric get_financial_fact doesn't cover or finds no data for. It returns filing text "
+            "only, not structured XBRL values."
+        ),
         "parameters": {
             "type": "object",
             "properties": {
