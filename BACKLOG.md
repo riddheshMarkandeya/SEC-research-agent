@@ -49,7 +49,6 @@ reference:
 
 Design: `docs/plans/2026-09-24-prompt-audit-roadmap.md` (read its "How this roadmap is executed" section first). Findings: `docs/reviews/2026-09-24-prompt-audit.md`. Work packages run strictly in order. Each one is planned in its own plan-mode session that points at its roadmap section rather than restating it.
 
-- [ ] **[design, Med, Standard]** WP4: resolve the rule 3 / rule 9 contradiction in SYSTEM_PROMPT (finding 3). Depends on WP3. Roadmap: Step 4.
 - [ ] **[design, Low, Standard]** WP5: plain wording for the segment-rule emphasis (finding 4), with a trace check on segment questions. Depends on WP4. Roadmap: Step 5.
 - [ ] **[bug, Med, Standard]** WP6: no-data message renders "None FYNone" (finding 11), and the "not available"/"Returns null" descriptions don't match what either surface actually returns (finding 12). Depends on WP5. Roadmap: Step 6.
 - [ ] **[bug, Med, Standard]** WP7: accept digit-only `fiscal_year` strings (138 live silent rejections), and fix SYSTEM_PROMPT's "rejected outright" wording (finding 13). Depends on WP6. Roadmap: Step 7.
