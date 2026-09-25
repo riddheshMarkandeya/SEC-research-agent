@@ -57,6 +57,28 @@ Design: `docs/plans/2026-09-24-prompt-audit-roadmap.md` (read its "How this road
 - [ ] **[refactor, Low, Trivial]** Duplicated enum values in `prompts/agent_tools.py`, all copied as-is from `agent.py` by WP1: the period list `["FY", "Q1", "Q2", "Q3", "Q4"]` twice, `list(COMPANIES.keys())` three times, and `CLAIM_UNITS` restating `numeric_utils.UNIT_MULTIPLIERS`'s keys by hand. Hoist each into one constant; the schemas' bytes must stay identical (check with the WP2 fingerprint). Found in the WP1 code review.
 - [ ] **[design, Low, Standard]** The MCP `search_filings` schema is derived the wrong way round: `prompts.mcp.MCP_SEARCH_TOOL_SCHEMA` is the agent's schema with its agent-only text overridden, so agent-only wording in any other field reaches MCP clients silently. The `ticker` description already does ("…which company the question is about"), and three description sentences are written out on both surfaces. Fix: a neutral shared schema that the agent adds its note to. It changes model-visible text, so it needs a panel screen. Found in WP3's plan and code reviews (`docs/reviews/2026-09-24-wp3-group-a-wording.md`).
 
+### From the 2026-09-25 token-efficiency workflow change
+
+Full evidence/reasoning: `docs/decisions/2026-09-25-token-efficiency-workflow.md`.
+
+- [ ] **[test-coverage, Med, Trivial]** In the next new session, confirm `plan-reviewer`,
+  `arch-reviewer` and `security-reviewer` appear as agent types. Spawn `security-reviewer` on
+  the last commit and check that the output follows the contract, ends with `checked:`, and the
+  transcript shows `claude-sonnet-5`. Exercise the general-purpose fallback once.
+- [ ] **[misc, Med, Standard]** Pilot: over the next 2 WPs, measure main-thread and subagent
+  tokens and count review findings. Method: sum `message.usage` per unique `message.id` in
+  `~/.claude/projects/<project>/*.jsonl` (main thread) and `*/subagents/*.jsonl`, with cache
+  reads weighted at 0.1. Compare against the decision file's baseline:
+  86% main-thread share, 351k median context. Also note anything lost to compaction.
+  - Restore Opus reviewers or two clean rounds if findings drop.
+  - Raise the window if compaction loses something important.
+- [ ] **[design, Low, Trivial]** After a clean pilot, consider lowering `autoCompactWindow` from
+  300k to 200k (simulated −68% main-thread input vs −56%, ~4.5 vs ~2 compactions per session).
+- [ ] **[design, Low, Standard]** After a clean pilot, trial `arch-reviewer` on Sonnet at
+  Substantial tier too. Today it escalates to Opus there.
+- [ ] **[design, Low, Trivial]** Consider lowering `PROJECT_INDEX.md`'s `Recent` cap (50 → ~25).
+  It's read in full every session (~16KB).
+
 ### From the 2026-09-23 context-management hooks change
 
 Full evidence/reasoning: `docs/decisions/2026-09-23-context-management-hooks.md`.
