@@ -48,6 +48,10 @@ prepend them (verbatim, still reverse-chronological) to the top of
 
 ## Recent
 
+- 2026-09-24 [decision] WP3: Group A wording (audit findings 1, 2, 5, 6) — MCP-only `search_filings` schema, fuller agent search description, calculate/compare phrase fixes; screen accepted, 37/39 vs 37/39, agent `cc984387c3e8` → `4f36a2b026cf`; searches up 47 → 62 → `docs/decisions/2026-09-24-wp3-group-a-wording.md`
+- 2026-09-24 [review] WP3 code review — 2 rounds; MCP description parity ("or finds no data for"), stale docstring pointer, whole-schema parity test; derivation direction and duplicated sentences filed → `docs/reviews/2026-09-24-wp3-group-a-wording.md`
+- 2026-09-24 [review] WP3 plan review — 1 round; no tests pinning fingerprints that 3c changes, "finds no data for" wording, 3b also moves `mcp`, validate against the listed schema, measured request estimate → `docs/reviews/2026-09-24-wp3-group-a-wording-plan-review.md`
+- 2026-09-24 [plan] WP3: Group A wording fixes, MCP search schema plus 3 agent-text commits screened under the Decision rule (roadmap Step 3) → `docs/plans/2026-09-24-wp3-group-a-wording.md`
 - 2026-09-24 [decision] WP2: committed model-input snapshot folded into per-consumer prompt fingerprints (agent/judge/mcp), eval-report provenance, `compare_prompt_versions.py`, judge nonstandard-output flag, Gemini pinned to `gemini-3.5-flash-lite`; panel baseline 37/39 at agent `cc984387c3e8` → `docs/decisions/2026-09-24-wp2-prompt-provenance.md`
 - 2026-09-24 [review] WP2 code review — 5 rounds; float ceil in REGRESSED-TOTAL, self-comparison and backwards defaults, silent exclusions, un-added files not counted dirty, snapshot-check timeout and warning/exclusion drift fixed; judge parse left unchanged (evidence-gated) → `docs/reviews/2026-09-24-wp2-prompt-provenance.md`
 - 2026-09-24 [review] WP2 plan review — 2 rounds; totals over shared questions, within-1-pass, re-baseline grouping, lenient-parse cases; snapshot: pure render, no repr, hash-seed check, own declarations → `docs/reviews/2026-09-24-wp2-prompt-provenance-plan-review.md`
