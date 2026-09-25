@@ -1247,12 +1247,12 @@ def collect_citation_warnings(answer_text: str, all_results: list[dict]) -> list
 def verify_citations(answer_text: str, all_results: list[dict]) -> list[str]:
     """Cheap, deterministic check for one specific silent-misgrounding
     pattern: a numeric claim attributed to a citation whose own cited
-    source text doesn't contain that number. No model call needed —
+    source text doesn't contain that number -- e.g. a percentage computed
+    from two dollar figures and cited to both sources, which state only
+    those inputs (aapl-revenue-growth-q3fy2026). No model call needed --
     reuses numeric_utils.py's number extraction/normalization (the same
     one eval_harness.py's numeric grading uses), applied to the cited
-    result's text instead of a ground-truth expected value. E.g. a
-    percentage computed from two dollar figures and cited to both
-    sources, which state only those inputs (aapl-revenue-growth-q3fy2026).
+    result's text instead of a ground-truth expected value.
 
     Also flags a numeric claim with NO citation marker anywhere near it
     at all -- see _iter_uncited_claims() (msft-cash-to-assets-fy2025).
