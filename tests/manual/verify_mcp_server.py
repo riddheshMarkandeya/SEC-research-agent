@@ -163,7 +163,7 @@ async def _check_model_facing_text(session, listed_tools):
     for tool, schema in zip(listed_tools, expected, strict=True):
         assert tool.description == schema["function"]["description"], tool.name
         assert tool.input_schema == schema["function"]["parameters"], tool.name
-    print("  [OK] all 3 tools' descriptions and input schemas are exactly prompts/' (search: the MCP variant)")
+    print("  [OK] all 3 tools' descriptions and input schemas match prompts/ (search: prompts.mcp's MCP variant)")
 
     # FY1990 predates every covered company's XBRL data, so both calls
     # reach the real no-data path rather than a validation rejection.

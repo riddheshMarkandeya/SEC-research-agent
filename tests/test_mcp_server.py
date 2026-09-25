@@ -14,6 +14,7 @@ wrap or sit in front of is live-only.
 """
 
 import asyncio
+import copy
 import json
 
 import pytest
@@ -377,13 +378,13 @@ def test_mcp_search_schema_differs_from_the_agents_only_in_descriptions():
     from prompts.agent_tools import SEARCH_TOOL_SCHEMA
     from prompts.mcp import MCP_SEARCH_TOOL_SCHEMA
 
-    def without_query_description(schema):
-        parameters = schema["function"]["parameters"]
-        query = {k: v for k, v in parameters["properties"]["query"].items() if k != "description"}
-        return {**parameters, "properties": {**parameters["properties"], "query": query}}
+    def without_descriptions(schema):
+        schema = copy.deepcopy(schema)
+        del schema["function"]["description"]
+        del schema["function"]["parameters"]["properties"]["query"]["description"]
+        return schema
 
-    assert MCP_SEARCH_TOOL_SCHEMA["function"]["name"] == SEARCH_TOOL_SCHEMA["function"]["name"]
-    assert without_query_description(MCP_SEARCH_TOOL_SCHEMA) == without_query_description(SEARCH_TOOL_SCHEMA)
+    assert without_descriptions(MCP_SEARCH_TOOL_SCHEMA) == without_descriptions(SEARCH_TOOL_SCHEMA)
 
 
 def test_search_filings_rejects_an_unknown_argument(monkeypatch):

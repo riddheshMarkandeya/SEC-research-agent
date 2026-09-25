@@ -6,8 +6,7 @@ reimplementing either; search_filings is listed with its own MCP schema
 (prompts.mcp), whose descriptions are true for a direct MCP caller.
 search_filings citations get a "Scroll To Text Fragment" anchor;
 get_financial_fact/compare_financial_metric don't, since those come
-from structured XBRL data with no prose position to anchor to. See
-docs/decisions/2026-08-25-mcp-server-week6.md.
+from structured XBRL data with no prose position to anchor to.
 
 Usage:
     python mcp_server.py --port 8765

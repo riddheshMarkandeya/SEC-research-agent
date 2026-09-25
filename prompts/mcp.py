@@ -23,8 +23,8 @@ MCP_SEARCH_TOOL_SCHEMA = {
             "Search SEC 10-K/10-Q filing excerpts from the five covered companies. Returns the most "
             "relevant excerpts as a list of {text, source} objects, where source identifies the filing. "
             "Use it for narrative content (risk factors, MD&A, segment or product-line figures) and for "
-            "any metric get_financial_fact doesn't cover. Pass ticker to restrict the search to one "
-            "company. It returns filing text only, not structured XBRL values."
+            "any metric get_financial_fact doesn't cover or finds no data for. Pass ticker to restrict "
+            "the search to one company. It returns filing text only, not structured XBRL values."
         ),
         "parameters": {
             **_search_parameters,
