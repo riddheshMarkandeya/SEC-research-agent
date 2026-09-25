@@ -1,0 +1,58 @@
+{
+  "backend": "gemini",
+  "answer_model": "gemini-3.5-flash-lite",
+  "judge_model": "gemini-3.5-flash-lite",
+  "provenance": {
+    "git_sha": "d45156f",
+    "git_dirty": false,
+    "dirty_files": [],
+    "snapshot_verified": true,
+    "config": {
+      "gemini_model": "gemini-3.5-flash-lite",
+      "embed_model": "BAAI/bge-small-en-v1.5",
+      "rerank_model": "cross-encoder/ms-marco-MiniLM-L-6-v2",
+      "chroma_dir": "./chroma_db",
+      "google_genai": "2.18.1",
+      "mcp": "2.1.1"
+    },
+    "prompts": {
+      "agent_system": "9c58af695148",
+      "agent_tools": "7bec1d85d9ce",
+      "agent_messages": "f7c7eae639bd",
+      "judge": "2ee29f234c91",
+      "mcp": "3f183b31ab70",
+      "agent": "5d3cea51c73b"
+    }
+  },
+  "results": [
+    {
+      "id": "msft-three-segments-revenue-q3fy2026",
+      "ticker": [
+        "MSFT"
+      ],
+      "question": "What was Microsoft's revenue for each of its three reportable segments \u2014 Productivity and Business Processes, Intelligent Cloud, and More Personal Computing \u2014 for the three months ended March 31, 2026?",
+      "type": "comparison",
+      "passed": false,
+      "detail": "agent refused to answer (hard-gated on unverified citation(s)) -- no value to grade",
+      "has_citation": false,
+      "citation_warnings": [
+        "claims 17.0 (percent) but no claim in your submit_answer call covers it"
+      ],
+      "answer": "I can't confirm this answer against the sources I retrieved -- the following claim(s) don't hold up under citation verification:\n- claims 17.0 (percent) but no claim in your submit_answer call covers it\n\nRather than give you a number I can't verify, I'm refusing this answer.",
+      "n_chunks_retrieved": 25,
+      "withheld_answer": "Based on Microsoft's Form 10-Q for the quarterly period ended March 31, 2026, the specific revenue figures for each of its three reportable segments are not explicitly listed in the tables for that quarter. While the filing discusses segment trends and mentions that revenue increased 17% for Productivity and Business Processes [2] and grew across Intelligent Cloud and More Personal Computing, the exact dollar amounts for each segment for the three months ended March 31, 2026, are not provided in the excerpted text.",
+      "gate_withheld_would_have_passed": false,
+      "gate_withheld_detail": "missing or wrong value(s) for: MSFT-PBP (35013 million), MSFT-IC (34681 million), MSFT-MPC (13192 million)",
+      "citation_warning_details": [
+        {
+          "check": "uncovered_number",
+          "citation_index": null,
+          "value": 17.0,
+          "unit": "percent",
+          "message": "claims 17.0 (percent) but no claim in your submit_answer call covers it",
+          "quote": null
+        }
+      ]
+    }
+  ]
+}

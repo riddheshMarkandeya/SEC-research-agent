@@ -1,0 +1,267 @@
+{
+  "backend": "gemini",
+  "answer_model": "gemini-3.5-flash-lite",
+  "judge_model": "gemini-3.5-flash-lite",
+  "provenance": {
+    "git_sha": "d45156f",
+    "git_dirty": false,
+    "dirty_files": [],
+    "snapshot_verified": true,
+    "config": {
+      "gemini_model": "gemini-3.5-flash-lite",
+      "embed_model": "BAAI/bge-small-en-v1.5",
+      "rerank_model": "cross-encoder/ms-marco-MiniLM-L-6-v2",
+      "chroma_dir": "./chroma_db",
+      "google_genai": "2.18.1",
+      "mcp": "2.1.1"
+    },
+    "prompts": {
+      "agent_system": "9c58af695148",
+      "agent_tools": "7bec1d85d9ce",
+      "agent_messages": "f7c7eae639bd",
+      "judge": "2ee29f234c91",
+      "mcp": "3f183b31ab70",
+      "agent": "5d3cea51c73b"
+    }
+  },
+  "results": [
+    {
+      "id": "aapl-employees-fy25",
+      "ticker": "AAPL",
+      "question": "How many full-time equivalent employees did Apple have as of September 27, 2025?",
+      "type": "numeric",
+      "passed": true,
+      "detail": "found matching value: 166000.0 (raw)",
+      "has_citation": true,
+      "citation_warnings": [],
+      "answer": "As of September 27, 2025, Apple had approximately 166,000 full-time equivalent employees [1].",
+      "n_chunks_retrieved": 5,
+      "withheld_answer": null,
+      "gate_withheld_would_have_passed": null,
+      "gate_withheld_detail": null,
+      "citation_warning_details": []
+    },
+    {
+      "id": "aapl-ai-risk",
+      "ticker": "AAPL",
+      "question": "What risks does Apple describe related to artificial intelligence?",
+      "type": "judged",
+      "passed": true,
+      "detail": "The answer explicitly mentions that AI issues create reputational, legal, financial, and competitive risks, and it includes proper citation markers like [1].",
+      "has_citation": true,
+      "citation_warnings": [],
+      "answer": "Apple describes several categories of risks related to artificial intelligence in its SEC filings:\n\n* **Reputational, Legal, and Regulatory Risks:** Issues related to artificial intelligence can lead to reputational, competitive, and financial harm, regulatory actions, and legal liability [1]. Apple notes that AI technologies present emerging legal, regulatory, ethical, and operational risks across areas such as competition and strategy, recouping costs and returns on investments, product liability, intellectual property infringement, data privacy, cybersecurity, sanctions and export controls, exposing users to harmful or inaccurate content, bias and discrimination, and online safety [1].\n* **Cybersecurity and Security Threats:** The rapid advancement and widespread dissemination of AI significantly increase cybersecurity risks [2]. AI can be used to execute highly targeted phishing campaigns, automate vulnerability discovery and exploitation, generate deepfakes to bypass authentication, and accelerate attacks [2]. Furthermore, AI technologies and their development and deployment by Apple and its suppliers can themselves be susceptible to security threats and vulnerabilities [2].\n* **Infrastructure and Compute Resource Constraints:** Apple's AI and machine learning offerings depend on access to sufficient computing resources [5]. High industry-wide demand for cloud computing and AI infrastructure has led to constrained supply, extended lead times, and rising costs [5]. Apple relies on both its own data centers and third-party cloud service providers, and failure to secure adequate compute capacity on commercially reasonable terms or in a timely manner can limit product functionality, delay new feature deployments, or increase operational costs [5].",
+      "n_chunks_retrieved": 5,
+      "withheld_answer": null,
+      "gate_withheld_would_have_passed": null,
+      "gate_withheld_detail": null,
+      "citation_warning_details": []
+    },
+    {
+      "id": "nvda-crm-revenue-comparison",
+      "ticker": [
+        "NVDA",
+        "CRM"
+      ],
+      "question": "Compare NVIDIA's total revenue for the quarter ended April 26, 2026 to Salesforce's total revenue for the quarter ended April 30, 2026.",
+      "type": "comparison",
+      "passed": true,
+      "detail": "found matching values for all 2 entities",
+      "has_citation": true,
+      "citation_warnings": [],
+      "answer": "For the quarter ended April 26, 2026, NVIDIA reported total revenue of $81.62 billion [1]. For the quarter ended April 30, 2026, Salesforce reported total revenue of $11.13 billion [2]. NVIDIA's revenue was approximately 7.33 times that of Salesforce for their respective comparable quarters (computed as $81,615,000,000 \u00f7 $11,133,000,000 = 7.33) [3].",
+      "n_chunks_retrieved": 3,
+      "withheld_answer": null,
+      "gate_withheld_would_have_passed": null,
+      "gate_withheld_detail": null,
+      "citation_warning_details": []
+    },
+    {
+      "id": "pltr-government-contract-risk",
+      "ticker": "PLTR",
+      "question": "What risks does Palantir describe related to its dependence on government contracts?",
+      "type": "judged",
+      "passed": true,
+      "detail": "The answer states that Palantir depends significantly on government contracts, describes multiple specific related risks (such as budget/appropriations delays, termination rights, and public criticism), and includes multiple citation markers like [1].",
+      "has_citation": true,
+      "citation_warnings": [],
+      "answer": "In its SEC filings, Palantir describes several risk factors related to its dependence on government contracts and relationships with the public sector under the section titled \"Risks Related to Relationships and Business with the Public Sector\" [1]. Key risks include:\n\n\u2022 **Dependence on Government Revenue and Contracts:** Palantir derives a significant portion of its revenue from federal, state, local, and foreign government agencies (particularly the U.S. federal government), and its growth depends on successfully procuring these contracts [1]. Failure to receive and maintain government contracts has adversely affected and could continue to adversely affect its business [1].\n\u2022 **Complex and Competitive Procurement:** Selling to government agencies is highly competitive, expensive, and time-consuming, requiring significant upfront time and expense with no guarantee of generating a sale [1].\n\u2022 **Unique Contractual and Legal Compliance:** Palantir must comply with specialized laws and regulations governing the formation, administration, and performance of public sector contracts, which grant public sector customers rights not typically found in commercial contracts [1].\n\u2022 **Fiscal and Policy Changes, and Funding Decreases:** Changes in fiscal or contracting policies, decreases in available government funding, efforts by the federal government to analyze and enhance operational efficiency or enforce executive orders and administration priorities, and changes in government programs or requirements can adversely affect results [2, 20].\n\u2022 **Government Shutdowns and Lapses in Appropriations:** Constraints and operational disruptions caused by lapses in federal government appropriations or extended government shutdowns can impact business [16].\n\u2022 **Clearances and Certifications:** Risks include restrictions in granting personnel security clearances to employees, the ability to maintain required facility clearances for classified contracts, and the ability to achieve or maintain government certifications such as FedRAMP, IL2, IL4, IL5, and IL6 authorizations [5, 20].\n\u2022 **Geopolitical and Political Changes:** Changes in the political environment, changes in government leadership or composition, and ongoing conflicts (such as the Russia-Ukraine conflict and Middle East conflicts) can create policy uncertainty, shifting priorities, and changes in funding [5, 20].\n\u2022 **International and Geopolitical Perceptions:** Palantir's perceived relationship with the U.S. government could adversely affect its business prospects in certain non-U.S. geographies or with certain non-U.S. governments [1].\n\u2022 **Classified Programs and Limited Transparency:** Certain government programs involve classified information and security restrictions, which limit investor insight into those portions of Palantir's business and risks [16].\n\u2022 **Public Criticism and Activism:** Relationships with government customers\u2014especially those perceived as controversial\u2014have resulted in public criticism, political and social activist protests, unfavorable media coverage, and increased security risks, which can disrupt operations and cause third parties or customers to limit or terminate their relationships [9].\n\u2022 **Third-Party and Subcontractor Risks:** Performance failures by subcontractors or third parties can cause increased or unexpected costs or unanticipated delays [16].\n\u2022 **Third-Party Influence:** Influence by or competition from third parties regarding pending, new, or existing government contracts can also affect business [16].",
+      "n_chunks_retrieved": 20,
+      "withheld_answer": null,
+      "gate_withheld_would_have_passed": null,
+      "gate_withheld_detail": null,
+      "citation_warning_details": []
+    },
+    {
+      "id": "nvda-rd-expense-q4fy26-refusal",
+      "ticker": "NVDA",
+      "question": "What were NVIDIA's research and development expenses for the fourth quarter of fiscal year 2026?",
+      "type": "judged",
+      "passed": false,
+      "detail": "The assistant refused to answer and failed to state that NVIDIA's 10-K reports only full fiscal year figures rather than a separate Q4 breakout for R&D expenses.",
+      "has_citation": false,
+      "citation_warnings": [
+        "[1] claims 18497 (million) but the quoted text doesn't appear in source [1]",
+        "[2] claims 12985 (million) but its quote '$12,985' is too short to verify",
+        "[2] claims 4705 (million) but its quote '$4,705' is too short to verify"
+      ],
+      "answer": "I can't confirm this answer against the sources I retrieved -- the following claim(s) don't hold up under citation verification:\n- [1] claims 18497 (million) but the quoted text doesn't appear in source [1]\n- [2] claims 12985 (million) but its quote '$12,985' is too short to verify\n- [2] claims 4705 (million) but its quote '$4,705' is too short to verify\n\nRather than give you a number I can't verify, I'm refusing this answer.",
+      "n_chunks_retrieved": 20,
+      "withheld_answer": null,
+      "gate_withheld_would_have_passed": null,
+      "gate_withheld_detail": null,
+      "citation_warning_details": []
+    },
+    {
+      "id": "nvda-segment-revenue-comparison-q1fy27",
+      "ticker": "NVDA",
+      "question": "For the quarter ended April 26, 2026, did NVIDIA's Compute & Networking segment generate more revenue than its Graphics segment?",
+      "type": "judged",
+      "passed": false,
+      "detail": "The AI assistant refused to answer the question instead of affirmatively stating that Compute & Networking revenue was higher than Graphics revenue.",
+      "has_citation": false,
+      "citation_warnings": [
+        "[14] claims 74550 (million) but the quoted text doesn't appear in source [14]",
+        "[14] claims 7065 (million) but the quoted text doesn't appear in source [14]"
+      ],
+      "answer": "I can't confirm this answer against the sources I retrieved -- the following claim(s) don't hold up under citation verification:\n- [14] claims 74550 (million) but the quoted text doesn't appear in source [14]\n- [14] claims 7065 (million) but the quoted text doesn't appear in source [14]\n\nRather than give you a number I can't verify, I'm refusing this answer.",
+      "n_chunks_retrieved": 15,
+      "withheld_answer": null,
+      "gate_withheld_would_have_passed": null,
+      "gate_withheld_detail": null,
+      "citation_warning_details": []
+    },
+    {
+      "id": "pltr-inventory-turnover-fy2025-refusal",
+      "ticker": "PLTR",
+      "question": "What was Palantir's inventory turnover ratio for fiscal year 2025?",
+      "type": "judged",
+      "passed": false,
+      "detail": "The answer refuses to answer due to a tool-use/citation error rather than recognizing that Palantir does not have inventory on its balance sheet.",
+      "has_citation": false,
+      "citation_warnings": [
+        "[12]'s quote doesn't appear in source [12]",
+        "claims 789177.0 (thousand) but no claim in your submit_answer call covers it",
+        "claims 789.18 (million) but no claim in your submit_answer call covers it"
+      ],
+      "answer": "I can't confirm this answer against the sources I retrieved -- the following claim(s) don't hold up under citation verification:\n- [12]'s quote doesn't appear in source [12]\n- claims 789177.0 (thousand) but no claim in your submit_answer call covers it\n- claims 789.18 (million) but no claim in your submit_answer call covers it\n\nRather than give you a number I can't verify, I'm refusing this answer.",
+      "n_chunks_retrieved": 20,
+      "withheld_answer": null,
+      "gate_withheld_would_have_passed": null,
+      "gate_withheld_detail": null,
+      "citation_warning_details": []
+    },
+    {
+      "id": "msft-cash-to-assets-fy2025",
+      "ticker": "MSFT",
+      "question": "What percentage of Microsoft's total assets was held as cash and cash equivalents at the end of fiscal year 2025?",
+      "type": "numeric",
+      "passed": true,
+      "detail": "found matching value: 4.9 (percent)",
+      "has_citation": true,
+      "citation_warnings": [],
+      "answer": "At the end of fiscal year 2025, Microsoft held $30.24 billion in cash and cash equivalents [1] out of $619.00 billion in total assets [2], which was computed as $30,242,000,000 \u00f7 $619,003,000,000 = 4.9% of its total assets [3].",
+      "n_chunks_retrieved": 3,
+      "withheld_answer": null,
+      "gate_withheld_would_have_passed": null,
+      "gate_withheld_detail": null,
+      "citation_warning_details": []
+    },
+    {
+      "id": "aapl-cash-and-buyback-q3fy2026",
+      "ticker": [
+        "AAPL"
+      ],
+      "question": "As of June 27, 2026, what was Apple's cash and cash equivalents balance, and how much remaining availability did it have under its May 2025 $100 billion share repurchase program as of that same date?",
+      "type": "comparison",
+      "passed": true,
+      "detail": "found matching values for all 2 entities",
+      "has_citation": true,
+      "citation_warnings": [],
+      "answer": "As of June 27, 2026, Apple's cash and cash equivalents balance was $39.544 billion (or $39,544 million) [1]. As of that same date, the remaining availability under Apple's May 2025 $100 billion share repurchase program was $38.0 billion [8].",
+      "n_chunks_retrieved": 11,
+      "withheld_answer": null,
+      "gate_withheld_would_have_passed": null,
+      "gate_withheld_detail": null,
+      "citation_warning_details": []
+    },
+    {
+      "id": "aapl-msft-total-assets-comparison",
+      "ticker": [
+        "AAPL",
+        "MSFT"
+      ],
+      "question": "Compare Apple's total assets as of September 27, 2025 to Microsoft's total assets as of June 30, 2025.",
+      "type": "comparison",
+      "passed": true,
+      "detail": "found matching values for all 2 entities",
+      "has_citation": true,
+      "citation_warnings": [],
+      "answer": "As of their respective fiscal period-ends, Microsoft's total assets were $619.00 billion as of June 30, 2025 [2], while Apple's total assets were $359.24 billion as of September 27, 2025 [1]. Microsoft's total assets exceeded Apple's by $259.76 billion (computed as $619,003,000,000 - $359,241,000,000 = $259,762,000,000) [3].",
+      "n_chunks_retrieved": 3,
+      "withheld_answer": null,
+      "gate_withheld_would_have_passed": null,
+      "gate_withheld_detail": null,
+      "citation_warning_details": []
+    },
+    {
+      "id": "aapl-rd-pct-gross-profit-fy2025",
+      "ticker": "AAPL",
+      "question": "What percentage of Apple's fiscal year 2025 gross profit was spent on research and development?",
+      "type": "numeric",
+      "passed": true,
+      "detail": "found matching value: 17.7 (percent)",
+      "has_citation": true,
+      "citation_warnings": [],
+      "answer": "In fiscal year 2025, Apple's gross profit was $195.20 billion [1] and its research and development expense was $34.55 billion [2]. Therefore, the percentage of Apple's gross profit spent on research and development was computed as $34,550,000,000 \u00f7 $195,201,000,000 = 17.7% [3].",
+      "n_chunks_retrieved": 3,
+      "withheld_answer": null,
+      "gate_withheld_would_have_passed": null,
+      "gate_withheld_detail": null,
+      "citation_warning_details": []
+    },
+    {
+      "id": "nvda-revenue-two-quarter-comparison",
+      "ticker": "NVDA",
+      "question": "Compare NVIDIA's total revenue for the quarter ended April 26, 2026 to the quarter ended April 27, 2025.",
+      "type": "comparison",
+      "passed": false,
+      "detail": "agent refused to answer (hard-gated on unverified citation(s)) -- no value to grade",
+      "has_citation": false,
+      "citation_warnings": [
+        "claims 1.0 (raw) but no claim in your submit_answer call covers it"
+      ],
+      "answer": "I can't confirm this answer against the sources I retrieved -- the following claim(s) don't hold up under citation verification:\n- claims 1.0 (raw) but no claim in your submit_answer call covers it\n\nRather than give you a number I can't verify, I'm refusing this answer.",
+      "n_chunks_retrieved": 3,
+      "withheld_answer": "For the quarter ended April 26, 2026, NVIDIA reported total revenue of $81.615 billion [1]. For the prior-year quarter ended April 27, 2025, NVIDIA reported total revenue of $44.062 billion [2]. This represents a year-over-year increase of 85.2% (computed as $81,615,000,000 \u00f7 $44,062,000,000 \u2212 1 = 85.2%) [3].",
+      "gate_withheld_would_have_passed": true,
+      "gate_withheld_detail": "found matching values for all 2 entities",
+      "citation_warning_details": [
+        {
+          "check": "uncovered_number",
+          "citation_index": null,
+          "value": 1.0,
+          "unit": "raw",
+          "message": "claims 1.0 (raw) but no claim in your submit_answer call covers it",
+          "quote": null
+        }
+      ]
+    },
+    {
+      "id": "aapl-iphone-net-sales-q3fy2026",
+      "ticker": "AAPL",
+      "question": "What were Apple's iPhone net sales for the three months ended June 27, 2026?",
+      "type": "numeric",
+      "passed": true,
+      "detail": "found matching value: 54252.0 (million)",
+      "has_citation": true,
+      "citation_warnings": [],
+      "answer": "Apple's iPhone net sales for the three months ended June 27, 2026, were $54,252 million (or $54.25 billion) [1].",
+      "n_chunks_retrieved": 5,
+      "withheld_answer": null,
+      "gate_withheld_would_have_passed": null,
+      "gate_withheld_detail": null,
+      "citation_warning_details": []
+    }
+  ]
+}

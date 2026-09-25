@@ -1,0 +1,67 @@
+{
+  "backend": "gemini",
+  "answer_model": "gemini-3.5-flash-lite",
+  "judge_model": "gemini-3.5-flash-lite",
+  "provenance": {
+    "git_sha": "d45156f",
+    "git_dirty": false,
+    "dirty_files": [],
+    "snapshot_verified": true,
+    "config": {
+      "gemini_model": "gemini-3.5-flash-lite",
+      "embed_model": "BAAI/bge-small-en-v1.5",
+      "rerank_model": "cross-encoder/ms-marco-MiniLM-L-6-v2",
+      "chroma_dir": "./chroma_db",
+      "google_genai": "2.18.1",
+      "mcp": "2.1.1"
+    },
+    "prompts": {
+      "agent_system": "9c58af695148",
+      "agent_tools": "7bec1d85d9ce",
+      "agent_messages": "f7c7eae639bd",
+      "judge": "2ee29f234c91",
+      "mcp": "3f183b31ab70",
+      "agent": "5d3cea51c73b"
+    }
+  },
+  "results": [
+    {
+      "id": "msft-three-segments-revenue-q3fy2026",
+      "ticker": [
+        "MSFT"
+      ],
+      "question": "What was Microsoft's revenue for each of its three reportable segments \u2014 Productivity and Business Processes, Intelligent Cloud, and More Personal Computing \u2014 for the three months ended March 31, 2026?",
+      "type": "comparison",
+      "passed": false,
+      "detail": "agent refused to answer (hard-gated on unverified citation(s)) -- no value to grade",
+      "has_citation": false,
+      "citation_warnings": [
+        "[2] claims 33892 (million) but the quoted text doesn't appear in source [2]",
+        "[3] claims 13462 (million) but the quoted text doesn't appear in source [3]"
+      ],
+      "answer": "I can't confirm this answer against the sources I retrieved -- the following claim(s) don't hold up under citation verification:\n- [2] claims 33892 (million) but the quoted text doesn't appear in source [2]\n- [3] claims 13462 (million) but the quoted text doesn't appear in source [3]\n\nRather than give you a number I can't verify, I'm refusing this answer.",
+      "n_chunks_retrieved": 25,
+      "withheld_answer": "For the three months ended March 31, 2026, Microsoft\u2019s revenue for each of its three reportable segments was as follows:\n- **Productivity and Business Processes:** $35,532 million [1]\n- **Intelligent Cloud:** $33,892 million [2]\n- **More Personal Computing:** $13,462 million [3]",
+      "gate_withheld_would_have_passed": false,
+      "gate_withheld_detail": "missing or wrong value(s) for: MSFT-PBP (35013 million), MSFT-IC (34681 million), MSFT-MPC (13192 million)",
+      "citation_warning_details": [
+        {
+          "check": "quote_not_found",
+          "citation_index": 2,
+          "value": 33892,
+          "unit": "million",
+          "message": "[2] claims 33892 (million) but the quoted text doesn't appear in source [2]",
+          "quote": "Intelligent Cloud Revenue $33,892"
+        },
+        {
+          "check": "quote_not_found",
+          "citation_index": 3,
+          "value": 13462,
+          "unit": "million",
+          "message": "[3] claims 13462 (million) but the quoted text doesn't appear in source [3]",
+          "quote": "More Personal Computing Revenue $13,462"
+        }
+      ]
+    }
+  ]
+}

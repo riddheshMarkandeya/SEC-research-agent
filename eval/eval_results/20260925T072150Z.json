@@ -1,0 +1,47 @@
+{
+  "backend": "gemini",
+  "answer_model": "gemini-3.5-flash-lite",
+  "judge_model": "gemini-3.5-flash-lite",
+  "provenance": {
+    "git_sha": "a3965f3",
+    "git_dirty": false,
+    "dirty_files": [],
+    "snapshot_verified": true,
+    "config": {
+      "gemini_model": "gemini-3.5-flash-lite",
+      "embed_model": "BAAI/bge-small-en-v1.5",
+      "rerank_model": "cross-encoder/ms-marco-MiniLM-L-6-v2",
+      "chroma_dir": "./chroma_db",
+      "google_genai": "2.18.1",
+      "mcp": "2.1.1"
+    },
+    "prompts": {
+      "agent_system": "03649381869f",
+      "agent_tools": "7bec1d85d9ce",
+      "agent_messages": "f7c7eae639bd",
+      "judge": "2ee29f234c91",
+      "mcp": "3f183b31ab70",
+      "agent": "d2131f5d5aae"
+    }
+  },
+  "results": [
+    {
+      "id": "msft-three-segments-revenue-q3fy2026",
+      "ticker": [
+        "MSFT"
+      ],
+      "question": "What was Microsoft's revenue for each of its three reportable segments \u2014 Productivity and Business Processes, Intelligent Cloud, and More Personal Computing \u2014 for the three months ended March 31, 2026?",
+      "type": "comparison",
+      "passed": false,
+      "detail": "missing or wrong value(s) for: MSFT-PBP (35013 million), MSFT-IC (34681 million), MSFT-MPC (13192 million)",
+      "has_citation": false,
+      "citation_warnings": [],
+      "answer": "Based on Microsoft's Form 10-Q for the quarterly period ended March 31, 2026, the specific segment revenues for the three reportable segments are not explicitly listed in the search results for that specific three-month period (though segment growth rates and qualitative discussions are provided). Therefore, the exact segment revenues for the three months ended March 31, 2026, cannot be stated from the retrieved data.",
+      "n_chunks_retrieved": 25,
+      "withheld_answer": null,
+      "gate_withheld_would_have_passed": null,
+      "gate_withheld_detail": null,
+      "citation_warning_details": []
+    }
+  ]
+}
