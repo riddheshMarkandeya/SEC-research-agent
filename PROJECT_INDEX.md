@@ -48,6 +48,9 @@ prepend them (verbatim, still reverse-chronological) to the top of
 
 ## Recent
 
+- 2026-09-25 [decision] Context-management trial promoted to global CLAUDE.md §6 + global `# Compact instructions` (verified honored from user-level file via a PINEAPPLE compaction test); `showClearContextOnPlanAccept` moved to user settings; midpoint `/compact` offer for 4+-step plans → `docs/decisions/2026-09-25-promote-context-management.md`
+- 2026-09-25 [review] Promote-context-management plan review (first `plan-reviewer` agent run) — 7 findings: observable earlier-break trigger, verify user-level Compact instructions, project-neutral list → `docs/reviews/2026-09-25-promote-context-management-plan-review.md`
+- 2026-09-25 [plan] Promote the context-management trial (7 boundary compactions over 6 tasks, no friction) to the global workflow → `docs/plans/2026-09-25-promote-context-management.md`
 - 2026-09-25 [decision] Token efficiency (global workflow): auto-compact at 300k (main-thread context was ~86% of cost, median 351k), reviewer agents with model routing, review loop ends after one clean round, instruction files −45%; `~/.claude` now a local git repo → `docs/decisions/2026-09-25-token-efficiency-workflow.md`
 - 2026-09-25 [review] Token-efficiency rule-preservation audit — 13 items, 12 fixed, security reviewer on Sonnet accepted → `docs/reviews/2026-09-25-token-efficiency-rule-audit.md`
 - 2026-09-25 [review] Token-efficiency plan review — 11 findings folded in: plan-reviewer stays Opus, split stop rule, `checked:` line, locator/log-summarizer dropped → `docs/reviews/2026-09-25-token-efficiency-plan-review.md`

@@ -11,6 +11,5 @@
     "deny": [
       "Read(./notes.md)"
     ]
-  },
-  "showClearContextOnPlanAccept": true
+  }
 }

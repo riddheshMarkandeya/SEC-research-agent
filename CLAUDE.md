@@ -107,19 +107,6 @@ Claude Code hooks are used.
 It checks the whole staged tree, so a miss that skipped pre-commit (`--no-verify`, merge, rebase,
 cherry-pick) is caught by the next ordinary commit. `githooks/pre-push` runs the code checks above.
 
-## Context management (trial)
-
-This is a project-local trial. Promoting it to the global `CLAUDE.md` is a `BACKLOG.md` item.
-`showClearContextOnPlanAccept` is on, so an approved plan can be implemented from a cleared
-context that holds only the plan text.
-
-- **Plans are self-contained.** Before `ExitPlanMode`, fold the plan-review findings and the
-  user's decisions into the plan. Step 1 of every approved plan saves it to `docs/plans/`.
-- **Implementation → review boundary.** In interactive Standard+ tasks, once implementation is
-  done and the full suite passes, stop before `independent-review-pass`. Give the user this line
-  to paste: `/compact Keep everything "Compact instructions" lists. Drop: exploration detail.`
-  In `/goal` or other autonomous runs, note the line and continue.
-
 ## Design principles
 
 - **Citations are non-negotiable.** In finance, "trust me" isn't good enough. Every numeric
@@ -132,15 +119,5 @@ context that holds only the plan text.
 
 # Compact instructions
 
-When compacting, the summary must keep:
-
-- the plan file path (`docs/plans/...`) and the current step;
-- decisions made and why, including the user's choices;
-- files changed so far;
-- test, eval and lint commands run, with their latest results (pass/fail counts and exact
-  figures);
-- which review passes are done or pending, and any open findings;
-- failed approaches and why they were dropped (a line each, not the exploration itself);
-- any running background tasks.
-
-After compacting, re-read the `.claude/rules/*` files that apply to the files being worked on.
+In addition to the global Compact instructions, the summary must also keep exact eval figures:
+pass counts, agent hashes, commit SHAs of eval snapshots, and Gemini quota state.

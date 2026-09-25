@@ -61,10 +61,11 @@ Design: `docs/plans/2026-09-24-prompt-audit-roadmap.md` (read its "How this road
 
 Full evidence/reasoning: `docs/decisions/2026-09-25-token-efficiency-workflow.md`.
 
-- [ ] **[test-coverage, Med, Trivial]** In the next new session, confirm `plan-reviewer`,
-  `arch-reviewer` and `security-reviewer` appear as agent types. Spawn `security-reviewer` on
-  the last commit and check that the output follows the contract, ends with `checked:`, and the
-  transcript shows `claude-sonnet-5`. Exercise the general-purpose fallback once.
+- [ ] **[test-coverage, Med, Trivial]** On the next real review round, check that
+  `security-reviewer` and `arch-reviewer` follow the output contract, end with `checked:`, and
+  the transcript shows `claude-sonnet-5`. Exercise the general-purpose fallback once. Already
+  confirmed 2026-09-25: all three agents load mid-session, and `plan-reviewer` followed its
+  contract.
 - [ ] **[misc, Med, Standard]** Pilot: over the next 2 WPs, measure main-thread and subagent
   tokens and count review findings. Method: sum `message.usage` per unique `message.id` in
   `~/.claude/projects/<project>/*.jsonl` (main thread) and `*/subagents/*.jsonl`, with cache
@@ -78,18 +79,6 @@ Full evidence/reasoning: `docs/decisions/2026-09-25-token-efficiency-workflow.md
   Substantial tier too. Today it escalates to Opus there.
 - [ ] **[design, Low, Trivial]** Consider lowering `PROJECT_INDEX.md`'s `Recent` cap (50 → ~25).
   It's read in full every session (~16KB).
-
-### From the 2026-09-23 context-management hooks change
-
-Full evidence/reasoning: `docs/decisions/2026-09-23-context-management-hooks.md`.
-
-- [ ] **[design, Low, Trivial]** Promote project `CLAUDE.md`'s "Context
-  management (trial)" rules (self-contained plans saved first;
-  stop-and-suggest-`/compact` at the implementation→review boundary),
-  and possibly `showClearContextOnPlanAccept`, to the global
-  `~/.claude/CLAUDE.md` and user settings. Trigger: about 3 Standard+
-  tasks run under them without friction. Drop or rework them instead if
-  they get in the way.
 
 ### From the 2026-09-22 eval-question-classification change
 
