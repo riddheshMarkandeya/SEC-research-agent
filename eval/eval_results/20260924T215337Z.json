@@ -1,0 +1,45 @@
+{
+  "backend": "gemini",
+  "answer_model": "gemini-3.5-flash-lite",
+  "judge_model": "gemini-3.5-flash-lite",
+  "provenance": {
+    "git_sha": "2c3dbdd",
+    "git_dirty": false,
+    "dirty_files": [],
+    "snapshot_verified": true,
+    "config": {
+      "gemini_model": "gemini-3.5-flash-lite",
+      "embed_model": "BAAI/bge-small-en-v1.5",
+      "rerank_model": "cross-encoder/ms-marco-MiniLM-L-6-v2",
+      "chroma_dir": "./chroma_db",
+      "google_genai": "2.18.1",
+      "mcp": "2.1.1"
+    },
+    "prompts": {
+      "agent_system": "5fd6d735657d",
+      "agent_tools": "a81fac17fe8e",
+      "agent_messages": "f7c7eae639bd",
+      "judge": "2ee29f234c91",
+      "mcp": "cc4ae9f9a9a6",
+      "agent": "cc984387c3e8"
+    }
+  },
+  "results": [
+    {
+      "id": "aapl-ai-risk",
+      "ticker": "AAPL",
+      "question": "What risks does Apple describe related to artificial intelligence?",
+      "type": "judged",
+      "passed": true,
+      "detail": "The answer explicitly mentions reputational, legal, financial, and competitive risks associated with AI and includes appropriate citation markers like [1].",
+      "has_citation": true,
+      "citation_warnings": [],
+      "answer": "Apple describes several risks related to artificial intelligence in its SEC filings, including:\n\n* **Reputational, competitive, and financial harm:** Issues related to artificial intelligence may lead to regulatory actions, legal liability, reputational and competitive harm, and other adverse effects on the company's business, results of operations, financial condition, and stock price [1].\n* **Emerging legal, regulatory, ethical, and operational risks:** As AI technologies are increasingly integrated into products, services, and operations, they present risks related to competition and strategy, recouping costs and return on investments, product liability, intellectual property infringement, data privacy, cybersecurity, sanctions and export controls, exposing users to harmful or inaccurate content, bias and discrimination, and online safety and protection of minors [1].\n* **Cybersecurity threats and advanced cyberattacks:** The rapid advancement and widespread dissemination of AI technologies significantly increase cyberattack risks, such as highly targeted phishing campaigns, automated vulnerability discovery and exploitation, and deepfake content designed to bypass authentication protocols [2]. Additionally, AI models themselves can be susceptible to security threats, exposing the company and its suppliers to additional vulnerabilities [2].\n* **Computing infrastructure constraints and costs:** Apple's AI and machine learning offerings depend on access to sufficient computing resources [5]. High industry-wide demand for cloud computing and AI infrastructure has led to constrained supply, extended lead times, and increasing costs [5]. Reliance on third-party cloud service providers alongside its own data center infrastructure means Apple may be unable to secure sufficient capacity on commercially reasonable terms, which could limit product functionality, delay deployments, or cause significantly higher operating costs [5].\n* **New and changing laws and regulations:** Expanding the use of machine learning and AI features requires navigating evolving legal, regulatory, and ethical considerations, with potential compliance costs and liabilities if laws or regulations are violated [4].",
+      "n_chunks_retrieved": 5,
+      "withheld_answer": null,
+      "gate_withheld_would_have_passed": null,
+      "gate_withheld_detail": null,
+      "citation_warning_details": []
+    }
+  ]
+}
