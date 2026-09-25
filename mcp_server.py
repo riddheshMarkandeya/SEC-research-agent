@@ -1,7 +1,9 @@
 """
 MCP server: expose search_filings/get_financial_fact/
 compare_financial_metric over Streamable HTTP. Reuses agent.py's own
-tool-dispatch logic and schemas rather than reimplementing either.
+tool-dispatch logic and the agent's fact/compare schemas rather than
+reimplementing either; search_filings is listed with its own MCP schema
+(prompts.mcp), whose descriptions are true for a direct MCP caller.
 search_filings citations get a "Scroll To Text Fragment" anchor;
 get_financial_fact/compare_financial_metric don't, since those come
 from structured XBRL data with no prose position to anchor to. See
@@ -31,8 +33,13 @@ from agent import (
 )
 from config import MCP_AUTH_TOKEN, MCP_RATE_LIMIT_REQUESTS, MCP_RATE_LIMIT_WINDOW_SECONDS
 from edgar_ingest import get_filing_url
-from prompts.agent_tools import COMPARE_TOOL_SCHEMA, FACT_TOOL_SCHEMA, SEARCH_TOOL_SCHEMA
-from prompts.mcp import COMPARISON_NOT_AVAILABLE_ERROR, FACT_NOT_AVAILABLE_ERROR, UNKNOWN_TOOL_TEMPLATE
+from prompts.agent_tools import COMPARE_TOOL_SCHEMA, FACT_TOOL_SCHEMA
+from prompts.mcp import (
+    COMPARISON_NOT_AVAILABLE_ERROR,
+    FACT_NOT_AVAILABLE_ERROR,
+    MCP_SEARCH_TOOL_SCHEMA,
+    UNKNOWN_TOOL_TEMPLATE,
+)
 from retrieval import hybrid_search
 from tracing import flush, log_event, traced_span
 
@@ -110,15 +117,15 @@ def _search_filings(args: dict) -> list[dict]:
     inherit boundary validation for free by delegating into agent.py's
     already-validated call_get_financial_fact/call_compare_financial_metric),
     this handler builds its result directly from hybrid_search(), so it
-    needs its own validate_tool_args() call against the same
-    SEARCH_TOOL_SCHEMA agent.py's own search_filings dispatch branch
-    uses, keeping both entry points on one source of truth. See
-    docs/decisions/2026-09-09-schema-driven-arg-validation.md. soft_required
+    needs its own validate_tool_args() call. It validates against the
+    schema it lists, MCP_SEARCH_TOOL_SCHEMA, whose parameters match the
+    agent's SEARCH_TOOL_SCHEMA apart from descriptions, so both entry
+    points accept exactly the same arguments. soft_required
     -- query is schema-required but the empty-query case below has always
     just returned [] rather than erroring, so a missing query still isn't
     a hard rejection here either."""
     with traced_span("tool", "search_filings", input=args) as span:
-        if validate_tool_args("search_filings", SEARCH_TOOL_SCHEMA, args, soft_required=frozenset({"query"})):
+        if validate_tool_args("search_filings", MCP_SEARCH_TOOL_SCHEMA, args, soft_required=frozenset({"query"})):
             span.update(output={"found": False, "rejected": True})
             return []
         query = args.get("query")
@@ -162,7 +169,7 @@ _TOOL_HANDLERS = {
     "compare_financial_metric": _compare_financial_metric,
 }
 
-_TOOL_SCHEMAS = (SEARCH_TOOL_SCHEMA, FACT_TOOL_SCHEMA, COMPARE_TOOL_SCHEMA)
+_TOOL_SCHEMAS = (MCP_SEARCH_TOOL_SCHEMA, FACT_TOOL_SCHEMA, COMPARE_TOOL_SCHEMA)
 
 
 async def _handle_list_tools(ctx, params) -> types.ListToolsResult:

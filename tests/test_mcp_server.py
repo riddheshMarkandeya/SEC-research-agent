@@ -360,6 +360,39 @@ def test_handle_list_tools_returns_all_three_tool_schemas():
     assert {t.name for t in result.tools} == {"search_filings", "get_financial_fact", "compare_financial_metric"}
 
 
+def test_listed_search_tool_is_the_mcp_variant():
+    # MCP clients get their own search description: the agent's says the
+    # first search per company uses the user's original question, which
+    # is true only inside the agent loop.
+    from prompts.mcp import MCP_SEARCH_TOOL_SCHEMA
+
+    result = asyncio.run(mcp_server._handle_list_tools(None, None))
+    [search] = [t for t in result.tools if t.name == "search_filings"]
+    assert search.description == MCP_SEARCH_TOOL_SCHEMA["function"]["description"]
+    assert search.input_schema == MCP_SEARCH_TOOL_SCHEMA["function"]["parameters"]
+    assert "original question" not in search.input_schema["properties"]["query"]["description"]
+
+
+def test_mcp_search_schema_differs_from_the_agents_only_in_descriptions():
+    from prompts.agent_tools import SEARCH_TOOL_SCHEMA
+    from prompts.mcp import MCP_SEARCH_TOOL_SCHEMA
+
+    def without_query_description(schema):
+        parameters = schema["function"]["parameters"]
+        query = {k: v for k, v in parameters["properties"]["query"].items() if k != "description"}
+        return {**parameters, "properties": {**parameters["properties"], "query": query}}
+
+    assert MCP_SEARCH_TOOL_SCHEMA["function"]["name"] == SEARCH_TOOL_SCHEMA["function"]["name"]
+    assert without_query_description(MCP_SEARCH_TOOL_SCHEMA) == without_query_description(SEARCH_TOOL_SCHEMA)
+
+
+def test_search_filings_rejects_an_unknown_argument(monkeypatch):
+    monkeypatch.setattr(
+        mcp_server, "hybrid_search", lambda *a, **k: (_ for _ in ()).throw(AssertionError("should not be called"))
+    )
+    assert mcp_server._search_filings({"query": "revenue", "segment": "iPhone"}) == []
+
+
 def test_handle_call_tool_dispatches_to_registered_handler(monkeypatch):
     monkeypatch.setattr(mcp_server, "_TOOL_HANDLERS", {"fake_tool": lambda args: {"echo": args}})
     params = types.CallToolRequestParams(name="fake_tool", arguments={"x": 1})

@@ -987,12 +987,12 @@
   },
   "mcp_list_tools": [
    {
-    "description": "Search SEC 10-K/10-Q filing excerpts for one of the five covered companies.",
+    "description": "Search SEC 10-K/10-Q filing excerpts from the five covered companies. Returns the most relevant excerpts as a list of {text, source} objects, where source identifies the filing. Use it for narrative content (risk factors, MD&A, segment or product-line figures) and for any metric get_financial_fact doesn't cover. Pass ticker to restrict the search to one company. It returns filing text only, not structured XBRL values.",
     "inputSchema": {
      "additionalProperties": false,
      "properties": {
       "query": {
-       "description": "What to search for, as a natural-language question or phrase. Only used for a follow-up search against a company you've already searched — the first search against each company always uses the user's original question.",
+       "description": "What to search for, as a natural-language question or phrase.",
        "type": "string"
       },
       "ticker": {

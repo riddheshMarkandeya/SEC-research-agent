@@ -60,8 +60,13 @@ from mcp import ClientSession
 from mcp.client.streamable_http import streamable_http_client
 
 from config import SEC_USER_AGENT, TRACE_LOG_PATH
-from prompts.agent_tools import COMPARE_TOOL_SCHEMA, FACT_TOOL_SCHEMA, SEARCH_TOOL_SCHEMA
-from prompts.mcp import COMPARISON_NOT_AVAILABLE_ERROR, FACT_NOT_AVAILABLE_ERROR, UNKNOWN_TOOL_TEMPLATE
+from prompts.agent_tools import COMPARE_TOOL_SCHEMA, FACT_TOOL_SCHEMA
+from prompts.mcp import (
+    COMPARISON_NOT_AVAILABLE_ERROR,
+    FACT_NOT_AVAILABLE_ERROR,
+    MCP_SEARCH_TOOL_SCHEMA,
+    UNKNOWN_TOOL_TEMPLATE,
+)
 
 PORT = 8799
 BASE_URL = f"http://127.0.0.1:{PORT}"
@@ -153,12 +158,12 @@ async def run_checks():
 
 async def _check_model_facing_text(session, listed_tools):
     print("\n[model-facing text] tool descriptions, schemas and error strings match prompts/")
-    expected = [SEARCH_TOOL_SCHEMA, FACT_TOOL_SCHEMA, COMPARE_TOOL_SCHEMA]
+    expected = [MCP_SEARCH_TOOL_SCHEMA, FACT_TOOL_SCHEMA, COMPARE_TOOL_SCHEMA]
     assert [t.name for t in listed_tools] == [s["function"]["name"] for s in expected], listed_tools
     for tool, schema in zip(listed_tools, expected, strict=True):
         assert tool.description == schema["function"]["description"], tool.name
         assert tool.input_schema == schema["function"]["parameters"], tool.name
-    print("  [OK] all 3 tools' descriptions and input schemas are exactly prompts.agent_tools'")
+    print("  [OK] all 3 tools' descriptions and input schemas are exactly prompts/' (search: the MCP variant)")
 
     # FY1990 predates every covered company's XBRL data, so both calls
     # reach the real no-data path rather than a validation rejection.

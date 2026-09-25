@@ -1,7 +1,7 @@
 """Static model-facing text for the agent model: the tool schemas it is
 offered, and AGENT_TOOL_SCHEMAS, the exact list and order
-agent._run_agent_impl sends. FACT/COMPARE/SEARCH are also listed to MCP
-clients by mcp_server."""
+agent._run_agent_impl sends. FACT and COMPARE are also listed to MCP
+clients by mcp_server, and SEARCH through its MCP variant in prompts.mcp."""
 
 # ruff: noqa: E501 -- the schemas' "description" values are deliberately
 # long natural-language content shown to the model; splitting them into
