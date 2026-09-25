@@ -226,7 +226,7 @@
        "type": "integer"
       },
       "metric": {
-       "description": "Which metric to fetch for every company. gross_margin, net_margin, operating_margin are each computed as a ratio and returned as a percent; the rest are returned in USD. (asset_turnover, cash_to_assets, inventory_turnover, rd_intensity, return_on_assets are NOT available here -- no cross-company version exists yet; use get_financial_fact per company instead.)",
+       "description": "Which metric to fetch for every company. gross_margin, net_margin, operating_margin are each computed as a ratio and returned as a percent; the rest are returned in USD. (asset_turnover, cash_to_assets, inventory_turnover, rd_intensity, return_on_assets are NOT available here -- no cross-company version exists; use get_financial_fact per company instead.)",
        "enum": [
         "cash_and_equivalents",
         "cost_of_revenue",
@@ -775,7 +775,7 @@
         "type": "integer"
        },
        "metric": {
-        "description": "Which metric to fetch for every company. gross_margin, net_margin, operating_margin are each computed as a ratio and returned as a percent; the rest are returned in USD. (asset_turnover, cash_to_assets, inventory_turnover, rd_intensity, return_on_assets are NOT available here -- no cross-company version exists yet; use get_financial_fact per company instead.)",
+        "description": "Which metric to fetch for every company. gross_margin, net_margin, operating_margin are each computed as a ratio and returned as a percent; the rest are returned in USD. (asset_turnover, cash_to_assets, inventory_turnover, rd_intensity, return_on_assets are NOT available here -- no cross-company version exists; use get_financial_fact per company instead.)",
         "enum": [
          "cash_and_equivalents",
          "cost_of_revenue",
@@ -1124,7 +1124,7 @@
        "type": "integer"
       },
       "metric": {
-       "description": "Which metric to fetch for every company. gross_margin, net_margin, operating_margin are each computed as a ratio and returned as a percent; the rest are returned in USD. (asset_turnover, cash_to_assets, inventory_turnover, rd_intensity, return_on_assets are NOT available here -- no cross-company version exists yet; use get_financial_fact per company instead.)",
+       "description": "Which metric to fetch for every company. gross_margin, net_margin, operating_margin are each computed as a ratio and returned as a percent; the rest are returned in USD. (asset_turnover, cash_to_assets, inventory_turnover, rd_intensity, return_on_assets are NOT available here -- no cross-company version exists; use get_financial_fact per company instead.)",
        "enum": [
         "cash_and_equivalents",
         "cost_of_revenue",

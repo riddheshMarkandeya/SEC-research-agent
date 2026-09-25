@@ -144,7 +144,7 @@ COMPARE_TOOL_SCHEMA = {
                         f"Which metric to fetch for every company. {', '.join(CROSS_COMPANY_RATIOS)} are each "
                         "computed as a ratio and returned as a percent; the rest are returned in USD. "
                         f"({', '.join(SINGLE_COMPANY_ONLY_RATIOS)} are NOT available here -- no cross-company "
-                        "version exists yet; use get_financial_fact per company instead.)"
+                        "version exists; use get_financial_fact per company instead.)"
                     ),
                 },
                 "period_end_date": {
