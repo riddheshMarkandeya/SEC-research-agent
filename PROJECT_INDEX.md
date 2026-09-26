@@ -49,6 +49,8 @@ prepend them (verbatim, still reverse-chronological) to the top of
 
 ## Recent
 
+- 2026-09-26 [review] WP7 code review — 2 rounds (Substantial by blast radius); whole-float years now converted (fixed a `range()` crash in the multi-year average), `"0000"` stays rejected; 0 deferred → `docs/reviews/2026-09-26-wp7-fiscal-year-strings.md`
+- 2026-09-26 [decision] WP7: 4-digit year strings (and whole floats) convert to int, "same no-data reply" wording accepted; screen 35/39 → 36/39, no REGRESSED, `nvda-revenue-two-quarter-comparison` watch ("− 1" gate FP); 0 year strings sent in the window, so 7a not exercised live; agent `7aec53939ce3` → `docs/decisions/2026-09-26-wp7-fiscal-year-strings.md`
 - 2026-09-26 [review] WP7 plan review — 1 round; 7a gets its own fingerprint via a dispatcher snapshot scenario, ≥350-request screen cutoff, shorter "same no-data reply" wording, 4-digit strings only → `docs/reviews/2026-09-26-wp7-fiscal-year-strings-plan-review.md`
 - 2026-09-26 [plan] WP7: convert 4-digit `fiscal_year` strings to int at the fact/compare boundary (7a) and replace "rejected outright" / "returns null" (7b); BACKLOG (a)/(d) moved to WP8 follow-ups → `docs/plans/2026-09-26-wp7-fiscal-year-strings.md`
 - 2026-09-26 [review] WP6 code review — 2 rounds (Substantial by blast radius); `_never_tagged_hint` typed `object`, `_no_fact_period` docstring says it mirrors the lookup; rejected-call "no data" wording deferred to WP7 (d) → `docs/reviews/2026-09-26-wp6-no-data-message.md`
