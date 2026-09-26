@@ -83,6 +83,7 @@ EXPECTED_KEYS = {
         "no_fact_never_tagged",
         "no_fact_ratio_not_tagged_check",
         "no_fact_multi_year",
+        "dispatch_no_fact_string_year",
         "no_comparison_empty",
         "no_comparison_q4_never_tagged",
         "never_tagged_hint",
@@ -236,6 +237,17 @@ def _render_retry_and_no_data(agent) -> dict:
         ("multi_year", {"metric": "gross_margin", "ticker": "PLTR", "start_fiscal_year": 2023}),
     ]:
         out[f"no_fact_{name}"] = agent._format_no_fact_message(args)
+    # Through the dispatcher, so the reply shows the year the lookup used
+    # after a string year is converted.
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(agent, "get_ratio", lambda *a, **k: None)
+        out["dispatch_no_fact_string_year"] = agent._dispatch_tool_call(
+            {"name": "get_financial_fact", "args": {"metric": "gross_margin", "ticker": "PLTR", "fiscal_year": "2025"}},
+            "q",
+            [],
+            set(),
+            False,
+        )
     for name, args in [
         ("empty", {}),
         ("q4_never_tagged", {"metric": "inventory", "anchor_ticker": "PLTR", "fiscal_period": "Q4"}),

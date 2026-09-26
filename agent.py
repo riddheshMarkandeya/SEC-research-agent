@@ -222,6 +222,28 @@ def _rejects_invalid_fiscal_year(tool: str, args: dict) -> bool:
     return False
 
 
+# ASCII digits only: \d would also match other scripts' decimal digits.
+_YEAR_STRING = re.compile(r"[0-9]{4}")
+
+
+def _coerce_year_args(tool: str, args: dict, fields: frozenset[str]) -> dict:
+    """A copy of `args` with each 4-digit year string in `fields` turned
+    into an int, or `args` itself when there is none. This is the only
+    string-to-int conversion: Gemini sends years as strings ("2025")
+    despite the integer schema, and rejecting them cost the model turns.
+    Anything else ("FY2025", "²²²²", "99999", a bool) is left for the
+    usual checks to reject."""
+    coerced = args
+    for field in sorted(fields):
+        value = args.get(field)
+        if isinstance(value, str) and _YEAR_STRING.fullmatch(value):
+            if coerced is args:
+                coerced = dict(args)
+            coerced[field] = int(value)
+            log_event("tool_arg_coerced", tool=tool, field=field, value=value)
+    return coerced
+
+
 _VALIDATOR_KIND_PRIORITY = {"additionalProperties": 0, "required": 1, "type": 2, "enum": 3}
 
 
@@ -375,6 +397,7 @@ def call_get_financial_fact(args: dict, question: str | None = None) -> dict | N
     multi-year-average combinations) -- those are a schema-violation
     problem, not a "this formula doesn't exist yet" problem, and would
     just be noise on the signal."""
+    args = _coerce_year_args("get_financial_fact", args, _FISCAL_YEAR_PROPS)
     if validate_tool_args("get_financial_fact", FACT_TOOL_SCHEMA, args, skip_properties=_FISCAL_YEAR_PROPS):
         return None
     ticker = args["ticker"]
@@ -518,6 +541,7 @@ def call_compare_financial_metric(args: dict, question: str | None = None) -> di
     `reason="no_data_for_ticker"` bucket rather than a third reason
     value: a human looking at the metric name in the Langfuse dashboard
     can already tell that case apart, not worth the extra complexity."""
+    args = _coerce_year_args("compare_financial_metric", args, frozenset({"fiscal_year"}))
     if validate_tool_args(
         "compare_financial_metric", COMPARE_TOOL_SCHEMA, args, skip_properties=frozenset({"fiscal_year"})
     ):
@@ -1897,6 +1921,9 @@ def _dispatch_get_financial_fact(name: str, args: dict, question: str, all_resul
     if verbose:
         print(f"  [tool call] get_financial_fact({args!r})")
     with traced_span("tool", name, input=args) as span:
+        # Converted here too, not only inside call_get_financial_fact, so
+        # the no-data reply names the year the lookup actually used.
+        args = _coerce_year_args(name, args, _FISCAL_YEAR_PROPS)
         fact = call_get_financial_fact(args, question=question)
         if fact is None:
             span.update(output={"found": False})

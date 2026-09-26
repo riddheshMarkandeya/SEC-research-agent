@@ -248,7 +248,8 @@ def test_format_no_fact_message_no_period_arguments_names_latest():
 
 
 def test_format_no_fact_message_string_year_stays_visible():
-    # Until digit-string years are coerced, the reply shows the malformed value.
+    # The dispatcher converts a 4-digit year string first; any other string
+    # that reaches the formatter is shown as sent.
     assert "'FY' FY'2025'" in _no_fact_for(fiscal_year="2025")
 
 
@@ -1916,16 +1917,14 @@ def test_call_get_financial_fact_logs_rejection_for_invalid_multi_year_average_c
 
 
 def test_call_get_financial_fact_rejects_non_int_multi_year_average_years(monkeypatch):
-    # Found in code review (2026-09-06): a numeric-STRING year (a real
-    # shape of LLM tool-call quirk this file already documents elsewhere)
-    # used to crash formulas.py's end_fiscal_year - start_fiscal_year
-    # with an uncaught TypeError instead of degrading like every other
-    # boundary check here.
+    # A year string that isn't 4 digits stays a string, and would crash
+    # formulas.py's end_fiscal_year - start_fiscal_year with a TypeError
+    # if it reached the lookup, so it must be rejected here instead.
     calls = []
     monkeypatch.setattr("agent.log_event", lambda category, **fields: calls.append((category, fields)))
 
     result = call_get_financial_fact(
-        {"ticker": "AAPL", "metric": "revenue", "start_fiscal_year": "2023", "end_fiscal_year": "2025"}
+        {"ticker": "AAPL", "metric": "revenue", "start_fiscal_year": "FY2023", "end_fiscal_year": "FY2025"}
     )
 
     assert result is None
@@ -1936,16 +1935,14 @@ def test_call_get_financial_fact_rejects_non_int_multi_year_average_years(monkey
 
 
 def test_call_get_financial_fact_rejects_non_int_fiscal_year(monkeypatch):
-    # review §8: a non-int fiscal_year (e.g. a numeric string) doesn't
-    # crash -- get_metric()/get_ratio() just fail to find a match and
-    # return None, which used to record reason="no_data_for_ticker" via
-    # record_unmet_metric_request(), polluting that "should we add a
-    # formula for this" telemetry with a schema-violation false negative
-    # instead of a real data gap.
+    # A non-year fiscal_year (e.g. "FY2025") doesn't crash -- the lookup
+    # would just find no match -- but recording that as
+    # reason="no_data_for_ticker" would pollute the "should we add a
+    # formula for this" telemetry with a malformed call, not a data gap.
     calls = []
     monkeypatch.setattr("agent.log_event", lambda category, **fields: calls.append((category, fields)))
 
-    result = call_get_financial_fact({"ticker": "AAPL", "metric": "revenue", "fiscal_year": "2025"})
+    result = call_get_financial_fact({"ticker": "AAPL", "metric": "revenue", "fiscal_year": "FY2025"})
 
     assert result is None
     assert len(calls) == 1
@@ -1960,13 +1957,87 @@ def test_call_compare_financial_metric_rejects_non_int_fiscal_year(monkeypatch):
     calls = []
     monkeypatch.setattr("agent.log_event", lambda category, **fields: calls.append((category, fields)))
 
-    result = call_compare_financial_metric({"anchor_ticker": "AAPL", "metric": "revenue", "fiscal_year": "2025"})
+    result = call_compare_financial_metric({"anchor_ticker": "AAPL", "metric": "revenue", "fiscal_year": "FY2025"})
 
     assert result == {}
     assert len(calls) == 1
     category, fields = calls[0]
     assert category == "tool_call_rejected"
     assert fields["reason"] == "invalid_fiscal_year_type"
+
+
+def test_call_get_financial_fact_converts_four_digit_year_string(monkeypatch):
+    # Gemini sends fiscal_year as "2025" despite the integer schema; the
+    # lookup must run with the int, and the conversion is logged.
+    events, lookups = [], []
+    monkeypatch.setattr("agent.log_event", lambda category, **fields: events.append((category, fields)))
+    monkeypatch.setattr("agent.get_metric", lambda *a, **k: lookups.append(a) or {"value": 1})
+    args = {"ticker": "AAPL", "metric": "revenue", "fiscal_year": "2025", "fiscal_period": "FY"}
+
+    result = call_get_financial_fact(args)
+
+    assert result == {"value": 1}
+    assert lookups == [("AAPL", "revenue", 2025, "FY", None)]
+    assert events == [("tool_arg_coerced", {"tool": "get_financial_fact", "field": "fiscal_year", "value": "2025"})]
+    assert args["fiscal_year"] == "2025"  # the caller's dict is untouched
+
+
+def test_call_compare_financial_metric_converts_four_digit_year_string(monkeypatch):
+    events, lookups = [], []
+    monkeypatch.setattr("agent.log_event", lambda category, **fields: events.append((category, fields)))
+    monkeypatch.setattr(
+        "agent.get_metric_all_companies", lambda *a, **k: lookups.append(a) or {"AAPL": {"value": 1}}
+    )
+
+    result = call_compare_financial_metric({"anchor_ticker": "AAPL", "metric": "revenue", "fiscal_year": "2025"})
+
+    assert result == {"AAPL": {"value": 1}}
+    assert lookups == [("AAPL", "revenue", 2025, "FY", None)]
+    assert [(c, f["field"]) for c, f in events] == [("tool_arg_coerced", "fiscal_year")]
+
+
+def test_call_get_financial_fact_converts_multi_year_string_years(monkeypatch):
+    events, lookups = [], []
+    monkeypatch.setattr("agent.log_event", lambda category, **fields: events.append((category, fields)))
+    monkeypatch.setattr("agent.get_multi_year_average", lambda *a, **k: lookups.append(a) or {"value": 1})
+
+    result = call_get_financial_fact(
+        {"ticker": "AAPL", "metric": "revenue", "start_fiscal_year": "2023", "end_fiscal_year": "2025"}
+    )
+
+    assert result == {"value": 1}
+    assert lookups == [("AAPL", "revenue", 2023, 2025)]
+    assert [f["field"] for _, f in events] == ["end_fiscal_year", "start_fiscal_year"]
+
+
+def test_call_get_financial_fact_still_rejects_non_year_values(monkeypatch):
+    # Only exactly four ASCII digits convert. "²²²²".isdigit() is True,
+    # but int() can't parse it; a short or long digit string isn't a year.
+    events, lookups = [], []
+    monkeypatch.setattr("agent.log_event", lambda category, **fields: events.append((category, fields)))
+    monkeypatch.setattr("agent.get_metric", lambda *a, **k: lookups.append(a) or {"value": 1})
+
+    for fiscal_year in [True, "FY2026", " 2025", "²²²²", "99999", "0", [2026]]:
+        events.clear()
+        result = call_get_financial_fact({"ticker": "AAPL", "metric": "revenue", "fiscal_year": fiscal_year})
+
+        assert result is None, fiscal_year
+        assert [f["reason"] for c, f in events if c == "tool_call_rejected"] == ["invalid_fiscal_year_type"]
+        assert not [c for c, _ in events if c == "tool_arg_coerced"], fiscal_year
+    assert lookups == []
+
+
+def test_dispatch_no_data_reply_names_the_converted_year_and_logs_once(monkeypatch):
+    events = []
+    monkeypatch.setattr("agent.log_event", lambda category, **fields: events.append((category, fields)))
+    monkeypatch.setattr("agent.get_ratio", lambda *a, **k: None)
+    call = {"name": "get_financial_fact", "args": {"ticker": "NVDA", "metric": "gross_margin", "fiscal_year": "2025"}}
+
+    content = _dispatch_tool_call(call, "q", [], set(), verbose=False)
+
+    assert "'FY' FY2025" in content
+    assert "FY'2025'" not in content
+    assert [c for c, _ in events].count("tool_arg_coerced") == 1
 
 
 def test_call_get_financial_fact_rejects_non_hashable_ticker_without_crashing(monkeypatch):

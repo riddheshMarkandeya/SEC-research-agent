@@ -94,6 +94,7 @@
     "text": "MSFT revenue = 5.0 USD (structured XBRL data, not filing prose)"
    }
   ],
+  "dispatch_no_fact_string_year": "(no structured data found for metric='gross_margin' ticker='PLTR' 'FY' FY2025 — try search_filings instead)",
   "fact_raw": {
    "metadata": {
     "accessionNumber": "acc-1",
