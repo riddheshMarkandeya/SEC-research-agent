@@ -98,7 +98,7 @@ FACT_TOOL_SCHEMA = {
                     "description": (
                         "Set true to get year-over-year percent growth of `metric` instead of its plain value "
                         "(e.g. 'revenue growth' questions). Only valid for the raw metrics, NOT for any ratio "
-                        f"metric ({', '.join(sorted(RATIO_DEFINITIONS))}) -- returns null for that combination. "
+                        f"metric ({', '.join(sorted(RATIO_DEFINITIONS))}) -- that combination is rejected and reports no data. "
                         "Compares the requested period to the SAME fiscal_period one year earlier automatically; "
                         "never compute growth yourself from two separate calls. The returned value IS the "
                         "answer -- do not also fetch the current and prior-period raw values afterward to "
