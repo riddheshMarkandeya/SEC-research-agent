@@ -47,6 +47,20 @@ round-trips); what the acceptance criteria are; what live spot-check or
 eval re-run (`eval_harness.py --ids ...`) confirms it end-to-end, not
 just in isolation.]
 
+## Plan review
+
+[Written before `ExitPlanMode`: which reviewer ran (e.g. `plan-reviewer`,
+Opus) and on what date, then each finding numbered with its severity
+and disposition — folded in (and where), or why it doesn't apply.]
+
+## Review log
+
+[Filled in during `independent-review-pass`. For each round: the passes
+run (and, for round 2+, the delta they reviewed), then each finding with
+its disposition — `[Fixed]`, `[Verified, no fix needed]`,
+`[Deferred → BACKLOG]` or `[Disputed]`. The stop rules read this
+section, so a finding dispositioned here doesn't count as new later.]
+
 ## Addendum (if applicable)
 
 [If actual execution deviates from this plan after implementation

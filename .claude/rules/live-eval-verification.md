@@ -111,10 +111,12 @@ don't let a live-only-discovered bug go unrecorded just because it fell
 outside the original TDD loop that produced the change. At minimum: a
 new `docs/decisions/YYYY-MM-DD-<slug>.md` file (naming the real failure
 mode, the live run that found it, and cross-linking back via `Related`
-to the decision file for the change that introduced the regression —
-never edited into that original file, which stays an immutable record)
+to the decision file, or the commit SHA, of the change that introduced
+the regression — never edited into that original file, which stays an
+immutable record)
 once fixed; a `BACKLOG.md` item, tagged per the usual convention, if not
-fixed in the same session.
+fixed in the same session. This decision file is exempt from the ADR gate
+in `documentation-backlog-hygiene`: it's always written.
 
 **An eval-discovered regression is exactly the "non-trivial,
 multi-location bug" case the `debugging-discipline` skill already

@@ -1,25 +1,27 @@
 # Backlog
 
 Tracks open work: what's queued, what's in progress. This is **not** a
-changelog — completed work's rationale and verification live in
-`docs/decisions/YYYY-MM-DD-<slug>.md` (and, for Substantial work, its
-own paired design doc under `docs/plans/`), indexed from
-`PROJECT_INDEX.md`. Link out to the relevant decision/plan/review file
-instead of re-explaining reasoning here; keep entries short.
+changelog. Completed work's rationale and verification live in its
+record: the commit message body, or a `docs/decisions/YYYY-MM-DD-<slug>.md`
+file when the change passes the ADR gate (and, for Substantial work, its
+own paired design doc under `docs/plans/`), with files indexed from
+`PROJECT_INDEX.md`. Link out to the relevant record instead of
+re-explaining reasoning here; keep entries short.
 
 **Keep this current as work happens, not just at session-end**: add a
 line the moment a new open item is identified (a deferred idea, a
 found-but-not-fixed bug, a follow-up) — don't wait for a wrap-up. Move
 an item to "In progress" when you start it. **When an item is done,
 delete its line entirely** — no strikethrough, no "resolved" annotation
-left behind — and land its `docs/decisions/` write-up in the same step,
-with an index line added to `PROJECT_INDEX.md`. If only part of a
+left behind — and land its record in the same step (the commit body,
+or a decision file plus its `PROJECT_INDEX.md` line if the ADR gate
+passes). If only part of a
 multi-part item is resolved, rewrite the line to describe only the
 remaining open part, with no decorated hybrid of done-and-not-done. An
-item should never just vanish from this file with no decision-file trace
+item should never just vanish from this file with no recorded trace
 of what happened to it. **Exception: items tagged "Recurring"**. When a run
 is done, rewrite the item's due date instead of deleting the line; each
-run still writes its own decision file.
+run still leaves its own record.
 
 This file replaces the project's former narrative changelog's old "Next
 steps" section, which needed its own 380-line cleanup pass once already
@@ -51,7 +53,6 @@ reference:
 
 Design: `docs/plans/2026-09-25-workflow-skills-overhaul-roadmap.md` (read "User decisions" first). Each work package is planned in its own plan-mode session that points at its roadmap section. WP-A goes first; WP-B follows it; WP-C is independent.
 
-- [ ] **[misc, High, Substantial]** WP-A: review and documentation cost. Tiered, diff-based review passes, delta-only re-rounds, ADR-gated decision files, plan review kept inside the plan, the `documentation-backlog-hygiene` rewrite, scope tiers split by axis, `arch-reviewer` spec/smell/guard-the-bar checklists, LLM category in `security-reviewer`. Roadmap: WP-A.
 - [ ] **[misc, Med, Standard]** WP-B: `debugging-discipline` merged with `diagnosing-bugs`, TDD anti-patterns, new skills `grill-me`, `research`, `wayfinder`, `retro` (fully global, including the tier-scheme evidence review), and the global CLAUDE.md "on-demand skills" list. Depends on WP-A. Roadmap: WP-B.
 - [ ] **[misc, Med, Standard]** WP-C: `ui-implementation-guidelines` upgrade with on-demand references, the `prototype` skill, and a node git-guardrails PreToolUse hook (`Bash|PowerShell`). Roadmap: WP-C.
 
@@ -59,7 +60,7 @@ Design: `docs/plans/2026-09-25-workflow-skills-overhaul-roadmap.md` (read "User 
 
 Design: `docs/plans/2026-09-24-prompt-audit-roadmap.md` (read its "How this roadmap is executed" section first). Findings: `docs/reviews/2026-09-24-prompt-audit.md`. Work packages run strictly in order. Each one is planned in its own plan-mode session that points at its roadmap section rather than restating it.
 
-- [ ] **[design, Low, Standard]** **IN PROGRESS — screen done, replicate pending (next quota day after 2026-09-25):** WP5: plain wording for the segment-rule emphasis (finding 4), with a trace check on segment questions. Roadmap: Step 5. Commit 5a `d45156f` (agent `5d3cea51c73b`) and its screen reports `1f72f14` are in: 31/39 vs 33/39, REGRESSED on `nvda-revenue-two-quarter-comparison` (3/3 → 1/3, both failures the citation gate withholding a passing answer over an inline "a ÷ b − 1"). Still to do, same Pacific day: replicate that question 3× on a clean tree and compare in explicit mode against `20260925T070749Z`/`071108Z`/`071503Z`; if not within 1 of B, attribute (`git revert d45156f`, 3×). Then the decision file and docs; the plan, plan review and code review (`docs/plans/2026-09-24-wp5-segment-rule.md`, `docs/reviews/2026-09-24-wp5-segment-rule-plan-review.md`, `docs/reviews/2026-09-25-wp5-segment-rule.md`) are untracked until then. Outcomes per case: `docs/plans/2026-09-25-wp6-no-data-message.md`, "If WP5 fails". WP6 waits for this.
+- [ ] **[design, Low, Standard]** **IN PROGRESS — screen done, replicate pending (next quota day after 2026-09-25):** WP5: plain wording for the segment-rule emphasis (finding 4), with a trace check on segment questions. Roadmap: Step 5. Commit 5a `d45156f` (agent `5d3cea51c73b`) and its screen reports `1f72f14` are in: 31/39 vs 33/39, REGRESSED on `nvda-revenue-two-quarter-comparison` (3/3 → 1/3, both failures the citation gate withholding a passing answer over an inline "a ÷ b − 1"). Still to do, same Pacific day: replicate that question 3× on a clean tree and compare in explicit mode against `20260925T070749Z`/`071108Z`/`071503Z`; if not within 1 of B, attribute (`git revert d45156f`, 3×). Then the decision file and docs; the plan, plan review and code review (`docs/plans/2026-09-24-wp5-segment-rule.md`, `docs/reviews/2026-09-24-wp5-segment-rule-plan-review.md`, `docs/reviews/2026-09-25-wp5-segment-rule.md`) are already committed in `2801940`. Outcomes per case: `docs/plans/2026-09-25-wp6-no-data-message.md`, "If WP5 fails". WP6 waits for this.
 - [ ] **[bug, Med, Standard]** WP6: no-data message renders "None FYNone" (finding 11), and the "not available"/"Returns null" descriptions don't match what either surface actually returns (finding 12). Depends on WP5. Roadmap: Step 6.
 - [ ] **[bug, Med, Standard]** WP7: accept digit-only `fiscal_year` strings (138 live silent rejections), and fix SYSTEM_PROMPT's "rejected outright" wording (finding 13). Depends on WP6. Roadmap: Step 7. From WP6's plan review: (a) a yoy no-data reply names the current period even when the prior year is the missing one (`formulas.py:353`); (b) convert the year on a copy of `args` and pass that copy to `_format_no_fact_message` too, or the reply still shows `FY'2025'`; (c) Step 7's "Bump MESSAGES_VERSION" is stale: regenerate the snapshot instead.
 - [ ] **[misc, Med, Standard]** WP8: final full 48-question run compared against the last two full runs, unpin the Gemini model, write the summary decision file, and file the deferred items (finding 7 judge change, notes 8–10, Step 7 follow-ups). Depends on WP7. Roadmap: Steps 8–9.

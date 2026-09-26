@@ -3,7 +3,7 @@
 Read `~/.claude/CLAUDE.md` first: it has the general workflow and the skills it points to. This
 file adds only what's specific to this project and describes current rules. Past decisions,
 including how this file got its shape, are in `PROJECT_INDEX.md`'s `Recent` section (grep
-`PROJECT_INDEX_ARCHIVE.md` for older ones).
+`PROJECT_INDEX_ARCHIVE.md` for older ones) and in commit message bodies (`git log --grep`).
 
 ## Path-scoped rules (`.claude/rules/`)
 
@@ -72,23 +72,32 @@ file alone unless the function or block it's attached to is meaningfully changed
 
 ## Documentation system
 
-This project's version of the five artifacts from `documentation-backlog-hygiene`:
+This project's version of the records from `documentation-backlog-hygiene`:
 
 - **`PROJECT_INDEX.md`**: a framing blurb, a static Project Overview, then `## Recent`, with one
   reverse-chronological line per file in the three `docs/` directories below.
   - Read `Recent` in full at session start; follow links only when relevant.
   - Cap: **50 entries**. When exceeded, trim to 40 and move the oldest lines verbatim into
     `PROJECT_INDEX_ARCHIVE.md`. Grep the archive; never read it in full.
-- **`docs/decisions/YYYY-MM-DD-<slug>.md`**: one per Standard+ change. Write it once and never
-  append. A revisit writes a new file that links back under `Related`.
-- **`docs/plans/YYYY-MM-DD-<slug>.md`** and **`docs/reviews/YYYY-MM-DD-<slug>.md`**: saved plans
-  and review findings.
+- **Commit message body**: the default record of a change (why / verified / follow-ups).
+- **`docs/decisions/YYYY-MM-DD-<slug>.md`**: only for a change that passes the ADR gate (hard to
+  reverse, surprising, a real trade-off), plus every live-found regression, which is exempt from
+  the gate (`live-eval-verification.md`). Write it once and never append. A revisit writes a new
+  file that links back under `Related`.
+- **`docs/plans/YYYY-MM-DD-<slug>.md`**: saved plans, for Substantial or multi-session work only.
+  The plan review and review log live inside the plan.
+- **Exemption from the decision, plan and review rules here**: the prompt-audit roadmap's work packages
+  (`docs/plans/2026-09-24-prompt-audit-roadmap.md`, WP5–WP8) keep the per-WP plan, review and
+  decision files that roadmap specifies, because later WPs read their eval baselines from them.
+- **`docs/reviews/YYYY-MM-DD-<slug>.md`**: only for Substantial work, or when a finding is
+  deferred or disputed.
 - Start each of these three from its directory's `TEMPLATE.md`.
 - **`BACKLOG.md`**: open items tagged `**[type, priority, effort]**` (legend at its top). Delete
   an item's line when it's done. **Grep it by tag or keyword; don't read it whole.** It's 40KB+.
 
 **Before design or debugging work**, search `Recent` for prior work on the same module, tool or
-failure mode, and grep the archive if the work might be older.
+failure mode, and grep the archive if the work might be older. Also run `git log --grep=<module>`:
+Standard changes leave no index line, only a commit body.
 
 ## Hooks
 
