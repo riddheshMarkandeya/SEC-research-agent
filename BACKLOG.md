@@ -47,6 +47,14 @@ reference:
 
 ## Backlog
 
+### From the 2026-09-25 workflow-skills overhaul roadmap
+
+Design: `docs/plans/2026-09-25-workflow-skills-overhaul-roadmap.md` (read "User decisions" first). Each work package is planned in its own plan-mode session that points at its roadmap section. WP-A goes first; WP-B follows it; WP-C is independent.
+
+- [ ] **[misc, High, Substantial]** WP-A: review and documentation cost. Tiered, diff-based review passes, delta-only re-rounds, ADR-gated decision files, plan review kept inside the plan, the `documentation-backlog-hygiene` rewrite, scope tiers split by axis, `arch-reviewer` spec/smell/guard-the-bar checklists, LLM category in `security-reviewer`. Roadmap: WP-A.
+- [ ] **[misc, Med, Standard]** WP-B: `debugging-discipline` merged with `diagnosing-bugs`, TDD anti-patterns, new skills `grill-me`, `research`, `wayfinder`, `retro` (fully global, including the tier-scheme evidence review), and the global CLAUDE.md "on-demand skills" list. Depends on WP-A. Roadmap: WP-B.
+- [ ] **[misc, Med, Standard]** WP-C: `ui-implementation-guidelines` upgrade with on-demand references, the `prototype` skill, and a node git-guardrails PreToolUse hook (`Bash|PowerShell`). Roadmap: WP-C.
+
 ### From the 2026-09-24 prompt-audit roadmap
 
 Design: `docs/plans/2026-09-24-prompt-audit-roadmap.md` (read its "How this roadmap is executed" section first). Findings: `docs/reviews/2026-09-24-prompt-audit.md`. Work packages run strictly in order. Each one is planned in its own plan-mode session that points at its roadmap section rather than restating it.

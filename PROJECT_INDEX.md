@@ -48,6 +48,7 @@ prepend them (verbatim, still reverse-chronological) to the top of
 
 ## Recent
 
+- 2026-09-25 [plan] Workflow-skills overhaul roadmap: review of mattpocock/skills + addyosmani/agent-skills; tiered diff-based review, ADR-gated docs, tiers split by axis, new grill-me/research/wayfinder/retro/prototype, git guardrails; WP-A/B/C → `docs/plans/2026-09-25-workflow-skills-overhaul-roadmap.md`
 - 2026-09-25 [review] WP5 code review (commit d45156f) — 1 round, clean, no fix commits; two findings not adopted → `docs/reviews/2026-09-25-wp5-segment-rule.md`
 - 2026-09-25 [decision] Read/diff/cache habits in global §6, reviewer agents get diff commands not pasted diffs, effort default medium, new status line (context tokens + cache expiry), BACKLOG: eval summary mode, agent.py/test_agent.py split, Recurring workflow retro due 2026-10-09 → `docs/decisions/2026-09-25-read-diff-cache-habits.md`
 - 2026-09-25 [review] Read/diff/cache habits — plan review 8 findings; statusline.js 2 rounds (1.0M rounding bug fixed test-first), closed clean; `/simplify` ~210k tokens/round on a 60-line script flagged for retro → `docs/reviews/2026-09-25-read-diff-cache-habits.md`
