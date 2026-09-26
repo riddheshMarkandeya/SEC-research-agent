@@ -62,7 +62,7 @@ FACT_TOOL_SCHEMA = {
             "yourself (a calendar date can fall in a different fiscal year than its calendar "
             "year for these companies). (b) if the question already states the period in fiscal "
             "terms (e.g. 'fiscal year 2026', 'the third quarter of fiscal year 2026'), pass "
-            "fiscal_year and fiscal_period directly instead. Returns null if the company doesn't "
+            "fiscal_year and fiscal_period directly instead. Finds no data if the company doesn't "
             "tag this metric or the period isn't recognized -- fall back to search_filings when "
             "that happens."
         ),
