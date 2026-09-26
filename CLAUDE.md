@@ -92,6 +92,8 @@ This project's version of the records from `documentation-backlog-hygiene`:
 - **`docs/reviews/YYYY-MM-DD-<slug>.md`**: only for Substantial work, or when a finding is
   deferred or disputed.
 - Start each of these three from its directory's `TEMPLATE.md`.
+- **`docs/research/YYYY-MM-DD-<slug>.md`**: cited notes from the `research` skill. They aren't
+  indexed. The plan or `/wayfinder` map (`docs/plans/…-map.md`) that asked for them links them.
 - **`BACKLOG.md`**: open items tagged `**[type, priority, effort]**` (legend at its top). Delete
   an item's line when it's done. **Grep it by tag or keyword; don't read it whole.** It's 40KB+.
 

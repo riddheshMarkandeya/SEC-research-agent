@@ -51,10 +51,11 @@ reference:
 
 ### From the 2026-09-25 workflow-skills overhaul roadmap
 
-Design: `docs/plans/2026-09-25-workflow-skills-overhaul-roadmap.md` (read "User decisions" first). Each work package is planned in its own plan-mode session that points at its roadmap section. WP-A goes first; WP-B follows it; WP-C is independent.
+Design: `docs/plans/2026-09-25-workflow-skills-overhaul-roadmap.md` (read "User decisions" first). Each work package is planned in its own plan-mode session that points at its roadmap section. WP-A and WP-B have landed; WP-C is independent.
 
-- [ ] **[misc, Med, Standard]** WP-B: `debugging-discipline` merged with `diagnosing-bugs`, TDD anti-patterns, new skills `grill-me`, `research`, `wayfinder`, `retro` (fully global, including the tier-scheme evidence review), and the global CLAUDE.md "on-demand skills" list. Depends on WP-A. Roadmap: WP-B.
-- [ ] **[misc, Med, Standard]** WP-C: `ui-implementation-guidelines` upgrade with on-demand references, the `prototype` skill, and a node git-guardrails PreToolUse hook (`Bash|PowerShell`). Roadmap: WP-C.
+- [ ] **[misc, Med, Standard]** WP-C: `ui-implementation-guidelines` upgrade with on-demand references, the `prototype` skill, and a node git-guardrails PreToolUse hook (`Bash|PowerShell`). Roadmap: WP-C. Carried from WP-B:
+  - Add `prototype` as the fifth row of the global CLAUDE.md "On-demand skills" list, and name it in `wayfinder`'s prototype ticket type.
+  - Invocation mode: the roadmap's WP-C section says user-invoked, but the later WP-B table says model-invocable and offered by the suggesting skill before building. Reconcile the two when planning.
 
 ### From the 2026-09-24 prompt-audit roadmap
 
@@ -84,30 +85,13 @@ Full evidence/reasoning: `docs/decisions/2026-09-25-token-efficiency-workflow.md
   86% main-thread share, 351k median context. Also note anything lost to compaction.
   - Restore Opus reviewers or two clean rounds if findings drop.
   - Raise the window if compaction loses something important.
+  - The first `/retro` run closes this out (its baseline is `~/.claude/retros/2026-09-25.md`).
 - [ ] **[design, Low, Trivial]** After a clean pilot, consider lowering `autoCompactWindow` from
   300k to 200k (simulated −68% main-thread input vs −56%, ~4.5 vs ~2 compactions per session).
 - [ ] **[design, Low, Standard]** After a clean pilot, trial `arch-reviewer` on Sonnet at
   Substantial tier too. Today it escalates to Opus there.
 - [ ] **[design, Low, Trivial]** Consider lowering `PROJECT_INDEX.md`'s `Recent` cap (50 → ~25).
   It's read in full every session (~16KB).
-- [ ] **[misc, Med, Standard]** **Recurring: workflow retro.** Due **2026-10-09**, then every 2
-  weeks. If fewer than 4 Standard+ tasks have run since the last retro, move it one week (too
-  little data). When done, rewrite the due date here and in memory file
-  `project_workflow_retro_due.md`; don't delete the line.
-  - Repeats the 2026-09-25 session: measure main-thread and subagent tokens plus cache
-    re-writes, check post-compaction friction, the reviewer agents' contracts and finding
-    counts, and drift, bloat or gaps in the global and project CLAUDE.md and skills. Revisit the
-    related items (the 200k window, Sonnet `arch-reviewer`). Also look at `/simplify`'s cost on
-    small diffs: its 4 agents used about 52k tokens each on a 60-line script
-    (`docs/reviews/2026-09-25-read-diff-cache-habits.md`).
-  - **The first run is the Pilot's close-out.** Use the Pilot item's method above, then delete
-    the Pilot item.
-  - Each run writes `docs/decisions/YYYY-MM-DD-workflow-retro.md`.
-  - It lives here because this project is where the global workflow gets exercised.
-  - On the second run, bundle the measurement scripts as a global skill
-    `~/.claude/skills/workflow-retro/` (with `scripts/`). Its parameter is a project: its repo
-    path and its transcript folder under `~/.claude/projects/`. It audits the global files and
-    that project's CLAUDE.md, `.claude/rules/`, backlog and docs.
 - [ ] **[feature, Med, Standard]** Add a summary mode to `eval_harness.py`: one line per question
   plus a final table on stdout, with full detail left in the results JSON. Eval and pytest output
   put 2.4M chars into context across past sessions (2026-09-25 read/grep audit).
