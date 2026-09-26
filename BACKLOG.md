@@ -85,11 +85,6 @@ Full reasoning: that cleanup's commit body (`git log --grep="Watch list"`).
 
 Full evidence/reasoning: `docs/decisions/2026-09-25-token-efficiency-workflow.md`.
 
-- [ ] **[test-coverage, Med, Trivial]** On the next real review round, check that
-  `security-reviewer` and `arch-reviewer` follow the output contract, end with `checked:`, and
-  the transcript shows `claude-sonnet-5`. Exercise the general-purpose fallback once. Already
-  confirmed 2026-09-25: all three agents load mid-session, and `plan-reviewer` followed its
-  contract.
 - [ ] **[misc, Med, Standard]** Pilot: over the next 2 WPs, measure main-thread and subagent
   tokens and count review findings. Method: sum `message.usage` per unique `message.id` in
   `~/.claude/projects/<project>/*.jsonl` (main thread) and `*/subagents/*.jsonl`, with cache
