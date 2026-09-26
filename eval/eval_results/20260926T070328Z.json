@@ -1,0 +1,45 @@
+{
+  "backend": "gemini",
+  "answer_model": "gemini-3.5-flash-lite",
+  "judge_model": "gemini-3.5-flash-lite",
+  "provenance": {
+    "git_sha": "a9311e8",
+    "git_dirty": false,
+    "dirty_files": [],
+    "snapshot_verified": true,
+    "config": {
+      "gemini_model": "gemini-3.5-flash-lite",
+      "embed_model": "BAAI/bge-small-en-v1.5",
+      "rerank_model": "cross-encoder/ms-marco-MiniLM-L-6-v2",
+      "chroma_dir": "./chroma_db",
+      "google_genai": "2.18.1",
+      "mcp": "2.1.1"
+    },
+    "prompts": {
+      "agent_system": "9c58af695148",
+      "agent_tools": "7bec1d85d9ce",
+      "agent_messages": "f7c7eae639bd",
+      "judge": "2ee29f234c91",
+      "mcp": "3f183b31ab70",
+      "agent": "5d3cea51c73b"
+    }
+  },
+  "results": [
+    {
+      "id": "nvda-revenue-two-quarter-comparison",
+      "ticker": "NVDA",
+      "question": "Compare NVIDIA's total revenue for the quarter ended April 26, 2026 to the quarter ended April 27, 2025.",
+      "type": "comparison",
+      "passed": true,
+      "detail": "found matching values for all 2 entities",
+      "has_citation": true,
+      "citation_warnings": [],
+      "answer": "For the quarter ended April 26, 2026, NVIDIA reported total revenue of $81,615 million (or approximately $81.62 billion) [1]. This compares to total revenue of $44,062 million (or approximately $44.06 billion) for the quarter ended April 27, 2025 [2]. This represents a year-over-year revenue growth of 85.2% [3].",
+      "n_chunks_retrieved": 3,
+      "withheld_answer": null,
+      "gate_withheld_would_have_passed": null,
+      "gate_withheld_detail": null,
+      "citation_warning_details": []
+    }
+  ]
+}
