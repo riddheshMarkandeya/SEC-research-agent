@@ -232,7 +232,7 @@ def _render_retry_and_no_data(agent) -> dict:
         ("empty", {}),
         ("fy", {"metric": "revenue", "ticker": "AAPL", "fiscal_year": 2025}),
         ("q4", {"metric": "revenue", "ticker": "AAPL", "fiscal_year": 2025, "fiscal_period": "Q4"}),
-        ("never_tagged", {"metric": "inventory", "ticker": "PLTR", "fiscal_year": "2025", "fiscal_period": "FY"}),
+        ("never_tagged", {"metric": "inventory", "ticker": "PLTR", "fiscal_year": 2025, "fiscal_period": "FY"}),
         ("ratio_not_tagged_check", {"metric": "gross_margin", "ticker": "PLTR", "period_end_date": "2025-12-31"}),
         ("multi_year", {"metric": "gross_margin", "ticker": "PLTR", "start_fiscal_year": 2023}),
     ]:

@@ -170,3 +170,71 @@ trace counts (rejections → coercions) in the decision file.
   - single logging under double coercion;
   - MCP coverage;
   - the dispositions of (a)–(d) and Step 9 (f).
+
+## Review log
+
+### Round 1 (`c8c2189..309d90a`, Substantial by blast radius)
+
+Passes: `/code-review` high, `arch-reviewer` (opus), `security-reviewer`, `/simplify` (reuse,
+simplification, efficiency, altitude; report-only, no edits).
+
+1. **Med** (code-review): a whole float year (`2023.0`) passes the integer schema, and
+   `get_multi_year_average`'s `range()` raises `TypeError` on it. The exception is uncaught,
+   on both the agent and MCP paths (reproduced). It predates WP7, and the traces hold no float
+   years. `[Fixed]`: `_coerce_year_args` also converts whole floats, so `FY2025.0` in a no-data
+   reply goes too (code-review item 3). Test first (red on `float`).
+2. **Low** (code-review): `[0-9]{4}` let `"0000"`/`"0999"` through as year 0/999, which is the
+   junk the plan's 4-digit rule was meant to keep out. `[Fixed]`: `[1-9][0-9]{3}`; both are
+   added to the still-rejected list, along with `2025.5`.
+3. **Low** (code-review): the `no_fact_never_tagged` snapshot scenario still fed the formatter a
+   `"2025"` string, a reply the agent can no longer send. `[Fixed]`: int `2025`; the snapshot
+   diff is that one line.
+4. **Nit** (code-review, simplify simplification and efficiency): `frozenset({"fiscal_year"})`
+   appeared twice in `call_compare_financial_metric`. `[Fixed]`: `_COMPARE_FISCAL_YEAR_PROPS`.
+5. **Nit** (arch): `test_format_no_fact_message_string_year_stays_visible`'s comment described
+   a non-year string, but its input was `"2025"`. `[Fixed]`: the input is now `"FY2025"`.
+6. **Low** (code-review, simplify simplification and efficiency): the conversion runs twice on
+   the agent path (dispatcher, then `call_get_financial_fact`). `[Verified, no fix needed]`:
+   planned. The inner call is what covers MCP, and both are pinned by tests (the dispatcher
+   reply test, and the direct `call_*` tests). Returning `(fact, args)` would change a
+   signature that MCP and about 40 tests use, to save one no-op scan.
+7. **Low** (code-review): `tool_arg_coerced` is logged for `fiscal_year` even when a multi-year
+   range makes the lookup ignore it. `[Verified, no fix needed]`: the value is still validated,
+   so the conversion is real, and the Step 6 trace check joins each coercion with its call's
+   outcome.
+8. **Low** (code-review): `tool_call_rejected` after a conversion logs the converted args.
+   `[Verified, no fix needed]`: the `tool_arg_coerced` line just before it, and the span input,
+   keep the raw value.
+9. **Med** (code-review): 7b's "gets the same no-data reply" drops any cue to retry without the
+   invented argument. `[Verified, no fix needed]`: this is the plan's wording (it states the
+   real behaviour, which "rejected outright" misstated). Reason-bearing rejections are the
+   roadmap's Step 9 (e) follow-up, and the screen measures the wording.
+10. **Low** (simplify, altitude): the conversion should live in `validate_tool_args` for every
+    integer argument. `[Verified, no fix needed]`:
+    - All 160 live string rejections are year fields. There are no string
+      `citation_index`/`_a`/`_b` values in the traces.
+    - The claimed crash on a string `citation_index` is false: `validate_tool_args` on
+      `SUBMIT_TOOL_SCHEMA` rejects it (checked).
+    - Generalizing would widen the blast radius with no evidence behind it.
+11. **Nit** (simplify, reuse): `numeric_utils._BARE_YEAR_STRING` is another year regex.
+    `[Verified, no fix needed]`: it serves a different purpose (a year in parentheses in
+    extracted text), accepts 1900–2099 and uses `\d`, so sharing it would change one side's
+    behaviour.
+12. **Nit** (arch): the snapshot scenario goes through `_dispatch_tool_call` with
+    `gross_margin` (stubbing `get_ratio`), not through `_dispatch_get_financial_fact` with
+    `get_metric` stubbed as the plan said. `[Verified, no fix needed]`: it is the real dispatch
+    path, and it is recorded here.
+13. **Nit** (arch): the plan listed `2026.0` as still rejected. `[Verified, no fix needed]`: it
+    was accepted before WP7 (JSON Schema treats it as an integer). With item 1 it is now
+    converted to `2026` and tested. This goes in the decision file.
+14. Security: no findings.
+
+### Round 2 (delta `git diff 309d90a`, uncommitted)
+
+Passes: `/code-review` medium, `security-reviewer`. No findings from either. (Security: a huge
+whole float already passed the integer check before this change, and `get_multi_year_average`
+returns at the first missing year, so converting it adds no new path.) The review closed after 2
+rounds: 5 fixed, 9 verified with no fix needed, 0 deferred. Checks:
+ruff 0, pyright 0, 936 passed, `agent.py` 96% with the new lines covered. Fingerprints:
+`agent` `35c13d2488df` → `7aec53939ce3`; `mcp` `b34024a4d17d` and `judge` `2ee29f234c91`
+unchanged.

@@ -222,25 +222,33 @@ def _rejects_invalid_fiscal_year(tool: str, args: dict) -> bool:
     return False
 
 
-# ASCII digits only: \d would also match other scripts' decimal digits.
-_YEAR_STRING = re.compile(r"[0-9]{4}")
+# ASCII digits only (\d would also match other scripts' decimal digits),
+# and no leading zero, so "0000" isn't read as year 0.
+_YEAR_STRING = re.compile(r"[1-9][0-9]{3}")
 
 
 def _coerce_year_args(tool: str, args: dict, fields: frozenset[str]) -> dict:
-    """A copy of `args` with each 4-digit year string in `fields` turned
-    into an int, or `args` itself when there is none. This is the only
-    string-to-int conversion: Gemini sends years as strings ("2025")
-    despite the integer schema, and rejecting them cost the model turns.
-    Anything else ("FY2025", "²²²²", "99999", a bool) is left for the
-    usual checks to reject."""
+    """A copy of `args` with each year in `fields` given as a 4-digit
+    string or a whole float turned into an int, or `args` itself when
+    there is none. This is the only conversion of these fields: Gemini
+    sends years as strings ("2025") despite the integer schema, and
+    rejecting them cost the model turns; a whole float (2025.0) passes the
+    schema but breaks the multi-year average's range() and shows as
+    "FY2025.0". Anything else ("FY2025", "²²²²", "0000", "99999", 2025.5,
+    a bool) is left for the usual checks to reject."""
     coerced = args
     for field in sorted(fields):
         value = args.get(field)
         if isinstance(value, str) and _YEAR_STRING.fullmatch(value):
-            if coerced is args:
-                coerced = dict(args)
-            coerced[field] = int(value)
-            log_event("tool_arg_coerced", tool=tool, field=field, value=value)
+            year = int(value)
+        elif isinstance(value, float) and value.is_integer():
+            year = int(value)
+        else:
+            continue
+        if coerced is args:
+            coerced = dict(args)
+        coerced[field] = year
+        log_event("tool_arg_coerced", tool=tool, field=field, value=value)
     return coerced
 
 
@@ -357,6 +365,7 @@ def validate_tool_args(
 # call_get_financial_fact's generic validate_tool_args pass -- see that
 # function's call site and validate_tool_args's own docstring for why.
 _FISCAL_YEAR_PROPS = frozenset({"fiscal_year", "start_fiscal_year", "end_fiscal_year"})
+_COMPARE_FISCAL_YEAR_PROPS = frozenset({"fiscal_year"})
 
 
 def call_get_financial_fact(args: dict, question: str | None = None) -> dict | None:
@@ -541,9 +550,9 @@ def call_compare_financial_metric(args: dict, question: str | None = None) -> di
     `reason="no_data_for_ticker"` bucket rather than a third reason
     value: a human looking at the metric name in the Langfuse dashboard
     can already tell that case apart, not worth the extra complexity."""
-    args = _coerce_year_args("compare_financial_metric", args, frozenset({"fiscal_year"}))
+    args = _coerce_year_args("compare_financial_metric", args, _COMPARE_FISCAL_YEAR_PROPS)
     if validate_tool_args(
-        "compare_financial_metric", COMPARE_TOOL_SCHEMA, args, skip_properties=frozenset({"fiscal_year"})
+        "compare_financial_metric", COMPARE_TOOL_SCHEMA, args, skip_properties=_COMPARE_FISCAL_YEAR_PROPS
     ):
         return {}
     anchor_ticker = args["anchor_ticker"]

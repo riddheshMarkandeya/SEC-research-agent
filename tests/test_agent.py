@@ -250,7 +250,7 @@ def test_format_no_fact_message_no_period_arguments_names_latest():
 def test_format_no_fact_message_string_year_stays_visible():
     # The dispatcher converts a 4-digit year string first; any other string
     # that reaches the formatter is shown as sent.
-    assert "'FY' FY'2025'" in _no_fact_for(fiscal_year="2025")
+    assert "'FY' FY'FY2025'" in _no_fact_for(fiscal_year="FY2025")
 
 
 def test_format_no_fact_message_list_ticker_does_not_raise():
@@ -2010,14 +2010,31 @@ def test_call_get_financial_fact_converts_multi_year_string_years(monkeypatch):
     assert [f["field"] for _, f in events] == ["end_fiscal_year", "start_fiscal_year"]
 
 
+def test_call_get_financial_fact_converts_whole_float_years(monkeypatch):
+    # A whole float passes the integer schema, but range() in the
+    # multi-year average raises TypeError on it.
+    events, lookups = [], []
+    monkeypatch.setattr("agent.log_event", lambda category, **fields: events.append((category, fields)))
+    monkeypatch.setattr("agent.get_multi_year_average", lambda *a, **k: lookups.append(a) or {"value": 1})
+
+    result = call_get_financial_fact(
+        {"ticker": "AAPL", "metric": "revenue", "start_fiscal_year": 2023.0, "end_fiscal_year": 2025.0}
+    )
+
+    assert result == {"value": 1}
+    assert [type(year) for year in lookups[0][2:]] == [int, int]
+    assert [(f["field"], f["value"]) for _, f in events] == [("end_fiscal_year", 2025.0), ("start_fiscal_year", 2023.0)]
+
+
 def test_call_get_financial_fact_still_rejects_non_year_values(monkeypatch):
-    # Only exactly four ASCII digits convert. "²²²²".isdigit() is True,
-    # but int() can't parse it; a short or long digit string isn't a year.
+    # Only four ASCII digits without a leading zero convert. "²²²²".isdigit()
+    # is True, but int() can't parse it; "0000" or a short or long digit
+    # string isn't a year.
     events, lookups = [], []
     monkeypatch.setattr("agent.log_event", lambda category, **fields: events.append((category, fields)))
     monkeypatch.setattr("agent.get_metric", lambda *a, **k: lookups.append(a) or {"value": 1})
 
-    for fiscal_year in [True, "FY2026", " 2025", "²²²²", "99999", "0", [2026]]:
+    for fiscal_year in [True, "FY2026", " 2025", "²²²²", "99999", "0", "0000", "0999", 2025.5, [2026]]:
         events.clear()
         result = call_get_financial_fact({"ticker": "AAPL", "metric": "revenue", "fiscal_year": fiscal_year})
 
