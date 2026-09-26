@@ -49,6 +49,7 @@ prepend them (verbatim, still reverse-chronological) to the top of
 
 ## Recent
 
+- 2026-09-26 [decision] WP5: plain segment-rule wording accepted; screen 31/39 vs 33/39 REGRESSED on `nvda-revenue-two-quarter-comparison` (1/3, gate FP on inline "a ÷ b − 1"), replicate 3/3 = noise; segment override never fired (0 fact calls either way, answers `6f3a8ee`: no effect on Gemini); agent `d2131f5d5aae` → `5d3cea51c73b`; WP6 baseline = WP5 screen → `docs/decisions/2026-09-26-wp5-segment-rule.md`
 - 2026-09-25 [review] WP-A rule-preservation audit — 2 rounds: prompt-audit WP5–WP8 exempted from ADR-gated docs (baselines), Trivial review row defers to diff re-classification, 3 dropped docs rules restored; small-diff security skip raised with user → `docs/reviews/2026-09-25-wp-a-review-docs-cost.md`
 - 2026-09-25 [decision] WP-A: review depth by the actual diff, delta-only re-rounds, ADR-gated decision files (commit body is the default record), plan review inside the plan; revisits the five-pass floor and 2026-09-14 docs overhaul; skip list with reasons → `docs/decisions/2026-09-25-wp-a-review-docs-cost.md`
 - 2026-09-25 [review] WP-A plan review — 10 findings folded in: BACKLOG header and other decision-file assumptions, wider contradiction grep, docs-health check against a scratch index, doc artifacts follow the design tier → `docs/reviews/2026-09-25-wp-a-review-docs-cost-plan-review.md`
