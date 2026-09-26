@@ -28,6 +28,8 @@ steps" section, which needed its own 380-line cleanup pass once already
 (2026-08-19) from exactly this kind of bloat — don't let this file
 suffer the same fate; prune it as items resolve.
 
+**Where items go.** Origin sections (`### From …`) hold work someone can pick up. A latent item with nothing to do until a named condition is observed goes in the `## Watch list` at the end instead, as one line: the trigger plus a record link.
+
 ## How to read an item
 
 Every bullet is tagged **[type, priority, effort]** — see the
@@ -60,6 +62,26 @@ Design: `docs/plans/2026-09-24-prompt-audit-roadmap.md` (read its "How this road
 - [ ] **[bug, Low, Standard]** A calculate result's expression pastes each operand's unit in as-is, so a `"raw"` operand (a plain ratio or count) reaches the model as e.g. "1.04 raw". The result value itself already omits "raw" via `agent._with_unit`. Found in the WP1 code review (`docs/reviews/2026-09-24-wp1-prompts-package.md`); left unchanged because WP1 had to be byte-identical. It changes model-visible text, so it goes through the roadmap's panel-screened process: fit it in after WP2.
 - [ ] **[refactor, Low, Trivial]** Duplicated enum values in `prompts/agent_tools.py`, all copied as-is from `agent.py` by WP1: the period list `["FY", "Q1", "Q2", "Q3", "Q4"]` twice, `list(COMPANIES.keys())` three times, and `CLAIM_UNITS` restating `numeric_utils.UNIT_MULTIPLIERS`'s keys by hand. Hoist each into one constant; the schemas' bytes must stay identical (check with the WP2 fingerprint). Found in the WP1 code review.
 - [ ] **[design, Low, Standard]** The MCP `search_filings` schema is derived the wrong way round: `prompts.mcp.MCP_SEARCH_TOOL_SCHEMA` is the agent's schema with its agent-only text overridden, so agent-only wording in any other field reaches MCP clients silently. The `ticker` description already does ("…which company the question is about"), and three description sentences are written out on both surfaces. Fix: a neutral shared schema that the agent adds its note to. It changes model-visible text, so it needs a panel screen. Found in WP3's plan and code reviews (`docs/reviews/2026-09-24-wp3-group-a-wording.md`).
+
+### From the 2026-09-26 backlog review
+
+Full reasoning: that cleanup's commit body (`git log --grep="Watch list"`).
+
+- [ ] **[misc, Med, Substantial]** Remove the Ollama backend and its code. Small local models
+  aren't a target; only cloud models big enough for the task are (user decision, 2026-09-26).
+  About 449 mentions across 14 files (`llm_backends.py`, `agent.py`, `config.py`,
+  `eval_harness.py`, tests, `tests/manual/verify_*.py`). It touches the blast-radius core, so
+  schedule it after WP8 and before the `agent.py` split, which it shrinks. Open points for its
+  own plan:
+  - (a) Ollama is the only backend that needs no API key, so it's the only fallback when the
+    Gemini free-tier quota runs out. Decide whether a second cloud backend replaces it.
+  - (b) The prose-fallback citation path is also Gemini's last resort, not only Ollama's. Decide
+    whether it stays; the three prose-path Watch list entries follow from that.
+  - (c) `grade_judged`/`_grade` default to `"ollama"` in their signatures.
+  - (d) Update `.claude/rules/plan-review-blast-radius.md` (it names `_ollama_send*`) and
+    `config.py`'s backend comment.
+  - (e) If (a) keeps Ollama after all, extending the final-turn safety net
+    (`_FINAL_TURN_BACKENDS` in `agent.py`) to it is open again, and needs live verification.
 
 ### From the 2026-09-25 token-efficiency workflow change
 
@@ -130,46 +152,6 @@ Full evidence/reasoning: `docs/decisions/2026-09-22-adopt-pytest-coverage.md`,
   Only the 90%/80% two-tier diff-coverage bar applies to new/changed
   lines going forward; these two remaining gaps close opportunistically,
   file by file, as those files are next touched for other reasons.
-- [ ] **[design, Low, TBD]** Revisit `diff-cover`'s own `--branch-coverage`
-  flag now that `[tool.coverage.run]`'s `branch = true` is on — deferred
-  since no diff-scoped (only repo-wide) partial-branch data has been
-  measured yet; see the decision doc's reasoning.
-
-### From the 2026-09-19 citation-header-in-quote fix
-
-Full evidence/reasoning: `docs/decisions/2026-09-19-citation-header-in-quote-fix.md`
-and its paired plan/review files.
-
-- [ ] **[bug (latent), Low, Trivial]** `_strip_citation_header`'s
-  exact-match-only design (deliberate — see the decision file) leaves
-  three related shapes unhandled, all confirmed via direct execution
-  during code review rather than merely hypothesized: (a) a doubled
-  header echo (the model repeats the header twice; only the first copy
-  is stripped, the second still drags coverage below threshold), (b) a
-  case-folded or otherwise reformatted echo (e.g. lowercased ticker,
-  `"ReportDate="` instead of `"reportDate="`), and (c) prose framing
-  before the header (e.g. `"Per [1] NVDA 10-Q (reportDate=...): ..."`)
-  — `.lstrip()` only removes whitespace, not preceding text. None
-  observed live yet; not fixed speculatively per this project's
-  practice. Revisit if any of these three shapes is ever observed in a
-  real eval failure.
-
-### From the 2026-09-18 flaky-eval-questions three-fix session
-
-Full evidence/reasoning: `docs/decisions/2026-09-18-flaky-eval-questions-three-fixes.md`
-and its paired plan/review files.
-
-- [ ] **[feature, Low, TBD]** The prose-fallback citation path
-  (`_iter_citation_claims`/`_iter_uncited_claims`/
-  `collect_citation_warnings`, Ollama's only path and Gemini's
-  last-resort fallback) has no `quote`-equivalent to capture the way
-  the structured-claims path now does (Fix B) — it works by extracting
-  bare numbers from a text window before a `[n]` marker, never asking
-  for an explicit quote. Extending it would mean threading
-  `_iter_citation_claims`'s already-computed `window` text out through
-  a generator-signature change. Lower priority than the structured-path
-  gap Fix B closed: no currently-tracked flaky question's root cause is
-  blocked on this specifically.
 
 ### From the 2026-09-17 orphaned-table-overlap chunking fix
 
@@ -183,26 +165,6 @@ and its paired review file.
   fixed by the chunking fix. Worth a future look at whether the
   tolerance should be tighter or paired with a stronger uniqueness
   check.
-- [ ] **[refactor, Low, TBD]** `chunk_blocks()`'s orphaned-tag fix is
-  hardcoded to the `<TABLE>`/`</TABLE>` tag pair specifically, not
-  generalized to any future atomic marker type `split_into_blocks()`
-  might grow (e.g. a `<FOOTNOTE>` or `<EXHIBIT>` block). No second
-  marker type exists in the live pipeline today, so this is debt, not a
-  live gap — revisit only if `split_into_blocks()` ever adds one.
-### From the 2026-09-17 mandatory-plan-review-floor change
-
-Full evidence/reasoning: `docs/decisions/2026-09-17-mandatory-plan-review-floor.md`.
-
-- [ ] **[design, Low, TBD]** Consider adding a mechanical
-  `PreToolUse`/`ExitPlanMode` hook backstop for the plan-review floor if
-  instruction-only enforcement is ever caught missing (deferred at
-  user's choice, 2026-09-17). Confirmed technically feasible — the
-  harness's hooks docs show a worked `PermissionRequest`/`ExitPlanMode`
-  matcher example — but proving a review genuinely happened (not just
-  that a marker string exists in the plan text) is a weaker mechanical
-  guarantee than it looks; would need real design work, not just
-  wiring.
-
 ### From the 2026-09-15 broader ruff rule-category survey
 
 Full evidence/reasoning: `docs/decisions/2026-09-15-expand-ruff-plr-rules.md`'s
@@ -232,56 +194,12 @@ file pending which (if any) get adopted. Reproduce with
   error-handling philosophy; `RUF003` and a dozen other 1-4-hit codes
   weren't worth the selected-rule overhead at that volume.
 
-### From the 2026-09-15 pyright adoption
-
-Full evidence/reasoning: `docs/decisions/2026-09-15-adopt-pyright.md`.
-
-- [ ] **[design, Low, TBD]** Revisit Pyright **strict** mode. Rejected
-  on 2026-09-15 adoption: real baseline was 4,655 errors, ~94% Unknown-
-  type-propagation noise from this codebase's dict-shaped data flow
-  (bare `dict`/`list` returns, third-party calls with no stubs), not
-  real gaps — see the decision file's full category breakdown. Worth
-  retrying only after either (a) a real reduction in untyped-dict data
-  flow (e.g. more `TypedDict`/`dataclass` use for XBRL facts, search
-  results, tool-call args), or (b) designing a scoped-down strict
-  preset that excludes the highest-noise categories rather than
-  adopting pyright's off-the-shelf `strict` bundle wholesale.
-
-### From the 2026-09-11 hand-rolled-complexity review
-
-Full evidence: `docs/decisions/2026-09-11-negative-number-support.md`
-and `docs/reviews/2026-09-11-negative-number-support.md`. That review's
-other findings needed no new tracking here: the
-citation-verification subsystem's general complexity is already covered
-by the `_QUOTE_ANCHOR_CHARS`/normalize-duplication entries below, and the
-retrieval-rescue and XBRL-period-duration findings had no live failure or
-concrete fix to attach, on top of already being thoroughly documented in
-their own code.
-
-- [ ] **[refactor, Low, Trivial]** `agent._dispatch_tool_call`'s tool
-  branches are an inline if-chain (4 today: `get_financial_fact`/
-  `compare_financial_metric`/`calculate`/`search_filings`) that will keep
-  growing linearly with each new tool, each hand-repeating the same
-  span/call/format/mutate shape. Not worth a registry-based dispatch
-  table at 4 tools; revisit if a 5th/6th tool is added.
-
 ### From the 2026-09-10 citation-gate-measurement-instrumentation plan
 
 Full evidence/reasoning: `docs/plans/2026-09-10-citation-gate-measurement-instrumentation.md`.
 
-- [ ] **[bug, Low, Standard]** `_SENTENCE_BREAK`'s abbreviation exception only excludes a *lowercase* follow-on word (`U.S. sales`); a capitalized follow-on (`U.S. GAAP`, `U.S. Treasury`) still registers a sentence break. Downgraded from High/Trivial and re-scoped 2026-09-10: this only matters on the prose-verification fallback path now (the structured-claims `submit_answer` path added that day doesn't parse prose at all), and Gemini rarely takes that path — the live re-measurement (`docs/plans/2026-09-10-structured-claims-citation-verification.md`) confirmed `nvda-revenue-fy26-us-gaap`, the original repro, now passes cleanly via the structured path. Still real for Ollama (no forcing mechanism, prose fallback is its normal path) or a Gemini forced-submit exhaustion — fix if it recurs there.
-- [ ] **[bug, Low, Standard]** `_CITATION_MARKER = re.compile(r"\[(\d+)\]")` does not match a comma-separated multi-source bracket like `[1, 2, 3]`. Downgraded from Med/Trivial 2026-09-10 and now genuinely fallback-path-only: the 41-question baseline re-run initially found this ALSO hit the new structured path (`verify_claims`'s coverage check extracted bare digits out of `[1, 3, 5]`/`[1, 17]` brackets as spurious uncovered numbers -- `crm-revenue-q1fy27`, `msft-net-income-fy2025-indirect`), fixed same day via a separate `_ANY_CITATION_BRACKET` pattern used only by that check (`_CITATION_MARKER` itself is untouched -- the old prose pipeline reads its single capture group as one index and can't just have the pattern widened). `_CITATION_MARKER` itself, and the prose fallback path that still uses it directly, remains unfixed.
-- [ ] **[feature, Low, Standard]** Model-based veto before refusal (one entailment check before the hard gate withholds an answer) — deferred 2026-09-10 pending the structured-claims redesign's own measurement. Re-evaluated 2026-09-11 with the full 41-question baseline + 4-question stress set now analyzed: **0/45 gate fires post-redesign**, down from 6/45 (100% false positive) pre-redesign. Still no evidence a veto is needed — there's nothing left for it to overturn in this corpus. Revisit only if a wider/harder question set finds the gate firing again.
+- [ ] **[feature, Low, Standard]** Model-based veto before refusal (one entailment check before the hard gate withholds an answer) — deferred 2026-09-10 pending the structured-claims redesign's own measurement. Re-evaluated 2026-09-11 with the full 41-question baseline + 4-question stress set now analyzed: **0/45 gate fires post-redesign**, down from 6/45 (100% false positive) pre-redesign. Still no evidence a veto is needed — there's nothing left for it to overturn in this corpus. Revisit only if a wider/harder question set finds the gate firing again. **2026-09-26**: WP5's gate refusals on `nvda-revenue-two-quarter-comparison` were an uncovered-number false positive (the `1` in "a ÷ b − 1", `claims 1.0 (raw)`), not an entailment case. That goes to the narrow gate fix the WP5 close-out files, so there's still no evidence for a veto.
 - [ ] **[feature, Low, Standard]** No script reads `trace_logs/traces.jsonl`, so it gets queried by hand. Now justified by token cost: the 2026-09-25 read/grep audit (`docs/decisions/2026-09-25-read-diff-cache-habits.md`) found 223 ad-hoc `python -c` queries, rewritten each time and returning 0.43M chars. Build a small query script that filters by run, question ID, span name or event (e.g. `citation_gate_refused`), picks fields and caps output. No log rotation: the file is never read whole.
-- [ ] **[test-coverage, Low, Standard]** `eval/citation_stress_questions.jsonl`'s original 4 questions targeted 3 specific citation-verifier failure modes; only 2 are covered by a passing question so far (same-chunk multi-period value attribution, table-only quote grounding — see `docs/decisions/2026-09-11-calculate-tool-and-stress-questions.md`). The two-nearby-percentages mode (`nvda-revenue-yoy-growth-q1fy27`, restored 2026-09-23 after 2026-09-16's final-turn safety net resolved its original budget-exhaustion blocker — see `docs/decisions/2026-09-23-restore-nvda-yoy-stress-question.md`) is now **partially** exercised: 3/3 live runs passed, but only 1/3 demonstrably cited the risky "up 85%... up 20% sequentially" sentence (and correctly extracted 85%, not 20%, when it did); the other 2/3 passed via a safer, unambiguous table cell instead, sidestepping the ambiguity entirely. The question is permanently in the suite now and `analyze_flakiness.py` tracks its ongoing behavior — this item stays open until enough accumulated runs show the risky sentence gets exercised reliably enough to call the mode genuinely covered, not just occasionally. The other mode remains fully untested: a paraphrased quote near the 0.90 coverage threshold (genuinely hard to force via question wording alone, since the model is instructed to quote verbatim and mostly does).
-- [ ] **[design, Low, Standard]** Found live verifying the `calculate` tool (2026-09-11), re-running `msft-cash-to-assets-fy2025` 5 times: it passed cleanly 3/5 times but exhausted the 6-turn budget or hit a real (pre-existing, unrelated) quote-mismatch refusal the other 2 -- traced to a compounding interaction, not a `calculate` bug: (a) the model sometimes emits `fiscal_year` as a STRING (`"2025"` not `2025`), which `_rejects_invalid_fiscal_year` correctly rejects, forcing a `search_filings` fallback (2 extra calls) instead of the direct `get_financial_fact` path; (b) `calculate` itself sometimes mislabels an already-raw XBRL value's unit on its first attempt (e.g. passing a raw dollar amount as `unit_a: "billion"`), which `_ground_operand` correctly rejects, costing one retry turn to self-correct (also observed on `aapl-rd-pct-gross-profit-fy2025`, where it self-corrected without issue since that question's shorter path had turns to spare). On an already-tight-budget question, (a)+(b) together can exceed `MAX_TOOL_ITERATIONS=6` before a final answer is submitted. **Addendum 2026-09-14**: clause (b) recurred and got a full root-cause fix at the message level -- `aapl-revenue-growth-q3fy2026`'s 2026-09-13 baseline failure was this exact mislabeled-unit case (`operand_a=109417000000` mislabeled `"billion"`), and the old message blamed the value/citation index instead of the unit, so the model's retry never touched the field that was actually wrong. `_ground_operand` now computes which correction actually applies (mislabeled unit vs. wrong citation index vs. genuinely ungroundable) instead of guessing -- see `docs/reviews/2026-09-14-tool-turn-waste.md`. This fixes the MESSAGING half of (b); it does not stop the model from mislabeling a unit in the first place, and (a) remains fully unaddressed -- still not fixed at the source, per this item's original "don't chase model non-determinism speculatively" reasoning. **Addendum 2026-09-24**: (a) is no longer speculative. There were 138 live `invalid_fiscal_year_type` rejections from Gemini between 09-11 and 09-22, 9 of them on `nvda-rd-expense-q4fy26-refusal`. Clause (a) is now scheduled as WP7 of the prompt-audit roadmap (`docs/plans/2026-09-24-prompt-audit-roadmap.md`, Step 7), which accepts digit-only year strings.
-- [ ] **[bug (latent), Low, Standard]** `nvda-cost-of-revenue-fy2026` (41-question baseline, 2026-09-11): one run answered via `search_filings` prose (citing `[13]`) and got a `quote_not_found` refusal; an immediate manual re-run of the identical question instead went through `get_financial_fact` (the structured XBRL path) and answered cleanly with zero warnings -- model tool-choice is non-deterministic across runs for this question, and the exact failing quote/source pair from the original run wasn't captured anywhere (the `CitationWarning` message doesn't include the quote text itself, only the citation index), so this couldn't be reproduced to confirm whether `_quote_matches` has a real gap against dense filing-table prose or the model's original quote was simply wrong. Marked latent, not a confirmed bug: needs either a repro with the actual failing quote+source captured, or richer logging (the new `traced_span("tool", "submit_answer", ...)` added 2026-09-11 does capture `checks` in its span output going forward -- check Langfuse/`trace_logs/traces.jsonl` next time this recurs before spending more live-question budget chasing it blind).
-- [ ] **[bug (latent), Low, Standard]** Table grounding's residual: a claim whose value genuinely IS a real table cell, quoted with no contradicting period/label token, still verifies even when the surrounding ANSWER PROSE misdescribes which period that cell covers (e.g. `"Productivity and Business Processes Revenue $102,149"` -- a real nine-month FY2026 cell -- grounds fine even if the answer calls it "the quarter"). `_verify_one_claim` checks quote-to-value grounding, not whether the answer's own prose correctly labels the period; closing this needs a `period` field on the claim schema checked against the cell's column header, not a `table_grounding.py` change. Found and deliberately scoped out during the 2026-09-12 table-grounding fix (`docs/plans/2026-09-12-structure-aware-table-quote-grounding.md`'s "Known limitations" section) -- no concrete question currently exercises it as a live false accept. Still accurate after the 2026-09-13 redesign: the QUOTE itself must still correctly identify the period/column (enforced by the new cherry-pick check) -- what's NOT checked is whether the answer's own PROSE, separately from the quote, describes the period correctly.
-- [ ] **[bug (latent), Low, Trivial]** `_quote_matches`'s flat anchor-path false accept (a long segment label lets a wrong-period or digit-inflated quote clear the flat coverage/anchor check on its own) remains open for genuinely prose-stated values (no table in the source, or the value only appears in surrounding text, so `table_grounding.locate_value` never runs at all). Not observed live as a real prose-path false accept; flagged only because the mechanism is architecturally identical wherever `_quote_matches`'s anchor path is still the final word (table sources no longer use it at all as of the 2026-09-13 redesign, which replaced the anchor floor with a region-scoped coverage + number-presence + cherry-pick check). Revisit only if a prose-path instance is ever found.
-- [ ] **[bug (latent), Low, Standard]** `table_grounding._classify_row`'s parenthesization heuristic (a single-cell, non-numeric row is a permanent "header" if parenthesized, else a resettable "label") could misclassify a real, named SEC convention: ASC 852 Predecessor/Successor fresh-start reporting renders both period labels parenthesized (`"(Predecessor)"`/`"(Successor)"`), which would (a) never set `group_label` for either period's rows, and (b) leak the Predecessor label into the permanent, shared `header_context` used by every cell in the block, letting a quote pair the Successor's real value with the Predecessor's label. Scanned the entire local corpus (all 5 tickers) for every real parenthesized single-cell row -- all 15 are genuine table-wide captions or signature-block titles, none are resettable labels, so the heuristic holds against today's evidence; none of this project's 5 tracked tickers has gone through bankruptcy/fresh-start reporting. Found in the 2026-09-13 redesign's architecture review (`docs/reviews/2026-09-13-table-grounding-region-scoped-matching.md`) -- not fixed, per this project's practice of not chasing unevidenced hypotheticals; revisit if a tracked company's filing ever actually uses this convention.
-- [ ] **[bug (latent), Low, Standard]** `table_grounding.py` has no defense against a quote citing a DIFFERENT group/segment's label if that label is merely similar (not identical) to the correct one across two DIFFERENT tables/blocks (e.g. two sibling segments named "Segment A"/"Segment B") -- coverage-based fuzzy matching alone could tolerate this. Confirmed NOT exploitable in any of this project's 4 real table fixtures (their labels are all sufficiently distinct), and confirmed there's no actual cross-block STATE leak (`header_context`/`group_label`/`caption_units` are correctly recomputed independently per `<TABLE>` block) -- the risk is purely fuzzy-tolerance, not a structural bug. Found in the 2026-09-13 redesign's architecture review; the missing test coverage for multiple `<TABLE>` blocks this same review flagged was fixed directly (`test_two_table_blocks_in_one_chunk_do_not_leak_context_between_them`), this residual fuzzy-tolerance concern was not, since no concrete real-filing exploit was constructible.
-- [ ] **[bug (latent), Low, Trivial]** `table_grounding.quote_is_grounded`'s coverage check can be measurably inflated by a large `header_context` (many leading caption/header lines): a fabricated quote reusing header vocabulary around a real value moved from 25% to 88% coverage as a synthetic header grew from 0 to 60 lines, in the 2026-09-13 redesign's architecture review -- but never crossed the 90% acceptance threshold in that testing, on any real or constructed fixture. Recorded as a latent watch item, not fixed speculatively.
-- [ ] **[bug (latent), Low, Trivial]** `table_grounding._classify_row` misclassifies a data row whose first cell is blank (a wrapped/continuation label with real values already present) as a "header" row instead of "data", silently dropping it from `locate_value`'s consideration. Fails safe (falls through to the ordinary flat-text `_quote_matches` path, not a false accept) -- found in the 2026-09-13 redesign's architecture review as a minor, unexploited structural-coverage gap; worth a fixture/test if a real filing with this shape is found.
 - [ ] **[design, Low, Standard]** `nvda-gross-margin-fy26` (41-question baseline, 2026-09-11): the model correctly stated 71.1% with a valid claim `[1]`, then added a second, redundant claim re-deriving the same figure ("...or 71.1 expressed as a percentage of revenue in its Consolidated Statements of Income) `[18]`") whose quote doesn't literally contain "71.1" (it's a derived restatement, not a direct source quote) -- `_verify_one_claim` correctly fails that second claim, but `verify_claims`'s all-or-nothing design means one bad redundant claim refuses an otherwise fully-grounded answer. Not clearly a code bug (the second claim genuinely doesn't verify) or clearly a system-prompt gap (rule 9 doesn't currently address a model restating an already-cited value a second way) -- needs a decision once this pattern is confirmed to recur: tighten rule 9 to discourage redundant restatement claims, or relax `verify_claims` to tolerate a claim that duplicates an already-verified value under a different citation. Didn't recur in an immediate re-run (that run failed the same question a different way -- tool-budget exhaustion, not a gate refusal -- consistent with general model non-determinism on this question, not a persistent gate gap).
 - [ ] **[refactor, Low, Trivial]** The `category, norm = normalize(...); tolerance = max(0.01*abs(norm), 0.05); any(c == category and abs(v - norm) <= tolerance for c, v in candidates)` pattern is now duplicated 6 times across `agent.py`/`table_grounding.py` (`_iter_citation_claims`, `value_is_citation_verified`, `_verify_one_claim`, `verify_claims`'s coverage check, `_ground_operand`/`call_calculate` for the `calculate` tool, 2026-09-11, and `table_grounding.locate_value`/`quote_is_grounded`, 2026-09-12) -- plus `eval_harness.grade_numeric`'s own copy, a natural 7th if a shared helper is ever extracted. Pre-existing style tolerated 3 times already; the `calculate` tool's addition was a good opportunity to extract a shared `_matches_any(value, unit, candidates) -> bool` helper instead of continuing to copy it, and the table-grounding fix is a second one, deferred for the same reason. Found in the `calculate` tool's architecture review, 2026-09-11 (`docs/reviews/2026-09-11-calculate-tool-and-stress-questions.md`) -- not fixed there or in the 2026-09-12 fix, since it's a cosmetic DRY cleanup unrelated to either change's actual scope.
 
@@ -293,38 +211,11 @@ why 9/16 failures in the 2026-09-13 47-question baseline were turn-
 budget timeouts, not citation-gate refusals.
 
 - [ ] **[design, Med, Standard]** The model never routes a 3+-company ranking question through `compare_financial_metric` -- confirmed across the ENTIRE trace history, it has never once been called on `five-company-*-ranking-fy2025`, always five individual `get_financial_fact` calls instead, which cannot even retrieve the right answer (see the fiscal-year-label bug below) and exhausts the 6-turn budget doing it. Attempted THREE times live against real Gemini calls with two different prompt wordings -- a narrowed "use this for 3+ companies" rule, then (after the first failed) an added reassurance that anchor-based closest-period matching is correct even when the question states each company's own distinct fiscal year/period-end date -- and failed identically each time, same five-call pattern, same timeout. Per this project's "fails twice in the same way" rule, brought back for a decision rather than tried a fourth way; the fourth attempt (one more targeted wording) also failed, and all wording was reverted to the original text rather than ship unproven changes that could regress 5 currently-passing comparison questions (`nvda-revenue-two-quarter-comparison`, `aapl-msft-tax-rate/employee/total-assets-comparison`, `msft-three-segments-revenue-q3fy2026`) for zero measured benefit. **Working hypothesis, not yet tested**: the target question spells out each company's own distinct fiscal year and period-end date explicitly (e.g. "Apple's fiscal year 2025 (ended September 27, 2025) ... NVIDIA's fiscal year 2026 (ended January 25, 2026)"), which may read to the model as needing exact per-company lookups rather than trusting the tool's anchor-and-closest-match approximation, no matter how that's worded. Needs a different angle before a fifth prompt attempt -- e.g. a worked example showing the tool's approximation IS the graded-correct answer for this exact question shape, or accepting this as a standing model limitation and moving the fix to code (a validator step, or splitting the tool call per stated date). **Addendum 2026-09-24**: the prompt audit found `compare_financial_metric` called only once in the whole trace log since 2026-09-15. The roadmap's 13-question eval panel has no question that exercises it (`docs/plans/2026-09-24-prompt-audit-roadmap.md`, Step 2), so prompt-wording changes to that tool are effectively untested until this item lands.
-- [ ] **[bug (latent), Low, Standard]** `msft-segment-revenue-comparison-q3fy2026` failed via a genuine `quote_not_found` citation-gate refusal in the 2026-09-14 baseline (`"[1] claims 35013 (million) ... doesn't appear in source [1]"`, plus `34681`/`13192` the same way) -- notable because `35013` and `34681` are the exact real segment-revenue values the 2026-09-13 table-grounding redesign's own review fixtures were built around (Productivity's real revenue vs. a wrong-segment attribution). Not investigated further this session (`table_grounding.py` is untouched by the 2026-09-14 diff, and the same question passed cleanly with all 3 segment values correctly grounded on `msft-three-segments-revenue-q3fy2026`, a different eval question against the same underlying table, in this SAME baseline run) -- flagged as a residual worth a targeted repro (capture the actual failing quote, not just the `CitationWarning`'s citation index, same gap `:72` above already notes) if it recurs.
-
-### From the 2026-09-16 crm-fiscal-year-lookup fix
-
-Full evidence/reasoning: `docs/decisions/2026-09-16-crm-fiscal-year-lookup-fix.md`.
-
-- [ ] **[bug (latent), Low, Standard]** `xbrl_facts._pick_entry`'s new end-date-year matching for annual entries widens the candidate pool for historical (pre-2015) fiscal years where CRM/NVDA's raw `fy` tags don't already agree with their own label -- a same-`end`-date restatement tie is now broken toward the most-recently-filed entry (mirroring `_pick_entry_by_end_date`'s convention), confirmed correct for the one case exercised in tests (CRM's real `end=2017-01-31` restated across 3 filings), but not exhaustively audited across every historical fiscal year for either ticker. No current live question reaches this. Revisit if a historical-year query for CRM/NVDA is ever added.
-
-### From the 2026-09-16 final-turn-safety-net fix
-
-Full evidence/reasoning: `docs/decisions/2026-09-16-final-turn-safety-net.md`.
-
-- [ ] **[bug (latent), Low, Standard]** The final-turn safety net's CRM-shaped grounded-but-incomplete risk (a forced final submit answering with fewer companies than the question asks about, all correctly cited, but still substantively wrong) is mitigated by message wording, not eliminated by anything structural, and wasn't directly exercised live -- the CRM fiscal-year-lookup bug (below) didn't trigger in any post-fix live run, so the model always had all 5 companies' data when forced to submit. Revisit if a future run hits that combination and produces a confidently-wrong ranking: strengthen the message, or gate on the most recent tool call's own scope, before reaching for a structural classifier.
-- [ ] **[feature, Low, TBD]** Extend the final-turn safety net (`_should_force_final_submit`) to Ollama -- currently gated to `_FINAL_TURN_BACKENDS = {"gemini"}` only, since no live evidence exists for how Ollama responds to a directive nudge under budget pressure (matching this project's existing precedent for gating other corrective-pressure mechanisms to Gemini first). Needs its own live verification before extending.
 
 ### From the 2026-09-17 uncovered-number-gap fixes
 
 Full evidence/reasoning: `docs/decisions/2026-09-17-uncovered-number-gap-fixes.md`.
 
-- [ ] **[feature, Low, TBD]** `numeric_utils.NUMBER_PATTERN` still has no
-  `M`/`B`/`K`-abbreviation recognition -- deliberately not added in the
-  2026-09-17 fix (shared across `agent.py`/`table_grounding.py`/
-  `eval_harness.py`, needs its own live-verified pass per this project's
-  2026-09-12 negative-number precedent). Per that fix's own prior-art
-  research: if ever added, recognize the disambiguating `MM`/`Bn` (the
-  actual finance-industry convention for unambiguous abbreviation), not
-  bare `M`/`B` -- real competing conventions disagree on whether bare
-  `M` means thousand or million, so treating it as "always million"
-  would be unsafe regardless of implementation risk. Currently
-  unreachable in practice: the system prompt now explicitly bans
-  bare-letter abbreviations outright (rule 9), so this is latent, not
-  evidenced as a live gap.
 - [ ] **[bug (latent), Low, Trivial]** `_NON_CLAIM_PATTERN`'s duration
   exemption (`year`/`month`/`day`) is inherently whack-a-mole --
   evidenced only for "N months" (`nvda-supply-chain-risk`'s real
@@ -332,20 +223,7 @@ Full evidence/reasoning: `docs/decisions/2026-09-17-uncovered-number-gap-fixes.m
   noun (weeks, quarters, "N employees", "N facilities") is found causing
   the same `uncovered_number` false-positive shape; not chased
   speculatively per this project's practice.
-- [ ] **[bug (latent), Low, Standard]** `aapl-rd-pct-gross-profit-fy2025`
-  has two OTHER, unrelated live refusal modes found while tracing its
-  full trace-log history for the 2026-09-17 fix, neither touched by that
-  fix and neither previously tracked: one run got a genuine
-  `cited_claim_unsupported` refusal on the 17.7% figure itself (quoted
-  text didn't match source `[1]`); another had the model self-compute
-  17.7%/0.177 inline with no citation marker at all
-  (`uncited_claim`). A post-fix live spot-check that still sees this
-  question refuse should not be assumed to mean the fix failed --
-  confirm which failure mode actually fired first.
-
-### From the 2026-09-07 review of the get_metric_all_companies redesign
-
-- [ ] **[feature, Low, Standard]** `formulas.py`'s `RATIO_DEFINITIONS` `supports_cross_company=False` gate (return_on_assets/asset_turnover/cash_to_assets/inventory_turnover) is justified by the same instant-frame problem the 2026-09-07 fix corrected at the `get_metric_all_companies()` layer, but `get_ratio_all_companies()` uses a separate, still frame-only path (`_compute_ratio_metric_all_companies()`), so these ratios stay blocked for cross-company comparison even though their raw legs (e.g. `total_assets`, `cash_and_equivalents`) are now individually comparable. Real gap, but a separate, larger-scope item (would need `_compute_ratio_metric_all_companies()` to compose from independent per-company legs for these 4 ratios specifically) — not a defect in that fix, no concrete question needs it yet. See `docs/decisions/2026-09-07-fix-get-metric-all-companies-instant-metrics.md`.
+  **Trigger fired 2026-09-25**: WP5's "− 1" constant (`claims 1.0 (raw)`) is this class. Close this item into the gate false-positive item the WP5 close-out files (per `docs/plans/2026-09-25-wp6-no-data-message.md`).
 
 ### From the 2026-09-06 full-codebase review
 
@@ -360,19 +238,11 @@ review also surfaced remain below.
 
 - [ ] **[design, Low, Standard]** `tracing.py` has two overlapping "record an instantaneous fact" primitives (`record_unmet_metric_request` vs `log_event`) with no documented decision rule for which to use
 
-### From the 2026-09-08 layered review of the §5/§7/§9 fixes
-
-Full evidence: `docs/reviews/2026-09-08-fix-3-medium-review-findings.md`.
-
-- [ ] **[refactor, Low, Standard]** `formulas.py` now has 3 independently-written same-shape zero-denominator guards (`get_yoy_growth`, `_compute_ratio_metric`, `_compute_ratio_metric_all_companies`) with no shared `_safe_ratio()`/zero-guard helper — CLAUDE.md's Standard-tier minimalism rule is why this diff didn't extract one; worth doing once a 4th call site needs the same guard.
-- [ ] **[bug (latent), Low, Trivial]** `chunk_documents.py`'s `chunk_blocks()` `current_is_only_overlap` flag would be incorrectly cleared by a hypothetical empty-string block merge (`f"{overlap}\n\n{''}".strip()` collapses back to the overlap value alone) — not currently reachable since `split_into_blocks()` only ever produces non-empty blocks, so this is a documentation-worthy assumption rather than a live bug.
-
 ### From the 2026-09-10 layered review of the §11/§12/§13 fixes
 
 Full evidence: `docs/reviews/2026-09-10-fix-3-more-review-findings.md`.
 
 - [ ] **[performance, Low, Standard]** `_never_tagged_hint()` (called from both `_format_no_fact_message` and, as of §12, `_format_no_comparison_message`) re-fetches `xbrl_facts.fetch_concept()` for the exact (ticker, tag) pair the caller's own lookup just fetched moments earlier — normally a free disk-cache hit, but `fetch_concept()` never caches a 404 response, so on the one case this hint actually exists for (a company that genuinely never tags a concept at all) it makes a real second live SEC network round-trip synchronously inside message formatting. Root cause is in `xbrl_facts.fetch_concept()`'s caching, not in either message formatter — a separate, larger-scope item than either function's own fix.
-- [ ] **[bug (latent), Low, Trivial]** `tracing.py`'s `traced_span()` builds `span.error = f"{type(e).__name__}: {e}"` inside its `except` block before `raise` — if the caught exception's own `__str__` raised, that would replace the original exception instead of re-raising it, contradicting the docstring's "never swallows" claim. Not currently reachable: no exception type actually raised anywhere in this codebase (`ValueError`, `KeyError`, `requests.RequestException`, etc.) has a `__str__` that can raise.
 - [ ] **[design, Low, Standard]** `search_filings`' unknown-ticker rejection returns a bespoke, actionable string built inline in `_dispatch_tool_call` (naming the invalid ticker and listing valid ones), while `call_get_financial_fact`/`call_compare_financial_metric` fold the same failure into their generic `_format_no_fact_message`/`_format_no_comparison_message` (which don't name the ticker as the problem). An incidental inconsistency between three sibling "unknown ticker" paths, not a bug — worth a deliberate decision later (upgrade the other two similarly, or document why search_filings needs to differ) rather than leaving it accidental. Still stands after the 2026-09-09 schema-validator redesign — `validate_tool_args` deliberately preserved this asymmetry rather than resolving it (out of scope for that change).
 
 ### From the 2026-09-09 schema-driven arg-validation redesign
@@ -385,10 +255,45 @@ Full evidence/reasoning: `docs/plans/2026-09-09-schema-driven-arg-validation.md`
 
 ### Carried over from the project's pre-2026-09-06 history
 
-- [ ] **[feature, Low, Substantial]** Per-call LLM "generation" tracing (token counts, prompt/completion text, per-call cost/latency as Langfuse generation objects) — explicitly scoped out of the Langfuse tracing work, parked until a real debugging need shows up. See `docs/decisions/2026-09-04-langfuse-tracing.md`.
-- [ ] **[feature, Low, Substantial]** Multi-turn conversational QA (ConvFinQA-style follow-ups) — `run_agent()` is single-turn only. Parked since Week 5's single-turn architecture; revisit only on a real multi-turn need.
-- [ ] **[feature, Low, Substantial]** Graph DB (Neo4j) as a retrieval layer — parked; only worth it if a relationship/multi-hop-shaped question actually appears.
-- [ ] **[test-coverage, Low, Standard]** Growing the eval set further toward the original 30-50 FinanceBench-style target — optional, not a fixed requirement.
 - [ ] **[misc, Low, TBD]** "Week 8 — polish + write-up" — no detail scoped yet.
 
 (HNSW index tuning was rejected outright, not parked, so it isn't carried over as an open item.)
+
+## Watch list
+
+Latent items with nothing to do until the named trigger is observed. When it is, move the item
+back into an origin section as work. One line each: the trigger, plus the record that holds the
+detail. The fuller write-ups from before the 2026-09-26 cleanup are in
+`git show e45de8b:BACKLOG.md`.
+
+**Citation verification**
+
+- **[bug (latent), Low, Trivial]** `_strip_citation_header` strips only an exact header echo, so a doubled echo, a reformatted echo, or prose before the header still drags coverage down. Trigger: any of those shapes in a real eval failure. `docs/decisions/2026-09-19-citation-header-in-quote-fix.md`
+- **[feature, Low, TBD]** The prose-fallback citation path has no `quote` capture like the structured path's. Trigger: a prose-path failure that needs it, or the Ollama item's prose-path decision. `docs/decisions/2026-09-18-flaky-eval-questions-three-fixes.md`
+- **[bug, Low, Standard]** `_SENTENCE_BREAK` treats a capitalized word after an abbreviation (`U.S. GAAP`) as a sentence break. Prose-fallback path only. Trigger: a recurrence on Gemini's forced-submit fallback, or the Ollama item's prose-path decision. `docs/plans/2026-09-10-citation-gate-measurement-instrumentation.md`
+- **[bug, Low, Standard]** `_CITATION_MARKER` doesn't match a multi-source bracket like `[1, 2, 3]` on the prose-fallback path. The structured path's coverage check already handles it via `_ANY_CITATION_BRACKET`. Trigger: same as `_SENTENCE_BREAK`. `docs/plans/2026-09-10-citation-gate-measurement-instrumentation.md`
+- **[bug (latent), Low, Standard]** `_verify_one_claim` checks quote-to-value grounding, not whether the answer's own prose labels the cell's period correctly. A fix needs a `period` field on the claim schema. Trigger: a live false accept. `docs/plans/2026-09-12-structure-aware-table-quote-grounding.md`
+- **[bug (latent), Low, Trivial]** `_quote_matches`'s flat anchor path can accept a wrong-period or digit-inflated quote for a prose-only value (table sources no longer use it). Trigger: a prose-path false accept. `docs/reviews/2026-09-13-table-grounding-region-scoped-matching.md`
+- **[bug (latent), Low, Standard]** `table_grounding`'s fuzzy coverage could accept a similar-but-wrong segment label from a different table block. Trigger: a tracked filing with near-identical sibling labels. `docs/reviews/2026-09-13-table-grounding-region-scoped-matching.md`
+- **[bug (latent), Low, Trivial]** A large `header_context` inflates `quote_is_grounded`'s coverage (25% → 88% in synthetic testing, never past the 90% threshold). Trigger: a fabricated quote crossing it. `docs/reviews/2026-09-13-table-grounding-region-scoped-matching.md`
+- **[bug (latent), Low, Trivial]** `_classify_row` treats a data row with a blank first cell as a header and drops it from `locate_value` (fails safe to `_quote_matches`). Trigger: a real filing with that shape. `docs/reviews/2026-09-13-table-grounding-region-scoped-matching.md`
+- **[feature, Low, TBD]** `NUMBER_PATTERN` doesn't recognize `M`/`B`/`K` abbreviations. Rule 9 bans them; if ever added, recognize `MM`/`Bn`, not bare letters. Trigger: an abbreviation in a live answer. `docs/decisions/2026-09-17-uncovered-number-gap-fixes.md`
+- **[test-coverage, Low, Standard]** Citation stress modes: the two-nearby-percentages question (`nvda-revenue-yoy-growth-q1fy27`) cited the risky sentence in only 1 of 3 runs, and a paraphrased quote near the 0.90 threshold is untested. Trigger: `analyze_flakiness.py` history showing the risky sentence exercised reliably (then close it), or a way to force a paraphrase. `docs/decisions/2026-09-23-restore-nvda-yoy-stress-question.md`
+
+**Refusals that need the failing quote captured** (check the `submit_answer` span's `checks` in `trace_logs/traces.jsonl` first; the trace query script item helps)
+
+- **[bug (latent), Low, Standard]** `nvda-cost-of-revenue-fy2026`: a `quote_not_found` refusal via `search_filings` prose, then clean via XBRL on re-run. Trigger: a recurrence. `e45de8b:BACKLOG.md`
+- **[bug (latent), Low, Standard]** `msft-segment-revenue-comparison-q3fy2026`: `quote_not_found` on the real segment values `35013`/`34681`/`13192` (2026-09-14 baseline). Trigger: a recurrence. `e45de8b:BACKLOG.md`
+- **[bug (latent), Low, Standard]** `aapl-rd-pct-gross-profit-fy2025`: two other refusal modes (`cited_claim_unsupported` on 17.7%, and an inline uncited 17.7%/0.177). Confirm which one fired before blaming the 2026-09-17 fix. Trigger: a recurrence. `e45de8b:BACKLOG.md`
+
+**Agent loop and code structure**
+
+- **[bug (latent), Low, Standard]** The final-turn safety net could force a grounded but incomplete answer (fewer companies than asked). Trigger: a confidently wrong ranking from a forced submit. `docs/decisions/2026-09-16-final-turn-safety-net.md`
+- **[refactor, Low, Trivial]** `_dispatch_tool_call`'s tool branches are an if-chain. Trigger: a 5th or 6th tool (then use a dispatch table). `docs/reviews/2026-09-11-negative-number-support.md`
+- **[refactor, Low, Standard]** `formulas.py` has 3 hand-written zero-denominator guards. Trigger: a 4th call site (then extract a shared `_safe_ratio()`). `docs/reviews/2026-09-08-fix-3-medium-review-findings.md`
+- **[feature, Low, Substantial]** Per-call LLM generation tracing in Langfuse (tokens, prompt/completion text, cost and latency per call). Trigger: a real debugging need. `docs/decisions/2026-09-04-langfuse-tracing.md`
+
+**Tooling and workflow**
+
+- **[design, Low, TBD]** Pyright strict mode (rejected 2026-09-15: ~94% of its errors were noise from dict-shaped data). Trigger: less untyped-dict data flow (`TypedDict`/`dataclass`), or a scoped-down strict preset. `docs/decisions/2026-09-15-adopt-pyright.md`
+- **[design, Low, TBD]** A `PreToolUse`/`ExitPlanMode` hook backstop for the plan-review floor. Trigger: instruction-only enforcement caught missing a review. `docs/decisions/2026-09-17-mandatory-plan-review-floor.md`

@@ -179,7 +179,9 @@ def traced_span(as_type: str, name: str, input: dict | None = None) -> Iterator[
         # start swallowing them. No Langfuse-side call here on purpose --
         # see this function's own docstring for why a manual one would be
         # both redundant with and, worse, silently ineffective against
-        # OpenTelemetry's own default exception-recording.
+        # OpenTelemetry's own default exception-recording. Assumes str(e)
+        # can't itself raise (that error would replace `e`); no exception
+        # type this codebase raises has a __str__ that can.
         span.error = f"{type(e).__name__}: {e}"
         raise
     finally:

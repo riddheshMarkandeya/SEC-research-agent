@@ -306,11 +306,16 @@ def chunk_blocks(blocks: list[str]) -> list[str]:
 
         if len(candidate) <= MAX_CHUNK_CHARS:
             current = candidate
+            # Relies on split_into_blocks() never yielding an empty block:
+            # merging one would leave `current` as the bare overlap while
+            # clearing this flag.
             current_is_only_overlap = False
             if len(current) >= TARGET_CHUNK_CHARS:
                 chunks.append(current)
                 # carry a small tail forward for continuity
                 tail = current[-OVERLAP_CHARS:]
+                # <TABLE> is the only atomic block type split_into_blocks()
+                # produces; a new one would need this same orphan handling.
                 if tail.count("</TABLE>") > tail.count("<TABLE>"):
                     # tail starts mid-table (past its own <TABLE> open
                     # tag). Keep only what follows the one orphaned

@@ -145,7 +145,10 @@ def _classify_row(cells: list[str]) -> str:
       cell row as "header" (permanent, table-wide) rather than "label"
       (resettable, per-group) is what lets locate_value() keep it as
       shared context for EVERY group in the table instead of losing it
-      the moment the next real group label appears.
+      the moment the next real group label appears. Known gap: ASC 852
+      fresh-start reporting parenthesizes its period labels
+      ("(Predecessor)"/"(Successor)"), which this would misread as
+      table-wide captions; none of the tracked companies reports that way.
 
     Never assumed to come first by position -- derived purely
     structurally, so a table with no header row at all (see the AAPL

@@ -82,7 +82,7 @@ exclude = [
 # habit): repo-wide, branch mode added only 30 partial branches out of
 # 714 total, aggregate barely moved (~90% either way) -- no
 # pyright-strict-style noise blowup. diff-cover's own separate
-# --branch-coverage flag is deliberately NOT enabled yet -- that's a
+# --branch-coverage flag is deliberately NOT enabled -- that's a
 # second, independent escalation (penalizing partial branches on a
 # diff specifically), and no diff-scoped data exists to justify it, only
 # this repo-wide historical measurement. See

@@ -210,7 +210,9 @@ def _pick_entry(entries: list[dict], fiscal_year: int, fiscal_period: str) -> di
     across separate filings -- confirmed in CRM's own historical data,
     where trusting the end-date's calendar year instead of an exact raw
     `fy` tag can admit more than one candidate for an older fiscal year)
-    are broken toward the most-recently-filed entry, same convention
+    are broken toward the most-recently-filed entry (verified only on
+    CRM's restated 2017-01-31 annual entry; CRM/NVDA fiscal years before
+    2015 haven't been audited), same convention
     _pick_entry_by_end_date() already uses for the identical situation:
     a later filing is never less authoritative than an earlier
     restatement of the same period."""
