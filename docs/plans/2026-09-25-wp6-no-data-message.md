@@ -177,3 +177,35 @@ years (WP7); the all-caps emphasis (WP8).
 Unit tests per shape; snapshot diff limited to intended spans; fingerprints (`agent` and
 `mcp` move, `judge` doesn't); explicit-mode screen verdict and trace counts in the decision
 file.
+
+## Review log
+Diff `a3c3eb8..ca6cace` touches blast-radius paths (`agent.py`, `prompts/`), so it
+re-classified as Substantial at review time. Step 5's "light" was superseded:
+code-review high, arch-reviewer (opus), security-reviewer, /simplify.
+
+**Round 1** (code-review high, arch opus, security, /simplify: 4 angles)
+- Security: no findings.
+- `_never_tagged_hint` typed `str | None` but guards non-str input (code-review, arch)
+  [Fixed]: params widened to `object`.
+- `_no_fact_period` hand-copies the lookup's precedence and the "FY" default
+  (code-review, arch, simplify reuse/simplification/altitude) [Fixed, docstring only]:
+  says it must mirror `call_get_financial_fact`/`get_metric` and covers rejected calls.
+  A shared resolver stays out: it would reach into `xbrl_facts.get_metric` (critical core,
+  untouched here). Arch and altitude checked every branch against the lookup: they match.
+- yoy no-data reply names the anchor period, not the missing prior year (code-review)
+  [Verified, no fix needed]: already WP7 BACKLOG item (a).
+- Q4 hint fires when the lookup ignored the period (code-review) [Verified, no fix needed]:
+  plan decision S1.
+- A call rejected at the boundary reads as "no data … try search_filings" (code-review)
+  [Deferred → BACKLOG]: predates 6a; added to WP7's line as (d).
+- Only the partial multi-year range is in the snapshot (code-review) [Verified, no fix
+  needed]: plan decision S4; the template constant itself is fingerprinted and the full
+  range is unit-tested.
+- simplify: parametrize the new tests [Verified, no fix needed]: `test_agent.py` never
+  parametrizes and each test's reasoning comment would be lost. Micro-efficiency items and
+  moving `isinstance` after the membership test [Verified, no fix needed]: the latter
+  reintroduces the list-ticker TypeError. Shared ticker guard helper: 2 call sites, skipped.
+  /simplify made no edits.
+
+**Round 2** (code-review low over the fix delta; no executable change, so no security):
+no findings. `agent` fingerprint unchanged (`e073094f18b9`). Done.

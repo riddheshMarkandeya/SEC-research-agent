@@ -110,7 +110,7 @@ def _format_results_block(results: list[dict], start_index: int) -> str:
     return msg.RESULT_BLOCK_SEPARATOR.join(blocks)
 
 
-def _never_tagged_hint(ticker: str | None, metric: str | None) -> str | None:
+def _never_tagged_hint(ticker: object, metric: object) -> str | None:
     """None unless `ticker` genuinely never tags `metric` at all (as
     opposed to just not having it for the specific period asked about)
     -- see xbrl_facts.is_metric_tagged()'s own docstring. Scoped to raw
@@ -130,8 +130,11 @@ def _never_tagged_hint(ticker: str | None, metric: str | None) -> str | None:
 
 
 def _no_fact_period(args: dict) -> str:
-    """The period call_get_financial_fact's lookup actually used, so the
-    no-data reply names it instead of echoing absent arguments."""
+    """The period call_get_financial_fact's lookup used (or, for a
+    rejected call, the period arguments it was sent), so the no-data reply
+    names it instead of echoing absent arguments. The branch order must
+    mirror call_get_financial_fact and xbrl_facts.get_metric; nothing
+    else keeps the two in step."""
     start, end = args.get("start_fiscal_year"), args.get("end_fiscal_year")
     if start is not None or end is not None:
         # A missing side renders as None: that is what was sent, and why
