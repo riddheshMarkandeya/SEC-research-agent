@@ -103,8 +103,10 @@ Standard changes leave no index line, only a commit body.
 
 ## Hooks
 
-Git hooks live in `githooks/`. A fresh clone runs `git config core.hooksPath githooks` once. No
-Claude Code hooks are used.
+Git hooks live in `githooks/`. A fresh clone runs `git config core.hooksPath githooks` once. The
+only Claude Code hook is the global git guardrail (see `~/.claude/CLAUDE.md` §3). It blocks
+`git push` from the agent, so the user pushes: with `!` in the Claude Code terminal CLI, or from
+their own terminal. Either way the pre-push gate still runs.
 
 `githooks/pre-commit` runs `scripts/check_docs_health.py` on the staged tree:
 

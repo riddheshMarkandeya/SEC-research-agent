@@ -49,14 +49,6 @@ reference:
 
 ## Backlog
 
-### From the 2026-09-25 workflow-skills overhaul roadmap
-
-Design: `docs/plans/2026-09-25-workflow-skills-overhaul-roadmap.md` (read "User decisions" first). Each work package is planned in its own plan-mode session that points at its roadmap section. WP-A and WP-B have landed; WP-C is independent.
-
-- [ ] **[misc, Med, Standard]** WP-C: `ui-implementation-guidelines` upgrade with on-demand references, the `prototype` skill, and a node git-guardrails PreToolUse hook (`Bash|PowerShell`). Roadmap: WP-C. Carried from WP-B:
-  - Add `prototype` as the fifth row of the global CLAUDE.md "On-demand skills" list, and name it in `wayfinder`'s prototype ticket type.
-  - Invocation mode: the roadmap's WP-C section says user-invoked, but the later WP-B table says model-invocable and offered by the suggesting skill before building. Reconcile the two when planning.
-
 ### From the 2026-09-24 prompt-audit roadmap
 
 Design: `docs/plans/2026-09-24-prompt-audit-roadmap.md` (read its "How this roadmap is executed" section first). Findings: `docs/reviews/2026-09-24-prompt-audit.md`. Work packages run strictly in order. Each one is planned in its own plan-mode session that points at its roadmap section rather than restating it.
