@@ -92,7 +92,9 @@ Panel total 35/39 → 36/39, expected passes lost −1.0, threshold 6: ok.
 | canary fact calls with an int year | 2 of 6 | 6 of 6 |
 | next call after the canary no-data reply | search (6/6) | search (6/6) |
 
-No unmet-metric events in either window.
+Unmet-metric records (`unmet_metric_request` spans, all `no_data_for_ticker`): B 3 (NVDA Q4
+R&D 2, NVDA revenue 1), C 6 (NVDA Q4 R&D 3, PLTR inventory turnover 3). C's PLTR lookups ran
+because the model sent int years itself (6/6), not through 7a (0 `tool_arg_coerced`).
 
 **Requests** (approximate): 151 tool calls, 13 transient 429 retries (none exhausted), about 15
 judge calls: about 180. Day total 2026-09-26: about 378.
