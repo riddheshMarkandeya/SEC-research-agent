@@ -118,30 +118,45 @@ def _never_tagged_hint(ticker: str | None, metric: str | None) -> str | None:
     understand those names, and would raise for a margin metric name
     like "gross_margin" (not itself a GAAP tag) rather than telling us
     anything meaningful about it."""
+    # The type check comes first: a list from a malformed call is
+    # unhashable and would raise on the membership test.
+    if not (isinstance(ticker, str) and isinstance(metric, str)):
+        return None
     if metric not in DEFAULT_METRIC_TAGS or ticker not in COMPANIES:
         return None
-    # Both memberships just checked above -- DEFAULT_METRIC_TAGS/COMPANIES
-    # are keyed by str, so passing either check already proves ticker/metric
-    # are real strings, not None. Spelled out for the type checker.
-    assert isinstance(ticker, str) and isinstance(metric, str)
     if is_metric_tagged(ticker, metric):
         return None
     return msg.NEVER_TAGGED_HINT_TEMPLATE.format(ticker=ticker, metric=metric)
 
 
+def _no_fact_period(args: dict) -> str:
+    """The period call_get_financial_fact's lookup actually used, so the
+    no-data reply names it instead of echoing absent arguments."""
+    start, end = args.get("start_fiscal_year"), args.get("end_fiscal_year")
+    if start is not None or end is not None:
+        # A missing side renders as None: that is what was sent, and why
+        # the call was rejected.
+        return msg.NO_FACT_PERIOD_MULTI_YEAR.format(start=start, end=end)
+    # Truthy, not "is not None": get_metric treats an empty date as absent.
+    if args.get("period_end_date"):
+        return msg.NO_FACT_PERIOD_END_DATE.format(date=args["period_end_date"])
+    if args.get("fiscal_year") is not None:
+        return msg.NO_FACT_PERIOD_FISCAL.format(
+            fiscal_period=args.get("fiscal_period", "FY"),
+            fiscal_year=args["fiscal_year"],
+        )
+    return msg.NO_FACT_PERIOD_LATEST
+
+
 def _format_no_fact_message(args: dict) -> str:
-    """Built as its own function (not inlined at the call site) so the Q4
-    hint below is unit-testable without a live Ollama round-trip -- both
-    hints exist because a bare "not found" message leaves the model
-    unaware WHY the data is missing, causing it to trust noisy search
-    results and fabricate instead of refusing. See
-    docs/decisions/2026-08-18-q4-refusal-fix.md and
-    docs/decisions/2026-08-19-fixing-6-accumulated-eval-findings.md."""
+    """Kept separate from the call site so the hints are unit-testable
+    without a model round-trip. Both hints exist because a bare "not
+    found" leaves the model unaware WHY data is missing, and it then
+    trusts noisy search results and fabricates instead of refusing."""
     message = msg.NO_FACT_TEMPLATE.format(
         metric=args.get("metric"),
         ticker=args.get("ticker"),
-        fiscal_period=args.get("fiscal_period"),
-        fiscal_year=args.get("fiscal_year"),
+        period=_no_fact_period(args),
     )
     if args.get("fiscal_period") == "Q4":
         message += msg.NO_DATA_HINT_SEPARATOR + msg.Q4_NOT_DISCLOSED_HINT

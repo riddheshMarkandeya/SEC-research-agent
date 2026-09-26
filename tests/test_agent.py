@@ -198,6 +198,65 @@ def test_format_no_fact_message_preserves_existing_detail():
     assert "2026" in message
 
 
+def _no_fact_for(**period_args) -> str:
+    # A ratio metric skips the never-tagged check, so no XBRL cache read.
+    return _format_no_fact_message({"metric": "gross_margin", "ticker": "NVDA", **period_args})
+
+
+def test_format_no_fact_message_year_without_period_names_the_fy_default():
+    # The lookup defaults a missing fiscal_period to "FY".
+    assert "'FY' FY2025" in _no_fact_for(fiscal_year=2025)
+
+
+def test_format_no_fact_message_explicit_null_period_renders_none():
+    # The lookup reads args.get("fiscal_period", "FY"), so an explicit
+    # null reaches it as None; the reply says what was used.
+    assert "None FY2025" in _no_fact_for(fiscal_year=2025, fiscal_period=None)
+
+
+def test_format_no_fact_message_period_end_date_wins_over_fiscal_year():
+    message = _no_fact_for(period_end_date="2026-04-26", fiscal_year=2027, fiscal_period="Q1")
+    assert "period ending '2026-04-26'" in message
+    assert "FY" not in message
+
+
+def test_format_no_fact_message_keeps_q4_hint_when_date_overrides_period():
+    # The hint answers what the user asked for (a Q4 figure), which stays
+    # true even though the date lookup ignored fiscal_period.
+    message = _no_fact_for(period_end_date="2026-06-30", fiscal_period="Q4")
+    assert "period ending '2026-06-30'" in message
+    assert "isn't reported as a standalone figure" in message
+
+
+def test_format_no_fact_message_empty_date_falls_through_to_fiscal_year():
+    assert "'Q2' FY2026" in _no_fact_for(period_end_date="", fiscal_year=2026, fiscal_period="Q2")
+
+
+def test_format_no_fact_message_full_multi_year_range():
+    message = _no_fact_for(start_fiscal_year=2023, end_fiscal_year=2025, fiscal_year=2025)
+    assert "FY2023–FY2025 average" in message
+
+
+def test_format_no_fact_message_partial_multi_year_range_shows_what_was_sent():
+    assert "FYNone–FY2025 average" in _no_fact_for(end_fiscal_year=2025)
+
+
+def test_format_no_fact_message_no_period_arguments_names_latest():
+    message = _no_fact_for()
+    assert "the latest available period" in message
+    assert "None" not in message
+
+
+def test_format_no_fact_message_string_year_stays_visible():
+    # Until digit-string years are coerced, the reply shows the malformed value.
+    assert "'FY' FY'2025'" in _no_fact_for(fiscal_year="2025")
+
+
+def test_format_no_fact_message_list_ticker_does_not_raise():
+    message = _format_no_fact_message({"metric": "inventory", "ticker": ["NVDA"], "fiscal_year": 2025})
+    assert "['NVDA']" in message
+
+
 def test_format_no_comparison_message_includes_q4_hint():
     # Same structural gap applies to compare_financial_metric -- a user
     # could just as easily ask to compare Q4 figures across companies.

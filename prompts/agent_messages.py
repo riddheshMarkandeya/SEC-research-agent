@@ -56,9 +56,14 @@ CALCULATION_PLACEHOLDER = "N/A"
 # hint appended, joined by NO_DATA_HINT_SEPARATOR.
 NO_FACT_TEMPLATE = (
     "(no structured data found for metric={metric!r} "
-    "ticker={ticker!r} {fiscal_period!r} "
-    "FY{fiscal_year!r} — try search_filings instead)"
+    "ticker={ticker!r} {period} — try search_filings instead)"
 )
+# {period} names the period the lookup actually used, one form per
+# argument shape; values keep !r so malformed input stays visible.
+NO_FACT_PERIOD_MULTI_YEAR = "FY{start!r}–FY{end!r} average"
+NO_FACT_PERIOD_END_DATE = "period ending {date!r}"
+NO_FACT_PERIOD_FISCAL = "{fiscal_period!r} FY{fiscal_year!r}"
+NO_FACT_PERIOD_LATEST = "the latest available period"
 NO_COMPARISON_TEMPLATE = (
     "(no structured data found for metric={metric!r} "
     "across companies for this period — try search_filings per company instead)"
@@ -268,6 +273,10 @@ FINGERPRINTED = (
     "CALCULATION_FORM",
     "CALCULATION_PLACEHOLDER",
     "NO_FACT_TEMPLATE",
+    "NO_FACT_PERIOD_MULTI_YEAR",
+    "NO_FACT_PERIOD_END_DATE",
+    "NO_FACT_PERIOD_FISCAL",
+    "NO_FACT_PERIOD_LATEST",
     "NO_COMPARISON_TEMPLATE",
     "NO_DATA_HINT_SEPARATOR",
     "Q4_NOT_DISCLOSED_HINT",
