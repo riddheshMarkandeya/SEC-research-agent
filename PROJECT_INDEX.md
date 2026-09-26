@@ -49,6 +49,8 @@ prepend them (verbatim, still reverse-chronological) to the top of
 
 ## Recent
 
+- 2026-09-26 [review] WP7 plan review — 1 round; 7a gets its own fingerprint via a dispatcher snapshot scenario, ≥350-request screen cutoff, shorter "same no-data reply" wording, 4-digit strings only → `docs/reviews/2026-09-26-wp7-fiscal-year-strings-plan-review.md`
+- 2026-09-26 [plan] WP7: convert 4-digit `fiscal_year` strings to int at the fact/compare boundary (7a) and replace "rejected outright" / "returns null" (7b); BACKLOG (a)/(d) moved to WP8 follow-ups → `docs/plans/2026-09-26-wp7-fiscal-year-strings.md`
 - 2026-09-26 [review] WP6 code review — 2 rounds (Substantial by blast radius); `_never_tagged_hint` typed `object`, `_no_fact_period` docstring says it mirrors the lookup; rejected-call "no data" wording deferred to WP7 (d) → `docs/reviews/2026-09-26-wp6-no-data-message.md`
 - 2026-09-26 [decision] WP6: no-data reply names the period used + "finds no data" wording accepted; screen 31/39 → 35/39, no REGRESSED, `pltr-government-contract-risk` watch (date claimed as a number, unrelated); gains not credited to WP6; agent `e073094f18b9` is WP7's B → `docs/decisions/2026-09-26-wp6-no-data-message.md`
 - 2026-09-26 [decision] WP5: plain segment-rule wording accepted; screen 31/39 vs 33/39 REGRESSED on `nvda-revenue-two-quarter-comparison` (1/3, gate FP on inline "a ÷ b − 1"), replicate 3/3 = noise; segment override never fired (0 fact calls either way, answers `6f3a8ee`: no effect on Gemini); agent `d2131f5d5aae` → `5d3cea51c73b`; WP6 baseline = WP5 screen → `docs/decisions/2026-09-26-wp5-segment-rule.md`
