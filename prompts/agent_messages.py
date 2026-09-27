@@ -16,7 +16,8 @@ filing-supplied content (answers, quotes, chunks, warnings can contain
 # ---------------------------------------------------------------------------
 # The header above each numbered result. agent._strip_citation_header
 # reconstructs exactly this text to strip an echoed header from a quote,
-# via agent._citation_header, so the two can't drift apart.
+# via agent._citation_header, so the two can't drift apart. It also strips
+# the header minus its leading "[{i}] ", so that part must stay a prefix.
 CITATION_HEADER_TEMPLATE = "[{i}] {ticker} {form} (reportDate={report_date})"
 RESULT_BLOCK_TEMPLATE = "{header}\n{text}"
 RESULT_BLOCK_SEPARATOR = "\n\n"

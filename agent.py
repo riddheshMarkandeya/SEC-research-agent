@@ -1409,15 +1409,19 @@ def _strip_citation_header(quote: str, n: int, meta: dict) -> str:
 
     Reconstructs the exact header from this claim's OWN citation index
     and metadata (via _citation_header, not a generic regex), and only
-    strips an exact match -- a source chunk that coincidentally starts
-    with bracket-shaped text is never mistakenly stripped, and a
-    reformatted/case-folded copy of a real header is deliberately left
-    alone rather than guessed at (unproven live, so not chased)."""
+    strips an exact match of it, or of it without its leading "[n] "
+    (models echo both forms). A header naming a different ticker, form
+    or reportDate is never stripped. The unprefixed form is shared by
+    every result from the same filing, which is harmless: the rest of
+    the quote must still ground against result [n]'s own text. Any
+    other reformatted/case-folded copy of a real header is deliberately
+    left alone rather than guessed at."""
     header = _citation_header(n, meta)
     stripped = quote.lstrip()
-    if not stripped.startswith(header):
-        return quote
-    return stripped.removeprefix(header).lstrip()
+    for candidate in (header, header.removeprefix(f"[{n}] ")):
+        if stripped.startswith(candidate):
+            return stripped.removeprefix(candidate).lstrip()
+    return quote
 
 
 def _verify_one_claim(claim: dict, all_results: list[dict]) -> "CitationWarning | None":

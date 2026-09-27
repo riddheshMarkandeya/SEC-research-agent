@@ -15,6 +15,8 @@ monkeypatched BACKENDS entries instead.
 from contextlib import contextmanager
 from typing import cast
 
+import pytest
+
 from agent import (
     AgentResult,
     CitationWarning,
@@ -3750,6 +3752,42 @@ def test_strip_citation_header_does_not_strip_a_similar_but_wrong_prefix():
     meta = {"ticker": "NVDA", "form": "10-Q", "reportDate": "2026-04-26"}
     quote = f"[2] NVDA 10-Q (reportDate=2026-04-26)\n{_NVDA_XBRL_SOURCE_TEXT}"
     assert _strip_citation_header(quote, 1, meta) == quote
+
+
+@pytest.mark.parametrize("separator", ["\n", " "])
+def test_strip_citation_header_removes_a_header_echoed_without_its_index_prefix(separator):
+    # Models also echo the header with its "[n] " dropped; both
+    # separators after it have been seen in live quotes.
+    meta = {"ticker": "NVDA", "form": "10-K", "reportDate": "2026-01-25"}
+    quote = f"NVDA 10-K (reportDate=2026-01-25){separator}{_NVDA_XBRL_SOURCE_TEXT}"
+    assert _strip_citation_header(quote, 1, meta) == _NVDA_XBRL_SOURCE_TEXT
+
+
+@pytest.mark.parametrize(
+    "other", ["NVDA 10-Q (reportDate=2026-01-25)", "NVDA 10-K (reportDate=2025-01-26)"],
+)
+def test_strip_citation_header_does_not_strip_an_unprefixed_header_for_other_metadata(other):
+    meta = {"ticker": "NVDA", "form": "10-K", "reportDate": "2026-01-25"}
+    quote = f"{other}\n{_NVDA_XBRL_SOURCE_TEXT}"
+    assert _strip_citation_header(quote, 1, meta) == quote
+
+
+@pytest.mark.parametrize(
+    ("value", "unit", "source_text"),
+    [
+        (215.938, "billion", "revenue = 215938000000 USD (structured XBRL data, not filing prose)"),
+        (71.1, "percent", "gross_margin = 71.1 percent (structured XBRL data, not filing prose)"),
+    ],
+)
+def test_verify_claims_grounds_a_quote_with_an_unprefixed_citation_header(value, unit, source_text):
+    # Real submitted claim shapes: an unprefixed header plus a scaled or
+    # percent unit must still ground.
+    results = [_fake_result(ticker="NVDA", form="10-K", reportDate="2026-01-25", text=source_text)]
+    claims = [_valid_submitted_claim(
+        value=value, unit=unit, citation_index=1,
+        quote=f"NVDA 10-K (reportDate=2026-01-25)\n{source_text}",
+    )]
+    assert verify_claims(claims, results, "q", f"The figure was {value} {unit} [1].") == []
 
 
 def test_verify_claims_grounds_a_claim_whose_quote_includes_its_own_citation_header():
