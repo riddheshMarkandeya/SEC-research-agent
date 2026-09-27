@@ -49,6 +49,8 @@ prepend them (verbatim, still reverse-chronological) to the top of
 
 ## Recent
 
+- 2026-09-27 [decision] Unprefixed citation-header strip: `_strip_citation_header` also strips the exact header minus `[n] ` (revisits 09-19 exact-match-only; 17 of 29 traced header echoes were unprefixed); commit `022e851`, fingerprint unchanged `7aec53939ce3`; spot-check 6/6 (WP8 0/2) but no run echoed the header → `docs/decisions/2026-09-27-unprefixed-citation-header-strip.md`
+- 2026-09-27 [review] Unprefixed citation-header strip review: Substantial passes, 2 rounds, 3 fixed, 1 disputed (derive test headers via `_citation_header` = tautological) → `docs/reviews/2026-09-27-unprefixed-citation-header-strip.md`
 - 2026-09-27 [decision] Prompt-audit rollout summary: roadmap closed; one row per WP1–WP8 (commits, fingerprints, panel B → C, watch); WP1–WP7 accepted, none reverted; open items filed (baseline-improvement plan next) → `docs/decisions/2026-09-27-prompt-audit-rollout.md`
 - 2026-09-27 [decision] WP8 final run: 40/47 vs 39/47 and 38/47 (bar ≥ 38 met), 41/48 with the restored question; 3 drops all explained (PLTR panel noise; both NVDA = unprefixed citation-header echo → `quote_not_found`, promoted from Watch list); 0 lenient-parse hits; model pin kept; report `20260927T071935Z` → `docs/decisions/2026-09-27-wp8-final-run.md`
 - 2026-09-26 [review] WP8 plan review — 1 round; bar = 47-question cand sum ≥ 38 (compare flags expected with 2 base vs 1 cand), panel drops checked against the WP7 screen first, fixed 3× rerun rule, cut-short run = invalid → `docs/reviews/2026-09-26-wp8-final-run-plan-review.md`

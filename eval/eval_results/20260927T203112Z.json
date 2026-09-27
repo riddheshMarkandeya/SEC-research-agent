@@ -1,0 +1,61 @@
+{
+  "backend": "gemini",
+  "answer_model": "gemini-3.5-flash-lite",
+  "judge_model": "gemini-3.5-flash-lite",
+  "provenance": {
+    "git_sha": "022e851",
+    "git_dirty": false,
+    "dirty_files": [],
+    "snapshot_verified": true,
+    "config": {
+      "gemini_model": "gemini-3.5-flash-lite",
+      "embed_model": "BAAI/bge-small-en-v1.5",
+      "rerank_model": "cross-encoder/ms-marco-MiniLM-L-6-v2",
+      "chroma_dir": "./chroma_db",
+      "google_genai": "2.18.1",
+      "mcp": "2.1.1"
+    },
+    "prompts": {
+      "agent_system": "12a028f88e84",
+      "agent_tools": "d0e198d4dd09",
+      "agent_messages": "8c9475cb348b",
+      "judge": "2ee29f234c91",
+      "mcp": "b34024a4d17d",
+      "agent": "7aec53939ce3"
+    }
+  },
+  "results": [
+    {
+      "id": "nvda-revenue-fy26",
+      "ticker": "NVDA",
+      "question": "What was NVIDIA's total revenue for fiscal year 2026?",
+      "type": "numeric",
+      "passed": true,
+      "detail": "found matching value: 215938.0 (million)",
+      "has_citation": true,
+      "citation_warnings": [],
+      "answer": "NVIDIA's total revenue for fiscal year 2026 was $215,938 million (or $215.94 billion) [1].",
+      "n_chunks_retrieved": 1,
+      "withheld_answer": null,
+      "gate_withheld_would_have_passed": null,
+      "gate_withheld_detail": null,
+      "citation_warning_details": []
+    },
+    {
+      "id": "nvda-gross-margin-fy26",
+      "ticker": "NVDA",
+      "question": "What was NVIDIA's gross margin for fiscal year 2026?",
+      "type": "numeric",
+      "passed": true,
+      "detail": "found matching value: 71.1 (percent)",
+      "has_citation": true,
+      "citation_warnings": [],
+      "answer": "NVIDIA's gross margin for fiscal year 2026 was 71.1% [1].",
+      "n_chunks_retrieved": 1,
+      "withheld_answer": null,
+      "gate_withheld_would_have_passed": null,
+      "gate_withheld_detail": null,
+      "citation_warning_details": []
+    }
+  ]
+}
