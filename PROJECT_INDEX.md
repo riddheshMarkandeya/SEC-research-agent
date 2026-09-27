@@ -49,6 +49,8 @@ prepend them (verbatim, still reverse-chronological) to the top of
 
 ## Recent
 
+- 2026-09-26 [review] WP8 plan review — 1 round; bar = 47-question cand sum ≥ 38 (compare flags expected with 2 base vs 1 cand), panel drops checked against the WP7 screen first, fixed 3× rerun rule, cut-short run = invalid → `docs/reviews/2026-09-26-wp8-final-run-plan-review.md`
+- 2026-09-26 [plan] WP8: one full 48-question run at agent `7aec53939ce3` vs `20260921T222521Z`/`20260922T062823Z` (47 shared), drops explained from traces with `trace_query.py`, model pin kept, rollout summary + deferred items → `docs/plans/2026-09-26-wp8-final-run.md`
 - 2026-09-26 [review] WP7 code review — 2 rounds (Substantial by blast radius); whole-float years now converted (fixed a `range()` crash in the multi-year average), `"0000"` stays rejected; 0 deferred → `docs/reviews/2026-09-26-wp7-fiscal-year-strings.md`
 - 2026-09-26 [decision] WP7: 4-digit year strings (and whole floats) convert to int, "same no-data reply" wording accepted; screen 35/39 → 36/39, no REGRESSED, `nvda-revenue-two-quarter-comparison` watch ("− 1" gate FP); 0 year strings sent in the window, so 7a not exercised live; agent `7aec53939ce3` → `docs/decisions/2026-09-26-wp7-fiscal-year-strings.md`
 - 2026-09-26 [review] WP7 plan review — 1 round; 7a gets its own fingerprint via a dispatcher snapshot scenario, ≥350-request screen cutoff, shorter "same no-data reply" wording, 4-digit strings only → `docs/reviews/2026-09-26-wp7-fiscal-year-strings-plan-review.md`
