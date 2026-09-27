@@ -53,10 +53,27 @@ reference:
 
 ### From the 2026-09-24 prompt-audit roadmap
 
-Design: `docs/plans/2026-09-24-prompt-audit-roadmap.md` (read its "How this roadmap is executed" section first). Findings: `docs/reviews/2026-09-24-prompt-audit.md`. Work packages run strictly in order. Each one is planned in its own plan-mode session that points at its roadmap section rather than restating it.
+Design: `docs/plans/2026-09-24-prompt-audit-roadmap.md`. Findings: `docs/reviews/2026-09-24-prompt-audit.md`. The roadmap closed 2026-09-27 (WP8 bar met, 40/47). Summary: `docs/decisions/2026-09-27-prompt-audit-rollout.md`. What's left here are its open items. Anything that changes model-visible text still goes through the roadmap's panel-screen process.
+
+- [ ] **[misc, Med, Substantial]** **Next:** the baseline-improvement plan. Candidates, from the WP5–WP8 misses: the "− 1" gate false positive (item below), the Q4-hint vs judge conflict on `nvda-rd-expense-q4fy26-refusal` (the judge fails a correct refusal for leaving out the full-year figure, which the Q4 hint forbids; `docs/decisions/2026-09-26-wp7-fiscal-year-strings.md`), and the unprefixed header echo (item below). Keep the model pin for its screens. `docs/decisions/2026-09-27-prompt-audit-rollout.md`
+- [ ] **[bug, Med, Standard]** `_strip_citation_header` strips only the exact `[n] <ticker> <form> (reportDate=…)` echo. A quote that starts with the header minus its `[n] ` prefix fails `quote_not_found`, and the gate withholds a correct answer. It caused both NVDA drops in the WP8 full run (`nvda-revenue-fy26` withheld with `would_have_passed: True`; `nvda-gross-margin-fy26`), and unprefixed-header quotes with `quote_not_found` appear in traces on 9 days from 09-11 to 09-27. Promoted from the Watch list (its "reformatted echo" trigger fired). Touches the gate in `agent.py`, so it needs a live spot-check. `docs/decisions/2026-09-27-wp8-final-run.md`; `docs/decisions/2026-09-19-citation-header-in-quote-fix.md`
+- [ ] **[misc, Low, Standard]** Step 7 follow-ups:
+  - reason-bearing rejections via `on_reject`, including a call rejected at the boundary (partial multi-year range, yoy + multi-year), which today reads as "no data … try search_filings";
+  - `calculate`'s generic missing-argument message;
+  - MCP search returning a silent `[]`;
+  - a yoy no-data reply names the anchor period even when the prior year is the missing one (`formulas.py:353`; no live case, all 62 yoy calls found data).
+
+  Each one changes model-visible text, so it needs a panel screen. `docs/decisions/2026-09-26-wp7-fiscal-year-strings.md`
+- [ ] **[refactor, Low, Standard]** Audit notes 8–10 (prompt style):
+  - all-caps emphasis;
+  - tool bullets in SYSTEM_PROMPT that duplicate the tool descriptions;
+  - the size of rule 9;
+  - sentences duplicated across the agent and MCP surfaces;
+  - the hard-coded "five companies".
+
+  It changes model-visible text, so it needs a panel screen. `docs/reviews/2026-09-24-prompt-audit.md`
 
 - [ ] **[bug, Med, Standard]** Citation gate false positive on the inline "− 1" of an "a ÷ b − 1" percent-change display: `uncovered_number` reads the constant as `claims 1.0 (raw)` and withholds a passing answer. Withheld 2 of 3 WP5 screen runs of `nvda-revenue-two-quarter-comparison` (`gate_withheld_would_have_passed: True`), then 0/3 in the replicate; withheld 1 of 3 again in the WP7 screen (`20260926T085714Z`). Same family as WP3's "−359,241,000,000" on `aapl-msft-total-assets-comparison`: an arithmetic display in prose, not a claimed figure. Also absorbs the old `_NON_CLAIM_PATTERN` duration-exemption item (year/month/day only, whack-a-mole), so the fix should target the class (numbers inside an inline formula/derivation), not add another exemption word. Touches the gate in `agent.py`, so it needs its own panel screen; not part of WP6/WP7. `docs/decisions/2026-09-26-wp5-segment-rule.md`; absorbed item's evidence: `docs/decisions/2026-09-17-uncovered-number-gap-fixes.md`
-- [ ] **[misc, Med, Standard]** **IN PROGRESS — plan `docs/plans/2026-09-26-wp8-final-run.md`:** WP8: final full 48-question run compared against the last two full runs, unpin the Gemini model, write the summary decision file, and file the deferred items (finding 7 judge change, notes 8–10, Step 7 follow-ups). WP7 closed 2026-09-26 (accepted, agent `7aec53939ce3`, `docs/decisions/2026-09-26-wp7-fiscal-year-strings.md`); Step 9 (f) is moot (that item is gone). Add to the Step 9 (e) follow-ups when filing them: a yoy no-data reply names the anchor period even when the prior year is the missing one (`formulas.py:353`; no live case, all 62 yoy calls found data); and reason-bearing rejections should also cover a call rejected at the boundary (partial multi-year range, yoy + multi-year), which today reads as "no data … try search_filings". Roadmap: Steps 8–9.
 - [ ] **[bug, Low, Standard]** A calculate result's expression pastes each operand's unit in as-is, so a `"raw"` operand (a plain ratio or count) reaches the model as e.g. "1.04 raw". The result value itself already omits "raw" via `agent._with_unit`. Found in the WP1 code review (`docs/reviews/2026-09-24-wp1-prompts-package.md`); left unchanged because WP1 had to be byte-identical. It changes model-visible text, so it goes through the roadmap's panel-screened process: fit it in after WP2.
 - [ ] **[refactor, Low, Trivial]** Duplicated enum values in `prompts/agent_tools.py`, all copied as-is from `agent.py` by WP1: the period list `["FY", "Q1", "Q2", "Q3", "Q4"]` twice, `list(COMPANIES.keys())` three times, and `CLAIM_UNITS` restating `numeric_utils.UNIT_MULTIPLIERS`'s keys by hand. Hoist each into one constant; the schemas' bytes must stay identical (check with the WP2 fingerprint). Found in the WP1 code review.
 - [ ] **[design, Low, Standard]** The MCP `search_filings` schema is derived the wrong way round: `prompts.mcp.MCP_SEARCH_TOOL_SCHEMA` is the agent's schema with its agent-only text overridden, so agent-only wording in any other field reaches MCP clients silently. The `ticker` description already does ("…which company the question is about"), and three description sentences are written out on both surfaces. Fix: a neutral shared schema that the agent adds its note to. It changes model-visible text, so it needs a panel screen. Found in WP3's plan and code reviews (`docs/reviews/2026-09-24-wp3-group-a-wording.md`).
@@ -247,7 +264,6 @@ detail. The fuller write-ups from before the 2026-09-26 cleanup are in
 
 **Citation verification**
 
-- **[bug (latent), Low, Trivial]** `_strip_citation_header` strips only an exact header echo, so a doubled echo, a reformatted echo, or prose before the header still drags coverage down. Trigger: any of those shapes in a real eval failure. `docs/decisions/2026-09-19-citation-header-in-quote-fix.md`
 - **[feature, Low, TBD]** The prose-fallback citation path has no `quote` capture like the structured path's. Trigger: a prose-path failure that needs it, or the Ollama item's prose-path decision. `docs/decisions/2026-09-18-flaky-eval-questions-three-fixes.md`
 - **[bug, Low, Standard]** `_SENTENCE_BREAK` treats a capitalized word after an abbreviation (`U.S. GAAP`) as a sentence break. Prose-fallback path only. Trigger: a recurrence on Gemini's forced-submit fallback, or the Ollama item's prose-path decision. `docs/plans/2026-09-10-citation-gate-measurement-instrumentation.md`
 - **[bug, Low, Standard]** `_CITATION_MARKER` doesn't match a multi-source bracket like `[1, 2, 3]` on the prose-fallback path. The structured path's coverage check already handles it via `_ANY_CITATION_BRACKET`. Trigger: same as `_SENTENCE_BREAK`. `docs/plans/2026-09-10-citation-gate-measurement-instrumentation.md`
@@ -274,5 +290,6 @@ detail. The fuller write-ups from before the 2026-09-26 cleanup are in
 
 **Tooling and workflow**
 
+- **[design, Med, Standard]** Audit finding 7: the judge verdict is parsed from a two-line format (`startswith("PASS")`), so `**PASS**` or a preamble would grade FAIL. Fix: structured output for the judge. It touches `grade_judged`, so it needs a panel screen. Trigger: `lenient parse disagrees` in any eval report (0 hits through WP8). `docs/reviews/2026-09-24-prompt-audit.md`
 - **[design, Low, TBD]** Pyright strict mode (rejected 2026-09-15: ~94% of its errors were noise from dict-shaped data). Trigger: less untyped-dict data flow (`TypedDict`/`dataclass`), or a scoped-down strict preset. `docs/decisions/2026-09-15-adopt-pyright.md`
 - **[design, Low, TBD]** A `PreToolUse`/`ExitPlanMode` hook backstop for the plan-review floor. Trigger: instruction-only enforcement caught missing a review. `docs/decisions/2026-09-17-mandatory-plan-review-floor.md`

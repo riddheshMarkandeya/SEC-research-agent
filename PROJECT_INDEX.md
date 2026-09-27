@@ -49,6 +49,8 @@ prepend them (verbatim, still reverse-chronological) to the top of
 
 ## Recent
 
+- 2026-09-27 [decision] Prompt-audit rollout summary: roadmap closed; one row per WP1–WP8 (commits, fingerprints, panel B → C, watch); WP1–WP7 accepted, none reverted; open items filed (baseline-improvement plan next) → `docs/decisions/2026-09-27-prompt-audit-rollout.md`
+- 2026-09-27 [decision] WP8 final run: 40/47 vs 39/47 and 38/47 (bar ≥ 38 met), 41/48 with the restored question; 3 drops all explained (PLTR panel noise; both NVDA = unprefixed citation-header echo → `quote_not_found`, promoted from Watch list); 0 lenient-parse hits; model pin kept; report `20260927T071935Z` → `docs/decisions/2026-09-27-wp8-final-run.md`
 - 2026-09-26 [review] WP8 plan review — 1 round; bar = 47-question cand sum ≥ 38 (compare flags expected with 2 base vs 1 cand), panel drops checked against the WP7 screen first, fixed 3× rerun rule, cut-short run = invalid → `docs/reviews/2026-09-26-wp8-final-run-plan-review.md`
 - 2026-09-26 [plan] WP8: one full 48-question run at agent `7aec53939ce3` vs `20260921T222521Z`/`20260922T062823Z` (47 shared), drops explained from traces with `trace_query.py`, model pin kept, rollout summary + deferred items → `docs/plans/2026-09-26-wp8-final-run.md`
 - 2026-09-26 [review] WP7 code review — 2 rounds (Substantial by blast radius); whole-float years now converted (fixed a `range()` crash in the multi-year average), `"0000"` stays rejected; 0 deferred → `docs/reviews/2026-09-26-wp7-fiscal-year-strings.md`
