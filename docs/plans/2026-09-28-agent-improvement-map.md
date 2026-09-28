@@ -84,8 +84,31 @@ New in this merge:
 
 14. **No fallback backend after Ollama removal (user, 2026-09-28).** When the Gemini quota runs
     out, work stops until the reset. Other cloud backends are a separate effort, outside this map.
-    The user also confirmed the order: prerequisites 1–5, then the improvement packages. The user
-    will add one item of their own to the order.
+    The user also confirmed the order: prerequisites 1–5, then the improvement packages.
+15. **Repo layout move to a `src/` package (user, 2026-09-28).** This is the user's own addition.
+    It goes into Decision 13's prerequisites between Ollama removal and the `agent.py` split.
+    - **What:** pure moves, in their own commit:
+      - `src/sec_agent/`, with subpackages `agent/`, `verification/`, `sources/`, `retrieval/`,
+        `llm/`, `prompts/` and `eval/`, plus `config`, `tracing` and `mcp_server`;
+      - `tools/` for the analysis CLIs and the replay tool;
+      - one gitignored `var/` for `chroma_db`, `chunks`, `data`, `xbrl_cache` and `trace_logs`;
+      - `tests/` mirrored.
+    - **Measured cost:**
+      - 21 modules, 102 import lines, 226 string mock targets.
+      - 10 working-directory-relative data paths, which the move anchors to the project root. That
+        fixes a latent bug.
+      - About 55 tooling path references: rules frontmatter, pre-push list, pyproject, CLAUDE.md,
+        pre-commit.
+      - 11 `tests/manual` `sys.path` hacks, replaced by an editable install.
+      - The 156 history docs keep their old paths.
+      - About one session.
+    - **Unchanged:** the eval fingerprint (it hashes prompt values, not paths), the Chroma IDs
+      (from filing metadata) and the logged traces.
+    - **Why this slot:** after the edits that touch the same files, and before the split, so the
+      split's new modules are created once, in their final place.
+    - **Checks:** the full suite, the model-input snapshot, and identical verdicts from the
+      replay tool.
+    - The critical-core list becomes directory globs, mirrored in pre-push.
 
 ## Open tickets
 
@@ -132,8 +155,8 @@ New in this merge:
 
 ## Proposed build order
 
-Prerequisites (Decision 13): NUMBER_PATTERN fix → replay tool → Ollama removal → `agent.py`
-split → eval summary mode.
+Prerequisites (Decisions 13 and 15): NUMBER_PATTERN fix → replay tool → Ollama removal → `src/`
+layout move → `agent.py` split (inside the package) → eval summary mode.
 
 Then the improvement packages:
 1. **Retry slot** (gate D9): code, then the panel and a full run.
