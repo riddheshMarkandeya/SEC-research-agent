@@ -90,6 +90,13 @@ def _looks_like_reference_number(text: str, open_paren_pos: int, digits: str, fo
 # valid trailing word here.
 _NUMBER_ENDING_WORDS = ("billion", "million", "thousand", "percent")
 
+# "raw" isn't a NUMBER_PATTERN unit, but calculate's rendered expression
+# prints it after a unitless operand and models copy that text verbatim
+# ("619,003,000,000 raw − 359,241,000,000 raw"). Only "<digit> raw" counts:
+# a bare suffix match would flip a real negative after "draw"/"withdraw",
+# and "raw" as an adjective ("a raw −3.1% basis") precedes a real sign.
+_RAW_UNIT_WORD = "raw"
+
 
 def _preceded_by_number(text: str, pos: int) -> bool:
     """True if the text immediately before position `pos` (skipping
@@ -104,7 +111,11 @@ def _preceded_by_number(text: str, pos: int) -> bool:
         return False
     if before[-1].isdigit() or before[-1] == "%":
         return True
-    return before.lower().endswith(_NUMBER_ENDING_WORDS)
+    lowered = before.lower()
+    if lowered.endswith(_RAW_UNIT_WORD):
+        operand = before[: -len(_RAW_UNIT_WORD)]
+        return operand[-1:].isspace() and operand.rstrip()[-1:].isdigit()
+    return lowered.endswith(_NUMBER_ENDING_WORDS)
 
 
 def _is_negative(text: str, match: re.Match, digits: str, unit_word: str | None, percent_sign: str | None) -> bool:

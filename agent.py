@@ -900,6 +900,40 @@ _NON_CLAIM_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
+# The identities in a percent formula ("a ÷ b − 1"; "(a ÷ b) − 1" and
+# "(a ÷ b × 100) − 100", which parse as negatives after ")"; "× 100")
+# aren't figures any filing states, so the model's own write-up of a
+# percent calculation would otherwise be withheld for them. They count
+# only when that calculation actually ran, never from the answer's
+# wording, and only as exact unitless values. The accepted cost: on such a
+# turn, a bare 1, −1, 100 or −100 anywhere in the answer is covered too.
+_PERCENT_IDENTITY_CONSTANTS = {"percent_change": (1.0, -1.0, 100.0, -100.0), "percent_of": (100.0,)}
+
+
+def _template_marker(template: str) -> str:
+    """The longest literal run of an expression template, which identifies
+    the operation in its rendering whatever order the placeholders are in."""
+    return max(re.split(r"\{[^}]*\}", template), key=len).strip()
+
+
+# calculate's own rendering (not the model's) says which operation ran.
+_PERCENT_OPERATION_MARKERS = {
+    "percent_change": _template_marker(msg.CALCULATION_PERCENT_CHANGE_EXPRESSION),
+    "percent_of": _template_marker(msg.CALCULATION_PERCENT_OF_EXPRESSION),
+}
+
+
+def _percent_identity_values(calculated_expressions: list[str]) -> set[float]:
+    """The identity values granted by every percent calculation among
+    calculate's rendered expressions, for an exact match on a unitless
+    answer number."""
+    return {
+        v
+        for operation, marker in _PERCENT_OPERATION_MARKERS.items()
+        if any(marker in expression for expression in calculated_expressions)
+        for v in _PERCENT_IDENTITY_CONSTANTS[operation]
+    }
+
 
 # ---------------------------------------------------------------------------
 # Structured-claims quote grounding -- verifies a submit_answer claim's
@@ -1610,7 +1644,12 @@ def verify_claims(
     hazard `answer_numbers`'s own `_ANY_CITATION_BRACKET` strip below
     exists for -- belt-and-suspenders, since the bracketed "operands
     from results [N] and [M])" text only ever appears after "=" and so
-    is already excluded by the split above on today's exact rendering."""
+    is already excluded by the split above on today's exact rendering.
+
+    A percent calculation that ran also covers its formula's unitless
+    identities (the "1" in "a ÷ b − 1", the "100" in "× 100"), so the
+    model's own write-up of it isn't withheld; `_PERCENT_IDENTITY_CONSTANTS`
+    lists them and the accepted cost."""
     warnings = [w for w in (_verify_one_claim(c, all_results) for c in claims) if w is not None]
 
     # Qualitative and malformed claims (see _verify_one_claim) have no
@@ -1626,15 +1665,18 @@ def verify_claims(
     # _CITATION_MARKER) specifically to also catch the multi-index form
     # -- see that constant's own comment.
     answer_numbers = extract_numbers(_NON_CLAIM_PATTERN.sub("", _ANY_CITATION_BRACKET.sub("", answer_text)))
+    # Only the portion before "=" (the two operands) -- everything from
+    # "=" onward is the RESULT itself, which must still earn its own
+    # claims entry the normal way; see docstring above.
+    calculated_expressions = [
+        r["text"].split("=", 1)[0] for r in all_results if r["metadata"].get("chunk_index") == "calculated"
+    ]
     calculated_candidates: list[tuple[str, float]] = [
         candidate
-        for r in all_results
-        if r["metadata"].get("chunk_index") == "calculated"
-        # Only the portion before "=" (the two operands) -- everything
-        # from "=" onward is the RESULT itself, which must still earn
-        # its own claims entry the normal way; see docstring above.
-        for candidate in _number_candidates(_ANY_CITATION_BRACKET.sub("", r["text"].split("=", 1)[0]))
+        for expression in calculated_expressions
+        for candidate in _number_candidates(_ANY_CITATION_BRACKET.sub("", expression))
     ]
+    identity_values = _percent_identity_values(calculated_expressions)
 
     def _covered(category: str, norm: float, tolerance: float) -> bool:
         if any(c == category and abs(v - norm) <= tolerance for c, v in claimed_normalized):
@@ -1649,6 +1691,8 @@ def verify_claims(
 
     seen_uncovered: set[tuple[str, float]] = set()
     for value, unit in answer_numbers:
+        if unit == "raw" and value in identity_values:
+            continue
         category, norm = normalize(value, unit)
         if _covered(category, norm, max(0.01 * abs(norm), 0.05)):
             continue

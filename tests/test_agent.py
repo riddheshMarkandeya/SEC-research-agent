@@ -4101,6 +4101,163 @@ def test_verify_claims_calculate_entry_exemption_does_not_cover_the_result_itsel
     assert any(w.check == "uncovered_number" and w.value == 32.6 for w in warnings)
 
 
+def _nvda_two_quarter_revenue_scenario(operation="percent_change"):
+    """Sources, a real calculate entry for `operation` (None for none),
+    and claims shaped like nvda-revenue-two-quarter-comparison's real
+    withheld answer."""
+    results = [
+        _fake_result(text="Total revenue for the quarter was $81,615 million."),
+        _fake_result(text="Total revenue for the quarter was $44,062 million."),
+    ]
+    claims = [
+        {"value": 81615.0, "unit": "million", "citation_index": 1,
+         "quote": "Total revenue for the quarter was $81,615 million."},
+        {"value": 44062.0, "unit": "million", "citation_index": 2,
+         "quote": "Total revenue for the quarter was $44,062 million."},
+    ]
+    if operation is not None:
+        args = _valid_calculate_args(
+            operation=operation, operand_a=81615.0, operand_b=44062.0, unit_a="million", unit_b="million"
+        )
+        calc_result, error = call_calculate(args, results)
+        assert error is None and calc_result is not None
+        entry = _calculation_as_result(calc_result, args)
+        results.append(entry)
+        claims.append({"value": calc_result["value"], "unit": calc_result["unit"], "citation_index": 3,
+                       "quote": entry["text"].split(" (computed", 1)[0]})
+    return results, claims
+
+
+_NVDA_REVENUE_LEAD = (
+    "For the quarter ended April 26, 2026, NVIDIA reported total revenue of $81.615 billion [1]. "
+    "For the prior-year quarter ended April 27, 2025, NVIDIA reported total revenue of "
+    "$44.062 billion [2]. This represents an increase of 85.2% "
+)
+
+
+def _uncovered(warnings):
+    return {(w.value, w.unit) for w in warnings if w.check == "uncovered_number"}
+
+
+@pytest.mark.parametrize(
+    "derivation",
+    [
+        # The live shape, then other ways to write the same formula: the
+        # exemption must not depend on how the model phrases it.
+        "(computed as $81,615,000,000 ÷ $44,062,000,000 - 1 = 85.2%) [3].",
+        "(computed as $81,615,000,000 ÷ $44,062,000,000 − 1 = 85.2%) [3].",
+        "(computed as $81,615,000,000 ÷ $44,062,000,000 – 1 = 85.2%) [3].",
+        "(computed as ($81,615,000,000 / $44,062,000,000 − 1) × 100 = 85.2%) [3].",
+        "(computed as ($81,615,000,000 ÷ $44,062,000,000) − 1 = 85.2%) [3].",
+        "(computed as $81,615,000,000 ÷ $44,062,000,000 × 100 − 100 = 85.2%) [3].",
+        "(computed as ($81,615,000,000 ÷ $44,062,000,000 × 100) − 100 = 85.2%) [3].",
+        "(computed as 100 × ($81,615,000,000 − $44,062,000,000) / $44,062,000,000 = 85.2%) [3].",
+        "(computed as ($81,615,000,000 − $44,062,000,000) × 100 / $44,062,000,000 = 85.2%) [3].",
+        "(computed as $81,615,000,000 ÷ $44,062,000,000−1 = 85.2%) [3].",
+        "computed as $81,615,000,000 ÷ $44,062,000,000 − 1 [3].",
+        "(computed as $81,615,000,000 ÷ $44,062,000,000 − 1.) [3]",
+    ],
+)
+def test_verify_claims_percent_change_identities_are_covered_by_the_calculation(derivation):
+    # The formula's identities aren't figures any filing states; the
+    # percent_change calculate call that ran is what covers them.
+    results, claims = _nvda_two_quarter_revenue_scenario()
+    warnings = verify_claims(claims, results, "q", _NVDA_REVENUE_LEAD + derivation)
+    assert _uncovered(warnings) == set()
+
+
+_NVDA_PERCENT_OF_LEAD = "NVIDIA revenue was $81,615,000,000 [1] versus $44,062,000,000 [2], or 185.2% "
+
+
+def test_verify_claims_percent_of_covers_100():
+    results, claims = _nvda_two_quarter_revenue_scenario("percent_of")
+    answer_text = _NVDA_PERCENT_OF_LEAD + "(computed as $81,615,000,000 ÷ $44,062,000,000 × 100 = 185.2%) [3]."
+    assert _uncovered(verify_claims(claims, results, "q", answer_text)) == set()
+
+
+@pytest.mark.parametrize(
+    "derivation, identity",
+    [
+        ("$81,615,000,000 ÷ $44,062,000,000 − 1 + 1", (1.0, "raw")),
+        ("($81,615,000,000 ÷ $44,062,000,000) − 1 + 1", (-1.0, "raw")),
+        ("($81,615,000,000 ÷ $44,062,000,000 × 100) − 100 + 100", (-100.0, "raw")),
+    ],
+)
+def test_verify_claims_percent_of_grants_only_100(derivation, identity):
+    results, claims = _nvda_two_quarter_revenue_scenario("percent_of")
+    answer_text = _NVDA_PERCENT_OF_LEAD + f"(computed as {derivation} = 185.2%) [3]."
+    assert identity in _uncovered(verify_claims(claims, results, "q", answer_text))
+
+
+@pytest.mark.parametrize("operation", [None, "add", "subtract", "multiply", "divide"])
+@pytest.mark.parametrize(
+    "derivation, identity",
+    [
+        ("$81,615,000,000 ÷ $44,062,000,000 − 1", (1.0, "raw")),
+        ("($81,615,000,000 ÷ $44,062,000,000) − 1", (-1.0, "raw")),
+        ("$81,615,000,000 ÷ $44,062,000,000 × 100", (100.0, "raw")),
+        ("($81,615,000,000 ÷ $44,062,000,000 × 100) − 100", (-100.0, "raw")),
+    ],
+)
+def test_verify_claims_identities_need_a_percent_calculation(operation, derivation, identity):
+    # Without a percent calculation in the results, each identity is an
+    # ordinary uncited number; a binary calculation doesn't count.
+    results, claims = _nvda_two_quarter_revenue_scenario(operation)
+    answer_text = _NVDA_REVENUE_LEAD + f"(computed as {derivation} = 85.2%)."
+    assert identity in _uncovered(verify_claims(claims, results, "q", answer_text))
+
+
+@pytest.mark.parametrize(
+    "answer_text, uncovered",
+    [
+        # Only the exact unitless identities are covered, not a figure
+        # with a unit and not a nearby value.
+        ("Revenue fell $44,062,000,000 − $1 million [2].", (1.0, "million")),
+        ("Margin rose 1% [2].", (1.0, "percent")),
+        ("NVIDIA opened 99 stores [2].", (99.0, "raw")),
+        ("NVIDIA opened 101 stores [2].", (101.0, "raw")),
+        ("Net change was ($101) [2].", (-101.0, "raw")),
+        ("Net change was −$100 million [2].", (-100.0, "million")),
+        ("Headcount rose by 0.1 thousand [2].", (0.1, "thousand")),
+        # Operands and results inside a derivation still need coverage.
+        ("Turnover was computed as 62,408 ÷ 44,062,000,000 − 1 [2].", (62408.0, "raw")),
+        ("Computed as $81,615,000,000 ÷ $44,062,000,000 − 1 = 91.3% [3].", (91.3, "percent")),
+    ],
+)
+def test_verify_claims_percent_identities_do_not_hide_real_numbers(answer_text, uncovered):
+    results, claims = _nvda_two_quarter_revenue_scenario()
+    assert uncovered in _uncovered(verify_claims(claims, results, "q", answer_text))
+
+
+def test_verify_claims_subtraction_after_calculate_raw_unit_is_not_a_negative_claim():
+    # Models copy calculate's "raw" unit word into the answer; the operand
+    # after "raw −" is a subtrahend, not a -359,241,000,000 claim.
+    results = [
+        _fake_result(text="Total assets were $619,003,000,000 at June 30, 2025."),
+        _fake_result(text="Total assets were $359,241,000,000 at September 27, 2025."),
+    ]
+    args = _valid_calculate_args(
+        operation="subtract", operand_a=619003000000.0, operand_b=359241000000.0, unit_a="raw", unit_b="raw"
+    )
+    calc_result, error = call_calculate(args, results)
+    assert error is None and calc_result is not None
+    entry = _calculation_as_result(calc_result, args)
+    results.append(entry)
+    claims = [
+        {"value": 619003000000.0, "unit": "raw", "citation_index": 1,
+         "quote": "Total assets were $619,003,000,000"},
+        {"value": 359241000000.0, "unit": "raw", "citation_index": 2,
+         "quote": "Total assets were $359,241,000,000"},
+        {"value": calc_result["value"], "unit": calc_result["unit"], "citation_index": 3,
+         "quote": entry["text"].split(" (computed", 1)[0]},
+    ]
+    answer_text = (
+        "Microsoft: $619,003,000,000 [1]. Apple: $359,241,000,000 [2]. The difference is "
+        "$259,762,000,000, computed as 619,003,000,000 raw − 359,241,000,000 raw = 259,762,000,000 [3]."
+    )
+    assert verify_claims(claims, results, "q", answer_text) == []
+
+
 def test_verify_claims_non_claim_noise_in_answer_text_is_not_flagged():
     results = [_fake_result(text="Apple filed its 10-K covering the period.")]
     claims = []

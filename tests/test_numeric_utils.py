@@ -116,6 +116,29 @@ def test_extract_numbers_unicode_minus_sign_recognized():
     ]
 
 
+@pytest.mark.parametrize("minus", ["−", "-"])
+def test_extract_numbers_subtraction_after_raw_unit_word_stays_positive(minus):
+    # calculate's rendering prints "raw" after a unitless operand and
+    # models copy it, so a minuend can end in that word, not a digit.
+    assert extract_numbers(f"computed as 619,003,000,000 raw {minus} 359,241,000,000 raw") == [
+        (619003000000.0, "raw"),
+        (359241000000.0, "raw"),
+    ]
+
+
+@pytest.mark.parametrize(
+    "text, expected",
+    [
+        ("a planned draw −5 million", [(-5.0, "million")]),
+        ("a withdraw −$500 million", [(-500.0, "million")]),
+        # "raw" as an adjective, not after a number, precedes a real sign.
+        ("on a raw −3.1% basis", [(-3.1, "percent")]),
+    ],
+)
+def test_extract_numbers_negative_after_a_word_ending_in_raw_stays_negative(text, expected):
+    assert extract_numbers(text) == expected
+
+
 def test_extract_numbers_spaced_subtraction_expression_stays_positive():
     # Found live (2026-09-12, first full eval run after shipping negative-
     # number support): a model's own disclosure prose for a computed
