@@ -1,5 +1,7 @@
 # Map: citation-gate refusals behind flaky eval questions
 
+> **Superseded for ticket state** by `docs/plans/2026-09-28-agent-improvement-map.md` (2026-09-28). This file keeps its evidence and is no longer edited.
+
 Date: 2026-09-28. Wayfinder map. It is the single source of ticket state for this effort.
 
 ## Destination

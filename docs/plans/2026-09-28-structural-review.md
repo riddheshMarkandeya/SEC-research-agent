@@ -1,5 +1,7 @@
 # Structural review: challenging the core design (self-grilled)
 
+> **Superseded for ticket state** by `docs/plans/2026-09-28-agent-improvement-map.md` (2026-09-28). This file keeps its evidence and is no longer edited.
+
 Date: 2026-09-28. This is a grill-me record the agent ran against itself at the user's request. It
 challenges prior design decisions and looks for structural changes, not patches. Every proposal
 below states its evidence, its blast radius (any structural change touches every question) and

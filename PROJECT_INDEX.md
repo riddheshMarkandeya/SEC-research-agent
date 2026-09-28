@@ -49,6 +49,7 @@ prepend them (verbatim, still reverse-chronological) to the top of
 
 ## Recent
 
+- 2026-09-28 [plan] Agent-improvement map (merged): supersedes the gate-refusal map and structural review for ticket state; prerequisites first (NUMBER_PATTERN fix → replay tool → Ollama removal → agent.py split → eval summary mode), then retry slot, gate rules, uniform submit loop, not-available answer, period-scoped retrieval, thinking A/B → `docs/plans/2026-09-28-agent-improvement-map.md`
 - 2026-09-28 [plan] Structural review (self-grilled): 68 fails since 09-19 = 41 gate, 11 judge, 10 retrieval, 6 wrong; verbatim quotes upheld (value-location test loses 2 true catches); proposals: replay as regression gate, uniform submit loop, first-class not-available answer, thinking-level A/B, period-aware retrieval → `docs/plans/2026-09-28-structural-review.md`
 - 2026-09-28 [plan] Gate-refusal flakiness map (wayfinder, self-grilled): offline replay of 38 refusals since 09-19; 6 already fixed; 27/38 got no corrective retry (82% rescue when it runs); retry-slot fix decided pending user OK; frontier: segment-table ranking fix, commit replay tool → `docs/plans/2026-09-28-gate-refusal-flakiness-map.md`
 - 2026-09-27 [decision] Unprefixed citation-header strip: `_strip_citation_header` also strips the exact header minus `[n] ` (revisits 09-19 exact-match-only; 17 of 29 traced header echoes were unprefixed); commit `022e851`, fingerprint unchanged `7aec53939ce3`; spot-check 6/6 (WP8 0/2) but no run echoed the header → `docs/decisions/2026-09-27-unprefixed-citation-header-strip.md`
