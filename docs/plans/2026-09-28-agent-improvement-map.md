@@ -118,7 +118,8 @@ New in this merge:
 - Type: grilling (self). Evidence: find what those 8 runs were and whether a forced submit would
   have covered them.
 - Blocked by: none.
-- Status: open. **Frontier.**
+- Status: **resolved 2026-09-29: deleted** (user). Text after a forced submit is now refused. See
+  `docs/decisions/2026-09-29-remove-ollama-and-prose-fallback.md`.
 
 ### `agent.py` module boundaries
 - Question: Which modules, and where do the seams fall?
@@ -127,8 +128,8 @@ New in this merge:
   - The module boundaries should match what the S2 loop refactor and the gate packages will
     touch.
 - Type: grilling (self), then its own plan.
-- Blocked by: Ollama removal (prose-fallback ticket).
-- Status: open.
+- Blocked by: none (Ollama removal done 2026-09-29).
+- Status: open. **Frontier.**
 
 ### Tool-message citations on refusal questions (from the gate map)
 - Question: Should the refusal path need no numeric claims? It merges with review S3 (the

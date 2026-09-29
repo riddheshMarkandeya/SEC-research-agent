@@ -232,4 +232,20 @@ earlier steps where they conflict.
 
 ## Review log
 
-(filled in during independent-review-pass)
+Full record: `docs/reviews/2026-09-29-remove-ollama-and-prose-fallback.md`.
+
+- **Round 1** (snapshot `579bb53`): `/code-review` high, `arch-reviewer` (opus), security,
+  `/simplify`. 15 findings: 11 fixed, 1 deferred (mixed-turn submission cache → BACKLOG Watch
+  list), 1 disputed (a `refusal=` kwarg on `_finalize_answer` breaks PLR0913), 2 verified with
+  no fix needed. Security: none. `/simplify`: 1 fix.
+- **Deviation from this plan (round 1, item 2):** a text reply with the dispatch budget spent now
+  gets its forced submit from the reserved final round trip (`final_turn_attempted`), instead of
+  being refused at once. That overrides Commit 2's "no budget left → finalize" and Plan review 6.
+  Otherwise the fix would have refused text that the prose checker used to verify. The replaced
+  test covers the reserve already being spent by a pending tool call.
+- **Round 2** (delta vs `579bb53`): arch, `/code-review` low, security. 5 arch findings, all
+  fixed (docstring ownership, explicit flag write, `final_turn_forced` log, `complete()`
+  Gemini-only comment, this deviation note).
+- **Round 3:** 1 arch nit fixed (reuse `_should_force_final_submit`), confirmed equivalent by a
+  `/code-review` low. Closed clean.
+- **Live:** `verify_complete.py` passes; `verify_final_turn_safety_net.py` 3/3 `[OK]`.

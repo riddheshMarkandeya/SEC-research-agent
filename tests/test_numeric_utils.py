@@ -1,7 +1,7 @@
 """
 Unit tests for numeric_utils.py's extract_numbers/normalize -- split out
 from test_eval_harness.py when these moved into their own module so
-agent.py's verify_citations() could share them without a circular
+agent.py's citation checks could share them without a circular
 import (agent.py <- eval_harness.py already; eval_harness.py <- agent.py
 would be circular the other way).
 """
@@ -251,10 +251,8 @@ def test_extract_numbers_with_spans_paren_negative_span_is_digits_only():
 
 
 # ---------------------------------------------------------------------------
-# extract_numbers_with_spans -- position-aware sibling of extract_numbers,
-# added for agent.py's uncited-numeric-claim detection (verify_citations()),
-# which needs to measure a claim's distance from the nearest [n] citation
-# marker in the ORIGINAL answer text, not just its (value, unit).
+# extract_numbers_with_spans -- position-aware sibling of extract_numbers
+# (which is its span-free projection).
 # ---------------------------------------------------------------------------
 def test_extract_numbers_with_spans_returns_correct_offsets():
     text = "revenue was $72.4 billion last quarter"
@@ -294,7 +292,7 @@ def test_normalize_raw_is_unchanged_scale_value():
 
 
 def test_normalize_percent_and_raw_are_different_categories():
-    # This is the exact guarantee grade_numeric() (and verify_citations())
+    # This is the exact guarantee grade_numeric() (and verify_claims())
     # depend on: a literal "20" must never be treated as satisfying an
     # expected "20 percent".
     percent_category, _ = normalize(20, "percent")

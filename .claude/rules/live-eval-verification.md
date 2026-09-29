@@ -23,8 +23,8 @@ own notation in free text, not by anything a test author would think to
 construct by hand.
 
 **Rule**: after any change to `numeric_utils.py`, `agent.py`'s citation-
-verification functions (`verify_claims`, `collect_citation_warnings`,
-`_verify_one_claim`, and friends), `retrieval.py`'s ranking/rerank
+verification functions (`verify_claims`, `_verify_one_claim`,
+`value_is_citation_verified`, and friends), `retrieval.py`'s ranking/rerank
 logic, `eval_harness.py`'s `grade_judged` and the judge prompts it
 sends (`prompts/judge.py`; the LLM-as-judge grading itself — a
 prompt-wording change here can only be confirmed correct by a real judge

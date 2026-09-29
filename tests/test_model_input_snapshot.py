@@ -72,9 +72,7 @@ EXPECTED_KEYS = {
         "calc_bad_schema",
         "calc_category_mismatch",
         "calc_divide_zero",
-        "prose_warnings",
         "structured_warnings",
-        "citation_retry",
         "claim_retry",
         "refusal",
         "no_fact_empty",
@@ -90,7 +88,7 @@ EXPECTED_KEYS = {
         "search_bad_ticker",
         "search_bad_args",
         "loop_force_claimretry_refusal",
-        "loop_prose_retry",
+        "loop_text_after_force_refusal",
         "loop_mixed_turn",
         "loop_final_turn",
         "loop_budget_exhausted",
@@ -192,9 +190,6 @@ def _render_calculate_messages(agent) -> dict:
 
 def _render_citation_warnings(agent) -> dict:
     r = _results()
-    prose = agent.collect_citation_warnings(
-        "Net sales were $999 million [1]. Separately, profit was $55 million overall.", r
-    )
     claims = [
         {"citation_index": 9, "value": 1.0, "unit": "million", "quote": "whatever"},
         {"citation_index": 1, "value": 100.0, "quote": "Total net sales were $100 million"},
@@ -216,15 +211,13 @@ def _render_citation_warnings(agent) -> dict:
     ]
     structured = agent.verify_claims(claims, r, "What were Apple's sales?", "Sales were $777 million [1].")
     return {
-        "prose_warnings": [w._asdict() for w in prose],
         "structured_warnings": [w._asdict() for w in structured],
     }
 
 
 def _render_retry_and_no_data(agent) -> dict:
-    warning = agent.CitationWarning("uncited_claim", None, 1.0, "raw", "msg {x} one", None)
+    warning = agent.CitationWarning("uncovered_number", None, 1.0, "raw", "msg {x} one", None)
     out = {
-        "citation_retry": agent._format_citation_retry_message("answer with {braces} {0}", ["w {1}", "w2"]),
         "claim_retry": agent._format_claim_retry_message("answer_text {braces}", [warning]),
         "refusal": agent._format_refusal_message(["a {b}", "c"]),
     }
@@ -356,9 +349,7 @@ def _render_loop_runs(agent) -> dict:
             [bad_submit, bad_submit],
             ["start", "send_followup", "send_tool_results"],
         ),
-        "loop_prose_retry": _run(
-            None, "gemini", prose, [prose, prose, prose], ["start", "send_followup", "send_followup"]
-        ),
+        "loop_text_after_force_refusal": _run(None, "gemini", prose, [prose], ["start", "send_followup"]),
         "loop_mixed_turn": _run(
             None,
             "gemini",

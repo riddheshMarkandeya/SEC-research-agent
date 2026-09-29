@@ -30,12 +30,11 @@ from formulas import (
     get_ratio_all_companies,
     get_yoy_growth,
 )
-from llm_backends import BACKENDS
+from llm_backends import BACKENDS, require_backend
 from numeric_utils import (
     QUOTE_COVERAGE_THRESHOLD,
     UNIT_MULTIPLIERS,
     extract_numbers,
-    extract_numbers_with_spans,
     normalize,
     normalize_for_match,
     text_coverage,
@@ -856,15 +855,14 @@ _CITATION_WINDOW_CHARS = 150
 
 # Broader than _CITATION_MARKER on purpose: matches a comma-separated
 # multi-source bracket like "[1, 3, 5]" too, not just a single-index
-# "[1]". _CITATION_MARKER can't just be widened to cover this -- the OLD
-# prose pipeline below (_iter_citation_claims/_iter_uncited_claims) walks
-# it marker-by-marker via finditer() and reads group(1) as ONE index, so
-# widening it would break that per-index logic, not just the pattern.
+# "[1]". _CITATION_MARKER can't just be widened to cover this --
+# _iter_citation_claims (the eval grader's walk) goes marker-by-marker via
+# finditer() and reads group(1) as ONE index, so widening it would break
+# that per-index logic, not just the pattern.
 # This one exists solely for verify_claims()'s coverage check, which
 # only needs to strip citation-marker-SHAPED text before scanning for
 # numbers -- it never reads the indices out (a bracket's own bare digits
-# would otherwise be extracted as spurious uncovered-number claims). See
-# docs/decisions/2026-09-10-structured-claims-citation-verification.md.
+# would otherwise be extracted as spurious uncovered-number claims).
 _ANY_CITATION_BRACKET = re.compile(r"\[\s*\d+(?:\s*,\s*\d+)*\s*\]")
 
 # Text that looks number-shaped but isn't a claim to verify -- stripped
@@ -1056,9 +1054,7 @@ def _number_candidates(text: str, *, unit_source: str | None = None) -> list[tup
     ("Remaining performance obligation consisted of the following (in
     billions):") and leave the actual cell values bare ("$72.4"), so a
     per-cell extract_numbers() reads $72.4 as 72.4 raw, not 72.4
-    billion -- a real, correctly-answered question was once wrongly
-    refused this way (see
-    docs/decisions/2026-09-10-structured-claims-citation-verification.md).
+    billion, and a correct claim would be refused.
     This only ADDS candidate interpretations (a raw number can still
     also match as raw) -- it never removes a way for a genuine mismatch
     to be caught.
@@ -1067,9 +1063,8 @@ def _number_candidates(text: str, *, unit_source: str | None = None) -> list[tup
     `quote` (which usually won't itself restate a caption-only unit)
     against its cited chunk's full text as the place the caption lives,
     without requiring the model to have copied the caption into the
-    quote. The old prose-verification path (_iter_citation_claims below)
-    still calls this with a single argument, so unit_source defaults to
-    `text` and that path's behavior is completely unchanged."""
+    quote. The eval grader's walk (_iter_citation_claims below) calls
+    this with a single argument, so unit_source defaults to `text`."""
     source = text if unit_source is None else unit_source
     numbers = extract_numbers(text)
     candidates = [normalize(v, u) for v, u in numbers]
@@ -1085,10 +1080,8 @@ def _iter_citation_claims(answer_text: str, all_results: list[dict]):
     in `answer_text` — yields (citation_index, claimed_value,
     claimed_unit, verified) for each one, where `verified` is whether
     the claim's own cited source text actually contains a matching
-    number. verify_citations() and value_is_citation_verified() are both
-    just different ways of consuming this same walk: the former collects
-    every unverified claim into warning strings, the latter checks
-    whether a single target value's claims are ever verified.
+    number. value_is_citation_verified() consumes it to check whether a
+    single target value's claims are ever verified.
 
     For each citation marker, only the text since the previous citation
     marker (capped at _CITATION_WINDOW_CHARS) is checked, so a claim
@@ -1119,252 +1112,43 @@ def _iter_citation_claims(answer_text: str, all_results: list[dict]):
             yield n, value, unit, verified
 
 
-# Sentence-ending punctuation followed by whitespace signals a break
-# UNLESS what comes after that whitespace is a citation marker
-# ("...total. [1]" is one sentence, not two) or a lowercase letter (an
-# abbreviation like "U.S." continuing mid-clause, not a real sentence
-# start -- without this exclusion, "... primarily from U.S. sales [1]"
-# registers a false break, wrongly refusing an otherwise-correct answer).
-#
-# Both lookaheads deliberately sit INSIDE the pattern (matching only the
-# punctuation character itself, zero-width beyond it) rather than
-# consuming "\s+" before checking what follows -- a version that
-# consumes "\s+" first (`r"[.!?]\s+(?![\[a-z])"`) lets the greedy `\s+`
-# backtrack to a SHORTER whitespace match whenever the maximal one fails
-# the lookahead, so "billion.  [1]" (two spaces) still registers a false
-# break via the first space alone. `(?!\s*[\[a-z])` checks ALL possible
-# amounts of trailing whitespace at once (a negative lookahead has no
-# successful match to backtrack away from), so it's immune to this
-# regardless of how much whitespace follows. See
-# docs/decisions/2026-09-09-citation-gap-frame-ordering-retrieval-verify.md.
-#
-# Residual, deliberately-not-fixed gaps this still doesn't catch: a
-# marker with NO whitespace after the preceding period at all
-# ("[1].Revenue...", judged too rare in real LLM output -- and too easy
-# to over-fix into misreading a decimal point like "109.4" as a break --
-# to be worth the added complexity); and a genuine new sentence that
-# happens to start with a lowercase word (rare in real prose, and a
-# false NEGATIVE -- silently missing a break -- rather than the false
-# POSITIVE (wrongly refusing a correct answer) the lowercase exception
-# exists to prevent, so accepted as the safer side to err on.
-_SENTENCE_BREAK = re.compile(r"[.!?](?=\s)(?!\s*[\[a-z])")
-
-
-def _iter_uncited_claims(answer_text: str):
-    """Yields (value, unit) for every numeric claim in `answer_text` that
-    has NO citation marker attached to it -- the counterpart gap
-    _iter_citation_claims() above can't see, since that walk is driven
-    entirely by _CITATION_MARKER matches: a claim with no marker nearby
-    never enters that loop at all. See
-    docs/decisions/2026-09-09-citation-gap-frame-ordering-retrieval-verify.md
-    for the real, observed case (msft-cash-to-assets-fy2025) this closes
-    -- a self-computed value stated with no citation marker nearby sailed
-    through unrefused despite violating the same "every numeric claim
-    must trace to a source" principle _iter_citation_claims() enforces
-    for the cited case.
-
-    Current contract: each marker attaches to EVERY REACHABLE claim on
-    ONE side of it -- all reachable claims immediately before it (the
-    dominant "$X [1]." convention), or, only if NONE is reachable on
-    that side, all reachable claims immediately after it (the "Per
-    source [1], $X" convention). Never both sides for the same marker.
-    A claim is "reachable" from a marker if it's within
-    _CITATION_WINDOW_CHARS and no sentence boundary (_SENTENCE_BREAK,
-    with an exception for a period immediately followed by a marker --
-    "...total. [1]" is one sentence, not two) separates them.
-
-    "Every reachable claim," not just the nearest one, matters: a marker
-    attaching to only its single nearest claim (an earlier version of
-    this function) broke a common, legitimate phrasing -- "Revenue grew
-    from $10 million to $12 million, a 20% increase [1]." states THREE
-    numbers all genuinely grounded in one source, and attaching [1] to
-    only the last one (20%) left the other two unattached to any
-    citation at all, wrongly flagged as uncited even though they're
-    correct. Covering the whole reachable side lets _iter_citation_claims()
-    above independently verify each one against the source for accuracy
-    (unaffected by this function) while this function only answers "does
-    it have a citation at all." "Never both sides" is still what keeps
-    the original bug fixed: "$20 billion [1], representing approximately
-    4.0% of total assets" has one claim on each side of [1], and the
-    4.0% (an ungrounded, self-computed figure, not a second grounded
-    fact) must stay unattached -- see
-    docs/decisions/2026-09-09-citation-gap-frame-ordering-retrieval-verify.md
-    for the full history of designs tried and rejected against this
-    codebase's own existing test cases.
-
-    Two implementation notes:
-    - Operates on the UNTOUCHED original answer_text throughout, never a
-      sliced/re-stripped substring -- unlike _iter_citation_claims(),
-      which only needs positions relative to an already-sliced window,
-      this function measures distance/sentence-membership in the whole
-      text, so re-slicing would silently drift the offsets.
-    - marker_spans excludes the bare digit INSIDE a "[n]" marker itself
-      from candidate claims -- NUMBER_PATTERN also matches it (documented
-      harmless noise for extract_numbers()'s other callers), but left in
-      here it would count as its own unverifiable claim whenever it's
-      the LAST marker in the answer."""
-    non_claim_spans = [m.span() for m in _NON_CLAIM_PATTERN.finditer(answer_text)]
-    marker_spans = [m.span() for m in _CITATION_MARKER.finditer(answer_text)]
-    # Computed once on the untouched full text, not via a range-restricted
-    # search per claim/marker pair -- pos/endpos-restricted re.search()
-    # makes a lookahead assertion (the "(?!\[)" above) unable to see past
-    # endpos, so a break's own trailing-marker exception would silently
-    # misfire if checked with the search range clipped right before that
-    # marker. Precomputing on the full string sidesteps that entirely.
-    sentence_breaks = [m.start() for m in _SENTENCE_BREAK.finditer(answer_text)]
-
-    def _reachable(lo: int, hi: int) -> bool:
-        return (hi - lo) <= _CITATION_WINDOW_CHARS and not any(lo <= b < hi for b in sentence_breaks)
-
-    excluded_spans = non_claim_spans + marker_spans
-    claims = [
-        (value, unit, start, end)
-        for value, unit, start, end in extract_numbers_with_spans(answer_text)
-        if not any(s <= start < e for s, e in excluded_spans)
-    ]
-
-    covered_spans = set()
-    for m_start, m_end in marker_spans:
-        before = [(s, e) for _, _, s, e in claims if e <= m_start and _reachable(e, m_start)]
-        if before:
-            covered_spans.update(before)
-            continue
-        after = [(s, e) for _, _, s, e in claims if s >= m_end and _reachable(m_end, s)]
-        covered_spans.update(after)
-
-    for value, unit, start, end in claims:
-        if (start, end) not in covered_spans:
-            yield value, unit
-
-
 CitationWarning = NamedTuple(
     "CitationWarning",
     [
-        ("check", str),  # "cited_claim_unsupported" | "uncited_claim"
-        ("citation_index", int | None),  # the [n] this warning is about, or None for the uncited check
+        ("check", str),  # which verify_claims()/submission check produced it, e.g. "quote_not_found"
+        ("citation_index", int | None),  # the [n] this warning is about, or None when it isn't about one
         ("value", float | None),  # None for a qualitative claim, which has no real value to report
         ("unit", str | None),  # None for a qualitative claim, which has no real unit to report
-        ("message", str),  # the exact string verify_citations() has always returned for this warning
+        ("message", str),  # the text shown to the model on a retry and embedded in a refusal
         ("quote", str | None),  # the claimed quote text for a quote-grounding check; None otherwise
     ],
 )
 
-
-def collect_citation_warnings(answer_text: str, all_results: list[dict]) -> list["CitationWarning"]:
-    """Structured counterpart to verify_citations() below -- same two
-    checks, same dedup, same warning text, but tagged with WHICH check
-    produced each one and what citation index (if any) it's about.
-    verify_citations() is now a one-line `.message` projection of this.
-
-    Added for the citation-gate FP/FN measurement work (see
-    docs/decisions/2026-09-10-citation-gate-measurement-instrumentation.md):
-    that work needs to break false positives down by which of the two
-    checks fired, and inferring that from a warning string's wording
-    would be exactly the kind of fragility the rest of this file's
-    comments warn against. Tag at construction instead.
-
-    `message` MUST stay byte-identical to what this function used to
-    return as a bare string -- _format_refusal_message() and
-    _format_citation_retry_message() interpolate these into prompt text
-    sent back to the model, so changing the wording would change model
-    behavior and perturb the very population the measurement work is
-    trying to observe."""
-    # Two dedup sets, deliberately not one: a single value+unit-only key
-    # (fixing the cross-loop duplicate below) ALSO collapses two
-    # genuinely different, independently-broken citations that happen to
-    # share a value --
-    # "$99 million [1]. ... $99 million [2]." with neither source
-    # containing 99 -- into one warning, silently dropping that [2] is
-    # ALSO broken. `seen_citation_keys` keeps citation-claims' own dedup
-    # precise (index + value, so different citation indices stay
-    # distinct); `seen_values` is value+unit only, populated by
-    # citation-claims and checked by the uncited-claims loop below, for
-    # the DIFFERENT problem that loop exists to solve: with two
-    # sentences like "Total costs were $30 million. Total revenue was
-    # $50 million [1]." (source backs only $50M), _iter_citation_claims's
-    # flat backward window (no sentence-boundary awareness, unlike
-    # _iter_uncited_claims) still attributes the unrelated "$30 million"
-    # to [1] and flags it as misattributed, while _iter_uncited_claims
-    # separately (and also correctly, by ITS OWN sentence-aware
-    # definition) finds no marker actually reachable from "30" and would
-    # flag it as uncited too -- the same claim occurrence producing two
-    # different, redundant messages. citation-claims (more specific/
-    # actionable) runs first and wins the wording in that case.
-    warnings: list[CitationWarning] = []
-    seen_citation_keys: set[tuple[str, str]] = set()
-    seen_values: set[str] = set()
-    for n, value, unit, verified in _iter_citation_claims(answer_text, all_results):
-        if verified:
-            continue
-        citation_key = (str(n), f"{value}{unit}")
-        if citation_key in seen_citation_keys:
-            continue
-        seen_citation_keys.add(citation_key)
-        seen_values.add(f"{value}{unit}")
-        warnings.append(
-            CitationWarning(
-                check="cited_claim_unsupported",
-                citation_index=n,
-                value=value,
-                unit=unit,
-                message=msg.CITED_CLAIM_UNSUPPORTED_TEMPLATE.format(n=n, value=value, unit=unit),
-                quote=None,
-            )
-        )
-    for value, unit in _iter_uncited_claims(answer_text):
-        value_key = f"{value}{unit}"
-        if value_key in seen_values:
-            continue
-        seen_values.add(value_key)
-        warnings.append(
-            CitationWarning(
-                check="uncited_claim",
-                citation_index=None,
-                value=value,
-                unit=unit,
-                message=msg.UNCITED_CLAIM_TEMPLATE.format(value=value, unit=unit),
-                quote=None,
-            )
-        )
-    return warnings
-
-
-def verify_citations(answer_text: str, all_results: list[dict]) -> list[str]:
-    """Cheap, deterministic check for one specific silent-misgrounding
-    pattern: a numeric claim attributed to a citation whose own cited
-    source text doesn't contain that number -- e.g. a percentage computed
-    from two dollar figures and cited to both sources, which state only
-    those inputs (aapl-revenue-growth-q3fy2026). No model call needed --
-    reuses numeric_utils.py's number extraction/normalization (the same
-    one eval_harness.py's numeric grading uses), applied to the cited
-    result's text instead of a ground-truth expected value.
-
-    Also flags a numeric claim with NO citation marker anywhere near it
-    at all -- see _iter_uncited_claims() (msft-cash-to-assets-fy2025).
-
-    Returns a list of human-readable warning strings (deduplicated),
-    empty if nothing looks unverified. Thin wrapper around
-    collect_citation_warnings() -- see that function for the actual
-    logic; this one exists because most callers only need the message,
-    not which check produced it."""
-    return [w.message for w in collect_citation_warnings(answer_text, all_results)]
+# The model answered in text even after a forced submit_answer turn:
+# there's no structured submission to verify, so the answer is refused
+# rather than trusted unchecked.
+_NO_SUBMISSION_WARNING = CitationWarning(
+    check="no_submission",
+    citation_index=None,
+    value=None,
+    unit=None,
+    message=msg.NO_SUBMISSION_WARNING,
+    quote=None,
+)
 
 
 def value_is_citation_verified(value: float, unit: str, answer_text: str, all_results: list[dict]) -> bool:
     """Whether `value` is properly grounded everywhere it's cited in
-    `answer_text` — the targeted counterpart to verify_citations() above,
-    used by eval_harness.py to check ONE specific expected value instead
-    of scanning every claim in the answer.
+    `answer_text`, used by eval_harness.py to check ONE specific expected
+    value.
 
     Built for eval_harness.py's grade_numeric()/grade_comparison(): they
     only check whether the expected value appears somewhere in the
     answer text, which can't tell a correctly-cited answer from one that
     states the right number but attaches it to the wrong source -- the
-    wrong-chunk-citation case is exactly the kind of silent misgrounding
-    verify_citations() already catches for OTHER claims; this wires that
-    same check into what decides pass/fail for the specific value a
-    question is graded on. See
-    docs/decisions/2026-08-18-citation-verification-wired-into-eval-gate.md.
+    wrong-chunk-citation case is a silent misgrounding this check wires
+    into what decides pass/fail for the specific value a question is
+    graded on.
 
     Returns True if `value` is never attached to a citation at all
     (nothing to contradict a plain-text match), or if AT LEAST ONE of
@@ -1590,11 +1374,8 @@ def _verify_qualitative_claim(n: int, quote: "_ClaimQuote", source_text: str) ->
 def verify_claims(
     claims: list[dict], all_results: list[dict], question: str, answer_text: str
 ) -> list["CitationWarning"]:
-    """Structured-claims counterpart to collect_citation_warnings() above,
-    used when the model answers via submit_answer (SUBMIT_TOOL_SCHEMA)
-    instead of free-text prose with [n] markers. See
-    docs/decisions/2026-09-10-structured-claims-citation-verification.md
-    for the full design.
+    """Verifies the structured claims of a submit_answer call
+    (SUBMIT_TOOL_SCHEMA) against the sources they cite.
 
     Two passes: first, each claim is checked independently against its
     own cited source (_verify_one_claim) -- citation index in range,
@@ -1618,7 +1399,7 @@ def verify_claims(
     accepted tradeoff, see the decision file above. `_NON_CLAIM_PATTERN`
     (dates, bare years, 10-K/10-Q, Note N, N-year/N-day) is stripped from
     both `question` and `answer_text` before extraction, same noise
-    filter collect_citation_warnings() already relies on.
+    filter the eval grader's _iter_citation_claims() relies on.
 
     A number matching an operand of a `calculate` call that already
     succeeded this turn is also exempt: rule 9 tells the model to show
@@ -1717,7 +1498,7 @@ def _should_retry_for_citations(citation_warnings: list[str], already_retried: b
     """Whether run_agent() should give the model one corrective retry
     turn for its own unverified citation(s). True only when there's
     something to correct, the single retry (see
-    _format_citation_retry_message below) hasn't already been spent this
+    _format_claim_retry_message below) hasn't already been spent this
     conversation -- capped at one retry, sharing run_agent()'s existing
     MAX_TOOL_ITERATIONS budget rather than a separate one."""
     return bool(citation_warnings) and not already_retried
@@ -1725,16 +1506,12 @@ def _should_retry_for_citations(citation_warnings: list[str], already_retried: b
 
 def _should_force_final_submit(already_attempted: bool, calls_made: int) -> bool:
     """Whether run_agent() should spend its one reserved, submit-only
-    final round trip: the dispatch budget is exhausted but the model is
-    still actively requesting tool calls rather than having already
-    given up (that case is handled separately, by the forced-submit-on-
-    prose mechanism below). Capped at one shot per conversation via
-    already_attempted, the same single-shot pattern as
-    forced_submit_attempted/_should_retry_for_citations. NOT a
-    MAX_TOOL_ITERATIONS increase -- the
-    resulting turn answers every pending tool call with a synthetic
-    "not run" result and force_tool="submit_answer", never a real
-    dispatch call."""
+    final round trip: the dispatch budget is exhausted and the reserve
+    is unspent. Two paths draw on it -- pending tool calls (answered with
+    a synthetic "not run" result) and a text reply (a forced follow-up)
+    -- and either way the next turn is forced to submit_answer, never a
+    real dispatch call, so this is NOT a MAX_TOOL_ITERATIONS increase.
+    Capped at one shot per conversation via already_attempted."""
     return not already_attempted and calls_made >= MAX_TOOL_ITERATIONS
 
 
@@ -1744,36 +1521,11 @@ def _bulleted(warnings: list[str]) -> str:
     return "\n".join(msg.WARNING_BULLET_TEMPLATE.format(warning=w) for w in warnings)
 
 
-def _format_citation_retry_message(answer: str, citation_warnings: list[str]) -> str:
-    """Builds the corrective follow-up message for a one-time citation
-    retry (see run_agent()). The wording
-    (prompts.agent_messages.CITATION_RETRY_GUIDANCE) directly targets two
-    live failure modes of an earlier retry design -- removing either
-    property from the wording would silently reopen the failure mode it
-    exists to prevent:
-
-    1. aapl-employees-fy25's retry gave up entirely instead of checking
-       the 4 OTHER already-retrieved chunks for a valid citation -- so
-       this message explicitly points the model back at the search
-       results ALREADY shown earlier in the conversation before it
-       concludes nothing supports the claim.
-    2. A "this is your final attempt" framing pushed the model to
-       fabricate an estimate on a previously-100%-reliable refusal
-       question (nvda-rd-expense-q4fy26-refusal) -- so this message
-       deliberately contains NO deadline/final-attempt language, states
-       an honest refusal is a fully acceptable outcome, and explicitly
-       forbids inventing or estimating a replacement number."""
-    return msg.CITATION_RETRY_TEMPLATE.format(
-        warnings_block=_bulleted(citation_warnings), answer=answer, guidance=msg.CITATION_RETRY_GUIDANCE
-    )
-
-
 def _format_claim_retry_message(answer_text: str, warnings: list["CitationWarning"]) -> str:
-    """Structured-claims counterpart to _format_citation_retry_message
-    above, used for a submit_answer retry instead of a prose one.
-    Reuses the exact same hard-won guidance via CITATION_RETRY_GUIDANCE
-    so both retry flavors stay consistent by construction, not by
-    copy-paste discipline. Delivered as a submit_answer tool RESULT
+    """Builds the corrective message for the one-time retry after a
+    submit_answer call whose claims don't verify. The hard-won wording
+    lives in CITATION_RETRY_GUIDANCE (see its own comment for the live
+    failure modes each property closes). Delivered as a submit_answer tool RESULT
     (types.Part.from_function_response), not a plain follow-up turn --
     see the loop's own comment for why a dangling function call followed
     by a bare user turn is worth avoiding."""
@@ -1787,12 +1539,10 @@ def _format_claim_retry_message(answer_text: str, warnings: list["CitationWarnin
 def _format_refusal_message(warnings: list[str]) -> str:
     """Hard-gate refusal, returned by _finalize_answer() below in place
     of an answer whose citations still don't check out after any
-    applicable retry. Implements this project's own standing design
-    principle (see CLAUDE.md, "This project's design principles"):
+    applicable retry. Implements the project's design principle
     "Every numeric claim must trace to a specific filing + section, or
-    the agent refuses" -- previously verify_citations()'s findings were
-    only ever surfaced as warnings alongside the (still-returned)
-    answer; this is what actually withholds it."""
+    the agent refuses" -- this is what actually withholds the answer
+    rather than only surfacing warnings next to it."""
     return msg.REFUSAL_TEMPLATE.format(warnings_block=_bulleted(warnings))
 
 
@@ -1880,9 +1630,7 @@ def _finalize_answer(
     _grade()) use the raw list directly rather than re-parsing it out of
     the answer text.
 
-    `withheld_answer` (see
-    docs/decisions/2026-09-10-citation-gate-measurement-instrumentation.md)
-    preserves what the model actually said whenever the gate refuses,
+    `withheld_answer` preserves what the model actually said whenever the gate refuses,
     since re-grading that text against ground truth is the only way to
     tell a correct-but-wrongly-refused answer (a false positive) from a
     genuinely bad one. Also fires a `citation_gate_refused` log event
@@ -1892,11 +1640,13 @@ def _finalize_answer(
     can't be swapped positionally.
 
     `citation_warning_details` is populated directly from `warnings`
-    here -- NOT re-derived by a second
-    pass elsewhere -- so `eval_harness._citation_gate_evidence()` can stop
-    calling collect_citation_warnings() (the PROSE checker) on a refusal
-    that might have come from the STRUCTURED checker instead, which could
-    otherwise silently disagree with what actually refused it."""
+    here -- NOT re-derived by a second pass elsewhere -- so every
+    consumer sees exactly the checks that refused the answer.
+
+    A refusal made only of no_submission warnings gets
+    NO_SUBMISSION_REFUSAL instead of REFUSAL_TEMPLATE: nothing was
+    submitted, so saying claims failed verification would be false. Mixed
+    with any claim warning, the claims wording is the true one."""
     messages = [w.message for w in warnings]
     details = [w._asdict() for w in warnings]
     if not warnings:
@@ -1911,7 +1661,11 @@ def _finalize_answer(
         warnings=messages,
         withheld_answer=answer,
     )
-    return AgentResult(_format_refusal_message(messages), all_results, messages, answer, details)
+    if all(w.check == _NO_SUBMISSION_WARNING.check for w in warnings):
+        refusal = msg.NO_SUBMISSION_REFUSAL
+    else:
+        refusal = _format_refusal_message(messages)
+    return AgentResult(refusal, all_results, messages, answer, details)
 
 
 def _format_citation_key(all_results: list[dict]) -> str:
@@ -2085,15 +1839,8 @@ def run_agent(question: str, backend: str | None = None, verbose: bool = False) 
 
     `citation_checks` in the span output reads the per-check counts
     straight from `result.citation_warning_details` (AgentResult's 5th
-    field) rather than re-deriving them by calling
-    collect_citation_warnings() (the PROSE checker) a second time on the
-    withheld/returned text -- that would silently disagree with whatever
-    ACTUALLY refused the answer once a structured-path refusal exists
-    (collect_citation_warnings can't see a
-    quote_not_found/value_not_in_quote/etc. failure at all -- those only
-    ever come from verify_claims()). Reading the field _finalize_answer
-    already computed removes both that risk and the redundant regex
-    pass. The withheld answer text itself is never put in this span's
+    field) rather than re-deriving them from the answer text, so they
+    always name the checks that actually refused it. The withheld answer text itself is never put in this span's
     output -- it goes to _finalize_answer's log_event call only, which is
     local-JSONL-only by design (see tracing.log_event's docstring): the
     whole point of withholding it is that it isn't trustworthy, so it
@@ -2122,29 +1869,23 @@ class _AgentLoopState:
     `calls_made` is written only by the parent loop's own central
     increment (once per iteration, whenever a helper hands back a new
     turn to continue with) -- no helper increments it itself.
-    `forced_submit_attempted`/`final_turn_attempted`/
-    `pre_retry_submit_args`/`pre_retry_answer` are each written by
-    exactly one owning helper. `retried_for_citations` is the one
-    deliberate exception: both _handle_submit_turn() and
-    _handle_no_tool_calls_turn() may set it, since it caps the whole
-    conversation at one retry total, not one per path (see
-    _run_agent_impl's own docstring).
+    `forced_submit_attempted`/`pre_retry_submit_args`/
+    `retried_for_citations` are each written by exactly one owning
+    helper. `final_turn_attempted` is the one reserved final round trip,
+    shared by two writers: _force_final_submit_turn (pending tool calls)
+    and _handle_no_tool_calls_turn (a text reply), so whichever spends it
+    first leaves none for the other.
 
     `pre_retry_submit_args` deliberately caches the RAW submit_answer
     args rather than pre-computed warnings: a pure function of
     (submit_args, all_results) can't go stale the way a cached warnings
-    list could if all_results grows further before the budget runs out.
-    `pre_retry_answer` (the prose-fallback sibling) has no equivalent
-    staleness risk -- its answer text is already final, not re-verified
-    against a growing all_results -- so it caches the finished
-    (answer, warnings) pair directly instead."""
+    list could if all_results grows further before the budget runs out."""
 
     calls_made: int
     retried_for_citations: bool = False
     forced_submit_attempted: bool = False
     final_turn_attempted: bool = False
     pre_retry_submit_args: dict | None = None
-    pre_retry_answer: tuple[str, list[CitationWarning]] | None = None
 
 
 @dataclass(frozen=True)
@@ -2224,36 +1965,38 @@ def _handle_submit_turn(args: dict, ctx: _AgentContext, loop_state: _AgentLoopSt
 
 
 def _handle_no_tool_calls_turn(turn: Any, ctx: _AgentContext, loop_state: _AgentLoopState) -> _LoopStep:
-    """Body of _run_agent_impl()'s `not turn.tool_calls` branch --
-    called only once that guard is already true, handling both the
-    forced-submit-attempt sub-case and the prose-fallback sub-case
-    internally (the real code's own nested `if`, unchanged). Pure
-    relocation, no logic change. Exactly one of _LoopStep's two fields
-    is ever set."""
-    if not loop_state.forced_submit_attempted and loop_state.calls_made < MAX_TOOL_ITERATIONS:
+    """Body of _run_agent_impl()'s `not turn.tool_calls` branch -- the
+    model replied in text. The first time it gets one forced
+    submit_answer-only follow-up, paid for by the dispatch budget or, once
+    that's spent, by the one reserved final round trip -- the same reserve
+    a pending tool call would get. After that there's nothing structured
+    to verify: a submission cached by an earlier retry is re-gated as the
+    model's last verifiable answer, otherwise the text is refused
+    (_NO_SUBMISSION_WARNING). Exactly one of _LoopStep's two fields is
+    ever set."""
+    has_budget = loop_state.calls_made < MAX_TOOL_ITERATIONS
+    if not loop_state.forced_submit_attempted and (
+        has_budget or _should_force_final_submit(loop_state.final_turn_attempted, loop_state.calls_made)
+    ):
         loop_state.forced_submit_attempted = True
+        if not has_budget:
+            loop_state.final_turn_attempted = True
+            log_event("final_turn_forced", backend=ctx.backend, calls_made=loop_state.calls_made, pending_tools=[])
         if ctx.verbose:
             print("  [forcing submit_answer] model replied in text instead of calling a tool")
         turn = ctx.send_followup(ctx.conv_state, msg.FORCE_SUBMIT_MESSAGE, force_tool="submit_answer")
         return _LoopStep(next_turn=turn)
-    # Prose fallback -- only reached if forcing itself didn't produce a
-    # clean submission (documented as occasionally possible).
-    answer = turn.text or ""
-    warnings = collect_citation_warnings(answer, ctx.all_results)
-    messages = [w.message for w in warnings]
-    if (
-        _should_retry_for_citations(messages, loop_state.retried_for_citations)
-        and loop_state.calls_made < MAX_TOOL_ITERATIONS
-    ):
-        loop_state.retried_for_citations = True
-        loop_state.pre_retry_answer = (answer, warnings)
-        log_event("citation_retry", backend=ctx.backend, warnings=messages)
-        if ctx.verbose:
-            print(f"  [citation retry] {messages}")
-        turn = ctx.send_followup(ctx.conv_state, _format_citation_retry_message(answer, messages))
-        return _LoopStep(next_turn=turn)
+    cached = _finalize_cached_submission(ctx, loop_state)
+    if cached is not None:
+        return _LoopStep(result=cached)
+    if ctx.verbose:
+        print("  [refusing] model replied in text instead of calling submit_answer")
     result = _finalize_answer(
-        answer, warnings, ctx.all_results, backend=ctx.backend, retried=loop_state.retried_for_citations
+        turn.text or "",
+        [_NO_SUBMISSION_WARNING],
+        ctx.all_results,
+        backend=ctx.backend,
+        retried=loop_state.retried_for_citations,
     )
     return _LoopStep(result=result)
 
@@ -2315,26 +2058,26 @@ def _dispatch_pending_calls(other: list[dict], submit: dict | None, ctx: _AgentC
     return ctx.send_tool_results(ctx.conv_state, results)
 
 
+def _finalize_cached_submission(ctx: _AgentContext, loop_state: _AgentLoopState) -> AgentResult | None:
+    """Re-gates the submission cached at retry time, if any (else None),
+    against the run's current all_results, since searches after the retry
+    may have added the sources it cites. The cached args may be the
+    schema-invalid ones that triggered the retry, so they go back through
+    the full gate, not straight to verify_claims."""
+    if loop_state.pre_retry_submit_args is None:
+        return None
+    answer_text, warnings = submission_warnings(loop_state.pre_retry_submit_args, ctx.all_results, ctx.question)
+    return _finalize_answer(
+        answer_text, warnings, ctx.all_results, backend=ctx.backend, retried=loop_state.retried_for_citations
+    )
+
+
 def _finalize_after_budget_exhausted(ctx: _AgentContext, loop_state: _AgentLoopState) -> AgentResult:
     """Body of _run_agent_impl()'s post-loop fallback -- called once,
-    after the while loop's own `break` exits it. A submission cached at
-    retry time is re-gated against the run's final all_results, since
-    searches after the retry may have added the sources it cites."""
-    if loop_state.pre_retry_submit_args is not None:
-        # The cached args may be the schema-invalid ones that triggered
-        # the retry, so they go back through the full gate, not straight
-        # to verify_claims.
-        answer_text, warnings = submission_warnings(loop_state.pre_retry_submit_args, ctx.all_results, ctx.question)
-        return _finalize_answer(
-            answer_text, warnings, ctx.all_results, backend=ctx.backend, retried=loop_state.retried_for_citations
-        )
-
-    if loop_state.pre_retry_answer is not None:
-        answer, warnings = loop_state.pre_retry_answer
-        return _finalize_answer(
-            answer, warnings, ctx.all_results, backend=ctx.backend, retried=loop_state.retried_for_citations
-        )
-
+    after the while loop's own `break` exits it."""
+    cached = _finalize_cached_submission(ctx, loop_state)
+    if cached is not None:
+        return cached
     return _finalize_answer(
         msg.BUDGET_EXHAUSTED_ANSWER,
         [],
@@ -2359,8 +2102,7 @@ def _run_agent_impl(question: str, backend: str, verbose: bool = False) -> Agent
     model's actual answer text in favor of a refusal whenever those
     warnings are non-empty.
 
-    A final answer arrives one of two ways (see
-    docs/decisions/2026-09-10-structured-claims-citation-verification.md):
+    A final answer arrives one of two ways:
 
     - `submit_answer` (SUBMIT_TOOL_SCHEMA), the preferred path: claims
       are structured data (value/unit/citation_index/quote), verified by
@@ -2368,27 +2110,26 @@ def _run_agent_impl(question: str, backend: str, verbose: bool = False) -> Agent
       coverage cross-check -- instead of regex-parsed out of prose.
       Offered as a 4th tool alongside the other 3 from turn 1, under AUTO
       mode.
-    - Plain text, the fallback: a text reply first triggers ONE forced
-      ANY+submit_answer-only follow-up turn; only if forcing itself
-      doesn't produce a clean submission is the text verified by the
-      prose pipeline (collect_citation_warnings()).
+    - Plain text: a text reply first triggers ONE forced
+      ANY+submit_answer-only follow-up turn (using the reserved final
+      round trip if the budget is spent). Text again after that is
+      refused, since there's no structured claim to verify -- see
+      _handle_no_tool_calls_turn.
 
     Known simplification: no deduplication if two tool calls happen to
     surface the same chunk (e.g. two related queries against the same
     company). Fine for now — a duplicate citation is cosmetic, not a
     correctness problem — but worth revisiting if it gets noisy.
 
-    One self-correction retry on an unverified citation/claim, shared
-    across whichever path produced the answer (retried_for_citations
-    caps the whole conversation at one retry total, not one per path).
-    The structured-claims retry reuses this same gate and budget,
-    just delivers its feedback as a submit_answer tool RESULT instead of
+    One self-correction retry on unverified claims
+    (retried_for_citations caps the conversation at one), sharing the
+    MAX_TOOL_ITERATIONS budget. It delivers its feedback as a
+    submit_answer tool RESULT instead of
     a plain follow-up turn -- keeps the chat history well-formed (a
     dangling function call followed by a bare user turn has historically
     400'd on Gemini) and needs no new plumbing, since it's exactly what
     send_tool_results already does."""
-    if backend not in BACKENDS:
-        raise ValueError(f"Unknown backend {backend!r}; valid backends: {', '.join(BACKENDS)}")
+    require_backend(backend)
     start, send_tool_results, send_followup = BACKENDS[backend]
     conv_state, turn = start(question, SYSTEM_PROMPT, list(AGENT_TOOL_SCHEMAS))
     ctx = _AgentContext(

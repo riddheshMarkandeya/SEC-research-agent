@@ -1,0 +1,89 @@
+{
+  "backend": "gemini",
+  "answer_model": "gemini-3.5-flash-lite",
+  "judge_model": "gemini-3.5-flash-lite",
+  "provenance": {
+    "git_sha": "19d135b",
+    "git_dirty": true,
+    "dirty_files": [
+      "agent.py",
+      "analyze_citation_gate.py",
+      "analyze_gate_replay.py",
+      "eval_harness.py",
+      "numeric_utils.py",
+      "prompts/agent_messages.py",
+      "prompts/model_input_snapshot.json",
+      "tests/test_agent.py",
+      "tests/test_eval_harness.py",
+      "tests/test_model_input_snapshot.py",
+      "tests/test_numeric_utils.py"
+    ],
+    "snapshot_verified": true,
+    "config": {
+      "gemini_model": "gemini-3.5-flash-lite",
+      "embed_model": "BAAI/bge-small-en-v1.5",
+      "rerank_model": "cross-encoder/ms-marco-MiniLM-L-6-v2",
+      "chroma_dir": "./chroma_db",
+      "google_genai": "2.18.1",
+      "mcp": "2.1.1"
+    },
+    "prompts": {
+      "agent_system": "12a028f88e84",
+      "agent_tools": "d0e198d4dd09",
+      "agent_messages": "2806b5b4acf1",
+      "judge": "2ee29f234c91",
+      "mcp": "b34024a4d17d",
+      "agent": "32aa4a3e4019"
+    }
+  },
+  "results": [
+    {
+      "id": "aapl-employees-fy25",
+      "ticker": "AAPL",
+      "question": "How many full-time equivalent employees did Apple have as of September 27, 2025?",
+      "type": "numeric",
+      "passed": true,
+      "detail": "found matching value: 166000.0 (raw)",
+      "has_citation": true,
+      "citation_warnings": [],
+      "answer": "As of September 27, 2025, Apple had approximately 166,000 full-time equivalent employees [1].",
+      "n_chunks_retrieved": 5,
+      "withheld_answer": null,
+      "gate_withheld_would_have_passed": null,
+      "gate_withheld_detail": null,
+      "citation_warning_details": []
+    },
+    {
+      "id": "msft-tax-rate-q2fy26",
+      "ticker": "MSFT",
+      "question": "What was Microsoft's effective tax rate for the three months ended December 31, 2025?",
+      "type": "numeric",
+      "passed": true,
+      "detail": "found matching value: 20.0 (percent)",
+      "has_citation": true,
+      "citation_warnings": [],
+      "answer": "Microsoft's effective tax rate for the three months ended December 31, 2025 was 20% [2].",
+      "n_chunks_retrieved": 5,
+      "withheld_answer": null,
+      "gate_withheld_would_have_passed": null,
+      "gate_withheld_detail": null,
+      "citation_warning_details": []
+    },
+    {
+      "id": "pltr-inventory-turnover-fy2025-refusal",
+      "ticker": "PLTR",
+      "question": "What was Palantir's inventory turnover ratio for fiscal year 2025?",
+      "type": "judged",
+      "passed": true,
+      "detail": "The assistant correctly recognized that Palantir does not have inventory or report an inventory turnover ratio due to being a software company, without fabricating any numbers.",
+      "has_citation": true,
+      "citation_warnings": [],
+      "answer": "Palantir Technologies Inc. does not report any inventory or cost of revenue associated with physical inventory on its consolidated balance sheets or financial statements for fiscal year 2025 [15], as it is a software company that builds and deploys software platforms [19]. Consequently, an inventory turnover ratio is not applicable and is not reported for fiscal year 2025.",
+      "n_chunks_retrieved": 20,
+      "withheld_answer": null,
+      "gate_withheld_would_have_passed": null,
+      "gate_withheld_detail": null,
+      "citation_warning_details": []
+    }
+  ]
+}

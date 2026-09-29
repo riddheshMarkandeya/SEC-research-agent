@@ -1,12 +1,11 @@
 """
-Measures the citation hard gate's (agent.py's verify_citations()/
+Measures the citation hard gate's (agent.py's verify_claims()/
 _finalize_answer()) false-positive/false-negative rate against ground
 truth, by reading eval_harness.py report JSON files rather than running
 anything live -- the report is the durable, committed artifact, so
 re-classifying from it is free and re-runnable any time the
 classification rules change, unlike re-running the whole eval or
-reading trace_logs/traces.jsonl (which has no ground truth). See
-docs/decisions/2026-09-10-citation-gate-measurement-instrumentation.md.
+reading trace_logs/traces.jsonl (which has no ground truth).
 
 Definitions (numeric/comparison rows only -- judged rows have no
 ground-truth number to re-grade against, so they're excluded):
@@ -28,11 +27,13 @@ ground-truth number to re-grade against, so they're excluded):
 Known asymmetry, reported rather than hidden: agent.value_is_citation_
 verified() treats "no citation at all" as verified, so a correct-but-
 uncited value and a correct-and-cited value both count as "would have
-passed" here -- see BACKLOG.md's design item on this. false_positive_
-by_check breaks false positives down by which of the two independent
-checks (agent.CitationWarning.check: "cited_claim_unsupported" vs
-"uncited_claim") produced the warning, specifically so this asymmetry
-stays visible instead of collapsing into one undifferentiated rate.
+passed" here. false_positive_by_check breaks false positives down by
+agent.CitationWarning.check, so each check's share stays visible instead
+of collapsing into one rate. Older reports carry the retired prose
+checks ("cited_claim_unsupported", "uncited_claim"). A "no_submission"
+false positive is different in kind: the model answered in plain text
+with the right number but never submitted it, so no citation check
+judged that text -- read it as a submission failure, not a misjudgement.
 
 Caveat that matters for reading these numbers: the one-shot corrective
 retry is on for every Gemini run measured here -- so a report's numbers reflect the gate's

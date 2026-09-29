@@ -161,12 +161,8 @@ def _is_negative(text: str, match: re.Match, digits: str, unit_word: str | None,
 def extract_numbers_with_spans(text: str) -> list[tuple[float, str, int, int]]:
     """Like extract_numbers() below, but also returns each candidate's
     (start, end) character span (of the digit group only, e.g. "72.4" in
-    "$72.4 billion") in `text`. Added for agent.py's uncited-numeric-
-    claim detection, which needs a claim's position relative to the
-    nearest [n] citation marker in the ORIGINAL, unmodified answer text
-    -- unlike verify_citations()'s existing marker-anchored check, which
-    only ever needs positions relative to an already-sliced window and
-    so never needed this."""
+    "$72.4 billion") in `text`. extract_numbers() is the span-free
+    projection of this."""
     candidates = []
     for match in NUMBER_PATTERN.finditer(text):
         digits = match.group("digits")

@@ -68,7 +68,6 @@
    "text": "150 million subtract 120.5 million = 1000000000000000000 (computed value, not directly stated in any filing; operands from results [1] and [2])"
   },
   "citation_header": "[7] AAPL 10-K (reportDate=2025-09-27)",
-  "citation_retry": "Your previous answer had at least one citation that doesn't hold up:\n- w {1}\n- w2\n\nYour previous answer was:\nanswer with {braces} {0}\n\nBefore answering again, check whether any of the search results ALREADY shown earlier in this conversation actually support each flagged claim -- the right source may already be there under a different citation number. If you find proper support, restate the claim with the correct citation. If, after checking, a value genuinely isn't supported by any result shown, say so plainly and refuse that specific claim instead of guessing -- an honest answer that the sources don't support it is a completely acceptable outcome here. Do not invent, estimate, or approximate a number to replace an unverified one.",
   "claim_retry": "Your previous submit_answer call had at least one claim that doesn't hold up:\n- msg {x} one\n\nYour previous answer_text was:\nanswer_text {braces}\n\nBefore answering again, check whether any of the search results ALREADY shown earlier in this conversation actually support each flagged claim -- the right source may already be there under a different citation number. If you find proper support, restate the claim with the correct citation. If, after checking, a value genuinely isn't supported by any result shown, say so plainly and refuse that specific claim instead of guessing -- an honest answer that the sources don't support it is a completely acceptable outcome here. Do not invent, estimate, or approximate a number to replace an unverified one.\n\nCall submit_answer again with the corrected answer_text and claims.",
   "comparison": [
    {
@@ -522,31 +521,6 @@
    "warnings": [],
    "withheld": null
   },
-  "loop_prose_retry": {
-   "answer": "I can't confirm this answer against the sources I retrieved -- the following claim(s) don't hold up under citation verification:\n- claims 777.0 (million) but no citation marker appears anywhere near it to trace the claim to a source\n\nRather than give you a number I can't verify, I'm refusing this answer.",
-   "capture": [
-    {
-     "call": "start",
-     "question": "What were sales?",
-     "system_prompt": "<agent.system_prompt>",
-     "tool_schemas": "<agent.tool_schemas>"
-    },
-    {
-     "call": "send_followup",
-     "force_tool": "submit_answer",
-     "text": "Please provide your final answer now by calling submit_answer."
-    },
-    {
-     "call": "send_followup",
-     "force_tool": null,
-     "text": "Your previous answer had at least one citation that doesn't hold up:\n- claims 777.0 (million) but no citation marker appears anywhere near it to trace the claim to a source\n\nYour previous answer was:\nSales were $777 million {x} in total.\n\nBefore answering again, check whether any of the search results ALREADY shown earlier in this conversation actually support each flagged claim -- the right source may already be there under a different citation number. If you find proper support, restate the claim with the correct citation. If, after checking, a value genuinely isn't supported by any result shown, say so plainly and refuse that specific claim instead of guessing -- an honest answer that the sources don't support it is a completely acceptable outcome here. Do not invent, estimate, or approximate a number to replace an unverified one."
-    }
-   ],
-   "warnings": [
-    "claims 777.0 (million) but no citation marker appears anywhere near it to trace the claim to a source"
-   ],
-   "withheld": "Sales were $777 million {x} in total."
-  },
   "loop_submit_schema_mismatch": {
    "answer": "I can't confirm this answer against the sources I retrieved -- the following claim(s) don't hold up under citation verification:\n- your submit_answer call didn't match the required schema (answer_text/claims)\n\nRather than give you a number I can't verify, I'm refusing this answer.",
    "capture": [
@@ -572,6 +546,26 @@
    ],
    "withheld": "hi"
   },
+  "loop_text_after_force_refusal": {
+   "answer": "I couldn't produce an answer I can verify against the sources I retrieved, so I'm not giving one.",
+   "capture": [
+    {
+     "call": "start",
+     "question": "What were sales?",
+     "system_prompt": "<agent.system_prompt>",
+     "tool_schemas": "<agent.tool_schemas>"
+    },
+    {
+     "call": "send_followup",
+     "force_tool": "submit_answer",
+     "text": "Please provide your final answer now by calling submit_answer."
+    }
+   ],
+   "warnings": [
+    "the model answered in plain text instead of calling submit_answer, so nothing could be verified"
+   ],
+   "withheld": "Sales were $777 million {x} in total."
+  },
   "never_tagged_hint": "PLTR does not report 'inventory' in its financial statements at all -- for some metrics (e.g. inventory) this is because it genuinely doesn't apply to the company's business model (a software/services company with no physical goods has nothing to report there), not because this specific period is missing. Do not fabricate, estimate, or infer a value for it; state plainly that this metric isn't reported for this company, and explain why if the reason is evident (e.g. the business model).",
   "no_comparison_empty": "(no structured data found for metric=None across companies for this period — try search_filings per company instead)",
   "no_comparison_q4_never_tagged": "(no structured data found for metric='inventory' across companies for this period — try search_filings per company instead) No company files a separate quarterly report for Q4 -- only Q1-Q3 get a standalone 10-Q, so a discrete Q4 figure is never independently disclosed via XBRL; it only exists implicitly as FY minus Q1-Q3. Tell the user this figure isn't reported as a standalone figure, and stop there -- do not state, estimate, or mention ANY dollar amount in your answer, not for Q4, not the full fiscal year total, not from search results or any other period. Simply explain that quarterly figures aren't broken out this way. PLTR does not report 'inventory' in its financial statements at all -- for some metrics (e.g. inventory) this is because it genuinely doesn't apply to the company's business model (a software/services company with no physical goods has nothing to report there), not because this specific period is missing. Do not fabricate, estimate, or infer a value for it; state plainly that this metric isn't reported for this company, and explain why if the reason is evident (e.g. the business model).",
@@ -581,24 +575,6 @@
   "no_fact_never_tagged": "(no structured data found for metric='inventory' ticker='PLTR' 'FY' FY2025 — try search_filings instead) PLTR does not report 'inventory' in its financial statements at all -- for some metrics (e.g. inventory) this is because it genuinely doesn't apply to the company's business model (a software/services company with no physical goods has nothing to report there), not because this specific period is missing. Do not fabricate, estimate, or infer a value for it; state plainly that this metric isn't reported for this company, and explain why if the reason is evident (e.g. the business model).",
   "no_fact_q4": "(no structured data found for metric='revenue' ticker='AAPL' 'Q4' FY2025 — try search_filings instead) No company files a separate quarterly report for Q4 -- only Q1-Q3 get a standalone 10-Q, so a discrete Q4 figure is never independently disclosed via XBRL; it only exists implicitly as FY minus Q1-Q3. Tell the user this figure isn't reported as a standalone figure, and stop there -- do not state, estimate, or mention ANY dollar amount in your answer, not for Q4, not the full fiscal year total, not from search results or any other period. Simply explain that quarterly figures aren't broken out this way. AAPL does not report 'revenue' in its financial statements at all -- for some metrics (e.g. inventory) this is because it genuinely doesn't apply to the company's business model (a software/services company with no physical goods has nothing to report there), not because this specific period is missing. Do not fabricate, estimate, or infer a value for it; state plainly that this metric isn't reported for this company, and explain why if the reason is evident (e.g. the business model).",
   "no_fact_ratio_not_tagged_check": "(no structured data found for metric='gross_margin' ticker='PLTR' period ending '2025-12-31' — try search_filings instead)",
-  "prose_warnings": [
-   {
-    "check": "cited_claim_unsupported",
-    "citation_index": 1,
-    "message": "[1] claims 999.0 (million) but that value doesn't appear in the cited source",
-    "quote": null,
-    "unit": "million",
-    "value": 999.0
-   },
-   {
-    "check": "uncited_claim",
-    "citation_index": null,
-    "message": "claims 55.0 (million) but no citation marker appears anywhere near it to trace the claim to a source",
-    "quote": null,
-    "unit": "million",
-    "value": 55.0
-   }
-  ],
   "refusal": "I can't confirm this answer against the sources I retrieved -- the following claim(s) don't hold up under citation verification:\n- a {b}\n- c\n\nRather than give you a number I can't verify, I'm refusing this answer.",
   "results_block": "[3] AAPL 10-K (reportDate=2025-09-27)\nTotal net sales were $100 million for fiscal year 2025, compared with prior-year results {braces}.\n\n[4] AAPL 10-K (reportDate=2025-09-27)\nResearch and development expense was $200 million during the year, driven by headcount.",
   "results_block_empty": "(no matching filing excerpts found for this search)",

@@ -48,9 +48,8 @@ from config import (
 # GEMINI_MODEL_NAME records which specific model actually answered/judged
 # a report (see save_report()'s own docstring).
 # complete() is llm_backends.py's one-shot, tool-free completion helper
-# that lets grade_judged() honor --judge-backend. See
-# docs/decisions/2026-09-10-citation-gate-measurement-instrumentation.md.
-from llm_backends import BACKENDS, complete
+# that lets grade_judged() honor --judge-backend.
+from llm_backends import BACKENDS, complete, require_backend
 from tracing import flush, log_event
 from numeric_utils import extract_numbers, normalize
 from prompts import prompt_fingerprint
@@ -66,7 +65,7 @@ CITATION_PATTERN = re.compile(r"\[\d+\]")
 # Numeric grading
 # ---------------------------------------------------------------------------
 # extract_numbers()/normalize() live in numeric_utils.py, shared with
-# agent.py's verify_citations() -- see that module's docstring for why.
+# agent.py's citation checks -- see that module's docstring for why.
 
 
 def grade_numeric(
@@ -301,13 +300,9 @@ def _citation_gate_evidence(
 
     `citation_warning_details` is passed straight through from
     `AgentResult.citation_warning_details` (the caller already has it)
-    rather than re-derived by calling collect_citation_warnings() a
-    second time -- that re-derivation can't see a structured-path
-    (quote_not_found/value_not_in_quote/etc.) refusal at all, since those
-    only ever come from verify_claims(). Passing the real field through
-    keeps analyze_citation_gate.py's false_positive_by_check breakdown
-    accurate for both checkers. See
-    docs/decisions/2026-09-10-citation-gate-measurement-instrumentation.md."""
+    rather than re-derived from the answer text, so
+    analyze_citation_gate.py's false_positive_by_check breakdown names
+    the checks that actually refused it."""
     if withheld_answer is None or q["type"] not in ("numeric", "comparison"):
         return _empty_citation_gate_evidence()
 
@@ -337,9 +332,14 @@ def run_eval(
 
     `judge_backend` then defaults to `backend` itself, so a run answers
     and judges with the same backend unless --judge-backend says
-    otherwise."""
+    otherwise. Both are checked before the first question: argparse
+    doesn't check a default against `choices`, and per question a bad
+    name would only be caught by the isolation below and saved as an
+    all-failed report."""
     backend = backend or DEFAULT_BACKEND
     judge_backend = judge_backend or backend
+    require_backend(backend)
+    require_backend(judge_backend)
     questions = load_questions(questions_path)
     questions = _select_questions(questions, ids, include_skipped)
     results = []

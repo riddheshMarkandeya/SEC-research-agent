@@ -263,6 +263,14 @@ BACKENDS: dict[str, tuple[Callable, Callable, Callable]] = {
 }
 
 
+def require_backend(backend: str) -> None:
+    """Raises ValueError naming the valid backends. Callers check up
+    front so a stale name (e.g. a leftover DEFAULT_BACKEND in .env) stops
+    a run with a clear message instead of failing on every call."""
+    if backend not in BACKENDS:
+        raise ValueError(f"Unknown backend {backend!r}; valid backends: {', '.join(BACKENDS)}")
+
+
 def complete(backend: str, system_prompt: str, user_prompt: str, temperature: float = 0.0) -> str:
     """One-shot, tool-free completion, used by eval_harness.py's
     grade_judged() to honor --judge-backend.
@@ -287,13 +295,14 @@ def complete(backend: str, system_prompt: str, user_prompt: str, temperature: fl
     inconsistently with every other Gemini call site. tool_calls will
     always be `[]` here (no tools were ever offered), so its `text` field
     is exactly `resp.text`."""
-    if backend == "gemini":
-        client = _get_gemini_client()
-        chat = client.chats.create(
-            model=GEMINI_MODEL_NAME,
-            config=types.GenerateContentConfig(system_instruction=system_prompt, temperature=temperature),
-        )
-        resp = _send_with_retry(chat, user_prompt)
-        turn = _gemini_response_to_turn(resp)
-        return (turn.text or "").strip()
-    raise ValueError(f"Unknown backend: {backend!r}")
+    require_backend(backend)
+    # Gemini is the only registered backend; a second one needs its own
+    # branch here, or the judge would silently run on Gemini.
+    client = _get_gemini_client()
+    chat = client.chats.create(
+        model=GEMINI_MODEL_NAME,
+        config=types.GenerateContentConfig(system_instruction=system_prompt, temperature=temperature),
+    )
+    resp = _send_with_retry(chat, user_prompt)
+    turn = _gemini_response_to_turn(resp)
+    return (turn.text or "").strip()

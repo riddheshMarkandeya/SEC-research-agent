@@ -146,6 +146,23 @@ def test_group_runs_refused_run_matches_the_withheld_answer():
     assert counts["skipped_prose_final"] == 1
 
 
+def test_group_runs_skips_a_no_submission_refusal_even_when_a_submit_text_matches():
+    # An earlier schema-invalid submit had no answer_text, and the final
+    # text reply was empty, so both read as "". The logged no_submission
+    # check says the run didn't end on a submit, so the text match is moot.
+    refused = {"timestamp": "2026-09-20T00:00:09", "run_id": "r1", "category": "citation_gate_refused"}
+    records = [
+        _span("r1", "submit_answer", {"claims": []}, {"checks": []}),
+        {**refused, "withheld_answer": ""},
+        _run_agent("r1", warnings=["no submission"], answer="refusal text", checks={"no_submission": 1}),
+    ]
+
+    runs, counts = group_runs(records, {})
+
+    assert runs == []
+    assert counts["skipped_prose_final"] == 1
+
+
 def test_group_runs_counts_only_non_agent_runs_inside_the_filter():
     records = [
         _span("mcp-old", "compare_financial_metric", timestamp="2026-09-01T00:00:00"),

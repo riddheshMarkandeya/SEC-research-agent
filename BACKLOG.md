@@ -47,7 +47,7 @@ reference:
 
 ## In progress
 
-- [ ] **[misc, Med, Substantial]** **Agent-improvement map** — the active workstream: `docs/plans/2026-09-28-agent-improvement-map.md` (merged; supersedes the gate-refusal map and the structural review). Prerequisites in order (Decisions 13 and 15): ~~NUMBER_PATTERN fix~~ (done, `bf9e600`) → ~~replay tool~~ (done: `analyze_gate_replay.py`, `docs/plans/2026-09-28-gate-replay-tool.md`) → **Ollama removal (next)** → `src/` layout move → `agent.py` split → eval summary mode. Then the improvement packages in the map's "Proposed build order". Frontier tickets: prose fallback path, segment-table ranking. No fallback backend after Ollama removal (user, 2026-09-28). Keep the model pin for its screens.
+- [ ] **[misc, Med, Substantial]** **Agent-improvement map** — the active workstream: `docs/plans/2026-09-28-agent-improvement-map.md` (merged; supersedes the gate-refusal map and the structural review). Prerequisites in order (Decisions 13 and 15): ~~NUMBER_PATTERN fix~~ (done, `bf9e600`) → ~~replay tool~~ (done: `analyze_gate_replay.py`, `docs/plans/2026-09-28-gate-replay-tool.md`) → ~~Ollama removal~~ (done, incl. the prose fallback: `docs/plans/2026-09-29-remove-ollama-and-prose-fallback.md`) → **`src/` layout move (next)** → `agent.py` split → eval summary mode. Then the improvement packages in the map's "Proposed build order". Frontier tickets: segment-table ranking, `agent.py` module boundaries. No fallback backend after Ollama removal (user, 2026-09-28). Keep the model pin for its screens.
 
 ## Backlog
 
@@ -82,26 +82,6 @@ Design: `docs/plans/2026-09-24-prompt-audit-roadmap.md`. Findings: `docs/reviews
 - [ ] **[bug, Low, Standard]** A calculate result's expression pastes each operand's unit in as-is, so a `"raw"` operand (a plain ratio or count) reaches the model as e.g. "1.04 raw". The result value itself already omits "raw" via `agent._with_unit`. Found in the WP1 code review (`docs/reviews/2026-09-24-wp1-prompts-package.md`); left unchanged because WP1 had to be byte-identical. It changes model-visible text, so it goes through the roadmap's panel-screened process: fit it in after WP2.
 - [ ] **[refactor, Low, Trivial]** Duplicated enum values in `prompts/agent_tools.py`, all copied as-is from `agent.py` by WP1: the period list `["FY", "Q1", "Q2", "Q3", "Q4"]` twice, `list(COMPANIES.keys())` three times, and `CLAIM_UNITS` restating `numeric_utils.UNIT_MULTIPLIERS`'s keys by hand. Hoist each into one constant; the schemas' bytes must stay identical (check with the WP2 fingerprint). Found in the WP1 code review.
 - [ ] **[design, Low, Standard]** The MCP `search_filings` schema is derived the wrong way round: `prompts.mcp.MCP_SEARCH_TOOL_SCHEMA` is the agent's schema with its agent-only text overridden, so agent-only wording in any other field reaches MCP clients silently. The `ticker` description already does ("…which company the question is about"), and three description sentences are written out on both surfaces. Fix: a neutral shared schema that the agent adds its note to. It changes model-visible text, so it needs a panel screen. Found in WP3's plan and code reviews (`docs/reviews/2026-09-24-wp3-group-a-wording.md`).
-
-### From the 2026-09-26 backlog review
-
-Full reasoning: that cleanup's commit body (`git log --grep="Watch list"`).
-
-- [ ] **[misc, Med, Substantial]** Remove the Ollama backend and its code. Small local models
-  aren't a target; only cloud models big enough for the task are (user decision, 2026-09-26).
-  About 449 mentions across 14 files (`llm_backends.py`, `agent.py`, `config.py`,
-  `eval_harness.py`, tests, `tests/manual/verify_*.py`). It touches the blast-radius core, so
-  schedule it after WP8 and before the `agent.py` split, which it shrinks. Open points for its
-  own plan:
-  - (a) Ollama is the only backend that needs no API key, so it's the only fallback when the
-    Gemini free-tier quota runs out. Decide whether a second cloud backend replaces it.
-  - (b) The prose-fallback citation path is also Gemini's last resort, not only Ollama's. Decide
-    whether it stays; the three prose-path Watch list entries follow from that.
-  - (c) `grade_judged`/`_grade` default to `"ollama"` in their signatures.
-  - (d) Update `.claude/rules/plan-review-blast-radius.md` (it names `_ollama_send*`) and
-    `config.py`'s backend comment.
-  - (e) If (a) keeps Ollama after all, extending the final-turn safety net
-    (`_FINAL_TURN_BACKENDS` in `agent.py`) to it is open again, and needs live verification.
 
 ### From the 2026-09-25 token-efficiency workflow change
 
@@ -269,9 +249,7 @@ detail. The fuller write-ups from before the 2026-09-26 cleanup are in
 
 **Citation verification**
 
-- **[feature, Low, TBD]** The prose-fallback citation path has no `quote` capture like the structured path's. Trigger: a prose-path failure that needs it, or the Ollama item's prose-path decision. `docs/decisions/2026-09-18-flaky-eval-questions-three-fixes.md`
-- **[bug, Low, Standard]** `_SENTENCE_BREAK` treats a capitalized word after an abbreviation (`U.S. GAAP`) as a sentence break. Prose-fallback path only. Trigger: a recurrence on Gemini's forced-submit fallback, or the Ollama item's prose-path decision. `docs/plans/2026-09-10-citation-gate-measurement-instrumentation.md`
-- **[bug, Low, Standard]** `_CITATION_MARKER` doesn't match a multi-source bracket like `[1, 2, 3]` on the prose-fallback path. The structured path's coverage check already handles it via `_ANY_CITATION_BRACKET`. Trigger: same as `_SENTENCE_BREAK`. `docs/plans/2026-09-10-citation-gate-measurement-instrumentation.md`
+- **[bug, Low, Standard]** `_CITATION_MARKER` doesn't match a multi-source bracket like `[1, 2, 3]`, so the eval grader's `value_is_citation_verified` treats a value cited that way as uncited (passes on a plain-text match). The agent's gate handles it via `_ANY_CITATION_BRACKET`. Trigger: a numeric eval question graded PASS on a wrongly multi-cited value. `docs/plans/2026-09-10-citation-gate-measurement-instrumentation.md`
 - **[bug (latent), Low, Standard]** `_verify_one_claim` checks quote-to-value grounding, not whether the answer's own prose labels the cell's period correctly. A fix needs a `period` field on the claim schema. Trigger: a live false accept. `docs/plans/2026-09-12-structure-aware-table-quote-grounding.md`
 - **[bug (latent), Low, Trivial]** `_quote_matches`'s flat anchor path can accept a wrong-period or digit-inflated quote for a prose-only value (table sources no longer use it). Trigger: a prose-path false accept. `docs/reviews/2026-09-13-table-grounding-region-scoped-matching.md`
 - **[bug (latent), Low, Standard]** `table_grounding`'s fuzzy coverage could accept a similar-but-wrong segment label from a different table block. Trigger: a tracked filing with near-identical sibling labels. `docs/reviews/2026-09-13-table-grounding-region-scoped-matching.md`
@@ -284,10 +262,10 @@ detail. The fuller write-ups from before the 2026-09-26 cleanup are in
 
 - **[bug (latent), Low, Standard]** `nvda-cost-of-revenue-fy2026`: a `quote_not_found` refusal via `search_filings` prose, then clean via XBRL on re-run. Trigger: a recurrence. `e45de8b:BACKLOG.md`
 - **[bug (latent), Low, Standard]** `msft-segment-revenue-comparison-q3fy2026`: `quote_not_found` on the real segment values `35013`/`34681`/`13192` (2026-09-14 baseline). Trigger: a recurrence. `e45de8b:BACKLOG.md`
-- **[bug (latent), Low, Standard]** `aapl-rd-pct-gross-profit-fy2025`: two other refusal modes (`cited_claim_unsupported` on 17.7%, and an inline uncited 17.7%/0.177). Confirm which one fired before blaming the 2026-09-17 fix. Trigger: a recurrence. `e45de8b:BACKLOG.md`
 
 **Agent loop and code structure**
 
+- **[bug (latent), Low, Standard]** A submission from a mixed submit+search turn (answered with `MIXED_TURN_RESUBMIT_MESSAGE`) isn't cached the way a retried one is (`pre_retry_submit_args`). If the model then answers in text twice, the run is refused as `no_submission` instead of re-gating that submission against the larger result set. Trigger: a `no_submission` refusal whose trace shows an earlier mixed-turn submit. Code review of `docs/plans/2026-09-29-remove-ollama-and-prose-fallback.md`.
 - **[bug (latent), Low, Standard]** The final-turn safety net could force a grounded but incomplete answer (fewer companies than asked). Trigger: a confidently wrong ranking from a forced submit. `docs/decisions/2026-09-16-final-turn-safety-net.md`
 - **[refactor, Low, Trivial]** `_dispatch_tool_call`'s tool branches are an if-chain. Trigger: a 5th or 6th tool (then use a dispatch table). `docs/reviews/2026-09-11-negative-number-support.md`
 - **[refactor, Low, Standard]** `formulas.py` has 3 hand-written zero-denominator guards. Trigger: a 4th call site (then extract a shared `_safe_ratio()`). `docs/reviews/2026-09-08-fix-3-medium-review-findings.md`

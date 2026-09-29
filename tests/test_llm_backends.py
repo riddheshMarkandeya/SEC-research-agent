@@ -475,7 +475,7 @@ def test_complete_gemini_passes_temperature_and_no_tools(monkeypatch, temperatur
 
 
 def test_complete_raises_on_unknown_backend():
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="'unknown-backend'.*gemini"):
         complete("unknown-backend", "system prompt", "user prompt")
 
 

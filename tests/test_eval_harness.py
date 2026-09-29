@@ -8,7 +8,7 @@ LLM calls) is exercised by manual runs (python eval_harness.py) instead,
 not here.
 
 extract_numbers()/normalize() moved to numeric_utils.py (shared with
-agent.py's verify_citations()) — see tests/test_numeric_utils.py.
+agent.py's citation checks) — see tests/test_numeric_utils.py.
 """
 
 import ast
@@ -22,6 +22,7 @@ import pytest
 
 import compare_prompt_versions
 import eval_harness
+import llm_backends
 from agent import AgentResult
 from eval_harness import (
     _grade,
@@ -416,6 +417,20 @@ def test_save_report_records_the_actual_answering_and_judging_model(monkeypatch,
     assert report["judge_model"] == "fake-gemini-model"
 
 
+@pytest.mark.parametrize("kwargs", [{"backend": "ollama"}, {"judge_backend": "ollama"}])
+def test_run_eval_rejects_an_unknown_backend_before_any_question(monkeypatch, tmp_path, kwargs):
+    # A stale backend name (e.g. a leftover DEFAULT_BACKEND in .env) must
+    # stop the run up front: per question it would only be swallowed by
+    # the per-question isolation below and saved as a normal-looking
+    # all-failed report.
+    questions_path = tmp_path / "questions.jsonl"
+    questions_path.write_text(json.dumps({"id": "q1", "question": "Q1?", "type": "numeric"}), encoding="utf-8")
+    monkeypatch.setattr(eval_harness, "run_agent", lambda *a, **k: pytest.fail("run_agent was called"))
+
+    with pytest.raises(ValueError, match="'ollama'.*gemini"):
+        run_eval(questions_path, **kwargs)
+
+
 # ---------------------------------------------------------------------------
 # run_eval — per-question exception isolation. run_eval()'s live agent
 # loop is otherwise "live" (real retrieval/LLM calls, exercised by manual
@@ -586,6 +601,7 @@ def test_run_eval_backend_default_follows_config(monkeypatch, tmp_path):
 
     monkeypatch.setattr(eval_harness, "run_agent", fake_run_agent)
     monkeypatch.setattr(eval_harness, "DEFAULT_BACKEND", "totally-custom-backend")
+    monkeypatch.setitem(llm_backends.BACKENDS, "totally-custom-backend", (None, None, None))
 
     run_eval(questions_path)
 

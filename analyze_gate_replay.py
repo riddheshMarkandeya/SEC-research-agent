@@ -22,9 +22,10 @@ A run whose rebuilt tool outputs differ from its logged ones (a found flag,
 a value, a result count) is marked drifted: the corpus or an XBRL fact
 changed since, so its verdict is low-confidence. search_filings calls
 rejected at validation write no span, so they aren't replayed or hashed;
-they added nothing to the run's sources either. A run that ended on the
-prose path after a submit is skipped: its verdict came from the prose
-checker, not from re-gating a submission.
+they added nothing to the run's sources either. A run whose final
+answer doesn't come from a submit is skipped: in older traces that's the
+prose-checker fallback, in newer ones a no-submission refusal -- either
+way there's no submission to re-gate.
 
 XBRL lookups read xbrl_cache/ (relative to the repo root, so the tool must
 run from there). A cache miss fetches live SEC data and writes the cache;
@@ -111,9 +112,13 @@ def _in_window(ts: str, since: str | None, until: str | None) -> bool:
 def _final_submit(submits: list[dict], output: dict, withheld: str | None) -> dict | None:
     """The submit the run's final answer came from: the last one whose text
     is the answer it returned (or withheld, when refused). None when no
-    submit matches, meaning the run ended on the prose path. A refused run
+    submit matches, meaning the run ended on a text answer. A refused run
     logged before refusal events carried the withheld answer has nothing to
-    match against, so it falls back to the last submit."""
+    match against, so it falls back to the last submit. A logged
+    no_submission check means the run ended on text, whatever the text
+    happens to match."""
+    if (output.get("citation_checks") or {}).get(agent._NO_SUBMISSION_WARNING.check):
+        return None
     final = withheld if output.get("citation_warnings") else output.get("answer")
     if final is None:
         return submits[-1]

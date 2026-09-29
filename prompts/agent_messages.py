@@ -139,13 +139,8 @@ SEARCH_INVALID_ARGS_MESSAGE = "(search_filings arguments were invalid — check 
 # ---------------------------------------------------------------------------
 # Citation-check warnings (agent.CitationWarning.message)
 # ---------------------------------------------------------------------------
-# The model reads these inside the retry messages below, and the user
+# The model reads these inside CLAIM_RETRY_TEMPLATE below, and the user
 # and the eval judge read them inside REFUSAL_TEMPLATE.
-CITED_CLAIM_UNSUPPORTED_TEMPLATE = "[{n}] claims {value} ({unit}) but that value doesn't appear in the cited source"
-UNCITED_CLAIM_TEMPLATE = (
-    "claims {value} ({unit}) but no citation marker appears anywhere "
-    "near it to trace the claim to a source"
-)
 CITATION_OUT_OF_RANGE_TEMPLATE = "[{n}] is not a valid citation index -- results are numbered 1-{result_count}"
 MALFORMED_CLAIM_TEMPLATE = (
     "[{n}] must include BOTH value and unit for a numeric claim, or omit both for a qualitative one"
@@ -157,6 +152,12 @@ QUALITATIVE_QUOTE_TOO_SHORT_TEMPLATE = "[{n}]'s quote {quote!r} is too short to 
 QUALITATIVE_QUOTE_NOT_FOUND_TEMPLATE = "[{n}]'s quote doesn't appear in source [{n}]"
 UNCOVERED_NUMBER_TEMPLATE = "claims {value} ({unit}) but no claim in your submit_answer call covers it"
 SUBMIT_INVALID_ARGS_WARNING = "your submit_answer call didn't match the required schema (answer_text/claims)"
+# Logged and returned in citation_warnings when the model answers in text
+# even after being forced to call submit_answer; the user sees
+# NO_SUBMISSION_REFUSAL instead, since nothing was submitted to verify.
+NO_SUBMISSION_WARNING = (
+    "the model answered in plain text instead of calling submit_answer, so nothing could be verified"
+)
 
 # ---------------------------------------------------------------------------
 # Retry, forced-submit and final-turn messages
@@ -165,7 +166,8 @@ SUBMIT_INVALID_ARGS_WARNING = "your submit_answer call didn't match the required
 # messages.
 WARNING_BULLET_TEMPLATE = "- {warning}"
 
-# Shared by both retry messages below so their wording can't drift apart.
+# Part of CLAIM_RETRY_TEMPLATE below, kept separate so its hard-won
+# wording is reviewed on its own.
 # Do not change these properties -- each one closes a failure mode seen
 # live when this retry was first tried:
 # - It points the model back at results ALREADY shown before it concludes
@@ -186,15 +188,6 @@ CITATION_RETRY_GUIDANCE = (
     "honest answer that the sources don't support it is a completely acceptable "
     "outcome here. Do not invent, estimate, or approximate a number to replace "
     "an unverified one."
-)
-
-# Retry after a plain-text answer, sent as a follow-up turn.
-CITATION_RETRY_TEMPLATE = (
-    "Your previous answer had at least one citation that doesn't hold up:\n"
-    "{warnings_block}\n\n"
-    "Your previous answer was:\n"
-    "{answer}\n\n"
-    "{guidance}"
 )
 
 # Retry after a submit_answer call, sent as that call's tool result.
@@ -249,6 +242,11 @@ REFUSAL_TEMPLATE = (
     "the following claim(s) don't hold up under citation verification:\n{warnings_block}\n\n"
     "Rather than give you a number I can't verify, I'm refusing this answer."
 )
+# Replaces a plain-text answer given even after a forced submit_answer turn.
+NO_SUBMISSION_REFUSAL = (
+    "I couldn't produce an answer I can verify against the sources I retrieved, "
+    "so I'm not giving one."
+)
 BUDGET_EXHAUSTED_ANSWER = (
     "I wasn't able to finish answering within the allotted number of searches. "
     "Try asking a more specific or narrower question."
@@ -291,8 +289,6 @@ FINGERPRINTED = (
     "CALCULATE_ZERO_DIVISOR_TEMPLATE",
     "SEARCH_INVALID_TICKER_TEMPLATE",
     "SEARCH_INVALID_ARGS_MESSAGE",
-    "CITED_CLAIM_UNSUPPORTED_TEMPLATE",
-    "UNCITED_CLAIM_TEMPLATE",
     "CITATION_OUT_OF_RANGE_TEMPLATE",
     "MALFORMED_CLAIM_TEMPLATE",
     "NUMERIC_QUOTE_TOO_SHORT_TEMPLATE",
@@ -302,14 +298,15 @@ FINGERPRINTED = (
     "QUALITATIVE_QUOTE_NOT_FOUND_TEMPLATE",
     "UNCOVERED_NUMBER_TEMPLATE",
     "SUBMIT_INVALID_ARGS_WARNING",
+    "NO_SUBMISSION_WARNING",
     "WARNING_BULLET_TEMPLATE",
     "CITATION_RETRY_GUIDANCE",
-    "CITATION_RETRY_TEMPLATE",
     "CLAIM_RETRY_TEMPLATE",
     "FORCE_SUBMIT_MESSAGE",
     "FINAL_TURN_SUBMIT_MESSAGE",
     "MIXED_TURN_RESUBMIT_MESSAGE",
     "REFUSAL_TEMPLATE",
+    "NO_SUBMISSION_REFUSAL",
     "BUDGET_EXHAUSTED_ANSWER",
 )
 NOT_FINGERPRINTED = ()
