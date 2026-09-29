@@ -6,6 +6,7 @@ paths:
   - "retrieval.py"
   - "agent.py"
   - "llm_backends.py"
+  - "analyze_gate_replay.py"
 ---
 
 # This project's live-code TDD carve-out
@@ -15,7 +16,8 @@ concretely, in this repo:
 
 - **SEC EDGAR HTTP calls** (`edgar_ingest.py`, `xbrl_facts.py`)
 - **Chroma + embedding indexing/retrieval** (`index_chunks.py`,
-  `retrieval.py`)
+  `retrieval.py`, and `analyze_gate_replay.py`'s live search binding,
+  which replays traced runs against the real index and XBRL cache)
 - **LLM round-trips through either backend** (`agent.py`'s tool-calling
   loop, `llm_backends.py`)
 

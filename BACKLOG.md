@@ -47,9 +47,11 @@ reference:
 
 ## In progress
 
-- [ ] **[misc, Med, Substantial]** **Agent-improvement map** — the active workstream: `docs/plans/2026-09-28-agent-improvement-map.md` (merged; supersedes the gate-refusal map and the structural review). Prerequisites in order (Decisions 13 and 15): ~~NUMBER_PATTERN fix~~ (done, `bf9e600`) → **replay tool (in progress: `docs/plans/2026-09-28-gate-replay-tool.md`)** → Ollama removal → `src/` layout move → `agent.py` split → eval summary mode. Then the improvement packages in the map's "Proposed build order". Frontier tickets: prose fallback path, segment-table ranking. No fallback backend after Ollama removal (user, 2026-09-28). Keep the model pin for its screens.
+- [ ] **[misc, Med, Substantial]** **Agent-improvement map** — the active workstream: `docs/plans/2026-09-28-agent-improvement-map.md` (merged; supersedes the gate-refusal map and the structural review). Prerequisites in order (Decisions 13 and 15): ~~NUMBER_PATTERN fix~~ (done, `bf9e600`) → ~~replay tool~~ (done: `analyze_gate_replay.py`, `docs/plans/2026-09-28-gate-replay-tool.md`) → **Ollama removal (next)** → `src/` layout move → `agent.py` split → eval summary mode. Then the improvement packages in the map's "Proposed build order". Frontier tickets: prose fallback path, segment-table ranking. No fallback backend after Ollama removal (user, 2026-09-28). Keep the model pin for its screens.
 
 ## Backlog
+
+- [ ] **[refactor, Low, Standard]** `xbrl_facts.CACHE_DIR` (`./xbrl_cache`) and `config.TRACE_LOG_PATH`'s default are relative to the working directory, so any caller run from elsewhere misses the XBRL cache, fetches live SEC data and writes a new cache in the wrong place. `analyze_gate_replay.py` guards it with `require_repo_root`; anchor both to the repo root instead (natural fit: the `src/` layout move). Deferred from the gate-replay review, `docs/reviews/2026-09-28-gate-replay-tool.md`.
 
 ### From the 2026-09-24 prompt-audit roadmap
 
