@@ -2371,13 +2371,14 @@ def _dispatch_pending_calls(other: list[dict], submit: dict | None, ctx: _AgentC
 
 def _finalize_after_budget_exhausted(ctx: _AgentContext, loop_state: _AgentLoopState) -> AgentResult:
     """Body of _run_agent_impl()'s post-loop fallback -- called once,
-    after the while loop's own `break` exits it. Pure relocation, no
-    logic change."""
+    after the while loop's own `break` exits it. A submission cached at
+    retry time is re-gated against the run's final all_results, since
+    searches after the retry may have added the sources it cites."""
     if loop_state.pre_retry_submit_args is not None:
-        answer_text = loop_state.pre_retry_submit_args["answer_text"]
-        warnings = verify_claims(
-            loop_state.pre_retry_submit_args["claims"], ctx.all_results, ctx.question, answer_text
-        )
+        # The cached args may be the schema-invalid ones that triggered
+        # the retry, so they go back through the full gate, not straight
+        # to verify_claims.
+        answer_text, warnings = submission_warnings(loop_state.pre_retry_submit_args, ctx.all_results, ctx.question)
         return _finalize_answer(
             answer_text, warnings, ctx.all_results, backend=ctx.backend, retried=loop_state.retried_for_citations
         )

@@ -3353,6 +3353,33 @@ def test_run_agent_submit_answer_retry_exhausting_budget_reverifies_against_curr
     assert answer == "The value was 100."
 
 
+def test_run_agent_invalid_submit_then_exhausted_budget_refuses_instead_of_crashing(monkeypatch):
+    # A schema-invalid submit triggers the corrective retry, which caches
+    # those invalid args; if the budget then runs out, the post-loop
+    # fallback must re-gate them through the same boundary check, not
+    # index their missing keys.
+    monkeypatch.setattr("agent.MAX_TOOL_ITERATIONS", 3)
+    invalid_submit = ModelTurn(tool_calls=[{"name": "submit_answer", "args": {"claims": "not-a-list"}}], text=None)
+    search_turn = ModelTurn(tool_calls=[{"name": "search_filings", "args": {"query": "more"}}], text=None)
+
+    def fake_start(question, system_prompt, tool_schemas):
+        return {}, invalid_submit
+
+    def fake_send_tool_results(state, results, force_tool=None):
+        return search_turn
+
+    monkeypatch.setattr("agent.BACKENDS", {"gemini": (fake_start, fake_send_tool_results, None)})
+    monkeypatch.setattr(
+        "agent._dispatch_tool_call",
+        lambda call, question, all_results, searched_tickers, verbose: all_results.append({"text": "extra"}) or "search result",
+    )
+
+    answer, all_results, warnings, withheld_answer, details = run_agent("What was the value?", backend="gemini")
+
+    assert [d["check"] for d in details] == ["no_structured_answer"]
+    assert withheld_answer == ""
+
+
 def test_run_agent_backend_default_follows_config(monkeypatch):
     # 2026-09-10: run_agent()'s backend default used to be a literal
     # "ollama" bound at function-definition time, ignoring
