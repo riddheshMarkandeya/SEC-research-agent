@@ -42,12 +42,11 @@ from config import (
     DEFAULT_BACKEND,
     EMBED_MODEL_NAME,
     GEMINI_MODEL_NAME,
-    OLLAMA_MODEL_NAME,
     RERANK_MODEL_NAME,
 )
 
-# OLLAMA_MODEL_NAME/GEMINI_MODEL_NAME record which specific model actually
-# answered/judged a report (see save_report()'s own docstring).
+# GEMINI_MODEL_NAME records which specific model actually answered/judged
+# a report (see save_report()'s own docstring).
 # complete() is llm_backends.py's one-shot, tool-free completion helper
 # that lets grade_judged() honor --judge-backend. See
 # docs/decisions/2026-09-10-citation-gate-measurement-instrumentation.md.
@@ -132,7 +131,7 @@ def grade_comparison(
 # ---------------------------------------------------------------------------
 # LLM-as-judge grading
 # ---------------------------------------------------------------------------
-def grade_judged(question: str, answer_text: str, criteria: str, backend: str = "ollama") -> tuple[bool, str]:
+def grade_judged(question: str, answer_text: str, criteria: str, backend: str = "gemini") -> tuple[bool, str]:
     """Routes through llm_backends.complete() so `backend` (--judge-
     backend) picks which one actually grades, at the same temperature=0.0
     (stricter than generation's 0.1) and no tool_schemas -- grading never
@@ -207,7 +206,7 @@ def load_questions(path: Path) -> list[dict]:
 
 def _select_questions(questions: list[dict], ids: list[str] | None, include_skipped: bool) -> list[dict]:
     """Applies --ids / skip-flag filtering, kept separate from
-    run_eval()'s live agent loop so it's testable without network/Ollama
+    run_eval()'s live agent loop so it's testable without network/LLM
     calls. Explicit `ids` always wins over a question's own `skip` flag
     -- asking for a question by ID directly is a stronger signal than
     the file's default, and is how you'd re-run a skip-flagged question
@@ -238,11 +237,11 @@ def _grade_by_type(q: dict, answer_text: str, retrieved: list[dict] | None) -> t
 
 
 def _grade(
-    q: dict, answer_text: str, citation_warnings: list[str], retrieved: list[dict], judge_backend: str = "ollama"
+    q: dict, answer_text: str, citation_warnings: list[str], retrieved: list[dict], judge_backend: str = "gemini"
 ) -> tuple[bool, str]:
     """Dispatches to the right grading strategy for question type
     q["type"], kept separate from run_eval()'s live agent loop so it's
-    testable without network/Ollama calls (same rationale as
+    testable without network/LLM calls (same rationale as
     _select_questions() above).
 
     Numeric/comparison questions short-circuit to FAIL when the agent
@@ -250,8 +249,7 @@ def _grade(
     grade_numeric()/grade_comparison() on the refusal text -- a refusal
     message necessarily repeats the claimed value it's rejecting, which
     a plain text scan could otherwise match as if it were a real,
-    verified answer. See
-    docs/decisions/2026-08-26-week7-citation-hard-gate-ollama-retry.md.
+    verified answer.
     Judged questions are deliberately NOT short-circuited here: some are
     written to expect a refusal, and grade_judged() already evaluates
     the actual answer text against its own criteria, which is the
@@ -337,15 +335,9 @@ def run_eval(
     ignoring any later change (same reasoning as agent.run_agent()'s
     matching fix).
 
-    `judge_backend` then defaults to `backend` itself, NOT
-    config.DEFAULT_BACKEND directly: --backend ollama is the no-API-key
-    path this project deliberately keeps runnable, and defaulting the
-    judge to DEFAULT_BACKEND instead would make it silently require a
-    Gemini key for every judged question even when the caller explicitly
-    asked for the no-key backend. --judge-backend still overrides this
-    either way, e.g. to grade a Gemini run's judged questions with Ollama
-    as a cross-model check. See
-    docs/decisions/2026-09-10-citation-gate-measurement-instrumentation.md."""
+    `judge_backend` then defaults to `backend` itself, so a run answers
+    and judges with the same backend unless --judge-backend says
+    otherwise."""
     backend = backend or DEFAULT_BACKEND
     judge_backend = judge_backend or backend
     questions = load_questions(questions_path)
@@ -362,8 +354,7 @@ def run_eval(
             # still matches CITATION_PATTERN, so a refusal would otherwise get
             # has_citation=True -- a real answer's citation and a refusal's
             # description of a FAILED citation shouldn't count the same way in
-            # this stat. See
-            # docs/decisions/2026-08-26-week7-citation-hard-gate-ollama-retry.md.
+            # this stat.
             has_citation = not citation_warnings and bool(CITATION_PATTERN.search(answer_text))
 
             passed, detail = _grade(q, answer_text, citation_warnings, retrieved, judge_backend)
@@ -442,7 +433,9 @@ def print_summary(results: list[dict]) -> None:
 
 
 def _model_name_for(backend: str) -> str:
-    return OLLAMA_MODEL_NAME if backend == "ollama" else GEMINI_MODEL_NAME
+    # Gemini is the only backend; this stays a function so a new backend
+    # adds its model setting here.
+    return GEMINI_MODEL_NAME
 
 
 # ---------------------------------------------------------------------------
@@ -614,9 +607,8 @@ def _provenance_warnings(provenance: dict) -> list[str]:
 def save_report(
     results: list[dict], backend: str, judge_backend: str | None = None, provenance: dict | None = None
 ) -> Path:
-    """`backend` ("ollama"/"gemini") alone doesn't say which specific
-    model answered -- OLLAMA_MODEL_NAME/GEMINI_MODEL_NAME are both
-    configurable via .env and can change over time, which would make an
+    """`backend` ("gemini") alone doesn't say which specific model
+    answered -- GEMINI_MODEL_NAME is configurable via .env and can change over time, which would make an
     old report ambiguous about what actually produced it. `answer_model`
     records whichever one actually ran; `judge_model` records whichever
     backend actually judged -- `judge_backend` defaults to `backend`

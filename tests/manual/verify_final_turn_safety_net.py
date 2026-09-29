@@ -12,9 +12,7 @@ actually submits a clean refusal/answer instead of ignoring the nudge or
 data set -- can only be answered by an actual API call, not a mock.
 
 Drives agent.run_agent() directly (the real entry point) for three
-questions, Gemini only (the new safety net is gated to
-_FINAL_TURN_BACKENDS = {"gemini"}, so Ollama's behavior is unchanged by
-this fix and isn't exercised here):
+questions on Gemini:
 
   1. nvda-rd-expense-q4fy26-refusal and
   2. pltr-inventory-turnover-fy2025-refusal: both correct-REFUSAL

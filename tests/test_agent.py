@@ -3,10 +3,9 @@ Unit tests for agent.py. Covers the pure helpers, plus the
 call_get_financial_fact/call_compare_financial_metric dispatch/
 boundary-validation logic (via monkeypatched xbrl_facts functions, no
 network). run_agent()'s actual model-facing behavior drives a live
-tool-calling loop against whichever backend is selected (see
-llm_backends.py), so THAT is exercised by manual runs (python agent.py
-"..." [--backend ollama|gemini]) documented in PROJECT_CONTEXT.md, not
-here -- but run_agent()'s own loop CONTROL FLOW (how it reacts to a
+tool-calling loop against the selected backend (see llm_backends.py),
+so THAT is exercised by manual runs (python agent.py "...") and
+tests/manual/, not here -- but run_agent()'s own loop CONTROL FLOW (how it reacts to a
 scripted sequence of ModelTurns) is deterministic and doesn't need a
 live model, so a few targeted regression tests below drive it through
 monkeypatched BACKENDS entries instead.
@@ -2525,35 +2524,21 @@ def test_dispatch_tool_call_search_filings_allows_no_ticker_filter(monkeypatch):
 # ---------------------------------------------------------------------------
 def test_should_retry_for_citations_true_with_warnings_and_not_yet_retried():
     assert (
-        _should_retry_for_citations(["[1] claims 6478.0 (million) ..."], already_retried=False, backend="gemini")
+        _should_retry_for_citations(["[1] claims 6478.0 (million) ..."], already_retried=False)
         is True
     )
 
 
 def test_should_retry_for_citations_false_once_already_retried():
     assert (
-        _should_retry_for_citations(["[1] claims 6478.0 (million) ..."], already_retried=True, backend="gemini")
+        _should_retry_for_citations(["[1] claims 6478.0 (million) ..."], already_retried=True)
         is False
     )
 
 
 def test_should_retry_for_citations_false_with_no_warnings_regardless_of_retried_flag():
-    assert _should_retry_for_citations([], already_retried=False, backend="gemini") is False
-    assert _should_retry_for_citations([], already_retried=True, backend="gemini") is False
-
-
-def test_should_retry_for_citations_false_for_ollama_even_with_warnings_and_not_yet_retried():
-    # Gated 2026-08-25 per live evidence in PROJECT_CONTEXT.md /
-    # docs/plans/2026-08-24-citation-retry-loop-design.md:
-    # this exact mechanism was tried and reverted once already (Week 5j)
-    # because qwen2.5:7b-instruct couldn't reliably act on the corrective
-    # feedback -- gated out for Ollama specifically rather than relying
-    # on a single live re-run to prove it's safe now.
-    assert (
-        _should_retry_for_citations(["[1] claims 6478.0 (million) ..."], already_retried=False, backend="ollama")
-        is False
-    )
-
+    assert _should_retry_for_citations([], already_retried=False) is False
+    assert _should_retry_for_citations([], already_retried=True) is False
 
 # ---------------------------------------------------------------------------
 # _should_force_final_submit (final-turn safety net for the
@@ -2561,23 +2546,33 @@ def test_should_retry_for_citations_false_for_ollama_even_with_warnings_and_not_
 # 2026-09-16-final-turn-safety-net.md)
 # ---------------------------------------------------------------------------
 def test_should_force_final_submit_true_when_budget_exhausted_and_not_yet_attempted():
-    assert _should_force_final_submit(already_attempted=False, calls_made=6, backend="gemini") is True
+    assert _should_force_final_submit(already_attempted=False, calls_made=6) is True
 
 
 def test_should_force_final_submit_false_once_already_attempted():
-    assert _should_force_final_submit(already_attempted=True, calls_made=6, backend="gemini") is False
+    assert _should_force_final_submit(already_attempted=True, calls_made=6) is False
 
 
 def test_should_force_final_submit_false_when_budget_not_yet_exhausted():
-    assert _should_force_final_submit(already_attempted=False, calls_made=5, backend="gemini") is False
+    assert _should_force_final_submit(already_attempted=False, calls_made=5) is False
 
+def _repeating_backend(fake_start):
+    """A BACKENDS entry whose every later turn (tool results, forced
+    follow-ups, retries) repeats fake_start's own turn -- for tests that
+    only care how the loop finalizes a model that keeps saying the same
+    thing."""
 
-def test_should_force_final_submit_false_for_ollama_even_with_budget_exhausted():
-    # Gated like _CITATION_RETRY_BACKENDS/_FORCED_SUBMIT_BACKENDS above --
-    # no live evidence yet for how Ollama responds to a directive nudge
-    # under budget pressure, so this mechanism stays Gemini-only until
-    # proven otherwise (see the decision doc).
-    assert _should_force_final_submit(already_attempted=False, calls_made=6, backend="ollama") is False
+    first_turn = []
+
+    def start(question, system_prompt, tool_schemas):
+        state, turn = fake_start(question, system_prompt, tool_schemas)
+        first_turn.append(turn)
+        return state, turn
+
+    def repeat(*_args, **_kwargs):
+        return first_turn[0]
+
+    return start, repeat, repeat
 
 
 # ---------------------------------------------------------------------------
@@ -2597,9 +2592,9 @@ def test_run_agent_sends_the_system_prompt_and_tool_schemas_in_order(monkeypatch
         captured["tool_schemas"] = tool_schemas
         return {}, ModelTurn(tool_calls=[], text="done")
 
-    monkeypatch.setattr("agent.BACKENDS", {"ollama": (fake_start, None, None)})
+    monkeypatch.setattr("agent.BACKENDS", {"gemini": _repeating_backend(fake_start)})
 
-    run_agent("What was Apple's revenue?", backend="ollama")
+    run_agent("What was Apple's revenue?", backend="gemini")
 
     assert captured["system_prompt"] is SYSTEM_PROMPT
     assert captured["tool_schemas"] == list(AGENT_TOOL_SCHEMAS)
@@ -2682,58 +2677,17 @@ def test_run_agent_citation_retry_exhausting_budget_returns_pre_retry_answer_not
     # retry decision is logged, not just printed under --verbose.
     assert ("citation_retry", {"backend": "gemini", "warnings": ["[1] claims 100.0 ... doesn't appear"]}) in log_calls
 
-
-def test_run_agent_citation_retry_not_attempted_for_ollama_backend(monkeypatch):
-    # Companion sanity check: the same scripted scenario, but for the
-    # gated-out backend, must never call send_followup at all -- if it
-    # did, MAX_TOOL_ITERATIONS being hit would trip the same bug this
-    # test's sibling guards against, just for the wrong reason (a retry
-    # that should never have started). Post-hard-gate (Week 7), the
-    # returned answer is now a refusal (no retry chance for ollama at
-    # all), not the raw pass-through text.
-    monkeypatch.setattr("agent.MAX_TOOL_ITERATIONS", 2)
-
-    final_answer_turn = ModelTurn(tool_calls=[], text="Apple's revenue was $100 billion [1].")
-
-    def fake_start(question, system_prompt, tool_schemas):
-        return {}, final_answer_turn
-
-    def fake_send_followup(state, text):
-        raise AssertionError("send_followup should never be called for the ollama backend")
-
-    monkeypatch.setattr("agent.BACKENDS", {"ollama": (fake_start, None, fake_send_followup)})
-    monkeypatch.setattr(
-        "agent.collect_citation_warnings",
-        lambda answer, all_results: [
-            CitationWarning(
-                check="cited_claim_unsupported",
-                citation_index=1,
-                value=100.0,
-                unit="raw",
-                message="[1] claims 100.0 ... doesn't appear",
-                quote=None,
-            )
-        ],
-    )
-
-    answer, all_results, warnings, withheld_answer, _ = run_agent("What was Apple's revenue?", backend="ollama")
-
-    assert "Apple's revenue was $100 billion [1]." not in answer
-    assert "[1] claims 100.0 ... doesn't appear" in answer
-    assert warnings == ["[1] claims 100.0 ... doesn't appear"]
-
-
 # ---------------------------------------------------------------------------
 # citation hard-gate (Week 7): run_agent() must refuse, not just warn, when
 # citation verification still fails after any applicable retry
 # ---------------------------------------------------------------------------
-def test_run_agent_refuses_when_ollama_answer_has_unverified_citation(monkeypatch):
+def test_run_agent_refuses_when_prose_answer_has_unverified_citation(monkeypatch):
     final_answer_turn = ModelTurn(tool_calls=[], text="Apple's revenue was $100 billion [1].")
 
     def fake_start(question, system_prompt, tool_schemas):
         return {}, final_answer_turn
 
-    monkeypatch.setattr("agent.BACKENDS", {"ollama": (fake_start, None, None)})
+    monkeypatch.setattr("agent.BACKENDS", {"gemini": _repeating_backend(fake_start)})
     monkeypatch.setattr(
         "agent.collect_citation_warnings",
         lambda answer, all_results: [
@@ -2748,7 +2702,7 @@ def test_run_agent_refuses_when_ollama_answer_has_unverified_citation(monkeypatc
         ],
     )
 
-    answer, all_results, warnings, withheld_answer, _ = run_agent("What was Apple's revenue?", backend="ollama")
+    answer, all_results, warnings, withheld_answer, _ = run_agent("What was Apple's revenue?", backend="gemini")
 
     assert answer == _format_refusal_message(["[1] claims 100.0 ... doesn't appear"])
     assert warnings == ["[1] claims 100.0 ... doesn't appear"]
@@ -2769,10 +2723,10 @@ def test_run_agent_refuses_a_bare_uncited_claim_end_to_end(monkeypatch):
     def fake_start(question, system_prompt, tool_schemas):
         return {}, final_answer_turn
 
-    monkeypatch.setattr("agent.BACKENDS", {"ollama": (fake_start, None, None)})
+    monkeypatch.setattr("agent.BACKENDS", {"gemini": _repeating_backend(fake_start)})
 
     answer, all_results, warnings, withheld_answer, _ = run_agent(
-        "What is Microsoft's cash to assets ratio?", backend="ollama"
+        "What is Microsoft's cash to assets ratio?", backend="gemini"
     )
 
     assert "refusing this answer" in answer
@@ -2795,9 +2749,9 @@ def test_run_agent_returns_generic_timeout_message_unchanged_when_iterations_exh
     def fake_start(question, system_prompt, tool_schemas):
         return {}, keeps_calling_tools
 
-    monkeypatch.setattr("agent.BACKENDS", {"ollama": (fake_start, None, None)})
+    monkeypatch.setattr("agent.BACKENDS", {"gemini": _repeating_backend(fake_start)})
 
-    answer, all_results, warnings, withheld_answer, _ = run_agent("What was Apple's revenue?", backend="ollama")
+    answer, all_results, warnings, withheld_answer, _ = run_agent("What was Apple's revenue?", backend="gemini")
 
     assert answer == (
         "I wasn't able to finish answering within the allotted number of searches. "
@@ -2862,8 +2816,8 @@ def test_run_agent_final_turn_safety_net_rescues_a_clean_refusal(monkeypatch):
 
 
 def test_run_agent_final_turn_safety_net_fires_at_most_once(monkeypatch):
-    # An uncooperative model (realistic for Ollama's no-forcing case, or
-    # Gemini simply ignoring the nudge) keeps requesting tool calls even
+    # An uncooperative model (Gemini ignoring the nudge) keeps requesting
+    # tool calls even
     # on the forced final turn -- the safety net must not fire a second
     # time; the loop falls through to the unmodified generic timeout.
     monkeypatch.setattr("agent.MAX_TOOL_ITERATIONS", 2)
@@ -2895,35 +2849,6 @@ def test_run_agent_final_turn_safety_net_fires_at_most_once(monkeypatch):
     )
     assert warnings == []
     assert withheld_answer is None
-
-
-def test_run_agent_final_turn_safety_net_not_applied_on_ollama(monkeypatch):
-    # Gated to _FINAL_TURN_BACKENDS = {"gemini"} -- Ollama's behavior on
-    # budget exhaustion must be completely unchanged by this mechanism.
-    monkeypatch.setattr("agent.MAX_TOOL_ITERATIONS", 2)
-
-    keeps_calling_tools = ModelTurn(tool_calls=[{"name": "search_filings", "args": {}}], text=None)
-
-    def fake_start(question, system_prompt, tool_schemas):
-        return {}, keeps_calling_tools
-
-    def fake_send_tool_results(state, results, force_tool=None):
-        assert force_tool is None, "the final-turn safety net must never fire for Ollama"
-        return keeps_calling_tools
-
-    monkeypatch.setattr("agent.BACKENDS", {"ollama": (fake_start, fake_send_tool_results, None)})
-    monkeypatch.setattr(
-        "agent._dispatch_tool_call",
-        lambda call, question, all_results, searched_tickers, verbose: "search result",
-    )
-
-    answer, all_results, warnings, withheld_answer, _ = run_agent("What was the value?", backend="ollama")
-
-    assert answer == (
-        "I wasn't able to finish answering within the allotted number of searches. "
-        "Try asking a more specific or narrower question."
-    )
-
 
 def test_final_turn_submit_message_contains_no_deadline_pressure_language():
     # Regression guard against reintroducing the documented fabrication
@@ -2986,10 +2911,10 @@ def test_run_agent_returns_answer_unchanged_when_no_citation_warnings(monkeypatc
     def fake_start(question, system_prompt, tool_schemas):
         return {}, final_answer_turn
 
-    monkeypatch.setattr("agent.BACKENDS", {"ollama": (fake_start, None, None)})
+    monkeypatch.setattr("agent.BACKENDS", {"gemini": _repeating_backend(fake_start)})
     monkeypatch.setattr("agent.collect_citation_warnings", lambda answer, all_results: [])
 
-    answer, all_results, warnings, withheld_answer, _ = run_agent("What was Apple's revenue?", backend="ollama")
+    answer, all_results, warnings, withheld_answer, _ = run_agent("What was Apple's revenue?", backend="gemini")
 
     assert answer == "Apple's revenue was $100 billion [1]."
     assert warnings == []
@@ -3129,35 +3054,6 @@ def test_run_agent_submit_answer_bad_claims_retries_on_gemini_then_succeeds(monk
     assert sent_results == [[{"name": "submit_answer", "content": sent_results[0][0]["content"]}]]
     assert "[1] quote not found" in sent_results[0][0]["content"]
 
-
-def test_run_agent_submit_answer_bad_claims_refuses_immediately_on_ollama(monkeypatch):
-    # No retry for Ollama (_CITATION_RETRY_BACKENDS is gemini-only,
-    # unchanged) -- a bad structured submission refuses on the first try.
-    def fake_start(question, system_prompt, tool_schemas):
-        return {}, _submit_turn()
-
-    monkeypatch.setattr("agent.BACKENDS", {"ollama": (fake_start, None, None)})
-    monkeypatch.setattr(
-        "agent.verify_claims",
-        lambda claims, all_results, question, answer_text: [
-            CitationWarning(
-                check="quote_not_found",
-                citation_index=1,
-                value=100.0,
-                unit="raw",
-                message="[1] quote not found",
-                quote=None,
-            )
-        ],
-    )
-
-    answer, all_results, warnings, withheld_answer, _ = run_agent("What was the value?", backend="ollama")
-
-    assert "refusing this answer" in answer
-    assert warnings == ["[1] quote not found"]
-    assert withheld_answer == "The value was 100."
-
-
 def test_run_agent_mixed_submit_and_search_turn_requests_resubmission(monkeypatch):
     mixed_turn = ModelTurn(
         tool_calls=[
@@ -3246,28 +3142,6 @@ def test_run_agent_text_reply_on_gemini_forces_submit_answer(monkeypatch):
     assert len(forced_calls) == 1
     assert forced_calls[0][1] == "submit_answer"  # force_tool was actually passed
 
-
-def test_run_agent_text_reply_on_ollama_never_attempts_forcing(monkeypatch):
-    # Companion sanity check to the forcing test above: Ollama has no
-    # forcing mechanism at all (_FORCED_SUBMIT_BACKENDS is gemini-only) --
-    # send_followup must never be called; a text reply goes straight to
-    # the prose fallback.
-    text_turn = ModelTurn(tool_calls=[], text="Apple's revenue was $100 billion [1].")
-
-    def fake_start(question, system_prompt, tool_schemas):
-        return {}, text_turn
-
-    def fake_send_followup(state, text, force_tool=None):
-        raise AssertionError("send_followup should never be called for the ollama backend")
-
-    monkeypatch.setattr("agent.BACKENDS", {"ollama": (fake_start, None, fake_send_followup)})
-    monkeypatch.setattr("agent.collect_citation_warnings", lambda answer, all_results: [])
-
-    answer, all_results, warnings, withheld_answer, _ = run_agent("What was Apple's revenue?", backend="ollama")
-
-    assert answer == "Apple's revenue was $100 billion [1]."
-
-
 def test_run_agent_malformed_submit_answer_args_produces_no_structured_answer_warning(monkeypatch):
     # Defensive boundary check (same belt-and-suspenders every other tool
     # gets via validate_tool_args) -- not expected in practice (both
@@ -3281,9 +3155,9 @@ def test_run_agent_malformed_submit_answer_args_produces_no_structured_answer_wa
     def fake_start(question, system_prompt, tool_schemas):
         return {}, malformed_turn
 
-    monkeypatch.setattr("agent.BACKENDS", {"ollama": (fake_start, None, None)})
+    monkeypatch.setattr("agent.BACKENDS", {"gemini": _repeating_backend(fake_start)})
 
-    answer, all_results, warnings, withheld_answer, _ = run_agent("What was the value?", backend="ollama")
+    answer, all_results, warnings, withheld_answer, _ = run_agent("What was the value?", backend="gemini")
 
     assert len(warnings) == 1
     assert "schema" in warnings[0].lower()
@@ -3380,20 +3254,28 @@ def test_run_agent_invalid_submit_then_exhausted_budget_refuses_instead_of_crash
     assert withheld_answer == ""
 
 
+def test_run_agent_rejects_an_unknown_backend_by_name(monkeypatch):
+    # e.g. a leftover DEFAULT_BACKEND=ollama in a local .env after that
+    # backend was removed -- the error must say which backends exist,
+    # not surface as a bare KeyError.
+    monkeypatch.setattr("agent.DEFAULT_BACKEND", "ollama")
+
+    with pytest.raises(ValueError, match="'ollama'.*gemini"):
+        run_agent("What was Apple's revenue?")
+
+
 def test_run_agent_backend_default_follows_config(monkeypatch):
-    # 2026-09-10: run_agent()'s backend default used to be a literal
-    # "ollama" bound at function-definition time, ignoring
-    # config.DEFAULT_BACKEND entirely. A caller that omits `backend`
-    # must resolve to whatever DEFAULT_BACKEND currently is -- a
-    # monkeypatched BACKENDS dict keyed only on a made-up backend name
-    # proves it: the old hardcoded "ollama" default would KeyError here.
+    # A caller that omits `backend` must resolve to whatever
+    # config.DEFAULT_BACKEND currently is, not a value bound at
+    # function-definition time -- a monkeypatched BACKENDS dict keyed
+    # only on a made-up backend name proves it.
     final_answer_turn = ModelTurn(tool_calls=[], text="Apple's revenue was $100 billion [1].")
 
     def fake_start(question, system_prompt, tool_schemas):
         return {}, final_answer_turn
 
     monkeypatch.setattr("agent.DEFAULT_BACKEND", "totally-custom-backend")
-    monkeypatch.setattr("agent.BACKENDS", {"totally-custom-backend": (fake_start, None, None)})
+    monkeypatch.setattr("agent.BACKENDS", {"totally-custom-backend": _repeating_backend(fake_start)})
     monkeypatch.setattr("agent.collect_citation_warnings", lambda answer, all_results: [])
 
     answer, all_results, warnings, withheld_answer, _ = run_agent("What was Apple's revenue?")
@@ -3412,7 +3294,7 @@ def test_run_agent_does_not_send_withheld_answer_to_the_span(monkeypatch):
     def fake_start(question, system_prompt, tool_schemas):
         return {}, final_answer_turn
 
-    monkeypatch.setattr("agent.BACKENDS", {"ollama": (fake_start, None, None)})
+    monkeypatch.setattr("agent.BACKENDS", {"gemini": _repeating_backend(fake_start)})
     monkeypatch.setattr(
         "agent.collect_citation_warnings",
         lambda answer, all_results: [
@@ -3439,7 +3321,7 @@ def test_run_agent_does_not_send_withheld_answer_to_the_span(monkeypatch):
 
     monkeypatch.setattr("agent.traced_span", fake_traced_span)
 
-    answer, all_results, warnings, withheld_answer, _ = run_agent("What was Apple's revenue?", backend="ollama")
+    answer, all_results, warnings, withheld_answer, _ = run_agent("What was Apple's revenue?", backend="gemini")
 
     assert withheld_answer == "Apple's revenue was $100 billion [1]."
     assert len(captured_outputs) == 1
@@ -3449,7 +3331,7 @@ def test_run_agent_does_not_send_withheld_answer_to_the_span(monkeypatch):
 
 
 def test_finalize_answer_passes_through_when_no_warnings():
-    result = _finalize_answer("the answer", [], [], backend="ollama", retried=False)
+    result = _finalize_answer("the answer", [], [], backend="gemini", retried=False)
     assert result == AgentResult("the answer", [], [], None, [])
 
 
@@ -3464,7 +3346,7 @@ def test_finalize_answer_refuses_when_warnings_present():
             quote=None,
         )
     ]
-    result = _finalize_answer("the answer", warnings, cast(list[dict], ["result"]), backend="ollama", retried=False)
+    result = _finalize_answer("the answer", warnings, cast(list[dict], ["result"]), backend="gemini", retried=False)
     assert result.answer == _format_refusal_message(["[1] claims 100.0 ... doesn't appear"])
     assert result.results == ["result"]
     assert result.citation_warnings == ["[1] claims 100.0 ... doesn't appear"]
@@ -3512,7 +3394,7 @@ def test_finalize_answer_withheld_answer_is_none_when_passing():
 # refused it.
 # ---------------------------------------------------------------------------
 def test_finalize_answer_citation_warning_details_empty_when_passing():
-    result = _finalize_answer("the answer", [], [], backend="ollama", retried=False)
+    result = _finalize_answer("the answer", [], [], backend="gemini", retried=False)
     assert result.citation_warning_details == []
 
 

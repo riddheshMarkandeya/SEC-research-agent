@@ -27,7 +27,7 @@ gates changes, tools exposed via an MCP server, and full tracing.
 **Stack** (all free): SEC EDGAR APIs (`data.sec.gov`,
 `www.sec.gov/Archives`) for data; `requests`+`beautifulsoup4`+`lxml` for
 parsing; `sentence-transformers` (local) for embeddings; Chroma as the
-vector store; Ollama (local) or Gemini free tier as the LLM; a
+vector store; Gemini free tier as the LLM; a
 hand-rolled tool-calling loop as the agent; the official Python MCP SDK;
 Langfuse (self-hosted or cloud free tier) for observability.
 
@@ -49,6 +49,7 @@ prepend them (verbatim, still reverse-chronological) to the top of
 
 ## Recent
 
+- 2026-09-29 [plan] Remove Ollama and the prose-citation fallback (map prerequisite 3): commit 1 drops the Ollama backend and the three backend-gating sets, keeping the one-entry BACKENDS seam; commit 2 replaces the prose fallback with a refusal when the model won't submit even after forcing (1 real prose answer in 1,303 traced Gemini runs) → `docs/plans/2026-09-29-remove-ollama-and-prose-fallback.md`
 - 2026-09-28 [review] Gate replay tool: 4 rounds (Substantial; code-review high, arch opus, security, simplify), 24 findings in round 1 plus 4 in round 2; headline fix: a run can end on the prose path after a submit, so the replay picks the submit matching the final answer; cwd-relative `xbrl_cache` deferred → `docs/reviews/2026-09-28-gate-replay-tool.md`
 - 2026-09-28 [plan] Gate replay tool (`analyze_gate_replay.py`, map prerequisite 2): offline re-gating of every traced run's final submit via the agent's own dispatch; verdicts vs logged or a saved baseline (`--compare`, exit 1 on any change incl. tool-result hash drift); extracts `submission_warnings`/`run_search`, fixes budget-exhausted KeyError → `docs/plans/2026-09-28-gate-replay-tool.md`
 - 2026-09-28 [plan] Agent-improvement map (merged): supersedes the gate-refusal map and structural review for ticket state; prerequisites first (NUMBER_PATTERN fix → replay tool → Ollama removal → agent.py split → eval summary mode), then retry slot, gate rules, uniform submit loop, not-available answer, period-scoped retrieval, thinking A/B → `docs/plans/2026-09-28-agent-improvement-map.md`

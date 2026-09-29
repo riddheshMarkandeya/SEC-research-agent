@@ -1713,59 +1713,29 @@ def verify_claims(
     return warnings
 
 
-# Backends allowed to get the citation-verification retry (see
-# _should_retry_for_citations below). Gated to Gemini only -- this exact
-# mechanism was already tried against Ollama once and reverted after
-# qwen2.5:7b-instruct proved unable to reliably act on the corrective
-# feedback (giving up on an already-correct answer, or fabricating an
-# estimate under retry pressure); a single clean Gemini re-run can't
-# outweigh that documented Ollama history against its own known
-# run-to-run noise, so the retry stays scoped to the backend it was
-# actually re-verified for. See
-# docs/decisions/2026-08-18-citation-retry-loop-v1-tried-reverted.md and
-# docs/decisions/2026-08-25-citation-retry-loop-gemini-gated.md.
-_CITATION_RETRY_BACKENDS = {"gemini"}
-
-
-def _should_retry_for_citations(citation_warnings: list[str], already_retried: bool, backend: str) -> bool:
+def _should_retry_for_citations(citation_warnings: list[str], already_retried: bool) -> bool:
     """Whether run_agent() should give the model one corrective retry
     turn for its own unverified citation(s). True only when there's
     something to correct, the single retry (see
     _format_citation_retry_message below) hasn't already been spent this
     conversation -- capped at one retry, sharing run_agent()'s existing
-    MAX_TOOL_ITERATIONS budget rather than a separate one -- and
-    `backend` is one this retry is actually enabled for (see
-    _CITATION_RETRY_BACKENDS above)."""
-    return bool(citation_warnings) and not already_retried and backend in _CITATION_RETRY_BACKENDS
+    MAX_TOOL_ITERATIONS budget rather than a separate one."""
+    return bool(citation_warnings) and not already_retried
 
 
-# Backends allowed the final-turn safety net below (BACKLOG.md's
-# MAX_TOOL_ITERATIONS zero-slack bug -- see docs/decisions/
-# 2026-09-16-final-turn-safety-net.md). Gemini only, matching
-# _CITATION_RETRY_BACKENDS/_FORCED_SUBMIT_BACKENDS's own precedent: this
-# is a directive nudge injected right as the tool-call budget runs out,
-# structurally the same kind of corrective-pressure mechanism that got
-# qwen2.5:7b-instruct gated out elsewhere in this file for being
-# unreliable under it. Kept as its own set rather than reusing either
-# existing one, same reasoning _FORCED_SUBMIT_BACKENDS's own comment
-# already gives for not collapsing into _CITATION_RETRY_BACKENDS despite
-# identical current membership.
-_FINAL_TURN_BACKENDS = {"gemini"}
-
-
-def _should_force_final_submit(already_attempted: bool, calls_made: int, backend: str) -> bool:
+def _should_force_final_submit(already_attempted: bool, calls_made: int) -> bool:
     """Whether run_agent() should spend its one reserved, submit-only
     final round trip: the dispatch budget is exhausted but the model is
     still actively requesting tool calls rather than having already
     given up (that case is handled separately, by the forced-submit-on-
     prose mechanism below). Capped at one shot per conversation via
     already_attempted, the same single-shot pattern as
-    forced_submit_attempted/_should_retry_for_citations. Gated to
-    _FINAL_TURN_BACKENDS. NOT a MAX_TOOL_ITERATIONS increase -- the
+    forced_submit_attempted/_should_retry_for_citations. NOT a
+    MAX_TOOL_ITERATIONS increase -- the
     resulting turn answers every pending tool call with a synthetic
     "not run" result and force_tool="submit_answer", never a real
     dispatch call."""
-    return not already_attempted and calls_made >= MAX_TOOL_ITERATIONS and backend in _FINAL_TURN_BACKENDS
+    return not already_attempted and calls_made >= MAX_TOOL_ITERATIONS
 
 
 def _bulleted(warnings: list[str]) -> str:
@@ -1824,22 +1794,6 @@ def _format_refusal_message(warnings: list[str]) -> str:
     only ever surfaced as warnings alongside the (still-returned)
     answer; this is what actually withholds it."""
     return msg.REFUSAL_TEMPLATE.format(warnings_block=_bulleted(warnings))
-
-
-# Backends allowed to FORCE a submit_answer call when the model replies
-# with plain text instead of any tool call. A separate set
-# from _CITATION_RETRY_BACKENDS above -- currently identical membership,
-# but the two represent different policies (which backends get a
-# citation retry vs. which backends get forced tool choice) that could
-# diverge later, and conflating them would make a future change to one
-# silently change the other. Gemini only: confirmed via design research
-# that `types.FunctionCallingConfig(mode="ANY", ...)` is a genuine hard
-# constraint on Gemini, while Ollama has no tool_choice/tool_config
-# equivalent at all (neither its native /api/chat nor its OpenAI-
-# compatible endpoint support it -- Ollama issues #8421, #11171) --
-# `force_tool` is still accepted by Ollama's *_send* functions for
-# interface uniformity, it just has no effect there.
-_FORCED_SUBMIT_BACKENDS = {"gemini"}
 
 
 def _partition_submit_call(tool_calls: list[dict]) -> tuple[dict | None, list[dict]]:
@@ -1979,11 +1933,11 @@ def _dispatch_tool_call(
     ModelTurn.tool_calls shape from llm_backends.py) against the right
     tool, mutating all_results/searched_tickers in place, and returns
     the content string to send back to the model. Backend-agnostic by
-    construction: it only ever sees the normalized shape, never
-    Ollama's or Gemini's raw wire format, so the boundary validation
-    inside call_get_financial_fact/call_compare_financial_metric
-    (e.g. rejecting an invented `segment` argument) now protects both
-    backends automatically instead of needing a second copy."""
+    construction: it only ever sees the normalized shape, never a
+    backend's raw wire format, so the boundary validation inside
+    call_get_financial_fact/call_compare_financial_metric (e.g.
+    rejecting an invented `segment` argument) protects every backend
+    without a second copy."""
     name, args = call["name"], call["args"]
 
     if name == "get_financial_fact":
@@ -2127,9 +2081,7 @@ def run_agent(question: str, backend: str | None = None, verbose: bool = False) 
     parameter default: a parameter default is evaluated once at
     module-import time, so a literal default would freeze in whatever
     DEFAULT_BACKEND happened to be when agent.py was first imported and
-    silently ignore any later change to it -- the exact bug the previous
-    hardcoded `= "ollama"` default had, just with an extra layer of
-    indirection that made it easy to miss.
+    silently ignore any later change to it.
 
     `citation_checks` in the span output reads the per-check counts
     straight from `result.citation_warning_details` (AgentResult's 5th
@@ -2254,7 +2206,7 @@ def _handle_submit_turn(args: dict, ctx: _AgentContext, loop_state: _AgentLoopSt
         messages = [w.message for w in warnings]
         span.update(output={"warning_count": len(warnings), "checks": [w.check for w in warnings]})
         if (
-            _should_retry_for_citations(messages, loop_state.retried_for_citations, ctx.backend)
+            _should_retry_for_citations(messages, loop_state.retried_for_citations)
             and loop_state.calls_made < MAX_TOOL_ITERATIONS
         ):
             loop_state.retried_for_citations = True
@@ -2278,25 +2230,19 @@ def _handle_no_tool_calls_turn(turn: Any, ctx: _AgentContext, loop_state: _Agent
     internally (the real code's own nested `if`, unchanged). Pure
     relocation, no logic change. Exactly one of _LoopStep's two fields
     is ever set."""
-    if (
-        ctx.backend in _FORCED_SUBMIT_BACKENDS
-        and not loop_state.forced_submit_attempted
-        and loop_state.calls_made < MAX_TOOL_ITERATIONS
-    ):
+    if not loop_state.forced_submit_attempted and loop_state.calls_made < MAX_TOOL_ITERATIONS:
         loop_state.forced_submit_attempted = True
         if ctx.verbose:
             print("  [forcing submit_answer] model replied in text instead of calling a tool")
         turn = ctx.send_followup(ctx.conv_state, msg.FORCE_SUBMIT_MESSAGE, force_tool="submit_answer")
         return _LoopStep(next_turn=turn)
-    # Prose fallback -- the original, completely unchanged pipeline.
-    # The only path for Ollama (never forced); for Gemini, only reached
-    # if forcing itself didn't produce a clean submission (documented
-    # as occasionally possible).
+    # Prose fallback -- only reached if forcing itself didn't produce a
+    # clean submission (documented as occasionally possible).
     answer = turn.text or ""
     warnings = collect_citation_warnings(answer, ctx.all_results)
     messages = [w.message for w in warnings]
     if (
-        _should_retry_for_citations(messages, loop_state.retried_for_citations, ctx.backend)
+        _should_retry_for_citations(messages, loop_state.retried_for_citations)
         and loop_state.calls_made < MAX_TOOL_ITERATIONS
     ):
         loop_state.retried_for_citations = True
@@ -2421,23 +2367,11 @@ def _run_agent_impl(question: str, backend: str, verbose: bool = False) -> Agent
       verify_claims() -- fuzzy quote grounding, value attribution, and a
       coverage cross-check -- instead of regex-parsed out of prose.
       Offered as a 4th tool alongside the other 3 from turn 1, under AUTO
-      mode, for BOTH backends (not gated by backend): Gemini's own
-      forcing mode can itself occasionally still return text, and a
-      forced follow-up can fail or exhaust the budget, so the prose
-      fallback below can never be fully deleted regardless of backend --
-      once that's true, gating Ollama out of the structured path the
-      model might spontaneously use anyway buys nothing. Confirmed live
-      (tests/manual/verify_submit_answer.py) that BOTH backends call it
-      correctly and spontaneously in practice.
-    - Plain text, the fallback: verified by the original,
-      completely-unchanged prose pipeline (collect_citation_warnings()).
-      For Ollama this is the ONLY path, since it has no forcing
-      mechanism at all (confirmed: neither its native nor OpenAI-
-      compatible API supports tool_choice). For Gemini, a text reply
-      instead triggers ONE forced ANY+submit_answer-only follow-up turn
-      first (_FORCED_SUBMIT_BACKENDS) before ever falling back to prose
-      -- so Gemini only reaches the prose path if forcing itself didn't
-      produce a clean submission.
+      mode.
+    - Plain text, the fallback: a text reply first triggers ONE forced
+      ANY+submit_answer-only follow-up turn; only if forcing itself
+      doesn't produce a clean submission is the text verified by the
+      prose pipeline (collect_citation_warnings()).
 
     Known simplification: no deduplication if two tool calls happen to
     surface the same chunk (e.g. two related queries against the same
@@ -2447,15 +2381,14 @@ def _run_agent_impl(question: str, backend: str, verbose: bool = False) -> Agent
     One self-correction retry on an unverified citation/claim, shared
     across whichever path produced the answer (retried_for_citations
     caps the whole conversation at one retry total, not one per path).
-    Gated to Gemini only -- see _CITATION_RETRY_BACKENDS's own comment
-    and docs/decisions/2026-08-18-citation-retry-loop-v1-tried-reverted.md
-    / docs/decisions/2026-08-25-citation-retry-loop-gemini-gated.md for
-    why. The structured-claims retry reuses this same gate and budget,
+    The structured-claims retry reuses this same gate and budget,
     just delivers its feedback as a submit_answer tool RESULT instead of
     a plain follow-up turn -- keeps the chat history well-formed (a
     dangling function call followed by a bare user turn has historically
     400'd on Gemini) and needs no new plumbing, since it's exactly what
     send_tool_results already does."""
+    if backend not in BACKENDS:
+        raise ValueError(f"Unknown backend {backend!r}; valid backends: {', '.join(BACKENDS)}")
     start, send_tool_results, send_followup = BACKENDS[backend]
     conv_state, turn = start(question, SYSTEM_PROMPT, list(AGENT_TOOL_SCHEMAS))
     ctx = _AgentContext(
@@ -2495,7 +2428,7 @@ def _run_agent_impl(question: str, backend: str, verbose: bool = False) -> Agent
             continue
 
         if loop_state.calls_made >= MAX_TOOL_ITERATIONS:
-            if not _should_force_final_submit(loop_state.final_turn_attempted, loop_state.calls_made, backend):
+            if not _should_force_final_submit(loop_state.final_turn_attempted, loop_state.calls_made):
                 break
             turn = _force_final_submit_turn(other, ctx, loop_state)
             loop_state.calls_made += 1

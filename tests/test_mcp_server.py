@@ -5,7 +5,7 @@ citations (Week 6). The actual MCP protocol/HTTP wiring (Server,
 streamable_http_app) is live-only -- exercised by a manual verification
 script against a real running server (tests/manual/verify_mcp_server.py),
 not mocked into unit tests here (same carve-out as hybrid_search/
-Ollama/Gemini elsewhere in this project). main()'s own shutdown-flush
+Gemini elsewhere in this project). main()'s own shutdown-flush
 control flow, and _handle_list_tools/_handle_call_tool's request
 dispatch (below), are the exceptions -- all deterministic once their
 live dependencies (uvicorn.run/build_app/flush, or the already-tested

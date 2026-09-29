@@ -1,7 +1,7 @@
 """
 Unit tests for eval_harness.py. Covers the deterministic grading logic
 (grade_numeric, grade_comparison, load_questions) plus grade_judged's
-response-PARSING logic with a mocked Ollama call — the call itself isn't
+response-PARSING logic with a mocked LLM call — the call itself isn't
 made, only the "split PASS/FAIL + reason out of the model's reply" logic
 is exercised. run_eval()'s end-to-end behavior (live retrieval + live
 LLM calls) is exercised by manual runs (python eval_harness.py) instead,
@@ -166,7 +166,7 @@ def test_load_questions_parses_jsonl_and_skips_blank_lines(tmp_path):
 
 # ---------------------------------------------------------------------------
 # _select_questions -- --ids / skip-flag filtering, kept separate from
-# run_eval()'s live agent loop so it's testable without network/Ollama calls
+# run_eval()'s live agent loop so it's testable without network/LLM calls
 # ---------------------------------------------------------------------------
 def _q(id_, skip=None):
     q = {"id": id_, "question": f"{id_}?"}
@@ -221,8 +221,7 @@ def test_select_questions_with_unknown_id_raises():
 # ---------------------------------------------------------------------------
 # _grade — dispatch + hard-gate short-circuit: a refusal's own warning
 # text repeats the claimed number, which grade_numeric's plain text scan
-# could otherwise match as a false PASS. See
-# docs/decisions/2026-08-26-week7-citation-hard-gate-ollama-retry.md.
+# could otherwise match as a false PASS.
 # ---------------------------------------------------------------------------
 def test_grade_fails_numeric_question_when_agent_refused_even_if_value_is_in_refusal_text():
     # The refusal text contains the expected value as part of explaining
@@ -295,9 +294,7 @@ def test_grade_by_type_dispatches_comparison_questions_to_grade_comparison():
 
 # ---------------------------------------------------------------------------
 # grade_judged — mocked llm_backends.complete() (routes through this
-# rather than calling Ollama directly, so --judge-backend can be
-# honored -- see
-# docs/decisions/2026-09-10-citation-gate-measurement-instrumentation.md).
+# so --judge-backend can be honored).
 # complete() itself still reuses each backend's existing retry/backoff/
 # log_event machinery, rather than a raw requests.post that would bypass
 # it entirely (see docs/decisions/2026-09-06-full-codebase-review.md,
@@ -378,14 +375,14 @@ def test_grade_judged_routes_to_the_requested_backend(monkeypatch):
     assert calls == ["gemini"]
 
 
-def test_grade_judged_defaults_to_ollama_backend(monkeypatch):
+def test_grade_judged_defaults_to_gemini_backend(monkeypatch):
     calls = []
     monkeypatch.setattr(
         "eval_harness.complete",
         lambda backend, system_prompt, user_prompt, temperature=0.0: calls.append(backend) or "PASS\nfine.",
     )
     grade_judged("Q?", "some answer", "some criteria")
-    assert calls == ["ollama"]
+    assert calls == ["gemini"]
 
 
 # ---------------------------------------------------------------------------
@@ -403,47 +400,20 @@ def test_save_report_writes_backend_and_results(monkeypatch, tmp_path):
     assert saved["results"] == results
 
 
-def test_save_report_records_the_actual_answering_model_per_backend(monkeypatch, tmp_path):
-    # The report must record which specific model actually answered, not
-    # just the generic "ollama"/"gemini" backend label --
-    # OLLAMA_MODEL_NAME/GEMINI_MODEL_NAME are both configurable via .env
-    # and can change over time, so an old report would otherwise become
-    # ambiguous about what really produced it.
+def test_save_report_records_the_actual_answering_and_judging_model(monkeypatch, tmp_path):
+    # The report must record which specific model actually answered and
+    # judged, not just the generic "gemini" backend label --
+    # GEMINI_MODEL_NAME is configurable via .env and can change over
+    # time, so an old report would otherwise become ambiguous about what
+    # really produced it.
     monkeypatch.setattr(eval_harness, "RESULTS_DIR", tmp_path)
-    monkeypatch.setattr(eval_harness, "OLLAMA_MODEL_NAME", "fake-ollama-model")
     monkeypatch.setattr(eval_harness, "GEMINI_MODEL_NAME", "fake-gemini-model")
 
-    with save_report([], backend="ollama").open(encoding="utf-8") as f:
-        ollama_report = json.load(f)
     with save_report([], backend="gemini").open(encoding="utf-8") as f:
-        gemini_report = json.load(f)
-
-    assert ollama_report["answer_model"] == "fake-ollama-model"
-    assert gemini_report["answer_model"] == "fake-gemini-model"
-
-
-def test_save_report_records_the_judge_backends_model(monkeypatch, tmp_path):
-    # judge_model must be whichever backend actually judged, not
-    # hardcoded to OLLAMA_MODEL_NAME -- an intentional behavior change,
-    # not a regression. See
-    # docs/decisions/2026-09-10-citation-gate-measurement-instrumentation.md.
-    monkeypatch.setattr(eval_harness, "RESULTS_DIR", tmp_path)
-    monkeypatch.setattr(eval_harness, "OLLAMA_MODEL_NAME", "fake-ollama-model")
-    monkeypatch.setattr(eval_harness, "GEMINI_MODEL_NAME", "fake-gemini-model")
-
-    with save_report([], backend="gemini", judge_backend="ollama").open(encoding="utf-8") as f:
         report = json.load(f)
+
     assert report["answer_model"] == "fake-gemini-model"
-    assert report["judge_model"] == "fake-ollama-model"
-
-
-def test_save_report_judge_backend_defaults_to_answer_backend(monkeypatch, tmp_path):
-    monkeypatch.setattr(eval_harness, "RESULTS_DIR", tmp_path)
-    monkeypatch.setattr(eval_harness, "OLLAMA_MODEL_NAME", "fake-ollama-model")
-
-    with save_report([], backend="ollama").open(encoding="utf-8") as f:
-        report = json.load(f)
-    assert report["judge_model"] == "fake-ollama-model"
+    assert report["judge_model"] == "fake-gemini-model"
 
 
 # ---------------------------------------------------------------------------
@@ -455,7 +425,7 @@ def test_save_report_judge_backend_defaults_to_answer_backend(monkeypatch, tmp_p
 # docs/decisions/2026-09-06-full-codebase-review.md.
 # ---------------------------------------------------------------------------
 def test_run_eval_isolates_one_questions_exception_from_the_rest(monkeypatch, tmp_path):
-    # One question raising (e.g. run_agent() exhausting Ollama's
+    # One question raising (e.g. run_agent() exhausting Gemini's
     # retries) must not kill the whole batch -- no partial report, no
     # flush -- discarding every already-graded result before it.
     questions_path = tmp_path / "questions.jsonl"
@@ -473,7 +443,7 @@ def test_run_eval_isolates_one_questions_exception_from_the_rest(monkeypatch, tm
 
     def fake_run_agent(question, backend):
         if question == "Q2?":
-            raise RuntimeError("Ollama exhausted retries")
+            raise RuntimeError("Gemini exhausted retries")
         return AgentResult(f"The answer is {question[1]}.", [], [], None, [])
 
     monkeypatch.setattr(eval_harness, "run_agent", fake_run_agent)
@@ -487,7 +457,7 @@ def test_run_eval_isolates_one_questions_exception_from_the_rest(monkeypatch, tm
     assert results[2]["passed"] is True
     assert results[1]["passed"] is False
     assert "RuntimeError" in results[1]["detail"]
-    assert "Ollama exhausted retries" in results[1]["detail"]
+    assert "Gemini exhausted retries" in results[1]["detail"]
     # Still flushes and returns a full (partial-failure) report rather
     # than losing everything to the one exception.
     assert flush_calls == [1]
@@ -604,7 +574,7 @@ def test_run_eval_gate_fields_are_empty_when_the_gate_never_fired(monkeypatch, t
 
 
 def test_run_eval_backend_default_follows_config(monkeypatch, tmp_path):
-    # A literal "ollama" default would be bound at function-definition
+    # A literal backend default would be bound at function-definition
     # time, ignoring config.DEFAULT_BACKEND entirely -- same gotcha as
     # run_agent()'s matching test in tests/test_agent.py.
     questions_path = _write_one_numeric_question(tmp_path)

@@ -22,16 +22,9 @@ SEC_USER_AGENT_NAME = os.getenv("SEC_USER_AGENT_NAME", "Rid")
 SEC_USER_AGENT_EMAIL = os.getenv("SEC_USER_AGENT_EMAIL", "riddhesh2307@gmail.com")
 SEC_USER_AGENT = f"{SEC_USER_AGENT_NAME} {SEC_USER_AGENT_EMAIL}"
 
-# Local Ollama server (agent.py, eval_harness.py).
-OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434/api/chat")
-OLLAMA_MODEL_NAME = os.getenv("OLLAMA_MODEL_NAME", "qwen2.5:7b-instruct")
-
 # Which LLM backend agent.py/eval_harness.py use when --backend isn't
-# passed explicitly (llm_backends.py's BACKENDS dict has the full list).
-# Gemini since 2026-09-10 -- Ollama remains fully supported (the only
-# backend needing no API key) but demoted from default; pass
-# --backend ollama explicitly to use it. See
-# docs/decisions/2026-09-10-citation-gate-measurement-instrumentation.md.
+# passed explicitly (llm_backends.py's BACKENDS dict has the full list;
+# today that's only "gemini").
 DEFAULT_BACKEND = os.getenv("DEFAULT_BACKEND", "gemini")
 
 # Gemini (free tier, api key from aistudio.google.com) -- llm_backends.py.

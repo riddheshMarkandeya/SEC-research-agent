@@ -31,7 +31,7 @@ own history, not a speculative "this file feels important" argument:
   fix, where a wire-protocol-shape mistake here would have produced a
   live Gemini 400 on the exact questions the fix targeted.
 - **`llm_backends.py`** — the backend send functions (`_gemini_send`,
-  `_gemini_send_followup`, `_ollama_send`, `_ollama_send_followup`).
+  `_gemini_send_followup`).
   Same incident — this is exactly where `send_followup` vs.
   `send_tool_results` had to be gotten right.
 - **`xbrl_facts.py`** — `_pick_entry`, `get_metric`,

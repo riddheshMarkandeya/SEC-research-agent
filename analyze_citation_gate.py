@@ -34,9 +34,8 @@ checks (agent.CitationWarning.check: "cited_claim_unsupported" vs
 "uncited_claim") produced the warning, specifically so this asymmetry
 stays visible instead of collapsing into one undifferentiated rate.
 
-Caveat that matters for reading these numbers: once DEFAULT_BACKEND is
-gemini, _CITATION_RETRY_BACKENDS gates the one-shot corrective retry ON
-for every run measured here -- so a report's numbers reflect the gate's
+Caveat that matters for reading these numbers: the one-shot corrective
+retry is on for every Gemini run measured here -- so a report's numbers reflect the gate's
 behavior AFTER that self-correction, not on the model's first-pass
 answer. The first-pass picture (pre-retry warnings) is only in
 trace_logs/traces.jsonl's "citation_retry" event, keyed by run_id, which

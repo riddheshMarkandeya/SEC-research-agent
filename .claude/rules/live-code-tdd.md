@@ -18,7 +18,7 @@ concretely, in this repo:
 - **Chroma + embedding indexing/retrieval** (`index_chunks.py`,
   `retrieval.py`, and `analyze_gate_replay.py`'s live search binding,
   which replays traced runs against the real index and XBRL cache)
-- **LLM round-trips through either backend** (`agent.py`'s tool-calling
+- **LLM round-trips through the Gemini backend** (`agent.py`'s tool-calling
   loop, `llm_backends.py`)
 
 For each of these, write the manual repro/verification script under

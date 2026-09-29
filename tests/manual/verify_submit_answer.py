@@ -3,24 +3,20 @@ Live verification of the submit_answer tool + forced-tool-choice mechanism
 (2026-09-10), run BEFORE the agent loop is restructured to depend on it --
 see docs/plans/2026-09-10-structured-claims-citation-verification.md.
 Exactly the CLAUDE.md live-code carve-out: whether Gemini's forcing
-mechanism and Ollama's real-world tool-calling behavior work as designed
-can only be answered by an actual API call, not a mock.
+mechanism works as designed can only be answered by an actual API call,
+not a mock.
 
 Drives llm_backends.py's low-level start/send functions directly (not
 agent.run_agent(), which doesn't know about submit_answer until the loop
-rewrite lands) to answer three open questions empirically:
+rewrite lands) to answer two open questions empirically:
   1. Does Gemini spontaneously choose submit_answer under AUTO mode,
      simply offered as one of 4 tools, once it's done searching?
   2. If not, does forcing (ANY + allowed_function_names=["submit_answer"])
      actually produce a submit_answer call on a real live turn?
-  3. What does Ollama (qwen2.5:7b-instruct, no forcing possible at all --
-     confirmed during design research) actually do when offered the same
-     4 tools -- call submit_answer correctly, emit tool-call-shaped JSON
-     as plain text, or just answer in ordinary prose?
 
 Informational, not a hard assert-and-exit-1 gate (same spirit as
-verify_retrieval.py/verify_period_labels.py) -- "which of three behaviors
-did the model exhibit" is exactly the kind of thing this script exists to
+verify_retrieval.py/verify_period_labels.py) -- "which behavior did the
+model exhibit" is exactly the kind of thing this script exists to
 observe and report, not something to fail loudly over.
 
 Usage (from the repo root):
@@ -160,37 +156,13 @@ def check_gemini_forcing_directly():
         print("  [PROBLEM] forcing did not produce a submit_answer call -- see design fork in the plan doc")
 
 
-def check_ollama():
-    print("\n[3] Ollama: real-world behavior when offered submit_answer (no forcing possible)")
-    outcome, payload, _state, _send_followup = _run_auto_loop("ollama")
-
-    if outcome == "submit_answer":
-        print("  Ollama called submit_answer correctly.")
-        print(f"  args: {json.dumps(payload, indent=2)[:800]}")
-    elif outcome == "text":
-        # Distinguish "plain prose" from "tool-call-shaped JSON leaked as
-        # text" (the documented qwen2.5 failure mode, ollama#7051) --
-        # informational only, both fall back to the prose checker either way.
-        looks_like_tool_json = payload is not None and '"name"' in payload and '"arguments"' in payload
-        if looks_like_tool_json:
-            print("  Ollama emitted tool-call-shaped JSON as plain text (documented qwen2.5 failure mode).")
-        else:
-            print("  Ollama answered in ordinary prose, ignoring submit_answer.")
-        print(f"  text: {payload!r}")
-        print("  Either way, this falls back to the existing prose checker -- expected, not a bug.")
-    else:
-        print(f"  [INFO] no final answer within {MAX_TURNS} turns.")
-
-
 def main():
     if not GEMINI_API_KEY:
-        print("GEMINI_API_KEY not set -- skipping Gemini checks (see .env.example).")
-    else:
-        check_gemini()
-        check_gemini_forcing_directly()
-
-    check_ollama()
-    print("\nDone. Record what each backend actually did in PROJECT_CONTEXT.md before proceeding with the loop rewrite.")
+        print("GEMINI_API_KEY not set -- nothing to check (see .env.example).")
+        return
+    check_gemini()
+    check_gemini_forcing_directly()
+    print("\nDone.")
 
 
 if __name__ == "__main__":

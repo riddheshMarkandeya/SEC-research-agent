@@ -417,6 +417,16 @@
      "question": "What were sales?",
      "system_prompt": "<agent.system_prompt>",
      "tool_schemas": "<agent.tool_schemas>"
+    },
+    {
+     "call": "send_tool_results",
+     "force_tool": "submit_answer",
+     "results": [
+      {
+       "content": "No more tool calls are available for this question -- nothing else will be dispatched, so this request was not run. Call submit_answer now using only what you've already retrieved above.\n\nBefore you do, check rule 6: did you actually get data for every company, period, or quantity this question asks about? If something is missing or came back unavailable, do not present a partial result as if it fully answers the question -- name what's missing per rule 7, or refuse per rule 2 if the missing piece could change the answer (e.g. you can't rank or compare without it). An honest refusal, or an answer that explicitly says what you could and couldn't verify, is a completely acceptable outcome here -- do not guess, estimate, or invent a value for anything you didn't actually retrieve.",
+       "name": "calculate"
+      }
+     ]
     }
    ],
    "warnings": [],

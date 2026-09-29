@@ -413,12 +413,12 @@ def test_log_event_writes_category_and_fields_with_no_run_id_when_standalone(mon
     log_path = tmp_path / "traces.jsonl"
     monkeypatch.setattr(tracing, "TRACE_LOG_PATH", str(log_path))
 
-    tracing.log_event("llm_retry", backend="ollama", attempt=1)
+    tracing.log_event("llm_retry", backend="gemini", attempt=1)
 
     lines = _read_log_lines(log_path)
     assert len(lines) == 1
     assert lines[0]["category"] == "llm_retry"
-    assert lines[0]["backend"] == "ollama"
+    assert lines[0]["backend"] == "gemini"
     assert lines[0]["attempt"] == 1
     assert lines[0]["run_id"] is None
 

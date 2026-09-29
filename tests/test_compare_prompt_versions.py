@@ -360,7 +360,7 @@ def test_main_explicit_mode_needs_both_sides(tmp_path, capsys):
 def test_warns_when_the_judge_model_differs(tmp_path):
     base = cpv.load([_write(tmp_path, "b0", [_row("q", True)], _provenance("fpA"))])
     [cand] = cpv.load([_write(tmp_path, "c0", [_row("q", True)], _provenance("fpB"))])
-    cand = [dataclasses.replace(cand, judge_model="other", backend="ollama")]
+    cand = [dataclasses.replace(cand, judge_model="other", backend="other")]
     warnings = "\n".join(cpv.compare(base, cand).warnings)
     assert "judge_model" in warnings and "backend" in warnings
 

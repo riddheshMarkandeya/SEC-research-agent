@@ -367,7 +367,7 @@ def _render_loop_runs(agent) -> dict:
             ["start", "send_tool_results"],
         ),
         "loop_final_turn": final_turn,
-        "loop_budget_exhausted": _run({"MAX_TOOL_ITERATIONS": 1}, "ollama", calc_turn, []),
+        "loop_budget_exhausted": _run({"MAX_TOOL_ITERATIONS": 1}, "gemini", calc_turn, [calc_turn]),
         "loop_submit_schema_mismatch": _run(None, "gemini", broken_submit, [broken_submit]),
     }
 

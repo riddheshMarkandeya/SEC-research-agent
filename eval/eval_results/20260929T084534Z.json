@@ -1,0 +1,78 @@
+{
+  "backend": "gemini",
+  "answer_model": "gemini-3.5-flash-lite",
+  "judge_model": "gemini-3.5-flash-lite",
+  "provenance": {
+    "git_sha": "437026e",
+    "git_dirty": true,
+    "dirty_files": [
+      "agent.py",
+      "analyze_citation_gate.py",
+      "config.py",
+      "eval_harness.py",
+      "llm_backends.py",
+      "prompts/model_input_snapshot.json",
+      "tests/manual/verify_complete.py",
+      "tests/manual/verify_final_turn_safety_net.py",
+      "tests/manual/verify_submit_answer.py",
+      "tests/test_agent.py",
+      "tests/test_compare_prompt_versions.py",
+      "tests/test_eval_harness.py",
+      "tests/test_llm_backends.py",
+      "tests/test_mcp_server.py",
+      "tests/test_model_input_snapshot.py",
+      "tests/test_tracing.py"
+    ],
+    "snapshot_verified": true,
+    "config": {
+      "gemini_model": "gemini-3.5-flash-lite",
+      "embed_model": "BAAI/bge-small-en-v1.5",
+      "rerank_model": "cross-encoder/ms-marco-MiniLM-L-6-v2",
+      "chroma_dir": "./chroma_db",
+      "google_genai": "2.18.1",
+      "mcp": "2.1.1"
+    },
+    "prompts": {
+      "agent_system": "12a028f88e84",
+      "agent_tools": "d0e198d4dd09",
+      "agent_messages": "8c9475cb348b",
+      "judge": "2ee29f234c91",
+      "mcp": "b34024a4d17d",
+      "agent": "b464d44a7a80"
+    }
+  },
+  "results": [
+    {
+      "id": "crm-rpo-fy26",
+      "ticker": "CRM",
+      "question": "What is Salesforce's total remaining performance obligation as of January 31, 2026?",
+      "type": "numeric",
+      "passed": true,
+      "detail": "found matching value: 72.4 (billion)",
+      "has_citation": true,
+      "citation_warnings": [],
+      "answer": "As of January 31, 2026, Salesforce's total remaining performance obligation was $72.4 billion, which consisted of $35.1 billion in current remaining performance obligation and $37.3 billion in noncurrent remaining performance obligation [1].",
+      "n_chunks_retrieved": 5,
+      "withheld_answer": null,
+      "gate_withheld_would_have_passed": null,
+      "gate_withheld_detail": null,
+      "citation_warning_details": []
+    },
+    {
+      "id": "aapl-ai-risk",
+      "ticker": "AAPL",
+      "question": "What risks does Apple describe related to artificial intelligence?",
+      "type": "judged",
+      "passed": true,
+      "detail": "The answer explicitly mentions reputational, legal, financial, and competitive risks associated with AI and includes appropriate citation markers like [1].",
+      "has_citation": true,
+      "citation_warnings": [],
+      "answer": "Apple describes several risks related to artificial intelligence in its SEC filings, which include:\n\n* **Reputational, Competitive, and Financial Harm:** Issues related to artificial intelligence can lead to regulatory action, legal liability, reputational harm, competitive disadvantage, and other material adverse effects [1].\n* **Emerging Legal, Ethical, and Operational Risks:** AI and machine learning efforts give rise to risks concerning competition and strategy, recouping costs and return on investments, product liability, intellectual property infringement, data privacy, cybersecurity, export controls and sanctions, exposing users to harmful or inaccurate content, bias and discrimination, and online safety and the protection of minors [1, 4].\n* **Cybersecurity and Threat Acceleration:** The rapid advancement and widespread dissemination of AI technologies significantly increase cyberattack risks, such as highly targeted phishing campaigns, automated vulnerability discovery, deepfake content generation designed to bypass authentication, and accelerated exploitation [2]. AI models can also be directly susceptible to security threats and vulnerabilities [2].\n* **Infrastructure and Compute Resource Constraints:** Apple's AI and machine learning offerings depend on access to sufficient computing resources [5]. High demand across the technology industry has led to constrained supply, extended lead times, and increasing costs for cloud computing and AI infrastructure [5]. Apple relies on its own data center infrastructure and third-party cloud service providers, and failing to secure sufficient capacity on commercially reasonable terms\u2014or misestimating compute requirements\u2014can limit product functionality, delay deployments, or cause significantly higher costs [5].",
+      "n_chunks_retrieved": 5,
+      "withheld_answer": null,
+      "gate_withheld_would_have_passed": null,
+      "gate_withheld_detail": null,
+      "citation_warning_details": []
+    }
+  ]
+}
