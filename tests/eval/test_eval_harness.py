@@ -840,6 +840,15 @@ def test_run_config_records_model_settings_and_library_versions():
     assert config["google_genai"]
 
 
+def test_run_config_records_chroma_dir_relative_to_the_project_root(monkeypatch, tmp_path):
+    # Reports are committed, so a store inside the checkout is recorded
+    # without the machine-specific prefix; one outside it stays absolute.
+    monkeypatch.setattr(eval_harness, "CHROMA_DIR", str(eval_harness.PROJECT_ROOT / "var" / "chroma_db"))
+    assert eval_harness._run_config()["chroma_dir"] == "var/chroma_db"
+    monkeypatch.setattr(eval_harness, "CHROMA_DIR", str(tmp_path))
+    assert eval_harness._run_config()["chroma_dir"] == str(tmp_path)
+
+
 def test_run_config_records_none_for_a_missing_library(monkeypatch):
     def missing(name):
         raise eval_harness.importlib.metadata.PackageNotFoundError(name)

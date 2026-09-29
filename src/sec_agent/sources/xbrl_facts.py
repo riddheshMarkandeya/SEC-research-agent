@@ -23,16 +23,15 @@ import http
 import json
 import time
 from datetime import date
-from pathlib import Path
 
 import requests
 
 from sec_agent.sources.companies import load_companies
-from sec_agent.config import SEC_USER_AGENT
+from sec_agent.config import SEC_USER_AGENT, XBRL_CACHE_DIR
 from sec_agent.tracing import log_event
 
 HEADERS = {"User-Agent": SEC_USER_AGENT}
-CACHE_DIR = Path("./xbrl_cache")
+CACHE_DIR = XBRL_CACHE_DIR
 REQUEST_DELAY_SECONDS = 0.3  # match edgar_ingest.py's courtesy delay
 
 # DEFAULT_METRIC_TAGS/METRIC_TAG_OVERRIDES map friendly metric names to

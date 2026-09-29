@@ -6,7 +6,6 @@ import pytest
 from sec_agent.agent import agent
 from tools import analyze_gate_replay as replay
 from sec_agent import tracing
-from sec_agent.config import PROJECT_ROOT
 from tools.analyze_gate_replay import (
     RunFilter,
     RunTrace,
@@ -18,7 +17,6 @@ from tools.analyze_gate_replay import (
     memoized,
     rebuild_results,
     replay_run,
-    require_repo_root,
     summarize,
 )
 
@@ -542,7 +540,7 @@ def test_format_summary_names_the_buckets():
 
 
 # ---------------------------------------------------------------------------
-# memoized, require_repo_root, main
+# memoized, main
 # ---------------------------------------------------------------------------
 def test_memoized_calls_once_per_key_and_returns_independent_copies():
     calls = []
@@ -559,12 +557,6 @@ def test_memoized_calls_once_per_key_and_returns_independent_copies():
 
     assert calls == [("q", "AAPL", 5), ("q", "MSFT", 5)]
     assert second == [{"metadata": {"ticker": "AAPL"}}]
-
-
-def test_require_repo_root_rejects_other_directories(tmp_path):
-    with pytest.raises(SystemExit):
-        require_repo_root(tmp_path)
-    require_repo_root(PROJECT_ROOT)
 
 
 def _write_jsonl(path, rows):

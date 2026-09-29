@@ -27,15 +27,14 @@ import argparse
 import json
 import time
 from datetime import date, timedelta
-from pathlib import Path
 
 import requests
 
 from sec_agent.sources.companies import load_companies
-from sec_agent.config import SEC_USER_AGENT
+from sec_agent.config import SEC_USER_AGENT, XBRL_CACHE_DIR
 
 HEADERS = {"User-Agent": SEC_USER_AGENT}
-CACHE_DIR = Path("./xbrl_cache")
+CACHE_DIR = XBRL_CACHE_DIR
 REQUEST_DELAY_SECONDS = 0.3  # match xbrl_facts.py's courtesy delay
 
 # A tag existing in companyfacts at all doesn't mean the company still

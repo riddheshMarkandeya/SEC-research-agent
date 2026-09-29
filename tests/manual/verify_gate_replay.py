@@ -26,11 +26,10 @@ from tools import trace_query
 # da3be66608ff: budget exhausted after a retry, tool spans after the last
 # submit. 981513aa83f1: a recent clean pass with search, fact and calculate.
 DEFAULT_RUN_IDS = ["da3be66608ff", "981513aa83f1"]
-QUESTIONS = Path("eval/eval_questions.jsonl")
+QUESTIONS = eval_harness.QUESTIONS_PATH
 
 
 def main() -> None:
-    replay.require_repo_root(Path.cwd())
     run_ids = set(sys.argv[1:] or DEFAULT_RUN_IDS)
     records, _ = trace_query.load(Path(config.TRACE_LOG_PATH))
     ids = trace_query.question_ids(records, QUESTIONS)

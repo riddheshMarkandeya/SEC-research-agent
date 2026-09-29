@@ -550,6 +550,12 @@ def _snapshot_verified() -> bool | None:
     return None
 
 
+def _root_relative(path: str) -> str:
+    # Reports are committed: keep a machine-specific checkout prefix out.
+    resolved = Path(path)
+    return resolved.relative_to(PROJECT_ROOT).as_posix() if resolved.is_relative_to(PROJECT_ROOT) else path
+
+
 def _run_config() -> dict:
     """Settings that change what the model sees but that git can't
     record: .env values (untracked) and the versions of the libraries
@@ -564,7 +570,7 @@ def _run_config() -> dict:
         "gemini_model": GEMINI_MODEL_NAME,
         "embed_model": EMBED_MODEL_NAME,
         "rerank_model": RERANK_MODEL_NAME,
-        "chroma_dir": CHROMA_DIR,
+        "chroma_dir": _root_relative(CHROMA_DIR),
         **versions,
     }
 

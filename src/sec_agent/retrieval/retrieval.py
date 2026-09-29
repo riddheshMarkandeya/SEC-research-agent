@@ -30,16 +30,14 @@ import argparse
 import json
 import re
 from collections.abc import Mapping
-from pathlib import Path
 
 import chromadb
 from chromadb import Where
 from rank_bm25 import BM25Okapi
 from sentence_transformers import CrossEncoder, SentenceTransformer
 
-from sec_agent.config import CHROMA_DIR, EMBED_MODEL_NAME, RERANK_MODEL_NAME
+from sec_agent.config import CHROMA_DIR, CHUNKS_DIR, EMBED_MODEL_NAME, RERANK_MODEL_NAME
 
-CHUNKS_DIR = Path("./chunks")
 COLLECTION_NAME = "sec_filings"
 
 QUERY_INSTRUCTION = "Represent this sentence for searching relevant passages: "
@@ -105,7 +103,7 @@ def _tokenize(text: str) -> list[str]:
 def _load_bm25_index():  # pragma: no cover -- reads real chunk files from disk, live-only
     """Build the BM25 index once from the same chunk files index_chunks.py
     reads, so both retrieval paths are always in sync with the current
-    ./chunks/ output."""
+    var/chunks/ output."""
     global _bm25_index, _bm25_records
     if _bm25_index is not None:
         return

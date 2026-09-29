@@ -1,6 +1,6 @@
 """
 Embed chunks and load them into a local Chroma collection. Reads every
-./chunks/<TICKER>/*_chunks.jsonl produced by chunk_documents.py, embeds
+var/chunks/<TICKER>/*_chunks.jsonl produced by chunk_documents.py, embeds
 the chunk text with a local sentence-transformers model, and upserts
 into a persistent on-disk Chroma collection with the full metadata dict
 preserved (so downstream code can filter by ticker/form/date and cite
@@ -10,19 +10,17 @@ docs/decisions/2026-08-13-embedding-indexing-and-query-cli.md.
 Usage:
     python index_chunks.py
 
-Input:  ./chunks/<TICKER>/<accession>_chunks.jsonl
-Output: ./chroma_db/  (persistent Chroma store, created if missing)
+Input:  var/chunks/<TICKER>/<accession>_chunks.jsonl
+Output: var/chroma_db/  (persistent Chroma store, created if missing)
 """
 
 import json
-from pathlib import Path
 
 import chromadb
 from sentence_transformers import SentenceTransformer
 
-from sec_agent.config import CHROMA_DIR, EMBED_MODEL_NAME
+from sec_agent.config import CHROMA_DIR, CHUNKS_DIR, EMBED_MODEL_NAME
 
-CHUNKS_DIR = Path("./chunks")
 COLLECTION_NAME = "sec_filings"
 
 # bge-small is trained for asymmetric retrieval (short query -> long

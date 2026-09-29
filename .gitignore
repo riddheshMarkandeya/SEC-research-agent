@@ -11,17 +11,11 @@ __pycache__/
 .coverage.*
 coverage.xml
 
-# Generated data — all regenerable via edgar_ingest.py -> chunk_documents.py -> index_chunks.py
-data/
-chunks/
-chroma_db/
-
-# Regenerable via xbrl_facts.py's fetch_concept() (disk cache of SEC companyconcept responses)
-xbrl_cache/
-
-# Local JSONL trace log (tracing.py) -- high-volume, per-run output,
-# not curated evidence like eval/eval_results/*.json.
-trace_logs/
+# Generated, regenerable data (config.VAR_DIR): data/, chunks/ and chroma_db/
+# via edgar_ingest.py -> chunk_documents.py -> index_chunks.py; xbrl_cache/
+# via xbrl_facts.py's fetch_concept(); trace_logs/ from tracing.py (per-run
+# output, not curated evidence like eval/eval_results/*.json).
+var/
 
 # Local Claude Code settings (personal, not shared project config)
 .claude/settings.local.json

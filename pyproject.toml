@@ -92,11 +92,7 @@ extraPaths = ["src"]
 exclude = [
     ".venv",
     "**/__pycache__",
-    "chroma_db",
-    "chunks",
-    "data",
-    "xbrl_cache",
-    "trace_logs",
+    "var",
 ]
 
 # Branch coverage, enabled 2026-09-22 after measuring the real impact
@@ -114,7 +110,7 @@ exclude = [
 [tool.coverage.run]
 branch = true
 source = ["."]
-omit = [".venv/*", "tests/*", "chroma_db/*", "chunks/*", "data/*", "xbrl_cache/*", "trace_logs/*"]
+omit = [".venv/*", "tests/*", "var/*"]
 
 [tool.coverage.report]
 show_missing = true

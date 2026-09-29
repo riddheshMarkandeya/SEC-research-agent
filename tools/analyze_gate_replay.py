@@ -27,8 +27,8 @@ answer doesn't come from a submit is skipped: in older traces that's the
 prose-checker fallback, in newer ones a no-submission refusal -- either
 way there's no submission to re-gate.
 
-XBRL lookups read xbrl_cache/ (relative to the repo root, so the tool must
-run from there). A cache miss fetches live SEC data and writes the cache;
+XBRL lookups read var/xbrl_cache/ (anchored to the project root, so any
+working directory works). A cache miss fetches live SEC data and writes the cache;
 new cache files are listed in the summary because newer data can shift a
 verdict.
 
@@ -452,12 +452,6 @@ def install_live_search():  # pragma: no cover - binds the real Chroma search
     return agent.run_search
 
 
-def require_repo_root(cwd: Path) -> None:
-    root = config.PROJECT_ROOT
-    if cwd.resolve() != root:
-        raise SystemExit(f"run from the repo root ({root}): xbrl_cache/ is resolved relative to it")
-
-
 def cache_listing() -> set[str]:
     cache_dir = xbrl_facts.CACHE_DIR
     return {p.name for p in cache_dir.iterdir()} if cache_dir.is_dir() else set()
@@ -470,7 +464,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--since", type=trace_query._iso_prefix, help="ISO UTC prefix, inclusive")
     parser.add_argument("--until", type=trace_query._iso_prefix, help="ISO UTC prefix, exclusive")
     parser.add_argument("--qid", action="append", help="eval question ID (repeatable)")
-    parser.add_argument("--out", type=Path, help="report path (default: trace_logs/replay-<UTC time>.json)")
+    parser.add_argument("--out", type=Path, help="report path (default: var/trace_logs/replay-<UTC time>.json)")
     parser.add_argument(
         "--compare",
         type=Path,
@@ -500,7 +494,6 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if args.compare and (args.since or args.until or args.qid):
         parser.error("--compare replays the baseline's runs; drop --since/--until/--qid")
-    require_repo_root(Path.cwd())
     stamp = datetime.now(timezone.utc)
     out = args.out or Path(config.TRACE_LOG_PATH).parent / f"replay-{stamp.strftime('%Y%m%dT%H%M%SZ')}.json"
     # Checked up front: a full replay takes many minutes, and its results

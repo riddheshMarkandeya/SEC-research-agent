@@ -10,9 +10,9 @@ Usage:
     python edgar_ingest.py
 
 Output:
-    ./data/<TICKER>/<accession>_meta.json   -- filing metadata
-    ./data/<TICKER>/<accession>_text.txt    -- prose text
-    ./data/<TICKER>/<accession>_tables.json -- extracted tables (list of table dicts)
+    var/data/<TICKER>/<accession>_meta.json   -- filing metadata
+    var/data/<TICKER>/<accession>_text.txt    -- prose text
+    var/data/<TICKER>/<accession>_tables.json -- extracted tables (list of table dicts)
 
 IMPORTANT: SEC requires a descriptive User-Agent header on every request,
 or it will block you. Set SEC_USER_AGENT_NAME/SEC_USER_AGENT_EMAIL in
@@ -22,7 +22,6 @@ or it will block you. Set SEC_USER_AGENT_NAME/SEC_USER_AGENT_EMAIL in
 import json
 import re
 import time
-from pathlib import Path
 
 import warnings
 
@@ -30,7 +29,7 @@ import requests
 from bs4 import BeautifulSoup, XMLParsedAsHTMLWarning
 
 from sec_agent.sources.companies import load_companies
-from sec_agent.config import SEC_USER_AGENT, SEC_USER_AGENT_EMAIL
+from sec_agent.config import DATA_DIR, SEC_USER_AGENT, SEC_USER_AGENT_EMAIL
 
 # SEC filings are often iXBRL (XHTML with embedded XML tags for financial
 # data). bs4 sometimes misdetects these as pure XML and warns about it —
@@ -43,7 +42,7 @@ HEADERS = {"User-Agent": SEC_USER_AGENT}
 FORM_TYPES = {"10-K", "10-Q"}
 FILINGS_PER_COMPANY = 5  # last N matching filings (mix of 10-K/10-Q)
 
-OUTPUT_DIR = Path("./data")
+OUTPUT_DIR = DATA_DIR
 REQUEST_DELAY_SECONDS = 0.3  # be polite to SEC's servers — stay under 10 req/sec
 
 

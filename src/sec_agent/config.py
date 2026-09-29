@@ -14,11 +14,32 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-load_dotenv()
-
 # The checkout root (this file is src/sec_agent/config.py). Valid only for
 # the supported editable install, which runs the code in place.
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
+
+load_dotenv(PROJECT_ROOT / ".env")
+
+
+def project_path(value: str) -> str:
+    """A relative path resolved against PROJECT_ROOT instead of the
+    working directory; absolute paths pass through, and "" stays "" (an
+    empty setting means disabled)."""
+    if not value:
+        return value
+    return str(PROJECT_ROOT / value)
+
+
+def env_path(name: str, default: str) -> str:
+    return project_path(os.getenv(name, default))
+
+
+# Generated, regenerable data (edgar_ingest -> chunk_documents ->
+# index_chunks, plus caches and logs), all under one gitignored dir.
+VAR_DIR = PROJECT_ROOT / "var"
+DATA_DIR = VAR_DIR / "data"
+CHUNKS_DIR = VAR_DIR / "chunks"
+XBRL_CACHE_DIR = VAR_DIR / "xbrl_cache"
 
 # SEC EDGAR requires a descriptive, real-looking User-Agent header on
 # every request (edgar_ingest.py, xbrl_facts.py) or it will reject the
@@ -39,7 +60,7 @@ GEMINI_MODEL_NAME = os.getenv("GEMINI_MODEL_NAME", "gemini-flash-lite-latest")
 # Persistent Chroma vector store path (index_chunks.py, retrieval.py)
 # — must be the SAME path in both, or querying silently hits an empty
 # or unrelated store instead of erroring.
-CHROMA_DIR = os.getenv("CHROMA_DIR", "./chroma_db")
+CHROMA_DIR = env_path("CHROMA_DIR", "var/chroma_db")
 
 # Embedding + reranking models (index_chunks.py, retrieval.py) — the
 # embedding model in particular must be identical between indexing and
@@ -69,4 +90,4 @@ LANGFUSE_BASE_URL = os.getenv("LANGFUSE_BASE_URL", "https://cloud.langfuse.com")
 # only 30-day retention; this has neither limit). Empty string disables
 # it -- unlike the other tracing settings above, this one is ON by
 # default, since "always-on local backup" is the point.
-TRACE_LOG_PATH = os.getenv("TRACE_LOG_PATH", "./trace_logs/traces.jsonl")
+TRACE_LOG_PATH = env_path("TRACE_LOG_PATH", "var/trace_logs/traces.jsonl")

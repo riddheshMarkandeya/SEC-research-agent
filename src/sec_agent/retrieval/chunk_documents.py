@@ -16,10 +16,10 @@ _tables.json) and:
 Usage:
     python chunk_documents.py
 
-Input:  ./data/<TICKER>/<accession>_text.txt
-        ./data/<TICKER>/<accession>_tables.json
-        ./data/<TICKER>/<accession>_meta.json
-Output: ./chunks/<TICKER>/<accession>_chunks.jsonl
+Input:  var/data/<TICKER>/<accession>_text.txt
+        var/data/<TICKER>/<accession>_tables.json
+        var/data/<TICKER>/<accession>_meta.json
+Output: var/chunks/<TICKER>/<accession>_chunks.jsonl
         (one JSON object per line: {text, metadata})
 
 See docs/decisions/2026-08-13-chunking-pipeline.md.
@@ -29,8 +29,7 @@ import json
 import re
 from pathlib import Path
 
-DATA_DIR = Path("./data")
-CHUNKS_DIR = Path("./chunks")
+from sec_agent.config import CHUNKS_DIR, DATA_DIR
 
 # Chunk size is measured in characters as a simple proxy for tokens
 # (~4 chars/token for English is a decent rule of thumb). Swap in

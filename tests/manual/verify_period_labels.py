@@ -46,13 +46,12 @@ Usage (from the repo root):
 import json
 import re
 from datetime import date, datetime
-from pathlib import Path
 
+from sec_agent.config import DATA_DIR
 from sec_agent.sources.companies import COMPANIES_PATH
 from sec_agent.sources.period_labels import fiscal_quarter, fiscal_year_label
 from sec_agent.sources.xbrl_facts import _ANNUAL_DURATION_DAYS, _duration_days, _tag_for, fetch_concept
 
-DATA_DIR = Path("./data")
 ANCHOR = "SECURITIES AND EXCHANGE COMMISSION"
 
 ORDINAL_TO_NUMBER = {"first": 1, "second": 2, "third": 3, "fourth": 4}
