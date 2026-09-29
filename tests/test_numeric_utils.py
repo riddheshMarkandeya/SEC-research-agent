@@ -6,9 +6,11 @@ import (agent.py <- eval_harness.py already; eval_harness.py <- agent.py
 would be circular the other way).
 """
 
+import time
+
 import pytest
 
-from numeric_utils import extract_numbers, extract_numbers_with_spans, normalize
+from numeric_utils import NUMBER_PATTERN, extract_numbers, extract_numbers_with_spans, normalize
 
 
 # ---------------------------------------------------------------------------
@@ -298,3 +300,88 @@ def test_normalize_percent_and_raw_are_different_categories():
     percent_category, _ = normalize(20, "percent")
     scale_category, _ = normalize(20, "raw")
     assert percent_category != scale_category
+
+
+# ---------------------------------------------------------------------------
+# Linear time on pathological input -- answer text is untrusted and every
+# chunk, answer and quote passes through the extractor, so one padded answer
+# must not stall citation verification. Sizes are picked so a linear pass
+# sits well under each budget while a cubic regex or a per-match prefix copy
+# overshoots it several times over -- seconds, not hours, if one ever comes
+# back.
+# ---------------------------------------------------------------------------
+_LINEAR_TIME_BUDGET_SECONDS = 0.5
+_LONG_RUN = 1_000
+# The per-match helpers do real work for every number found, so these inputs
+# need enough matches for a quadratic cost to stand out from Python overhead.
+_MANY_MATCHES_BUDGET_SECONDS = 2.0
+_MANY_SUBTRACTIONS = 150_000
+_MANY_REFERENCE_MARKERS = 75_000
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "x" + " " * _LONG_RUN + "y",
+        "(" + " " * _LONG_RUN + ")",
+        "$" + " " * _LONG_RUN,
+        "-" + " " * _LONG_RUN + "x",
+        "x" + " \n\t" * (_LONG_RUN // 3) + "y",
+    ],
+    ids=["spaces", "parens", "dollar", "minus", "mixed-whitespace"],
+)
+def test_extract_numbers_long_whitespace_run_is_linear(text):
+    started = time.perf_counter()
+    result = extract_numbers_with_spans(text)
+    elapsed = time.perf_counter() - started
+    assert result == []
+    assert elapsed < _LINEAR_TIME_BUDGET_SECONDS
+
+
+@pytest.mark.parametrize(
+    "unit_text, count",
+    [
+        # Each " - " sign checks what precedes it, and each "(1)" whether a
+        # word precedes it; neither check may copy the whole text prefix.
+        ("1 - ", _MANY_SUBTRACTIONS),
+        ("Registrant (1) ", _MANY_REFERENCE_MARKERS),
+    ],
+    ids=["spaced-subtractions", "reference-markers"],
+)
+def test_extract_numbers_many_matches_is_linear(unit_text, count):
+    started = time.perf_counter()
+    result = extract_numbers(unit_text * count)
+    elapsed = time.perf_counter() - started
+    assert result == [(1.0, "raw")] * count
+    assert elapsed < _MANY_MATCHES_BUDGET_SECONDS
+
+
+# Pins for the whitespace/sign/paren shapes around the digit group, so the
+# linear-time pattern provably keeps the old extraction output.
+@pytest.mark.parametrize(
+    "text, expected",
+    [
+        ("5   6", [(5.0, "raw", 0, 1), (6.0, "raw", 4, 5)]),
+        ("( 5)", [(-5.0, "raw", 2, 3)]),
+        ("  (5)", [(-5.0, "raw", 3, 4)]),
+        # Existing behaviour kept, not a spec: a sign spaced off "$" is dropped.
+        ("- $5", [(5.0, "raw", 3, 4)]),
+        ("-$5", [(-5.0, "raw", 2, 3)]),
+        ("$ (5)", [(-5.0, "raw", 3, 4)]),
+        ("  5  ", [(5.0, "raw", 2, 3)]),
+        ("Revenue\n\n 1,234 \n (56) \n", [(1234.0, "raw", 10, 15), (-56.0, "raw", 19, 21)]),
+        ("- 5", [(-5.0, "raw", 2, 3)]),
+        ("raw - 5", [(-5.0, "raw", 6, 7)]),
+        (" raw - 5", [(-5.0, "raw", 7, 8)]),
+        ("5 RAW - 3", [(5.0, "raw", 0, 1), (3.0, "raw", 8, 9)]),
+    ],
+)
+def test_extract_numbers_with_spans_whitespace_sign_paren_shapes(text, expected):
+    assert extract_numbers_with_spans(text) == expected
+
+
+@pytest.mark.parametrize("cell, matches", [(" 1,234 ", True), ("  (1,234) ", False)])
+def test_number_pattern_fullmatch_on_padded_cells(cell, matches):
+    # table_grounding decides "is this cell a number" with fullmatch; leading
+    # whitespace before "(" has never matched.
+    assert (NUMBER_PATTERN.fullmatch(cell) is not None) is matches

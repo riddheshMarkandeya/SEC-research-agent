@@ -49,15 +49,19 @@ import unicodedata
 # marker glued to a preceding word (`_looks_like_reference_number()`,
 # e.g. "Registrant (1)", "Total debt securities (1)").
 #
-# Design history and full corpus evidence:
-# docs/decisions/2026-08-17-citation-verification-pass.md (the `\d{1,3}`
-# cap and glued-letter fixes above) and
-# docs/decisions/2026-09-11-negative-number-support.md (all of the
-# negative-number design above, including the corpus evidence behind
-# both parenthesized-case carve-outs and the spaced-hyphen/Unicode-minus
-# findings that motivated the Python-level check).
+# Whitespace before the digit group is shaped for linear time, since
+# untrusted answer text passes through here. Two plain `\s*` slots around
+# an optional sign/"$" could split one whitespace run many ways, retried
+# from every offset in the run: cubic in its length. So each run is
+# consumed possessively (`*+`/`++`, never given back), only from its first
+# character (`(?<!\s)`) or right after "(", and the second slot exists
+# only after a sign or "$". Starting mid-run then fails at once. The
+# empty branch of the leading group still lets a match start right at a
+# sign/"$"/digit, e.g. "6" in "5   6", whose whitespace the previous
+# match's trailing `\s*` already consumed.
 NUMBER_PATTERN = re.compile(
-    r"(?P<open_paren>\()?\s*(?<!\d)(?P<sign>[-−])?\$?\s*(?<!\w)(?P<digits>\d+(?:,\d{3})*(?:\.\d+)?)"
+    r"(?:(?P<open_paren>\()\s*+|(?<!\s)\s++)?(?<!\d)(?:(?P<sign>[-−])\$?\s*+|\$\s*+)?"
+    r"(?<!\w)(?P<digits>\d+(?:,\d{3})*(?:\.\d+)?)"
     r"(?P<close_paren>\))?\s*(?P<unit>billion|million|thousand|percent)?\s*(?P<pct>%)?",
     re.IGNORECASE,
 )
@@ -70,14 +74,23 @@ _MAX_REFERENCE_MARKER_DIGITS = 2  # footnote markers run "(1)".."(99)", never lo
 
 
 def _looks_like_reference_number(text: str, open_paren_pos: int, digits: str, followed_by_unit_or_pct: bool) -> bool:
-    """See docs/decisions/2026-09-11-negative-number-support.md for the
-    real-corpus evidence behind all three conditions here. `open_paren_pos` is
-    `match.start("open_paren")` -- only meaningful when the caller has
-    already confirmed the parens wrap the number."""
+    """Whether a parenthesized number is a footnote/reference marker
+    ("Registrant (1)", "Total debt securities (1)") rather than a negative:
+    a 1-2 digit whole number with no unit or "%" after it, following a word.
+    `open_paren_pos` is `match.start("open_paren")` -- only meaningful when
+    the caller has already confirmed the parens wrap the number."""
     if len(digits) > _MAX_REFERENCE_MARKER_DIGITS or "." in digits or followed_by_unit_or_pct:
         return False
-    preceding = text[:open_paren_pos].rstrip()
-    return bool(preceding) and preceding[-1].isalpha()
+    end = _end_before_space(text, open_paren_pos)
+    return end > 0 and text[end - 1].isalpha()
+
+
+def _end_before_space(text: str, pos: int) -> int:
+    """`len(text[:pos].rstrip())`, without copying the prefix: these checks
+    run once per match, so a copy each time is quadratic in the text length."""
+    while pos > 0 and text[pos - 1].isspace():
+        pos -= 1
+    return pos
 
 
 # The full set of a rendered number's possible trailing characters --
@@ -97,6 +110,8 @@ _NUMBER_ENDING_WORDS = ("billion", "million", "thousand", "percent")
 # and "raw" as an adjective ("a raw −3.1% basis") precedes a real sign.
 _RAW_UNIT_WORD = "raw"
 
+_LONGEST_ENDING_WORD = max(len(word) for word in (*_NUMBER_ENDING_WORDS, _RAW_UNIT_WORD))
+
 
 def _preceded_by_number(text: str, pos: int) -> bool:
     """True if the text immediately before position `pos` (skipping
@@ -106,16 +121,21 @@ def _preceded_by_number(text: str, pos: int) -> bool:
     apart from a genuine negative sign: a real negation is preceded by a
     word, punctuation, an opening paren, or nothing at all, never by
     another number's own trailing digit/percent-sign/unit-word."""
-    before = text[:pos].rstrip()
-    if not before:
+    end = _end_before_space(text, pos)
+    if end == 0:
         return False
-    if before[-1].isdigit() or before[-1] == "%":
+    if text[end - 1].isdigit() or text[end - 1] == "%":
         return True
-    lowered = before.lower()
-    if lowered.endswith(_RAW_UNIT_WORD):
-        operand = before[: -len(_RAW_UNIT_WORD)]
-        return operand[-1:].isspace() and operand.rstrip()[-1:].isdigit()
-    return lowered.endswith(_NUMBER_ENDING_WORDS)
+    # Lowercasing maps each character on its own and never shortens it, so
+    # lowering just the last few characters yields the same ending.
+    lowered_tail = text[max(0, end - _LONGEST_ENDING_WORD) : end].lower()
+    if lowered_tail.endswith(_RAW_UNIT_WORD):
+        operand_end = end - len(_RAW_UNIT_WORD)
+        if operand_end == 0 or not text[operand_end - 1].isspace():
+            return False
+        number_end = _end_before_space(text, operand_end)
+        return number_end > 0 and text[number_end - 1].isdigit()
+    return lowered_tail.endswith(_NUMBER_ENDING_WORDS)
 
 
 def _is_negative(text: str, match: re.Match, digits: str, unit_word: str | None, percent_sign: str | None) -> bool:
