@@ -7,7 +7,7 @@ chunking). See docs/decisions/2026-08-13-edgar-ingestion.md.
 
 Usage:
     pip install requests beautifulsoup4 lxml
-    python edgar_ingest.py
+    python -m sec_agent.sources.edgar_ingest
 
 Output:
     var/data/<TICKER>/<accession>_meta.json   -- filing metadata

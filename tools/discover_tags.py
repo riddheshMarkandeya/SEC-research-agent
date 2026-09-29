@@ -19,8 +19,8 @@ Usage (library):
     list_tags("AAPL", recent_only=True)  # only tags AAPL still reports
 
 Usage (CLI):
-    python discover_tags.py PLTR --keyword inventory
-    python discover_tags.py AAPL --recent-only
+    python -m tools.discover_tags PLTR --keyword inventory
+    python -m tools.discover_tags AAPL --recent-only
 """
 
 import argparse

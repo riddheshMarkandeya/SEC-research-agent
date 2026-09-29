@@ -8,7 +8,7 @@ accessionNumber). See
 docs/decisions/2026-08-13-embedding-indexing-and-query-cli.md.
 
 Usage:
-    python index_chunks.py
+    python -m sec_agent.retrieval.index_chunks
 
 Input:  var/chunks/<TICKER>/<accession>_chunks.jsonl
 Output: var/chroma_db/  (persistent Chroma store, created if missing)

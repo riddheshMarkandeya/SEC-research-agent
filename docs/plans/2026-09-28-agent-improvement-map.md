@@ -109,6 +109,12 @@ New in this merge:
     - **Checks:** the full suite, the model-input snapshot, and identical verdicts from the
       replay tool.
     - The critical-core list becomes directory globs, mirrored in pre-push.
+    - **Done 2026-09-29** (`docs/plans/2026-09-29-src-layout-move.md`). Changes from the above,
+      user-decided: file basenames kept (`sec_agent/agent/agent.py`), and the directory globs
+      deliberately widen the critical core to every module in `agent/`, `llm/`, `sources/`,
+      `retrieval/`, `verification/`, `eval/` and `prompts/` (adds `table_grounding`,
+      `edgar_ingest`, `companies`, `period_labels`, `index_chunks`). Committed eval data stays in
+      `eval/`.
 
 ## Open tickets
 
@@ -156,8 +162,8 @@ New in this merge:
 
 ## Proposed build order
 
-Prerequisites (Decisions 13 and 15): NUMBER_PATTERN fix → replay tool → Ollama removal → `src/`
-layout move → `agent.py` split (inside the package) → eval summary mode.
+Prerequisites (Decisions 13 and 15): ~~NUMBER_PATTERN fix~~ → ~~replay tool~~ → ~~Ollama removal~~
+→ ~~`src/` layout move~~ → `agent.py` split (inside the package) → eval summary mode.
 
 Then the improvement packages:
 1. **Retry slot** (gate D9): code, then the panel and a full run.

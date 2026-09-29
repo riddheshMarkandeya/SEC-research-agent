@@ -44,7 +44,7 @@ touches — the checklist an implementer follows top to bottom.]
 live-verification script (live-only code per this project's CLAUDE.md
 carve-out — SEC EDGAR calls, Chroma/embedding indexing, LLM
 round-trips); what the acceptance criteria are; what live spot-check or
-eval re-run (`eval_harness.py --ids ...`) confirms it end-to-end, not
+eval re-run (`python -m sec_agent.eval.eval_harness --ids ...`) confirms it end-to-end, not
 just in isolation.]
 
 ## Plan review

@@ -21,9 +21,9 @@ changes or an unverified model-input snapshot are excluded unless
 --include-dirty.
 
 Usage:
-    python compare_prompt_versions.py
-    python compare_prompt_versions.py --since 20260925T000000Z
-    python compare_prompt_versions.py --base-files a.json b.json --candidate-files c.json
+    python -m tools.compare_prompt_versions
+    python -m tools.compare_prompt_versions --since 20260925T000000Z
+    python -m tools.compare_prompt_versions --base-files a.json b.json --candidate-files c.json
 """
 
 import argparse

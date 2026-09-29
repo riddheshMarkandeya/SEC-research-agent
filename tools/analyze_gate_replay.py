@@ -37,10 +37,10 @@ rerank. While iterating, replay a slice (--qid, repeatable, or a recent
 --since); run the full replay and --compare only as the final check.
 
 Usage:
-  python analyze_gate_replay.py --qid nvda-revenue-fy26 --qid aapl-ai-risk
-  python analyze_gate_replay.py --since 2026-09-19T03:12
-  python analyze_gate_replay.py --out base.json            (on master)
-  python analyze_gate_replay.py --compare base.json        (on the branch)
+  python -m tools.analyze_gate_replay --qid nvda-revenue-fy26 --qid aapl-ai-risk
+  python -m tools.analyze_gate_replay --since 2026-09-19T03:12
+  python -m tools.analyze_gate_replay --out base.json            (on master)
+  python -m tools.analyze_gate_replay --compare base.json        (on the branch)
 """
 
 import argparse

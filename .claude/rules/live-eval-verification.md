@@ -41,9 +41,9 @@ inspection confirmed it actually repaired a live filing's chunk), run a
 live
 spot-check *in addition to* the unit-test/manual-verification-script
 step already required — at minimum a targeted
-`eval_harness.py --backend gemini --ids <affected-question-id(s)>`
+`python -m sec_agent.eval.eval_harness --backend gemini --ids <affected-question-id(s)>`
 re-run of whatever eval question(s) exercise the changed path; the full
-48-question baseline (`eval_harness.py --backend gemini`, no `--ids`
+48-question baseline (`python -m sec_agent.eval.eval_harness --backend gemini`, no `--ids`
 filter) when the change is broad, touches multiple of the modules above,
 or before considering a session's work fully done. A green test suite
 alone is not sufficient evidence of correctness for this class of change.
@@ -69,9 +69,9 @@ runs by that fingerprint. For any change to what a model reads:
   that alters what a model receives, whether a `prompts/` constant or the
   logic that picks, fills or converts it (`agent.py`, `llm_backends.py`,
   `eval_harness.grade_judged`, `mcp_server.py`), fails
-  `tests/test_model_input_snapshot.py`. Read the diff it prints, then run
-  `UPDATE_SNAPSHOT=1 pytest tests/test_model_input_snapshot.py` (PowerShell:
-  `$env:UPDATE_SNAPSHOT=1; pytest tests/test_model_input_snapshot.py;
+  `tests/prompts/test_model_input_snapshot.py`. Read the diff it prints, then run
+  `UPDATE_SNAPSHOT=1 pytest tests/prompts/test_model_input_snapshot.py` (PowerShell:
+  `$env:UPDATE_SNAPSHOT=1; pytest tests/prompts/test_model_input_snapshot.py;
   Remove-Item Env:UPDATE_SNAPSHOT`). The
   fingerprint hashes the snapshot, so this is what gives the change a
   new fingerprint. When a new code path starts sending model text, add a
@@ -81,7 +81,7 @@ runs by that fingerprint. For any change to what a model reads:
 - **Run the panel protocol, not a single question.** The panel, the
   screen → replicate → attribute decision rule and the thresholds are in
   `docs/plans/2026-09-24-prompt-audit-roadmap.md` ("Decision rule").
-  Screen with `python compare_prompt_versions.py` (fingerprint mode).
+  Screen with `python -m tools.compare_prompt_versions` (fingerprint mode).
   For the replicate and attribute steps, always use explicit mode
   (`--base-files` / `--candidate-files`): a revert restores the base
   fingerprint, so fingerprint mode would pool reverted runs with the

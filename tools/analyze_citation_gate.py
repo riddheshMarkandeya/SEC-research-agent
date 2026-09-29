@@ -43,8 +43,8 @@ trace_logs/traces.jsonl's "citation_retry" event, keyed by run_id, which
 this script does not read.
 
 Usage:
-    python analyze_citation_gate.py eval/eval_results/20260910T120000Z.json
-    python analyze_citation_gate.py eval/eval_results/*.json
+    python -m tools.analyze_citation_gate eval/eval_results/20260910T120000Z.json
+    python -m tools.analyze_citation_gate eval/eval_results/*.json
 """
 
 import argparse

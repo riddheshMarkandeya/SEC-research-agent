@@ -13,10 +13,10 @@ The subcommand comes first. Every command prints at most --limit result
 lines (default 50), then a total line saying what was cut.
 
 Examples:
-  python trace_query.py counts --since 2026-09-26T08:53 --until 2026-09-26T09:04
-  python trace_query.py counts --kind tool_call_rejected --by qid,reason --since 2026-09-26
-  python trace_query.py records --kind unmet_metric_request --fields timestamp,qid,input.metric
-  python trace_query.py runs --qid nvda-rd-expense-q4fy26-refusal --since 2026-09-26T08:53
+  python -m tools.trace_query counts --since 2026-09-26T08:53 --until 2026-09-26T09:04
+  python -m tools.trace_query counts --kind tool_call_rejected --by qid,reason --since 2026-09-26
+  python -m tools.trace_query records --kind unmet_metric_request --fields timestamp,qid,input.metric
+  python -m tools.trace_query runs --qid nvda-rd-expense-q4fy26-refusal --since 2026-09-26T08:53
 """
 
 import argparse

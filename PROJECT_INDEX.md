@@ -33,10 +33,23 @@ Langfuse (self-hosted or cloud free tier) for observability.
 
 **Companies in scope**: 5 tech companies (chosen so the user can
 sanity-check answers) — AAPL, MSFT, NVDA, CRM, PLTR — see
-`companies.json` for the ticker/name/CIK source of truth (this file is
-not a duplicate of it). Last 5 10-K/10-Q filings each. To add a company:
-add a row to `companies.json`, then run `edgar_ingest.py` →
-`chunk_documents.py` → `index_chunks.py` for it.
+`src/sec_agent/sources/companies.json` for the ticker/name/CIK source of
+truth (this file is not a duplicate of it). Last 5 10-K/10-Q filings
+each. To add a company: add a row to `companies.json`, then run
+`python -m sec_agent.sources.edgar_ingest` →
+`python -m sec_agent.retrieval.chunk_documents` →
+`python -m sec_agent.retrieval.index_chunks` for it.
+
+**Layout and setup**: code lives in the `src/sec_agent/` package
+(`agent/`, `verification/`, `sources/`, `retrieval/`, `llm/`,
+`prompts/`, `eval/`, plus `config`, `tracing`, `mcp_server`); analysis
+CLIs and the gate replay tool in `tools/`; tests mirror the package
+under `tests/`. `pip install -r requirements.txt` includes the required
+editable install (`-e .`), and CLIs run as `python -m
+sec_agent.<pkg>.<module>` or `python -m tools.<module>`. Generated data
+(`data/`, `chunks/`, `chroma_db/`, `xbrl_cache/`, `trace_logs/`) lives
+in the gitignored `var/`, anchored to the project root; committed eval
+questions and results stay in `eval/`.
 
 `## Recent` below holds one line per file in `docs/decisions/`,
 `docs/plans/`, and `docs/reviews/`, reverse-chronological, newest
@@ -49,6 +62,7 @@ prepend them (verbatim, still reverse-chronological) to the top of
 
 ## Recent
 
+- 2026-09-29 [plan] `src/` layout move (map prerequisite 4): code into `src/sec_agent/` (agent, verification, sources, retrieval, llm, prompts, eval) and `tools/`, basenames kept, editable install replaces sys.path hacks; generated data anchored under root `var/`; critical core widened to whole-subpackage globs (user); replay identical over 1211 runs after each commit → `docs/plans/2026-09-29-src-layout-move.md`
 - 2026-09-29 [review] Ollama and prose-fallback removal: 3 rounds (Substantial; code-review high, arch opus, security, simplify), 21 findings, 17 fixed; headline fixes: a text reply at the budget edge now spends the reserved final round trip on a forced submit, a stale `DEFAULT_BACKEND` fails up front via `require_backend`, and the grader's window reset is tested again; mixed-turn submission cache deferred → `docs/reviews/2026-09-29-remove-ollama-and-prose-fallback.md`
 - 2026-09-29 [decision] Prose-citation fallback deleted with Ollama: text after a forced submit is refused (`no_submission`, `NO_SUBMISSION_REFUSAL`), a retry-cached submission is re-gated instead; revisits the structural review's keep-it (its reason was the Ollama path); 1 real prose answer in 1,303 traced Gemini runs → `docs/decisions/2026-09-29-remove-ollama-and-prose-fallback.md`
 - 2026-09-29 [plan] Remove Ollama and the prose-citation fallback (map prerequisite 3): commit 1 drops the Ollama backend and the three backend-gating sets, keeping the one-entry BACKENDS seam; commit 2 replaces the prose fallback with a refusal when the model won't submit even after forcing (1 real prose answer in 1,303 traced Gemini runs) → `docs/plans/2026-09-29-remove-ollama-and-prose-fallback.md`

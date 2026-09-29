@@ -660,7 +660,7 @@ def test_main_parses_ids_and_orchestrates_run_eval_then_save_report(monkeypatch,
     assert calls["provenance"] == {"git_sha": "abc1234"}
     out = capsys.readouterr().out
     assert "Full report saved to" in out
-    assert "Citation-gate FP/FN breakdown: python analyze_citation_gate.py" in out
+    assert "Citation-gate FP/FN breakdown: python -m tools.analyze_citation_gate" in out
 
 
 # ---------------------------------------------------------------------------

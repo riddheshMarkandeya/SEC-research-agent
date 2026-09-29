@@ -8,8 +8,8 @@ docs/decisions/2026-08-14-agent-v0-tool-calling.md for why this exists
 and how tool-calling was verified against the real backend wire format.
 
 Usage:
-    python agent.py "How many full-time employees does Apple have?"
-    python agent.py "Compare Apple's and Microsoft's effective tax rates." --verbose
+    python -m sec_agent.agent.agent "How many full-time employees does Apple have?"
+    python -m sec_agent.agent.agent "Compare Apple's and Microsoft's effective tax rates." --verbose
 """
 
 import argparse

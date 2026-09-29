@@ -21,8 +21,8 @@ Three grading strategies, chosen per-question by its "type" field:
     against.
 
 Usage:
-    python eval_harness.py
-    python eval_harness.py --questions custom_questions.jsonl
+    python -m sec_agent.eval.eval_harness
+    python -m sec_agent.eval.eval_harness --questions custom_questions.jsonl
 """
 
 import argparse
@@ -533,7 +533,7 @@ def _run_snapshot_check() -> int:
 
 
 def _snapshot_verified() -> bool | None:
-    """Whether prompts/model_input_snapshot.json matches what the current
+    """Whether src/sec_agent/prompts/model_input_snapshot.json matches what the current
     code sends a model. The fingerprint hashes that committed file, so a
     stale one would mislabel this run. True or False when the check ran;
     None when it couldn't (pytest missing, or the run errored or hung)."""
@@ -608,7 +608,7 @@ def _provenance_warnings(provenance: dict) -> list[str]:
         warnings.append(f"uncommitted changes, so the git SHA doesn't describe this run: {files}")
     if provenance.get("snapshot_verified") is not True:
         warnings.append(
-            "prompts/model_input_snapshot.json isn't verified against the current code "
+            "src/sec_agent/prompts/model_input_snapshot.json isn't verified against the current code "
             f"(snapshot_verified={provenance.get('snapshot_verified')}), so the prompt fingerprint may be wrong"
         )
     if provenance.get("prompts") == "error":
@@ -687,7 +687,7 @@ def main():
     print(f"\nFull report saved to {out_path}")
     # A print, not an import -- analyze_citation_gate.py stays a
     # standalone reader of the report file, not coupled to this module.
-    print(f"Citation-gate FP/FN breakdown: python analyze_citation_gate.py {out_path}")
+    print(f"Citation-gate FP/FN breakdown: python -m tools.analyze_citation_gate {out_path}")
 
 
 if __name__ == "__main__":

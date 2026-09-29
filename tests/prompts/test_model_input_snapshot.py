@@ -1,6 +1,6 @@
 """Model-input snapshot: every string a model receives, rendered through
 the real call sites with no network, compared against the committed
-prompts/model_input_snapshot.json.
+src/sec_agent/prompts/model_input_snapshot.json.
 
 Why: prompts/ fingerprints hash constant values, which can't see a code
 change that alters what a model reads without touching a constant (which
@@ -11,7 +11,7 @@ and since prompts.prompt_fingerprint() hashes the snapshot's sections,
 the fingerprint then changes with it.
 
 Regenerate after reading the diff:
-    UPDATE_SNAPSHOT=1 pytest tests/test_model_input_snapshot.py
+    UPDATE_SNAPSHOT=1 pytest tests/prompts/test_model_input_snapshot.py
 """
 
 import asyncio
@@ -480,7 +480,7 @@ def test_model_input_matches_committed_snapshot():
         )
         pytest.fail(
             "What a model receives has changed. If intended, regenerate the snapshot in the same "
-            "commit (UPDATE_SNAPSHOT=1 pytest tests/test_model_input_snapshot.py) after reading "
+            "commit (UPDATE_SNAPSHOT=1 pytest tests/prompts/test_model_input_snapshot.py) after reading "
             f"this diff:\n{diff[:6000]}"
         )
 

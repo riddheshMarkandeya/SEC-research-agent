@@ -14,7 +14,7 @@ _tables.json) and:
      wherever they fit within the chunk size budget.
 
 Usage:
-    python chunk_documents.py
+    python -m sec_agent.retrieval.chunk_documents
 
 Input:  var/data/<TICKER>/<accession>_text.txt
         var/data/<TICKER>/<accession>_tables.json

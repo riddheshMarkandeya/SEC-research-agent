@@ -23,7 +23,7 @@ Usage as a library:
     results = hybrid_search("What is Salesforce's remaining performance obligation?", ticker="CRM")
 
 Usage from the command line (manual spot-checking):
-    python retrieval.py "your question" [--ticker MSFT] [--n 5] [--no-rerank]
+    python -m sec_agent.retrieval.retrieval "your question" [--ticker MSFT] [--n 5] [--no-rerank]
 """
 
 import argparse

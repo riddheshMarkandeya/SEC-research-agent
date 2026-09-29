@@ -30,8 +30,8 @@ reliable marker for this: every other code path always sets a real
 string, even a refusal message.
 
 Usage:
-    python analyze_flakiness.py eval/eval_results/*.json
-    python analyze_flakiness.py eval/eval_results/*.json --min-appearances 10
+    python -m tools.analyze_flakiness eval/eval_results/*.json
+    python -m tools.analyze_flakiness eval/eval_results/*.json --min-appearances 10
 """
 
 import argparse

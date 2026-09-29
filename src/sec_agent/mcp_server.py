@@ -9,7 +9,7 @@ get_financial_fact/compare_financial_metric don't, since those come
 from structured XBRL data with no prose position to anchor to.
 
 Usage:
-    python mcp_server.py --port 8765
+    python -m sec_agent.mcp_server --port 8765
 """
 
 import json
