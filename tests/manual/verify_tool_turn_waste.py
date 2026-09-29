@@ -41,13 +41,10 @@ Usage (from the repo root):
 """
 
 import json
-import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
-
-from config import TRACE_LOG_PATH
-from agent import run_agent
+from sec_agent.config import TRACE_LOG_PATH
+from sec_agent.agent.agent import run_agent
 
 
 def _tool_calls_for_run(run_id: str) -> list[tuple[str, dict]]:

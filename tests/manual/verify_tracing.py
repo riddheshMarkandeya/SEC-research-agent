@@ -23,16 +23,13 @@ Usage (from the repo root):
 """
 
 import json
-import sys
 import time
 import uuid
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
-
-import tracing
-from agent import call_get_financial_fact, run_agent
-from config import LANGFUSE_BASE_URL, LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY, TRACE_LOG_PATH
+from sec_agent import tracing
+from sec_agent.agent.agent import call_get_financial_fact, run_agent
+from sec_agent.config import LANGFUSE_BASE_URL, LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY, TRACE_LOG_PATH
 
 
 def _client():

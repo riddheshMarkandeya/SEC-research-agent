@@ -1,12 +1,12 @@
 ---
 paths:
-  - "edgar_ingest.py"
-  - "xbrl_facts.py"
-  - "index_chunks.py"
-  - "retrieval.py"
-  - "agent.py"
-  - "llm_backends.py"
-  - "analyze_gate_replay.py"
+  - "src/sec_agent/sources/edgar_ingest.py"
+  - "src/sec_agent/sources/xbrl_facts.py"
+  - "src/sec_agent/retrieval/index_chunks.py"
+  - "src/sec_agent/retrieval/retrieval.py"
+  - "src/sec_agent/agent/agent.py"
+  - "src/sec_agent/llm/llm_backends.py"
+  - "tools/analyze_gate_replay.py"
 ---
 
 # This project's live-code TDD carve-out

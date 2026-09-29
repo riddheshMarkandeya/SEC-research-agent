@@ -12,7 +12,7 @@ import json
 from contextlib import contextmanager
 from pathlib import Path
 
-import tracing
+from sec_agent import tracing
 
 
 class _FakeObservation:

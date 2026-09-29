@@ -48,8 +48,6 @@ import time
 from pathlib import Path
 from urllib.parse import unquote
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
-
 # Not a typo for httpx -- mcp==2.1.1's streamable_http_client() expects
 # httpx2.AsyncClient specifically, a separate package by httpx's own
 # original author, pinned in requirements-dev.txt.
@@ -59,9 +57,9 @@ from bs4 import BeautifulSoup
 from mcp import ClientSession
 from mcp.client.streamable_http import streamable_http_client
 
-from config import SEC_USER_AGENT, TRACE_LOG_PATH
-from prompts.agent_tools import COMPARE_TOOL_SCHEMA, FACT_TOOL_SCHEMA
-from prompts.mcp import (
+from sec_agent.config import SEC_USER_AGENT, TRACE_LOG_PATH
+from sec_agent.prompts.agent_tools import COMPARE_TOOL_SCHEMA, FACT_TOOL_SCHEMA
+from sec_agent.prompts.mcp import (
     COMPARISON_NOT_AVAILABLE_ERROR,
     FACT_NOT_AVAILABLE_ERROR,
     MCP_SEARCH_TOOL_SCHEMA,
@@ -198,7 +196,7 @@ class _RunningServer:
         self._proc = None
 
     def __enter__(self):
-        self._proc = subprocess.Popen([sys.executable, "mcp_server.py", "--port", str(self.port)], env=self._env)
+        self._proc = subprocess.Popen([sys.executable, "-m", "sec_agent.mcp_server", "--port", str(self.port)], env=self._env)
         for _ in range(30):
             try:
                 requests.get(self.base_url, timeout=1)

@@ -1,11 +1,11 @@
 ---
 paths:
-  - "numeric_utils.py"
-  - "agent.py"
-  - "retrieval.py"
-  - "eval_harness.py"
-  - "chunk_documents.py"
-  - "prompts/**"
+  - "src/sec_agent/verification/numeric_utils.py"
+  - "src/sec_agent/agent/agent.py"
+  - "src/sec_agent/retrieval/retrieval.py"
+  - "src/sec_agent/eval/eval_harness.py"
+  - "src/sec_agent/retrieval/chunk_documents.py"
+  - "src/sec_agent/prompts/**"
 ---
 
 # Spot-check evals and live verification beyond TDD

@@ -45,14 +45,12 @@ Usage (from the repo root):
 
 import json
 import re
-import sys
 from datetime import date, datetime
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
-
-from period_labels import fiscal_quarter, fiscal_year_label
-from xbrl_facts import _ANNUAL_DURATION_DAYS, _duration_days, _tag_for, fetch_concept
+from sec_agent.sources.companies import COMPANIES_PATH
+from sec_agent.sources.period_labels import fiscal_quarter, fiscal_year_label
+from sec_agent.sources.xbrl_facts import _ANNUAL_DURATION_DAYS, _duration_days, _tag_for, fetch_concept
 
 DATA_DIR = Path("./data")
 ANCHOR = "SECURITIES AND EXCHANGE COMMISSION"
@@ -79,7 +77,7 @@ ANNUAL_PATTERN = re.compile(
 
 
 def _load_companies_with_fy_end() -> dict:
-    with open("companies.json", encoding="utf-8") as f:
+    with open(COMPANIES_PATH, encoding="utf-8") as f:
         return json.load(f)
 
 

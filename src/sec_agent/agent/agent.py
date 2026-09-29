@@ -1,0 +1,2209 @@
+"""
+Agent layer: gives the LLM a `search_filings` tool (wrapping
+retrieval.hybrid_search) instead of pre-fetching context ourselves, so
+the model decides what to search for, which ticker to restrict to (if
+any), and whether to search again -- e.g. calling the tool twice, once
+per company, for a cross-company comparison question. See
+docs/decisions/2026-08-14-agent-v0-tool-calling.md for why this exists
+and how tool-calling was verified against the real backend wire format.
+
+Usage:
+    python agent.py "How many full-time employees does Apple have?"
+    python agent.py "Compare Apple's and Microsoft's effective tax rates." --verbose
+"""
+
+import argparse
+import re
+from collections import Counter
+from dataclasses import dataclass
+from typing import Any, NamedTuple, TypeGuard
+
+import jsonschema
+import jsonschema.exceptions
+
+from sec_agent.sources.companies import COMPANIES
+from sec_agent.config import DEFAULT_BACKEND
+from sec_agent.sources.formulas import (
+    RATIO_DEFINITIONS,
+    get_multi_year_average,
+    get_ratio,
+    get_ratio_all_companies,
+    get_yoy_growth,
+)
+from sec_agent.llm.llm_backends import BACKENDS, require_backend
+from sec_agent.verification.numeric_utils import (
+    QUOTE_COVERAGE_THRESHOLD,
+    UNIT_MULTIPLIERS,
+    extract_numbers,
+    normalize,
+    normalize_for_match,
+    text_coverage,
+)
+from sec_agent.prompts import agent_messages as msg
+from sec_agent.prompts.agent_system import SYSTEM_PROMPT
+from sec_agent.prompts.agent_tools import (
+    AGENT_TOOL_SCHEMAS,
+    CALCULATE_TOOL_SCHEMA,
+    CLAIM_UNITS,
+    COMPARE_TOOL_SCHEMA,
+    FACT_TOOL_SCHEMA,
+    SEARCH_TOOL_SCHEMA,
+    SUBMIT_TOOL_SCHEMA,
+)
+from sec_agent.retrieval.retrieval import hybrid_search
+from sec_agent.verification.table_grounding import extract_table_blocks, locate_value, quote_is_grounded
+from sec_agent.tracing import flush, log_event, record_unmet_metric_request, traced_span
+from sec_agent.sources.xbrl_facts import DEFAULT_METRIC_TAGS, get_metric, get_metric_all_companies, is_metric_tagged
+
+MAX_TOOL_ITERATIONS = 6
+CHUNKS_PER_SEARCH = 5
+
+
+def _resolve_search_args(
+    args: dict, fallback_query: str, searched_tickers: set[str | None]
+) -> tuple[str, str | None]:
+    """Extract (query, ticker) from a tool call's arguments.
+
+    The model doesn't always include every schema-declared argument —
+    observed in testing: it sometimes calls search_filings with only
+    `ticker` and no `query`, despite `query` being marked required.
+
+    The model's own `query` text is only trusted on a *retry* against a
+    ticker already searched earlier in this conversation
+    (`searched_tickers`) -- a deliberate refinement, not a first guess.
+    The first search against each company always uses the original
+    question verbatim instead, since the model's own first-pass queries
+    are unreliable and no single query-phrasing instruction generalizes
+    across companies. See docs/decisions/2026-08-14-agent-v0-tool-calling.md."""
+    ticker = args.get("ticker")
+    if ticker not in searched_tickers:
+        return fallback_query, ticker
+    return args.get("query") or fallback_query, ticker
+
+
+def _citation_header(i: int, meta: dict) -> str:
+    """The exact citation header text _format_results_block() shows the
+    model above result [i]'s own text. Shared with
+    _strip_citation_header() below so the two can never independently
+    drift out of sync if this format ever changes -- the strip has to
+    reconstruct precisely what the model was actually shown, not a
+    close guess."""
+    return msg.CITATION_HEADER_TEMPLATE.format(
+        i=i, ticker=meta["ticker"], form=meta["form"], report_date=meta["reportDate"]
+    )
+
+
+def _format_results_block(results: list[dict], start_index: int) -> str:
+    """Format one search call's results as numbered excerpts, continuing
+    the numbering from start_index rather than restarting at [1] — so
+    citation numbers stay globally consistent across multiple tool calls
+    within the same conversation."""
+    if not results:
+        return msg.NO_SEARCH_RESULTS_MESSAGE
+
+    blocks = []
+    for offset, r in enumerate(results):
+        i = start_index + offset
+        header = _citation_header(i, r["metadata"])
+        blocks.append(msg.RESULT_BLOCK_TEMPLATE.format(header=header, text=r["text"]))
+    return msg.RESULT_BLOCK_SEPARATOR.join(blocks)
+
+
+def _never_tagged_hint(ticker: object, metric: object) -> str | None:
+    """None unless `ticker` genuinely never tags `metric` at all (as
+    opposed to just not having it for the specific period asked about)
+    -- see xbrl_facts.is_metric_tagged()'s own docstring. Scoped to raw
+    DEFAULT_METRIC_TAGS metrics only: is_metric_tagged()/_tag_for() only
+    understand those names, and would raise for a margin metric name
+    like "gross_margin" (not itself a GAAP tag) rather than telling us
+    anything meaningful about it."""
+    # The type check comes first: a list from a malformed call is
+    # unhashable and would raise on the membership test.
+    if not (isinstance(ticker, str) and isinstance(metric, str)):
+        return None
+    if metric not in DEFAULT_METRIC_TAGS or ticker not in COMPANIES:
+        return None
+    if is_metric_tagged(ticker, metric):
+        return None
+    return msg.NEVER_TAGGED_HINT_TEMPLATE.format(ticker=ticker, metric=metric)
+
+
+def _no_fact_period(args: dict) -> str:
+    """The period call_get_financial_fact's lookup used (or, for a
+    rejected call, the period arguments it was sent), so the no-data reply
+    names it instead of echoing absent arguments. The branch order must
+    mirror call_get_financial_fact and xbrl_facts.get_metric; nothing
+    else keeps the two in step."""
+    start, end = args.get("start_fiscal_year"), args.get("end_fiscal_year")
+    if start is not None or end is not None:
+        # A missing side renders as None: that is what was sent, and why
+        # the call was rejected.
+        return msg.NO_FACT_PERIOD_MULTI_YEAR.format(start=start, end=end)
+    # Truthy, not "is not None": get_metric treats an empty date as absent.
+    if args.get("period_end_date"):
+        return msg.NO_FACT_PERIOD_END_DATE.format(date=args["period_end_date"])
+    if args.get("fiscal_year") is not None:
+        return msg.NO_FACT_PERIOD_FISCAL.format(
+            fiscal_period=args.get("fiscal_period", "FY"),
+            fiscal_year=args["fiscal_year"],
+        )
+    return msg.NO_FACT_PERIOD_LATEST
+
+
+def _format_no_fact_message(args: dict) -> str:
+    """Kept separate from the call site so the hints are unit-testable
+    without a model round-trip. Both hints exist because a bare "not
+    found" leaves the model unaware WHY data is missing, and it then
+    trusts noisy search results and fabricates instead of refusing."""
+    message = msg.NO_FACT_TEMPLATE.format(
+        metric=args.get("metric"),
+        ticker=args.get("ticker"),
+        period=_no_fact_period(args),
+    )
+    if args.get("fiscal_period") == "Q4":
+        message += msg.NO_DATA_HINT_SEPARATOR + msg.Q4_NOT_DISCLOSED_HINT
+    never_tagged = _never_tagged_hint(args.get("ticker"), args.get("metric"))
+    if never_tagged:
+        message += msg.NO_DATA_HINT_SEPARATOR + never_tagged
+    return message
+
+
+def _format_no_comparison_message(args: dict) -> str:
+    """compare_financial_metric counterpart to _format_no_fact_message --
+    the same Q4 reporting gap and never-tagged-concept gap both apply
+    just as much to a cross-company comparison question as to a
+    single-company one. The never-tagged hint only reflects the anchor
+    company (args' `anchor_ticker`, this tool's ticker key), not every
+    company in the comparison -- same scoping limit _never_tagged_hint()
+    itself already documents, not a new one introduced here."""
+    message = msg.NO_COMPARISON_TEMPLATE.format(metric=args.get("metric"))
+    if args.get("fiscal_period") == "Q4":
+        message += msg.NO_DATA_HINT_SEPARATOR + msg.Q4_NOT_DISCLOSED_HINT
+    never_tagged = _never_tagged_hint(args.get("anchor_ticker"), args.get("metric"))
+    if never_tagged:
+        message += msg.NO_DATA_HINT_SEPARATOR + never_tagged
+    return message
+
+
+_INT_TYPE_VALIDATOR = jsonschema.Draft202012Validator({"type": "integer"})
+
+
+def _is_valid_int(value: Any) -> TypeGuard[int]:
+    """True if value is a JSON-Schema-valid "integer" -- an int but NOT a
+    bool. jsonschema's default type checker already excludes bool from
+    "integer" (JSON itself treats true/false as their own type, distinct
+    from numbers), so this gets that exclusion for free instead of
+    writing `isinstance(x, int) and not isinstance(x, bool)` by hand --
+    the exact shape of bug (isinstance(True, int) is True in Python) that
+    silently let fiscal_year=true through the old hand-rolled check. See
+    docs/decisions/2026-09-09-schema-driven-arg-validation.md. Shared by
+    _rejects_invalid_fiscal_year and the multi-year-average combo check
+    below, both of which read fiscal_year-shaped args outside of
+    validate_tool_args's generic pass (see call_get_financial_fact's
+    skip_properties)."""
+    return _INT_TYPE_VALIDATOR.is_valid(value)
+
+
+def _rejects_invalid_fiscal_year(tool: str, args: dict) -> bool:
+    """True (having already logged the rejection) if args["fiscal_year"]
+    is present but not a valid int -- shared by call_get_financial_fact
+    and call_compare_financial_metric, which otherwise would each
+    hand-roll an identical check. A malformed
+    fiscal_year doesn't crash any downstream lookup -- it just fails to
+    match and returns None/{}, which used to get recorded as
+    reason="no_data_for_ticker" via record_unmet_metric_request(),
+    polluting that "should we add a formula for this" telemetry with a
+    schema-violation false negative instead of a real data gap."""
+    fiscal_year = args.get("fiscal_year")
+    if fiscal_year is not None and not _is_valid_int(fiscal_year):
+        log_event("tool_call_rejected", tool=tool, reason="invalid_fiscal_year_type", args=args)
+        return True
+    return False
+
+
+# ASCII digits only (\d would also match other scripts' decimal digits),
+# and no leading zero, so "0000" isn't read as year 0.
+_YEAR_STRING = re.compile(r"[1-9][0-9]{3}")
+
+
+def _coerce_year_args(tool: str, args: dict, fields: frozenset[str]) -> dict:
+    """A copy of `args` with each year in `fields` given as a 4-digit
+    string or a whole float turned into an int, or `args` itself when
+    there is none. This is the only conversion of these fields: Gemini
+    sends years as strings ("2025") despite the integer schema, and
+    rejecting them cost the model turns; a whole float (2025.0) passes the
+    schema but breaks the multi-year average's range() and shows as
+    "FY2025.0". Anything else ("FY2025", "²²²²", "0000", "99999", 2025.5,
+    a bool) is left for the usual checks to reject."""
+    coerced = args
+    for field in sorted(fields):
+        value = args.get(field)
+        if isinstance(value, str) and _YEAR_STRING.fullmatch(value):
+            year = int(value)
+        elif isinstance(value, float) and value.is_integer():
+            year = int(value)
+        else:
+            continue
+        if coerced is args:
+            coerced = dict(args)
+        coerced[field] = year
+        log_event("tool_arg_coerced", tool=tool, field=field, value=value)
+    return coerced
+
+
+_VALIDATOR_KIND_PRIORITY = {"additionalProperties": 0, "required": 1, "type": 2, "enum": 3}
+
+
+def _reason_for_error(error: jsonschema.exceptions.ValidationError) -> str:
+    """Maps a jsonschema ValidationError to this project's own
+    tool_call_rejected reason= taxonomy -- distinct, greppable-by-
+    tool+reason values, not jsonschema's own vocabulary verbatim, since a
+    couple of its violation kinds don't map 1:1 onto a single named
+    property: additionalProperties covers every extra key at once (no
+    single offending property), and required's offending property isn't
+    exposed via error.path (the key doesn't exist in the instance, so
+    there's nothing for a JSON pointer to point at)."""
+    if error.validator == "additionalProperties":
+        return "unrecognized_extra_argument"
+    if error.validator == "required":
+        return "missing_required_argument"
+    prop = error.path[0] if error.path else "args"
+    kind = "not_in_enum" if error.validator == "enum" else "wrong_type"
+    return f"{prop}_{kind}"
+
+
+def validate_tool_args(
+    tool: str,
+    schema: dict,
+    args: dict,
+    *,
+    soft_required: frozenset = frozenset(),
+    skip_properties: frozenset = frozenset(),
+) -> bool:
+    """True (having already logged the rejection) if args fails schema's
+    parameter validation -- the generic replacement for what used to be
+    a hand-rolled extra-key/type/enum check per tool. See
+    docs/decisions/2026-09-09-schema-driven-arg-validation.md. `schema`
+    is one of *_TOOL_SCHEMA, doing double duty as both what's advertised
+    to the LLM and what's enforced here -- `additionalProperties: false`
+    on each schema's `parameters` is what replaces the old
+    `set(args) - _FACT_ARG_KEYS`-style checks.
+
+    Two carve-outs exist because a handful of properties have runtime
+    semantics a flat JSON Schema check can't safely express without
+    leaking business logic into the LLM-facing schema:
+    - `soft_required`: schema-advertised required properties the caller
+      tolerates being absent at runtime instead of rejecting -- e.g.
+      search_filings' `query`, which _resolve_search_args substitutes
+      the original question for when the model omits it (observed live,
+      not a bug -- see that function's own docstring).
+    - `skip_properties`: properties whose declared type is only
+      conditionally meaningful -- e.g. get_financial_fact's
+      `fiscal_year`, which the multi-year-average request shape never
+      reads at all, so a malformed value there must be ignored, not
+      rejected (test_call_get_financial_fact_ignores_malformed_fiscal_year_in_multi_year_average_request).
+      Their own type is still checked by the caller's own business logic
+      instead (see _rejects_invalid_fiscal_year), just not generically
+      here -- their sub-schema is swapped for `{}` (matches anything)
+      rather than removed from `properties` entirely, so a present value
+      still satisfies `additionalProperties: false`.
+
+    A `metric` enum violation is ALSO always allowed through (regardless
+    of skip_properties) so callers can route a recognized-shape-but-
+    unsupported metric name to record_unmet_metric_request() instead of
+    a silent generic boundary rejection -- see call_get_financial_fact's
+    own metric-enum check right after this returns False.
+
+    A declared-but-null-valued property (e.g. `{"ticker": None}`) is
+    validated as though the key were absent, for any DECLARED property --
+    an explicit JSON null for an unset optional argument is exactly as
+    valid as omitting it (nothing in this codebase distinguishes the two
+    afterwards; every reader uses `args.get(...)`, which returns None
+    either way) and just as invalid as omitting it for a required one.
+    Handled once, generically, here rather than enumerating
+    `["string", "null"]` per property as each one would otherwise need
+    it noticed separately (see the decision file above). An unrecognized
+    EXTRA key is deliberately NOT
+    stripped even if null-valued -- `additionalProperties: false` must
+    still catch e.g. `{"segment": None}`, since the key itself is the
+    problem, not its value."""
+    params = schema["function"]["parameters"]
+    if soft_required or skip_properties:
+        params = dict(params)
+        if soft_required:
+            params["required"] = [r for r in params.get("required", []) if r not in soft_required]
+        if skip_properties:
+            params["properties"] = {
+                name: ({} if name in skip_properties else sub_schema)
+                for name, sub_schema in params["properties"].items()
+            }
+    # dict, not set -- a dict already preserves declaration order (used
+    # below for property_order's tie-break) and `in` on a dict is an O(1)
+    # key check same as a set, so routing through set() first would only
+    # lose that ordering for no benefit (a set's iteration order is this
+    # process's hash seed, not schema order).
+    declared_properties = params.get("properties", {})
+    instance = {k: v for k, v in args.items() if v is not None or k not in declared_properties}
+    validator = jsonschema.Draft202012Validator(params)
+    property_order = list(declared_properties)
+
+    def priority(error):
+        prop = error.path[0] if error.path else None
+        prop_rank = property_order.index(prop) if prop in property_order else -1
+        return (_VALIDATOR_KIND_PRIORITY.get(error.validator, 9), prop_rank)
+
+    for error in sorted(validator.iter_errors(instance), key=priority):
+        if error.validator == "enum" and list(error.path) == ["metric"]:
+            continue
+        log_event("tool_call_rejected", tool=tool, reason=_reason_for_error(error), args=args)
+        return True
+    return False
+
+
+# fiscal_year/start_fiscal_year/end_fiscal_year are excluded from
+# call_get_financial_fact's generic validate_tool_args pass -- see that
+# function's call site and validate_tool_args's own docstring for why.
+_FISCAL_YEAR_PROPS = frozenset({"fiscal_year", "start_fiscal_year", "end_fiscal_year"})
+_COMPARE_FISCAL_YEAR_PROPS = frozenset({"fiscal_year"})
+
+
+def call_get_financial_fact(args: dict, question: str | None = None) -> dict | None:
+    """This is a real system boundary, not just an internal call — the
+    model doesn't reliably respect the schema (e.g. it has called this
+    with `metric` omitted entirely, or invented an unsupported `segment`
+    filter). Validated generically by validate_tool_args at the boundary
+    rather than trusting the schema was followed; this function only
+    layers the business rules a flat schema check can't express. See
+    docs/decisions/2026-08-19-fixing-6-accumulated-eval-findings.md and
+    docs/decisions/2026-09-09-schema-driven-arg-validation.md.
+
+    `yoy_growth=True` combined with a margin metric is rejected the same
+    way: get_yoy_growth() only supports the raw tagged metrics (see its
+    own docstring for why), so that combination isn't just unsupported,
+    it's meaningless -- caught here rather than passed through.
+
+    `start_fiscal_year`/`end_fiscal_year` (both required together, and
+    rejected if combined with yoy_growth) dispatch to
+    get_multi_year_average() instead of a single-period lookup (see that
+    function's own docstring). Supported for every RATIO_DEFINITIONS
+    metric -- formulas._get_annual_value() dispatches any of them
+    generically (see its own docstring).
+
+    `question` (optional -- only agent.py's tool-dispatch path has one;
+    mcp_server.py's direct callers don't) is passed through to
+    record_unmet_metric_request() purely for observability, see below.
+
+    Records an unmet-metric-request event (see
+    docs/decisions/2026-09-04-langfuse-tracing.md) when `metric` isn't
+    recognized at all (reason="unknown_metric" -- the "should we add a
+    formula for this" signal) or when it's a recognized metric/ratio but
+    the underlying lookup -- get_metric(), get_ratio(), get_yoy_growth(),
+    or get_multi_year_average(), all four genuine-data-lookup paths
+    below -- found no data for this ticker/period
+    (reason="no_data_for_ticker"). Deliberately NOT recorded for boundary
+    rejections above (malformed/invented args, invalid yoy_growth/
+    multi-year-average combinations) -- those are a schema-violation
+    problem, not a "this formula doesn't exist yet" problem, and would
+    just be noise on the signal."""
+    args = _coerce_year_args("get_financial_fact", args, _FISCAL_YEAR_PROPS)
+    if validate_tool_args("get_financial_fact", FACT_TOOL_SCHEMA, args, skip_properties=_FISCAL_YEAR_PROPS):
+        return None
+    ticker = args["ticker"]
+    metric = args["metric"]
+    if metric not in DEFAULT_METRIC_TAGS and metric not in RATIO_DEFINITIONS:
+        # A recognized-shape-but-unsupported metric name (the one
+        # violation validate_tool_args deliberately lets through) --
+        # this belongs on the unmet-metric-request signal, not a local-
+        # only tool_call_rejected event, since it's real evidence a
+        # formula might be worth adding.
+        record_unmet_metric_request(ticker, metric, reason="unknown_metric", question=question)
+        return None
+    fiscal_period = args.get("fiscal_period", "FY")
+    period_end_date = args.get("period_end_date")
+    start_fiscal_year = args.get("start_fiscal_year")
+    end_fiscal_year = args.get("end_fiscal_year")
+    if start_fiscal_year is not None or end_fiscal_year is not None:
+        # Deliberately does not check plain fiscal_year here -- this
+        # branch never reads it, so a value here is irrelevant.
+        return _get_financial_fact_multi_year_average(ticker, metric, args, question)
+    # Checked AFTER the multi-year-average branch above: that branch
+    # never reads fiscal_year at all, so checking it any earlier would
+    # wrongly reject a valid multi-year-average request over a stray,
+    # irrelevant fiscal_year value -- this must only gate the two
+    # branches below, which are the only ones that actually use it.
+    if _rejects_invalid_fiscal_year("get_financial_fact", args):
+        return None
+    fiscal_year = args.get("fiscal_year")
+    if args.get("yoy_growth"):
+        return _get_financial_fact_yoy_growth(ticker, metric, args, question)
+    if metric in RATIO_DEFINITIONS:
+        result = get_ratio(ticker, metric, fiscal_year, fiscal_period, period_end_date)
+    else:
+        result = get_metric(ticker, metric, fiscal_year, fiscal_period, period_end_date)
+    if result is None:
+        record_unmet_metric_request(ticker, metric, reason="no_data_for_ticker", question=question)
+    return result
+
+
+def _get_financial_fact_multi_year_average(
+    ticker: str, metric: str, args: dict, question: str | None
+) -> dict | None:
+    """Multi-year-average branch of call_get_financial_fact() -- pure
+    relocation (no logic change) to keep the parent's own branch/return
+    count under ruff's C901/PLR0911 thresholds. Re-derives
+    start_fiscal_year/end_fiscal_year from `args` (like the sibling
+    yoy_growth helper below re-derives its own period fields) rather
+    than taking them as separate params: the parent's own guard
+    condition already needs them as locals for its `is not None` check,
+    but passing them AND `args.get("yoy_growth")` AND `question`
+    separately would put this helper at 6 positional args, over
+    PLR0913's threshold -- bundling would only trade one opaque `dict`
+    for an equally-opaque ad hoc tuple with no real benefit here."""
+    start_fiscal_year = args.get("start_fiscal_year")
+    end_fiscal_year = args.get("end_fiscal_year")
+    if args.get("yoy_growth") or not _is_valid_int(start_fiscal_year) or not _is_valid_int(end_fiscal_year):
+        log_event("tool_call_rejected", tool="get_financial_fact", reason="invalid_multi_year_average_combo", args=args)
+        return None
+    result = get_multi_year_average(ticker, metric, start_fiscal_year, end_fiscal_year)
+    if result is None:
+        record_unmet_metric_request(ticker, metric, reason="no_data_for_ticker", question=question)
+    return result
+
+
+def _get_financial_fact_yoy_growth(ticker: str, metric: str, args: dict, question: str | None) -> dict | None:
+    """yoy_growth branch of call_get_financial_fact() -- pure relocation
+    (no logic change), same reasoning as
+    _get_financial_fact_multi_year_average() above. Re-derives
+    fiscal_year/fiscal_period/period_end_date from `args` rather than
+    taking them as separate params (kept to 4 args, under ruff's
+    PLR0913 threshold) -- identical values to the parent's own copies,
+    since `args` doesn't change between reads."""
+    fiscal_year = args.get("fiscal_year")
+    fiscal_period = args.get("fiscal_period", "FY")
+    period_end_date = args.get("period_end_date")
+    if metric in RATIO_DEFINITIONS:
+        log_event("tool_call_rejected", tool="get_financial_fact", reason="yoy_growth_unsupported_for_ratio", args=args)
+        return None
+    result = get_yoy_growth(ticker, metric, fiscal_year, fiscal_period, period_end_date)
+    if result is None:
+        record_unmet_metric_request(ticker, metric, reason="no_data_for_ticker", question=question)
+    return result
+
+
+def _with_unit(value: float | int | str, unit: str) -> str:
+    """Renders a value with its unit for citation text. "raw" (the unit for
+    any RATIO_DEFINITIONS entry with as_percent=False, e.g. asset_turnover/
+    inventory_turnover) is an internal normalize()-category label from
+    numeric_utils.py, not a natural-language unit -- omitted here so a
+    plain ratio reads as "1.04", not the internal-sounding "1.04 raw"."""
+    if unit == "raw":
+        return str(value)
+    return msg.VALUE_WITH_UNIT_TEMPLATE.format(value=value, unit=unit)
+
+
+def _format_fact_value(fact: dict) -> str:
+    """Renders a fact's value for citation text, via _with_unit."""
+    return _with_unit(fact["value"], fact["unit"])
+
+
+def _fact_as_result(fact: dict, args: dict) -> dict:
+    """Wrap a get_financial_fact value in the same {text, metadata} shape
+    hybrid_search results use, so it can share all_results/citation-key
+    handling uniformly with search_filings results instead of needing a
+    parallel code path."""
+    return {
+        "text": msg.FACT_RESULT_TEMPLATE.format(metric=args["metric"], value=_format_fact_value(fact)),
+        "metadata": {
+            "ticker": args["ticker"],
+            "form": fact["form"],
+            "filingDate": fact.get("filed") or fact["period_end"],
+            "reportDate": fact["period_end"],
+            "accessionNumber": fact["accession"],
+            "chunk_index": "xbrl",
+        },
+    }
+
+
+def call_compare_financial_metric(args: dict, question: str | None = None) -> dict[str, dict]:
+    """Same boundary-validation reasoning as call_get_financial_fact —
+    don't trust the schema was followed; validate_tool_args generically
+    rejects an unrecognized extra key (e.g. an invented `segment` filter)
+    rather than silently ignoring it. No yoy_growth here: there's no
+    current evidence/use case for a cross-company YoY-growth comparison,
+    so it isn't exposed on this tool (see get_yoy_growth()'s docstring).
+    A ratio with `supports_cross_company=False` (return_on_assets/
+    asset_turnover/cash_to_assets/inventory_turnover/rd_intensity) still
+    passes this function's own boundary check (it's a real, known ratio
+    name -- COMPARE_TOOL_SCHEMA's own metric enum is narrower, only
+    prompts.agent_system.CROSS_COMPANY_RATIOS, but validate_tool_args
+    lets any metric-enum violation through regardless of which schema
+    declared it, deferring to this same broader RATIO_DEFINITIONS
+    check), but get_ratio_all_companies() checks the flag internally
+    and returns the same graceful `{}` any other unsupported metric
+    gets -- see RATIO_DEFINITIONS' own comment for why there's no
+    cross-company version of those five yet.
+
+    Same unmet-metric-request tracing as call_get_financial_fact -- see
+    that function's docstring. The
+    `supports_cross_company=False` case above also lands in the generic
+    `reason="no_data_for_ticker"` bucket rather than a third reason
+    value: a human looking at the metric name in the Langfuse dashboard
+    can already tell that case apart, not worth the extra complexity."""
+    args = _coerce_year_args("compare_financial_metric", args, _COMPARE_FISCAL_YEAR_PROPS)
+    if validate_tool_args(
+        "compare_financial_metric", COMPARE_TOOL_SCHEMA, args, skip_properties=_COMPARE_FISCAL_YEAR_PROPS
+    ):
+        return {}
+    anchor_ticker = args["anchor_ticker"]
+    metric = args["metric"]
+    if metric not in DEFAULT_METRIC_TAGS and metric not in RATIO_DEFINITIONS:
+        # See call_get_financial_fact's matching guard: a recognized-
+        # shape-but-unsupported metric name belongs on the unmet-metric-
+        # request signal, not a local-only tool_call_rejected event.
+        record_unmet_metric_request(anchor_ticker, metric, reason="unknown_metric", question=question)
+        return {}
+    if _rejects_invalid_fiscal_year("compare_financial_metric", args):
+        return {}
+    fiscal_year = args.get("fiscal_year")
+    fiscal_period = args.get("fiscal_period", "FY")
+    period_end_date = args.get("period_end_date")
+    if metric in RATIO_DEFINITIONS:
+        result = get_ratio_all_companies(anchor_ticker, metric, fiscal_year, fiscal_period, period_end_date)
+    else:
+        result = get_metric_all_companies(anchor_ticker, metric, fiscal_year, fiscal_period, period_end_date)
+    # anchor_ticker not in result (not just `not result`) matters:
+    # instant metrics resolve each company independently with no
+    # requirement that the requested anchor itself has data (e.g. PLTR
+    # doesn't tag inventory but AAPL/MSFT do) -- a non-empty-but-anchor-
+    # missing result must still record that the specific company asked
+    # about has no data, even though everyone else's data is genuinely
+    # returned. See
+    # docs/decisions/2026-09-07-fix-get-metric-all-companies-instant-metrics.md.
+    if not result or anchor_ticker not in result:
+        record_unmet_metric_request(anchor_ticker, metric, reason="no_data_for_ticker", question=question)
+    return result
+
+
+def _comparison_as_results(data: dict[str, dict], metric: str) -> list[dict]:
+    """Wrap a {ticker: fact} dict (from compare_financial_metric) as a
+    list of {text, metadata} results, one per company, reusing the same
+    shape _fact_as_result uses for a single company. A frames entry
+    (duration metrics) doesn't carry a "form" field — "XBRL frame data"
+    stands in for it rather than guessing 10-K vs. 10-Q. Instant metrics
+    resolve independently per company via get_metric(), which DOES carry
+    a real form — used when present via fact.get(...) instead of always
+    hardcoding the frame fallback label. See
+    docs/decisions/2026-09-07-fix-get-metric-all-companies-instant-metrics.md."""
+    results = []
+    for ticker, fact in sorted(data.items()):
+        results.append(
+            {
+                "text": msg.COMPARISON_RESULT_TEMPLATE.format(
+                    ticker=ticker, metric=metric, value=_format_fact_value(fact)
+                ),
+                "metadata": {
+                    "ticker": ticker,
+                    "form": fact.get("form", msg.COMPARISON_FRAME_FORM),
+                    "filingDate": fact["period_end"],
+                    "reportDate": fact["period_end"],
+                    "accessionNumber": fact["accession"],
+                    "chunk_index": "xbrl",
+                },
+            }
+        )
+    return results
+
+
+# ---------------------------------------------------------------------------
+# calculate tool -- two independent guarantees: operand GROUNDING
+# (_ground_operand, reusing _number_candidates -- the same primitive
+# _verify_one_claim already trusts for a submit_answer claim) and
+# arithmetic CORRECTNESS (call_calculate runs the operation in real
+# Python, never the model's own mental math, since LLM arithmetic is
+# unreliable even when the model picks the right operation).
+# ---------------------------------------------------------------------------
+def _ground_operand(
+    value: float, unit: str, citation_index: int, all_results: list[dict], operand_name: str
+) -> str | None:
+    """Checks one calculate operand actually appears in its cited source.
+    Returns None if grounded, else a specific, actionable error message
+    naming which operand and citation index failed -- the model can
+    retry with a corrected value/citation rather than getting a generic
+    failure. Reuses _number_candidates() (not _quote_matches -- there's
+    no quoted substring here, just a bare operand value) and the same
+    tolerance constant (max(0.01*abs(norm), 0.05)) used everywhere else
+    in this file.
+
+    On failure, distinguishes three real cases rather than returning one
+    generic message for all of them -- a message that blames the wrong
+    field sends the model's retry nowhere useful (see
+    docs/reviews/2026-09-14-tool-turn-waste.md for the live case that
+    motivated computing which correction actually applies, instead of a
+    single generic message):
+    - MISLABELED UNIT (correctable): the same bare value grounds under a
+      DIFFERENT unit than the one claimed, in the SAME cited result --
+      says so explicitly, naming the unit that actually matches, since
+      that is the one field a generic message never mentions.
+    - WRONG CITATION INDEX (correctable): the value grounds under its
+      OWN claimed unit in a DIFFERENT already-retrieved result -- says
+      so explicitly and names which result, rather than leaving this
+      indistinguishable from the terminal case below.
+    - GENUINELY UNGROUNDABLE (terminal, not correctable): the value
+      grounds under NO unit in the cited result, and does not appear
+      under its claimed unit in any OTHER retrieved result either --
+      most commonly a literal conversion constant (e.g. dividing by
+      1,000,000,000 to convert to billions), which by construction has
+      no citation to ground against. Only NOW says explicitly that
+      retrying won't help, since both alternatives above have actually
+      been checked, not assumed -- this is the ModelRetry-vs-ToolFailed
+      distinction (pydantic-ai's terminology) encoded in the message
+      text; see CALCULATE_TOOL_SCHEMA's own description and system-
+      prompt rule 9 for the actual fix (state a unit-converted value
+      directly, no calculate call needed at all)."""
+    if not (1 <= citation_index <= len(all_results)):
+        return msg.OPERAND_BAD_CITATION_INDEX_TEMPLATE.format(
+            operand_name=operand_name, citation_index=citation_index, result_count=len(all_results)
+        )
+    source_text = all_results[citation_index - 1]["text"]
+    category, norm = normalize(value, unit)
+    tolerance = max(0.01 * abs(norm), 0.05)
+    candidates = _number_candidates(source_text)
+    if any(c == category and abs(v - norm) <= tolerance for c, v in candidates):
+        return None
+
+    for other_unit in CLAIM_UNITS:
+        if other_unit == unit:
+            continue
+        other_category, other_norm = normalize(value, other_unit)
+        other_tolerance = max(0.01 * abs(other_norm), 0.05)
+        if any(c == other_category and abs(v - other_norm) <= other_tolerance for c, v in candidates):
+            return msg.OPERAND_WRONG_UNIT_TEMPLATE.format(
+                operand_name=operand_name,
+                value=value,
+                unit=unit,
+                citation_index=citation_index,
+                other_unit=other_unit,
+            )
+
+    for other_index, other_result in enumerate(all_results, start=1):
+        if other_index == citation_index:
+            continue
+        other_candidates = _number_candidates(other_result["text"])
+        if any(c == category and abs(v - norm) <= tolerance for c, v in other_candidates):
+            return msg.OPERAND_WRONG_CITATION_INDEX_TEMPLATE.format(
+                operand_name=operand_name,
+                value=value,
+                unit=unit,
+                citation_index=citation_index,
+                other_index=other_index,
+            )
+
+    return msg.OPERAND_UNGROUNDABLE_TEMPLATE.format(
+        operand_name=operand_name, value=value, unit=unit, citation_index=citation_index
+    )
+
+
+def call_calculate(args: dict, all_results: list[dict]) -> tuple[dict | None, str | None]:
+    """Runs one calculate tool call: grounds both operands against their
+    cited sources, then performs the arithmetic in real Python. Returns
+    (result, None) on success, (None, message) on failure -- a richer
+    contract than call_get_financial_fact's bare dict|None, because
+    calculate has several distinct failure reasons (bad citation index,
+    an ungrounded operand, a category mismatch, divide by zero) that each
+    need their own specific message, unlike get_financial_fact's single
+    generic "not found."
+
+    This is the ONLY way, per system-prompt rule 9, to state a
+    hand-computed value at all: a self-computed number with no calculate
+    call behind it fails verify_claims's coverage check
+    (uncovered_number), and a claim quoting raw inputs for a derived
+    value can never pass _verify_one_claim's value-attribution check (it
+    requires the claimed VALUE itself to appear inside the quote, not
+    just the inputs it was derived from) -- confirmed by tracing the
+    actual code, not assumed; see this tool's own design doc.
+
+    Both operands must be the same normalize() category (both "percent"
+    or both "scale") -- add/subtract of mismatched categories is
+    meaningless, and percent's own scale (a bare number, not a fraction)
+    makes multiply/divide against a differently-categorized operand an
+    unresolvable ambiguity rather than a real use case worth supporting.
+    `add`/`subtract` preserve the shared input category in their result
+    unit; `multiply`/`divide` always return "raw" (a ratio or product is
+    not itself a percentage, regardless of what was fed into it, and
+    `divide` rounds to 2 decimals matching formulas.py's own decimal-ratio
+    convention); `percent_of`/`percent_change` always return "percent" by
+    definition, rounded to 1 decimal matching formulas.py's
+    RatioDefinition(as_percent=True) convention."""
+    if validate_tool_args("calculate", CALCULATE_TOOL_SCHEMA, args):
+        return None, msg.CALCULATE_INVALID_ARGS_MESSAGE
+
+    operation = args["operation"]
+    value_a, unit_a, idx_a = args["operand_a"], args["unit_a"], args["citation_index_a"]
+    value_b, unit_b, idx_b = args["operand_b"], args["unit_b"], args["citation_index_b"]
+
+    error = _ground_operand(value_a, unit_a, idx_a, all_results, "operand_a")
+    if error:
+        return None, error
+    error = _ground_operand(value_b, unit_b, idx_b, all_results, "operand_b")
+    if error:
+        return None, error
+
+    category_a, norm_a = normalize(value_a, unit_a)
+    category_b, norm_b = normalize(value_b, unit_b)
+    if category_a != category_b:
+        return None, msg.CALCULATE_CATEGORY_MISMATCH_TEMPLATE.format(
+            operation=operation, category_a=category_a, category_b=category_b
+        )
+
+    if operation in ("divide", "percent_of", "percent_change") and norm_b == 0:
+        return None, msg.CALCULATE_ZERO_DIVISOR_TEMPLATE.format(operation=operation.replace("_", " "))
+
+    value, unit = _apply_calculate_operation(operation, category_a, norm_a, norm_b)
+    return {"value": value, "unit": unit}, None
+
+
+def _apply_calculate_operation(operation: str, category: str, norm_a: float, norm_b: float) -> tuple[float, str]:
+    """The 6-way arithmetic dispatch for call_calculate() -- pure
+    relocation (no logic change), extracted to keep the parent's own
+    branch count under ruff's C901 threshold. `category` is the shared
+    normalize() category both operands were already confirmed to share
+    (see call_calculate's own category-mismatch check above) -- only
+    needed here to decide add/subtract's result unit."""
+    if operation == "add":
+        return norm_a + norm_b, ("percent" if category == "percent" else "raw")
+    if operation == "subtract":
+        return norm_a - norm_b, ("percent" if category == "percent" else "raw")
+    if operation == "multiply":
+        return norm_a * norm_b, "raw"
+    if operation == "divide":
+        return round(norm_a / norm_b, 2), "raw"
+    if operation == "percent_of":
+        return round(norm_a / norm_b * 100, 1), "percent"
+    return round((norm_a - norm_b) / norm_b * 100, 1), "percent"  # percent_change
+
+
+def _format_computed_number(value: float) -> str:
+    """Renders a float as plain fixed-point text, never scientific
+    notation -- str()'s default formatting switches to "1e+18"-style
+    notation outside roughly 1e16..1e-4 (multiply of two billion-scale
+    operands reaches this easily: 1e9 * 1e9 = 1e18), but NUMBER_PATTERN
+    (numeric_utils.py) has no exponent support at all. A value in that
+    range could never be re-extracted from the very citation text this
+    module generates, silently defeating the whole point of a citable
+    computed result -- guarded by
+    test_calculation_as_result_text_avoids_scientific_notation_for_large_values.
+    `.6f` gives 6 decimal places of precision (matching this project's
+    finest existing rounding, RatioDefinition(as_percent=True)'s 1 decimal
+    place, with headroom); trailing zeros and a bare trailing "." are
+    stripped for a clean integer-looking value like "150000000" rather
+    than "150000000.000000"."""
+    text = f"{value:.6f}"
+    if "." in text:
+        text = text.rstrip("0").rstrip(".")
+    return text
+
+
+def _calculation_as_result(result: dict, args: dict) -> dict:
+    """Wraps a call_calculate() result in the same {text, metadata} shape
+    every other all_results entry uses (mirrors _fact_as_result) -- the
+    whole design point of this tool is that its output flows through the
+    SAME citation/verification machinery unchanged, the same way
+    get_financial_fact's yoy_growth output already does. `text` renders
+    the full expression so it's directly quotable by
+    _quote_matches/_number_candidates, and so the model can copy it into
+    answer_text to satisfy the system prompt's disclosure requirement
+    (state the computation, not just the bare result) -- proven
+    end-to-end, not just asserted, by
+    test_calculation_as_result_text_is_directly_quotable_end_to_end.
+
+    metadata uses placeholder values the same way _comparison_as_results
+    already does for XBRL-frame-only rows (fact.get("form", "XBRL frame
+    data")) -- a pure computation has no filing of its own to attribute."""
+    operation = args["operation"]
+    value_a, unit_a = _format_computed_number(args["operand_a"]), args["unit_a"]
+    value_b, unit_b = _format_computed_number(args["operand_b"]), args["unit_b"]
+    idx_a, idx_b = args["citation_index_a"], args["citation_index_b"]
+
+    if operation == "percent_change":
+        expression_template = msg.CALCULATION_PERCENT_CHANGE_EXPRESSION
+    elif operation == "percent_of":
+        expression_template = msg.CALCULATION_PERCENT_OF_EXPRESSION
+    else:
+        expression_template = msg.CALCULATION_BINARY_EXPRESSION
+    expression = expression_template.format(
+        value_a=value_a, unit_a=unit_a, value_b=value_b, unit_b=unit_b, operation=operation
+    )
+
+    formatted_value = _with_unit(_format_computed_number(result["value"]), result["unit"])
+    return {
+        "text": msg.CALCULATION_RESULT_TEMPLATE.format(
+            expression=expression, value=formatted_value, idx_a=idx_a, idx_b=idx_b
+        ),
+        "metadata": {
+            "ticker": msg.CALCULATION_PLACEHOLDER,
+            "form": msg.CALCULATION_FORM,
+            "filingDate": msg.CALCULATION_PLACEHOLDER,
+            "reportDate": msg.CALCULATION_PLACEHOLDER,
+            "accessionNumber": msg.CALCULATION_PLACEHOLDER,
+            "chunk_index": "calculated",
+        },
+    }
+
+
+_CITATION_MARKER = re.compile(r"\[(\d+)\]")
+_CITATION_WINDOW_CHARS = 150
+
+# Broader than _CITATION_MARKER on purpose: matches a comma-separated
+# multi-source bracket like "[1, 3, 5]" too, not just a single-index
+# "[1]". _CITATION_MARKER can't just be widened to cover this --
+# _iter_citation_claims (the eval grader's walk) goes marker-by-marker via
+# finditer() and reads group(1) as ONE index, so widening it would break
+# that per-index logic, not just the pattern.
+# This one exists solely for verify_claims()'s coverage check, which
+# only needs to strip citation-marker-SHAPED text before scanning for
+# numbers -- it never reads the indices out (a bracket's own bare digits
+# would otherwise be extracted as spurious uncovered-number claims).
+_ANY_CITATION_BRACKET = re.compile(r"\[\s*\d+(?:\s*,\s*\d+)*\s*\]")
+
+# Text that looks number-shaped but isn't a claim to verify -- stripped
+# from the claim window before extraction, not from numeric_utils.py's
+# shared extract_numbers() itself, since grade_numeric() doesn't have
+# this false-positive problem (it only needs ONE number in the whole
+# answer to match, so spurious extras there are harmless noise, not
+# wrong verdicts) and stripping this there could hide a genuine
+# date/form-shaped ground-truth value in some future question type.
+# Four patterns, each found live rather than anticipated up front -- see
+# docs/decisions/2026-08-17-citation-verification-pass.md (dates, bare
+# years, 10-K/10-Q) and docs/decisions/2026-09-10-structured-claims-citation-verification.md
+# (Note N, N-year/N-day) for the corpus evidence behind each:
+#   - Dates ("June 27, 2026" -> 27, 2026), the single biggest noise
+#     source on a real multi-sentence answer.
+#   - Bare year-like numbers ("fiscal Q3 2025" -> the 2025 survives the
+#     date pattern above since it's not glued to a month name) -- a
+#     standalone 1900-2099 number next to a citation is virtually always
+#     a period label, not a numeric claim.
+#   - "10-K"/"10-Q" (the only two form types this project ingests, see
+#     edgar_ingest.py's FORM_TYPES) -- "10" isn't glued to a preceding
+#     letter (there's a space before it), so the digit-glued-to-letter
+#     fix in numeric_utils.py doesn't catch it.
+#   - "Note 1"/"Note 12" (a footnote/financial-statement-note reference)
+#     and "3-year"/"5-day" (an ordinal/count phrase, often echoing the
+#     question's own wording, e.g. "3-year average operating margin") --
+#     a bare `1` or `3` from either shape sitting near a real citation
+#     would otherwise be treated as its own spurious claim.
+_NON_CLAIM_PATTERN = re.compile(
+    r"\b(?:January|February|March|April|May|June|July|August|September|October|November|December)"
+    r"\s+\d{1,2},?\s+\d{4}\b|\b\d{4}-\d{2}-\d{2}\b|\b(?:19|20)\d{2}\b|\b10-[KQ]\b"
+    r"|\bNote\s+\d+\b|\b\d+[\s-](?:year|month|day)s?\b",
+    re.IGNORECASE,
+)
+
+# The identities in a percent formula ("a ÷ b − 1"; "(a ÷ b) − 1" and
+# "(a ÷ b × 100) − 100", which parse as negatives after ")"; "× 100")
+# aren't figures any filing states, so the model's own write-up of a
+# percent calculation would otherwise be withheld for them. They count
+# only when that calculation actually ran, never from the answer's
+# wording, and only as exact unitless values. The accepted cost: on such a
+# turn, a bare 1, −1, 100 or −100 anywhere in the answer is covered too.
+_PERCENT_IDENTITY_CONSTANTS = {"percent_change": (1.0, -1.0, 100.0, -100.0), "percent_of": (100.0,)}
+
+
+def _template_marker(template: str) -> str:
+    """The longest literal run of an expression template, which identifies
+    the operation in its rendering whatever order the placeholders are in."""
+    return max(re.split(r"\{[^}]*\}", template), key=len).strip()
+
+
+# calculate's own rendering (not the model's) says which operation ran.
+_PERCENT_OPERATION_MARKERS = {
+    "percent_change": _template_marker(msg.CALCULATION_PERCENT_CHANGE_EXPRESSION),
+    "percent_of": _template_marker(msg.CALCULATION_PERCENT_OF_EXPRESSION),
+}
+
+
+def _percent_identity_values(calculated_expressions: list[str]) -> set[float]:
+    """The identity values granted by every percent calculation among
+    calculate's rendered expressions, for an exact match on a unitless
+    answer number."""
+    return {
+        v
+        for operation, marker in _PERCENT_OPERATION_MARKERS.items()
+        if any(marker in expression for expression in calculated_expressions)
+        for v in _PERCENT_IDENTITY_CONSTANTS[operation]
+    }
+
+
+# ---------------------------------------------------------------------------
+# Structured-claims quote grounding -- verifies a submit_answer claim's
+# `quote` genuinely appears in its cited source chunk, allowing for
+# reformatting/paraphrase but not fabrication. See
+# docs/decisions/2026-09-10-structured-claims-citation-verification.md
+# for the full design reasoning behind every choice below.
+# ---------------------------------------------------------------------------
+_QUOTE_MIN_CHARS = 15  # a 2-character quote like "$5" would match almost any source trivially
+# Lives in numeric_utils.QUOTE_COVERAGE_THRESHOLD, alongside
+# text_coverage(), so table_grounding.py's region-scoped check can share
+# the identical threshold. Kept as an alias, not a second constant, since
+# every existing call site in this module refers to it by this name. See
+# docs/decisions/2026-09-13-table-grounding-region-scoped-matching.md.
+_QUOTE_COVERAGE_THRESHOLD = QUOTE_COVERAGE_THRESHOLD
+_QUOTE_ANCHOR_CHARS = 30  # a real quote's whole span usually appears as one long contiguous match
+# A bare-number quote (no surrounding prose -- e.g. quoting an XBRL fact's
+# raw value directly, "391035000000") needs a different length bar than
+# prose: DIGIT count, not character count, is what makes a number
+# specific enough to trust -- a 12-character bare number is under
+# _QUOTE_MIN_CHARS (15) despite being an unambiguous, correct quote,
+# and a 6+ digit number is astronomically unlikely to match by
+# coincidence even though it's short as text. See
+# docs/decisions/2026-09-10-structured-claims-citation-verification.md.
+_BARE_NUMBER_MIN_DIGITS = 6
+
+
+# Lives in numeric_utils.normalize_for_match so table_grounding.py can
+# share the exact same implementation without a circular import
+# (table_grounding is imported BY agent.py, so it can't import back from
+# agent.py). Kept as an alias, not re-exported under a new name, since
+# every existing call site and test in this module refers to it as
+# `_normalize_for_match`. See
+# docs/decisions/2026-09-12-structure-aware-table-quote-grounding.md.
+_normalize_for_match = normalize_for_match
+
+
+def _quote_is_long_enough(quote_norm: str) -> bool:
+    """Shared length gate for a normalized quote, used by both
+    _quote_matches() and _verify_one_claim()'s own pre-check -- both
+    call sites must share this exactly, not each run their own plain
+    len(quote_norm) < _QUOTE_MIN_CHARS check, or one could silently miss
+    the digit-count exception below and reproduce the exact bare-XBRL-
+    number false positive that exception exists to fix. See
+    _BARE_NUMBER_MIN_DIGITS's own comment for why a short-as-text bare
+    number can still be long/specific enough to trust."""
+    digit_count = sum(ch.isdigit() for ch in quote_norm)
+    return len(quote_norm) >= _QUOTE_MIN_CHARS or digit_count >= _BARE_NUMBER_MIN_DIGITS
+
+
+def _quote_matches(quote: str, source: str) -> bool:
+    """True if `quote` is genuinely present in `source`, allowing for
+    reformatting/paraphrase but not fabrication.
+
+    A quote shorter than _QUOTE_MIN_CHARS (normalized) is rejected
+    outright -- too short to tell a real match from a coincidence.
+
+    Exact-substring match (after normalization) is the fast path.
+    Otherwise falls back to a COVERAGE ratio via difflib.SequenceMatcher
+    -- deliberately NOT .ratio(), which scores a short quote against a
+    much longer chunk near zero even on exact containment (ratio is
+    symmetric -- 2*matches/(len(a)+len(b)) -- but "is the quote IN the
+    source" is not a symmetric relationship: it cares only how much of
+    the QUOTE is covered, not how much of the source is). Coverage is
+    the sum of matched-block lengths divided by the quote's own length.
+
+    `autojunk=False` is mandatory, not a style choice: SequenceMatcher's
+    autojunk heuristic is keyed off len(b) -- here, the QUOTE
+    (quote_norm is passed as the third/`b` argument below, source_norm
+    as the second/`a`), not the source chunk. Once a quote reaches 200+
+    normalized characters, autojunk treats any character appearing in
+    more than ~1% of IT as "popular" junk excluded from the initial
+    anchor search -- effectively every common letter in ordinary prose
+    -- and match quality collapses silently (no error, just a wrong low
+    score) whenever the quote also isn't a clean exact substring of the
+    source. Covered by a dedicated regression test (which actually
+    exercises this by building a 200+ character QUOTE, not just a long
+    source -- an earlier version of that test got this backwards), not
+    assumed to stay correct.
+
+    The `longest`-contiguous-block floor guards the coverage metric's one
+    real weakness: get_matching_blocks() finds a common SUBSEQUENCE, not
+    a single contiguous match, so a fabricated quote assembled from words
+    scattered across the source could otherwise accumulate high coverage
+    from many small, unrelated fragments. Requiring one long contiguous
+    run makes that construction much harder to pass by accident.
+
+    Length gate accepts EITHER _QUOTE_MIN_CHARS of prose OR
+    _BARE_NUMBER_MIN_DIGITS of digits -- see that constant's own comment
+    for why a short-as-text bare number can still be long/specific
+    enough to trust (e.g. a bare XBRL value like "391035000000" is 12
+    characters, under 15, but is exactly the kind of quote this exists
+    to accept, not reject).
+
+    The actual coverage/anchor computation is numeric_utils.text_coverage
+    (lives there so table_grounding.py can share the identical logic
+    against a narrower region, without a circular import back to this
+    module -- see
+    docs/decisions/2026-09-13-table-grounding-region-scoped-matching.md)
+    -- this function is now just that primitive plus the
+    length gate and this module's own anchor-floor threshold."""
+    quote_norm = _normalize_for_match(quote)
+    if not _quote_is_long_enough(quote_norm):
+        return False
+    exact, coverage, longest = text_coverage(quote, source)
+    if exact:
+        return True
+    return coverage >= _QUOTE_COVERAGE_THRESHOLD and longest >= min(_QUOTE_ANCHOR_CHARS, len(quote_norm))
+
+
+def _number_candidates(text: str, *, unit_source: str | None = None) -> list[tuple[str, float]]:
+    """Every (category, comparable_number) `text` could plausibly
+    support -- not just each number under its own immediately-adjacent
+    unit, but also each bare/raw number reinterpreted under any unit
+    word mentioned ANYWHERE in `unit_source` (defaulting to `text`
+    itself, which is byte-for-byte the original, single-argument
+    behavior this generalizes -- see below).
+
+    SEC filing tables routinely state a unit once in a caption
+    ("Remaining performance obligation consisted of the following (in
+    billions):") and leave the actual cell values bare ("$72.4"), so a
+    per-cell extract_numbers() reads $72.4 as 72.4 raw, not 72.4
+    billion, and a correct claim would be refused.
+    This only ADDS candidate interpretations (a raw number can still
+    also match as raw) -- it never removes a way for a genuine mismatch
+    to be caught.
+
+    `unit_source` is what lets the structured-claims verifier check a claim's short
+    `quote` (which usually won't itself restate a caption-only unit)
+    against its cited chunk's full text as the place the caption lives,
+    without requiring the model to have copied the caption into the
+    quote. The eval grader's walk (_iter_citation_claims below) calls
+    this with a single argument, so unit_source defaults to `text`."""
+    source = text if unit_source is None else unit_source
+    numbers = extract_numbers(text)
+    candidates = [normalize(v, u) for v, u in numbers]
+    source_lower = source.lower()
+    for caption_unit in UNIT_MULTIPLIERS:
+        if caption_unit in source_lower:
+            candidates.extend(normalize(v, caption_unit) for v, u in numbers if u == "raw")
+    return candidates
+
+
+def _iter_citation_claims(answer_text: str, all_results: list[dict]):
+    """Shared walk over every numeric claim found near a citation marker
+    in `answer_text` — yields (citation_index, claimed_value,
+    claimed_unit, verified) for each one, where `verified` is whether
+    the claim's own cited source text actually contains a matching
+    number. value_is_citation_verified() consumes it to check whether a
+    single target value's claims are ever verified.
+
+    For each citation marker, only the text since the previous citation
+    marker (capped at _CITATION_WINDOW_CHARS) is checked, so a claim
+    isn't accidentally "verified" by a number attributed to an earlier
+    citation elsewhere in the same sentence. Known limitation: an answer
+    that shows multi-step derivation work *between* a claim and its
+    citation (e.g. a LaTeX-style calculation block) can still smuggle
+    the correct intermediate numbers into that window and dodge
+    detection — this is a best-effort heuristic, not an exhaustive
+    grounding check."""
+    window_start = 0
+    for match in _CITATION_MARKER.finditer(answer_text):
+        n = int(match.group(1))
+        window = answer_text[max(window_start, match.start() - _CITATION_WINDOW_CHARS) : match.start()]
+        window_start = match.end()
+        if not (1 <= n <= len(all_results)):
+            continue
+
+        claimed = extract_numbers(_NON_CLAIM_PATTERN.sub("", window))
+        if not claimed:
+            continue
+
+        source_normalized = _number_candidates(all_results[n - 1]["text"])
+        for value, unit in claimed:
+            category, norm = normalize(value, unit)
+            tolerance = max(0.01 * abs(norm), 0.05)
+            verified = any(c == category and abs(sn - norm) <= tolerance for c, sn in source_normalized)
+            yield n, value, unit, verified
+
+
+CitationWarning = NamedTuple(
+    "CitationWarning",
+    [
+        ("check", str),  # which verify_claims()/submission check produced it, e.g. "quote_not_found"
+        ("citation_index", int | None),  # the [n] this warning is about, or None when it isn't about one
+        ("value", float | None),  # None for a qualitative claim, which has no real value to report
+        ("unit", str | None),  # None for a qualitative claim, which has no real unit to report
+        ("message", str),  # the text shown to the model on a retry and embedded in a refusal
+        ("quote", str | None),  # the claimed quote text for a quote-grounding check; None otherwise
+    ],
+)
+
+# The model answered in text even after a forced submit_answer turn:
+# there's no structured submission to verify, so the answer is refused
+# rather than trusted unchecked.
+_NO_SUBMISSION_WARNING = CitationWarning(
+    check="no_submission",
+    citation_index=None,
+    value=None,
+    unit=None,
+    message=msg.NO_SUBMISSION_WARNING,
+    quote=None,
+)
+
+
+def value_is_citation_verified(value: float, unit: str, answer_text: str, all_results: list[dict]) -> bool:
+    """Whether `value` is properly grounded everywhere it's cited in
+    `answer_text`, used by eval_harness.py to check ONE specific expected
+    value.
+
+    Built for eval_harness.py's grade_numeric()/grade_comparison(): they
+    only check whether the expected value appears somewhere in the
+    answer text, which can't tell a correctly-cited answer from one that
+    states the right number but attaches it to the wrong source -- the
+    wrong-chunk-citation case is a silent misgrounding this check wires
+    into what decides pass/fail for the specific value a question is
+    graded on.
+
+    Returns True if `value` is never attached to a citation at all
+    (nothing to contradict a plain-text match), or if AT LEAST ONE of
+    its citations is properly grounded — a redundant second, wrong
+    citation for an otherwise-correct value shouldn't fail the check.
+    Returns False only if every citation attached to it fails
+    verification."""
+    target_category, target_norm = normalize(value, unit)
+    tolerance = max(0.01 * abs(target_norm), 0.05)
+
+    matches = []
+    for _, claimed_value, claimed_unit, verified in _iter_citation_claims(answer_text, all_results):
+        category, norm = normalize(claimed_value, claimed_unit)
+        if category == target_category and abs(norm - target_norm) <= tolerance:
+            matches.append(verified)
+    return True if not matches else any(matches)
+
+
+def _quote_grounded_in_source(value: float, unit: str, quote: str, source_text: str) -> bool:
+    """Whether `quote` genuinely supports a claimed (value, unit) against
+    `source_text` -- table-aware where possible, falling back to the
+    flat-text _quote_matches() otherwise.
+
+    If the claimed value can be located in a parsed table cell in
+    `source_text`, that structural check is AUTHORITATIVE: it decides
+    the outcome, with no fallback to _quote_matches() even if the
+    structural check fails -- a deliberate design choice, not a default.
+    _quote_matches's flat coverage/anchor-floor check accepts several
+    real misattributions on this exact table shape whenever a segment
+    label happens to be long enough (wrong fiscal period, a 10x-inflated
+    value, a nine-month figure misquoted as a quarterly one), so letting
+    it rescue a structural rejection would silently reopen exactly the
+    holes this module closes. See
+    docs/decisions/2026-09-12-structure-aware-table-quote-grounding.md.
+
+    `quote_is_grounded()` matches against a tightly-scoped per-cell
+    region (the table's own leading caption/header rows, plus the cell's
+    own governing group label, plus the cell's own data row -- see
+    table_grounding.GroundedCell) rather than a fixed word-vocabulary
+    list, so a genuinely faithful multi-value row quote (e.g. a table row
+    stating Current/Noncurrent/Total together) isn't wrongly refused for
+    citing sibling-column content, while still rejecting the row-splice/
+    cross-segment-steal attacks this module exists to block (verified
+    directly, not assumed -- see tests/test_table_grounding.py). See
+    docs/decisions/2026-09-13-table-grounding-region-scoped-matching.md
+    for the region-scoped redesign this reflects.
+
+    If the value isn't in any table cell (no table in this source, or a
+    genuinely prose-stated value), that's not evidence of anything --
+    it falls through to the ordinary flat-text check unchanged."""
+    cells = locate_value(extract_table_blocks(source_text), value, unit)
+    if cells:
+        return any(quote_is_grounded(quote, cell) for cell in cells)
+    return _quote_matches(quote, source_text)
+
+
+_ClaimQuote = NamedTuple("_ClaimQuote", [("raw", str), ("grounding", str)])
+# Bundles a claim's model-echoed quote with its header-stripped
+# counterpart into one value, so _verify_numeric_claim/
+# _verify_qualitative_claim (which need both -- grounding checks run
+# against `.grounding`, any returned CitationWarning records `.raw`)
+# take one parameter instead of two, keeping both under this project's
+# ruff PLR0913 argument-count limit.
+
+
+def _strip_citation_header(quote: str, n: int, meta: dict) -> str:
+    """A model's quote for a submit_answer claim sometimes includes the
+    numbered citation header _format_results_block() displays directly
+    above result [n]'s own text (e.g. "[1] NVDA 10-Q
+    (reportDate=2026-04-26)"), even though that header is never part of
+    the underlying source text (all_results[n-1]["text"]) the quote is
+    grounded against -- it's added only when results are rendered for
+    the model to read. A quote that includes it can never reach the 90%
+    coverage _quote_matches() requires, however genuinely the rest of
+    it matches, so it's stripped here before any grounding check runs.
+
+    Reconstructs the exact header from this claim's OWN citation index
+    and metadata (via _citation_header, not a generic regex), and only
+    strips an exact match of it, or of it without its leading "[n] "
+    (models echo both forms). A header naming a different ticker, form
+    or reportDate is never stripped. The unprefixed form is shared by
+    every result from the same filing, which is harmless: the rest of
+    the quote must still ground against result [n]'s own text. Any
+    other reformatted/case-folded copy of a real header is deliberately
+    left alone rather than guessed at."""
+    header = _citation_header(n, meta)
+    stripped = quote.lstrip()
+    for candidate in (header, header.removeprefix(f"[{n}] ")):
+        if stripped.startswith(candidate):
+            return stripped.removeprefix(candidate).lstrip()
+    return quote
+
+
+def _verify_one_claim(claim: dict, all_results: list[dict]) -> "CitationWarning | None":
+    """Checks one submit_answer claim against its own cited source, then
+    dispatches to _verify_numeric_claim or _verify_qualitative_claim
+    depending on whether the claim states a real value. A claim
+    supplying only one of value/unit (a malformed shape no schema
+    validation catches, since both left `required` would forbid the
+    legitimate qualitative case) gets its own warning here rather than
+    crashing either branch on a missing key."""
+    n = claim["citation_index"]
+    value, unit, quote = claim.get("value"), claim.get("unit"), claim["quote"]
+    if not (1 <= n <= len(all_results)):
+        return CitationWarning(
+            check="citation_out_of_range",
+            citation_index=n,
+            value=value,
+            unit=unit,
+            message=msg.CITATION_OUT_OF_RANGE_TEMPLATE.format(n=n, result_count=len(all_results)),
+            quote=None,
+        )
+    if (value is None) != (unit is None):
+        return CitationWarning(
+            check="malformed_claim",
+            citation_index=n,
+            value=value,
+            unit=unit,
+            message=msg.MALFORMED_CLAIM_TEMPLATE.format(n=n),
+            quote=None,
+        )
+    source_text = all_results[n - 1]["text"]
+    grounding_quote = _strip_citation_header(quote, n, all_results[n - 1]["metadata"])
+    quote_pair = _ClaimQuote(raw=quote, grounding=grounding_quote)
+    if value is None:
+        return _verify_qualitative_claim(n, quote_pair, source_text)
+    assert unit is not None  # the (value is None) != (unit is None) check above already ruled this out
+    return _verify_numeric_claim(n, value, unit, quote_pair, source_text)
+
+
+def _verify_numeric_claim(
+    n: int, value: float, unit: str, quote: "_ClaimQuote", source_text: str
+) -> "CitationWarning | None":
+    """Checks a claim already known to state a real (value, unit): quote
+    long enough to mean anything, quote genuinely present in that source
+    (_quote_grounded_in_source -- see its own docstring for the
+    table-aware/flat-text split), and the claimed value actually
+    attributable to that quote specifically (via _number_candidates,
+    using the FULL source chunk as unit_source so a caption-only unit
+    still resolves -- see that function's own docstring). Returns None
+    when all three pass. Checked in this order deliberately: each later
+    check assumes the earlier ones already held.
+
+    `quote.grounding` (the model's quote, with any leading citation-
+    header echo already stripped by the caller) is what every check
+    below runs against; `quote.raw` (the model's raw, unmodified text)
+    is what gets recorded on any returned CitationWarning instead, so a
+    header-echo pattern stays visible for future debugging even when
+    grounding still fails for some unrelated reason -- silently
+    swapping in the cleaned-up version would erase the exact signal
+    this stripping logic exists to surface in the first place."""
+    if not _quote_is_long_enough(_normalize_for_match(quote.grounding)):
+        return CitationWarning(
+            check="quote_too_short",
+            citation_index=n,
+            value=value,
+            unit=unit,
+            message=msg.NUMERIC_QUOTE_TOO_SHORT_TEMPLATE.format(n=n, value=value, unit=unit, quote=quote.raw),
+            quote=quote.raw,
+        )
+    if not _quote_grounded_in_source(value, unit, quote.grounding, source_text):
+        return CitationWarning(
+            check="quote_not_found",
+            citation_index=n,
+            value=value,
+            unit=unit,
+            message=msg.QUOTE_NOT_FOUND_TEMPLATE.format(n=n, value=value, unit=unit),
+            quote=quote.raw,
+        )
+    category, norm = normalize(value, unit)
+    tolerance = max(0.01 * abs(norm), 0.05)
+    quote_candidates = _number_candidates(quote.grounding, unit_source=source_text)
+    if not any(c == category and abs(v - norm) <= tolerance for c, v in quote_candidates):
+        return CitationWarning(
+            check="value_not_in_quote",
+            citation_index=n,
+            value=value,
+            unit=unit,
+            message=msg.VALUE_NOT_IN_QUOTE_TEMPLATE.format(n=n, value=value, unit=unit),
+            quote=quote.raw,
+        )
+    return None
+
+
+def _verify_qualitative_claim(n: int, quote: "_ClaimQuote", source_text: str) -> "CitationWarning | None":
+    """Checks a claim with no real value to ground (a citation marker
+    supporting a purely qualitative fact, e.g. a risk-factor bullet):
+    quote long enough to mean anything, and quote genuinely present in
+    the cited source -- via _quote_matches() directly, not
+    _quote_grounded_in_source(), since there's no value to locate a
+    specific table cell for. No value-in-quote check at all, since
+    there's no value to verify. This is a real grounding check, not a
+    rubber stamp: a fabricated qualitative citation (a quote that isn't
+    actually in the cited source) is caught here, which it silently
+    wouldn't have been under the older `claims: []` fallback for a fully
+    qualitative answer.
+
+    `quote.grounding`/`quote.raw` split: see _verify_numeric_claim's own
+    docstring -- same reasoning, checks run against the header-stripped
+    `quote.grounding`, but the model's raw `quote.raw` is what's
+    recorded on any returned CitationWarning."""
+    if not _quote_is_long_enough(_normalize_for_match(quote.grounding)):
+        return CitationWarning(
+            check="quote_too_short",
+            citation_index=n,
+            value=None,
+            unit=None,
+            message=msg.QUALITATIVE_QUOTE_TOO_SHORT_TEMPLATE.format(n=n, quote=quote.raw),
+            quote=quote.raw,
+        )
+    if not _quote_matches(quote.grounding, source_text):
+        return CitationWarning(
+            check="qualitative_quote_not_found",
+            citation_index=n,
+            value=None,
+            unit=None,
+            message=msg.QUALITATIVE_QUOTE_NOT_FOUND_TEMPLATE.format(n=n),
+            quote=quote.raw,
+        )
+    return None
+
+
+def verify_claims(
+    claims: list[dict], all_results: list[dict], question: str, answer_text: str
+) -> list["CitationWarning"]:
+    """Verifies the structured claims of a submit_answer call
+    (SUBMIT_TOOL_SCHEMA) against the sources they cite.
+
+    Two passes: first, each claim is checked independently against its
+    own cited source (_verify_one_claim) -- citation index in range,
+    quote long enough, and quote genuinely present in that source; a
+    claim that also states a real value is additionally checked for
+    whether that value is attributable to the specific quote, while a
+    qualitative claim (no value/unit -- see _verify_qualitative_claim)
+    skips that value check, since there's no value to attribute. Second,
+    a COVERAGE cross-check scans `answer_text` for numbers and requires
+    each to match some claim's normalized (value, unit) within the same
+    1%-relative/0.05-floor tolerance grade_numeric() uses -- this is what
+    stops the model from writing an ungrounded number in prose while
+    conveniently leaving it out of `claims` to dodge the first pass.
+    Qualitative and malformed claims contribute nothing to this pass,
+    since neither states a real number to cover.
+
+    A number that also appears in `question` is exempt from the coverage
+    check: it's the model repeating what the user asked, not a claim the
+    model is asserting (kills "3-year"-shaped noise and date/fiscal-year
+    echoes at the source, without needing a claims entry for them) -- an
+    accepted tradeoff, see the decision file above. `_NON_CLAIM_PATTERN`
+    (dates, bare years, 10-K/10-Q, Note N, N-year/N-day) is stripped from
+    both `question` and `answer_text` before extraction, same noise
+    filter the eval grader's _iter_citation_claims() relies on.
+
+    A number matching an operand of a `calculate` call that already
+    succeeded this turn is also exempt: rule 9 tells the model to show
+    a calculate-derived value's computation inline for readability
+    (e.g. "computed as $35,695 million ... divided by $109,417 million
+    ... = 32.6%"), and those restated operands were already verified
+    against a real cited source by `_ground_operand` at calculate-call
+    time -- they're not a new, unverified assertion. A successful
+    `calculate` call's own `all_results` entry (`chunk_index ==
+    "calculated"`, see `_calculation_as_result`) already renders both
+    operands in directly re-extractable text, so no new state needs to
+    be threaded in from the tool-dispatch loop -- `all_results` is
+    already this function's own parameter.
+
+    Only the text BEFORE that entry's own "=" is used, deliberately
+    excluding the RESULT value that follows it: an earlier version of
+    this exemption extracted from the entry's full text, which meant
+    the derived value itself (not just its operands) was silently
+    exempt from ever needing its own `claims` entry at all -- caught
+    live, by direct call, in code review. The result must still earn
+    coverage the normal way, same as any other claimed value. Citation-
+    bracket text is also stripped before extraction, guarding the same
+    hazard `answer_numbers`'s own `_ANY_CITATION_BRACKET` strip below
+    exists for -- belt-and-suspenders, since the bracketed "operands
+    from results [N] and [M])" text only ever appears after "=" and so
+    is already excluded by the split above on today's exact rendering.
+
+    A percent calculation that ran also covers its formula's unitless
+    identities (the "1" in "a ÷ b − 1", the "100" in "× 100"), so the
+    model's own write-up of it isn't withheld; `_PERCENT_IDENTITY_CONSTANTS`
+    lists them and the accepted cost."""
+    warnings = [w for w in (_verify_one_claim(c, all_results) for c in claims) if w is not None]
+
+    # Qualitative and malformed claims (see _verify_one_claim) have no
+    # real value to normalize -- and no number to be covering anyway.
+    claimed_normalized = [
+        normalize(c["value"], c["unit"]) for c in claims if c.get("value") is not None and c.get("unit") is not None
+    ]
+    question_numbers = extract_numbers(_NON_CLAIM_PATTERN.sub("", question))
+    # Strip [n]/[n, m, ...] citation markers before extracting --
+    # otherwise a bare digit INSIDE a marker (e.g. the "1" in "[1]", or
+    # each of 1/3/5 in a multi-source "[1, 3, 5]") is itself picked up as
+    # its own spurious uncovered claim. _ANY_CITATION_BRACKET (not
+    # _CITATION_MARKER) specifically to also catch the multi-index form
+    # -- see that constant's own comment.
+    answer_numbers = extract_numbers(_NON_CLAIM_PATTERN.sub("", _ANY_CITATION_BRACKET.sub("", answer_text)))
+    # Only the portion before "=" (the two operands) -- everything from
+    # "=" onward is the RESULT itself, which must still earn its own
+    # claims entry the normal way; see docstring above.
+    calculated_expressions = [
+        r["text"].split("=", 1)[0] for r in all_results if r["metadata"].get("chunk_index") == "calculated"
+    ]
+    calculated_candidates: list[tuple[str, float]] = [
+        candidate
+        for expression in calculated_expressions
+        for candidate in _number_candidates(_ANY_CITATION_BRACKET.sub("", expression))
+    ]
+    identity_values = _percent_identity_values(calculated_expressions)
+
+    def _covered(category: str, norm: float, tolerance: float) -> bool:
+        if any(c == category and abs(v - norm) <= tolerance for c, v in claimed_normalized):
+            return True
+        for q_value, q_unit in question_numbers:
+            q_category, q_norm = normalize(q_value, q_unit)
+            if q_category == category and abs(q_norm - norm) <= tolerance:
+                return True
+        if any(c == category and abs(v - norm) <= tolerance for c, v in calculated_candidates):
+            return True
+        return False
+
+    seen_uncovered: set[tuple[str, float]] = set()
+    for value, unit in answer_numbers:
+        if unit == "raw" and value in identity_values:
+            continue
+        category, norm = normalize(value, unit)
+        if _covered(category, norm, max(0.01 * abs(norm), 0.05)):
+            continue
+        key = (category, norm)
+        if key in seen_uncovered:
+            continue
+        seen_uncovered.add(key)
+        warnings.append(
+            CitationWarning(
+                check="uncovered_number",
+                citation_index=None,
+                value=value,
+                unit=unit,
+                message=msg.UNCOVERED_NUMBER_TEMPLATE.format(value=value, unit=unit),
+                quote=None,
+            )
+        )
+    return warnings
+
+
+def _should_retry_for_citations(citation_warnings: list[str], already_retried: bool) -> bool:
+    """Whether run_agent() should give the model one corrective retry
+    turn for its own unverified citation(s). True only when there's
+    something to correct, the single retry (see
+    _format_claim_retry_message below) hasn't already been spent this
+    conversation -- capped at one retry, sharing run_agent()'s existing
+    MAX_TOOL_ITERATIONS budget rather than a separate one."""
+    return bool(citation_warnings) and not already_retried
+
+
+def _should_force_final_submit(already_attempted: bool, calls_made: int) -> bool:
+    """Whether run_agent() should spend its one reserved, submit-only
+    final round trip: the dispatch budget is exhausted and the reserve
+    is unspent. Two paths draw on it -- pending tool calls (answered with
+    a synthetic "not run" result) and a text reply (a forced follow-up)
+    -- and either way the next turn is forced to submit_answer, never a
+    real dispatch call, so this is NOT a MAX_TOOL_ITERATIONS increase.
+    Capped at one shot per conversation via already_attempted."""
+    return not already_attempted and calls_made >= MAX_TOOL_ITERATIONS
+
+
+def _bulleted(warnings: list[str]) -> str:
+    """One WARNING_BULLET_TEMPLATE line per warning -- the list format
+    shared by both retry messages and the refusal."""
+    return "\n".join(msg.WARNING_BULLET_TEMPLATE.format(warning=w) for w in warnings)
+
+
+def _format_claim_retry_message(answer_text: str, warnings: list["CitationWarning"]) -> str:
+    """Builds the corrective message for the one-time retry after a
+    submit_answer call whose claims don't verify. The hard-won wording
+    lives in CITATION_RETRY_GUIDANCE (see its own comment for the live
+    failure modes each property closes). Delivered as a submit_answer tool RESULT
+    (types.Part.from_function_response), not a plain follow-up turn --
+    see the loop's own comment for why a dangling function call followed
+    by a bare user turn is worth avoiding."""
+    return msg.CLAIM_RETRY_TEMPLATE.format(
+        warnings_block=_bulleted([w.message for w in warnings]),
+        answer_text=answer_text,
+        guidance=msg.CITATION_RETRY_GUIDANCE,
+    )
+
+
+def _format_refusal_message(warnings: list[str]) -> str:
+    """Hard-gate refusal, returned by _finalize_answer() below in place
+    of an answer whose citations still don't check out after any
+    applicable retry. Implements the project's design principle
+    "Every numeric claim must trace to a specific filing + section, or
+    the agent refuses" -- this is what actually withholds the answer
+    rather than only surfacing warnings next to it."""
+    return msg.REFUSAL_TEMPLATE.format(warnings_block=_bulleted(warnings))
+
+
+def _partition_submit_call(tool_calls: list[dict]) -> tuple[dict | None, list[dict]]:
+    """Splits one turn's normalized tool_calls into (the submit_answer
+    call, if present, else None) and (every OTHER call, in order). Lets
+    the loop tell a pure submission from a mixed submit+search turn
+    without giving _dispatch_tool_call's return type a str|Terminal
+    union just to encode "this call ends the conversation" -- the loop
+    already knows which call that is from this partition alone.
+
+    At most one call is ever treated as the submission: if a turn somehow
+    includes more than one submit_answer call (no real-world reason to,
+    but not schema-forbidden), only the FIRST is returned as `submit`;
+    any additional ones land in `other`, where the loop's mixed-turn
+    handling will tell the model to resubmit once instead of silently
+    picking one arbitrarily."""
+    submit = None
+    other = []
+    for call in tool_calls:
+        if call["name"] == "submit_answer" and submit is None:
+            submit = call
+        else:
+            other.append(call)
+    return submit, other
+
+
+AgentResult = NamedTuple(
+    "AgentResult",
+    [
+        ("answer", str),  # what a real caller may show a user (the refusal text if the gate fired)
+        ("results", list[dict]),
+        ("citation_warnings", list[str]),  # unchanged shape/strings -- every existing caller's contract
+        ("withheld_answer", str | None),  # the model's actual answer text iff the gate refused it, else None
+        ("citation_warning_details", list[dict]),  # [w._asdict() for w in warnings] -- see _finalize_answer
+    ],
+)
+
+
+def _count_citation_checks(warnings: list["CitationWarning"]) -> dict[str, int]:
+    """How many warnings each check (`CitationWarning.check`) produced --
+    shared by _finalize_answer's log event and run_agent's span output
+    below so the two don't independently hand-roll the same accumulation
+    loop."""
+    return dict(Counter(w.check for w in warnings))
+
+
+def submission_warnings(
+    args: dict, all_results: list[dict], question: str
+) -> tuple[str, list["CitationWarning"]]:
+    """The hard gate's verdict on one submit_answer call: its answer
+    text and the warnings that would refuse it (empty means it passes).
+    Every gate call site goes through here, and so does the offline
+    replay, so the replayed verdict can't drift from the live one.
+
+    Schema-invalid args get the same boundary check every other tool
+    gets, and they refuse like any other failed claim. The warning's
+    value/unit are sentinels (0.0/raw) because it isn't about any one
+    numeric claim."""
+    if validate_tool_args("submit_answer", SUBMIT_TOOL_SCHEMA, args):
+        answer_text = args.get("answer_text") or ""
+        return answer_text, [
+            CitationWarning(
+                check="no_structured_answer",
+                citation_index=None,
+                value=0.0,
+                unit="raw",
+                message=msg.SUBMIT_INVALID_ARGS_WARNING,
+                quote=None,
+            )
+        ]
+    answer_text = args["answer_text"]
+    return answer_text, verify_claims(args["claims"], all_results, question, answer_text)
+
+
+def _finalize_answer(
+    answer: str, warnings: list["CitationWarning"], all_results: list[dict], *, backend: str, retried: bool
+) -> AgentResult:
+    """Single choke point for every run_agent() return site: withholds
+    `answer` in favor of a refusal (see _format_refusal_message) whenever
+    citation warnings remain, so the hard gate can't be bypassed by a
+    return site that forgets to check. `citation_warnings` is still
+    returned either way, even though the refusal text already embeds
+    them inline -- callers other than main() (e.g. eval_harness.py's
+    _grade()) use the raw list directly rather than re-parsing it out of
+    the answer text.
+
+    `withheld_answer` preserves what the model actually said whenever the gate refuses,
+    since re-grading that text against ground truth is the only way to
+    tell a correct-but-wrongly-refused answer (a false positive) from a
+    genuinely bad one. Also fires a `citation_gate_refused` log event
+    (local JSONL only, never Langfuse -- see log_event's own docstring)
+    whenever it refuses, since this is the one place a real answer gets
+    thrown away. `backend`/`retried` are keyword-only so the two flags
+    can't be swapped positionally.
+
+    `citation_warning_details` is populated directly from `warnings`
+    here -- NOT re-derived by a second pass elsewhere -- so every
+    consumer sees exactly the checks that refused the answer.
+
+    A refusal made only of no_submission warnings gets
+    NO_SUBMISSION_REFUSAL instead of REFUSAL_TEMPLATE: nothing was
+    submitted, so saying claims failed verification would be false. Mixed
+    with any claim warning, the claims wording is the true one."""
+    messages = [w.message for w in warnings]
+    details = [w._asdict() for w in warnings]
+    if not warnings:
+        return AgentResult(answer, all_results, messages, None, details)
+
+    log_event(
+        "citation_gate_refused",
+        backend=backend,
+        retried=retried,
+        n_results=len(all_results),
+        checks=_count_citation_checks(warnings),
+        warnings=messages,
+        withheld_answer=answer,
+    )
+    if all(w.check == _NO_SUBMISSION_WARNING.check for w in warnings):
+        refusal = msg.NO_SUBMISSION_REFUSAL
+    else:
+        refusal = _format_refusal_message(messages)
+    return AgentResult(refusal, all_results, messages, answer, details)
+
+
+def _format_citation_key(all_results: list[dict]) -> str:
+    lines = []
+    for i, r in enumerate(all_results, start=1):
+        meta = r["metadata"]
+        lines.append(
+            f"  [{i}] {meta['ticker']} {meta['form']} filed {meta['filingDate']} "
+            f"(reportDate={meta['reportDate']}, accession={meta['accessionNumber']}, "
+            f"chunk={meta['chunk_index']})"
+        )
+    return "\n".join(lines)
+
+
+def _dispatch_tool_call(
+    call: dict, question: str, all_results: list[dict], searched_tickers: set[str | None], verbose: bool
+) -> str:
+    """Runs one normalized tool call ({"name", "args"} -- the
+    ModelTurn.tool_calls shape from llm_backends.py) against the right
+    tool, mutating all_results/searched_tickers in place, and returns
+    the content string to send back to the model. Backend-agnostic by
+    construction: it only ever sees the normalized shape, never a
+    backend's raw wire format, so the boundary validation inside
+    call_get_financial_fact/call_compare_financial_metric (e.g.
+    rejecting an invented `segment` argument) protects every backend
+    without a second copy."""
+    name, args = call["name"], call["args"]
+
+    if name == "get_financial_fact":
+        return _dispatch_get_financial_fact(name, args, question, all_results, verbose)
+    if name == "compare_financial_metric":
+        return _dispatch_compare_financial_metric(name, args, question, all_results, verbose)
+    if name == "calculate":
+        return _dispatch_calculate(name, args, all_results, verbose)
+    return _dispatch_search_filings(call, question, all_results, searched_tickers, verbose)
+
+
+def _dispatch_get_financial_fact(name: str, args: dict, question: str, all_results: list[dict], verbose: bool) -> str:
+    """get_financial_fact branch body of _dispatch_tool_call() -- pure
+    relocation (no logic change), extracted to keep the parent's own
+    branch/return count under ruff's C901/PLR0911 thresholds. Takes
+    `name`/`args` directly (the parent already has both split out) --
+    at 5 params this doesn't need the whole-`call`-dict trick
+    _dispatch_search_filings below uses, since that one alone needs a
+    6th param (searched_tickers)."""
+    if verbose:
+        print(f"  [tool call] get_financial_fact({args!r})")
+    with traced_span("tool", name, input=args) as span:
+        # Converted here too, not only inside call_get_financial_fact, so
+        # the no-data reply names the year the lookup actually used.
+        args = _coerce_year_args(name, args, _FISCAL_YEAR_PROPS)
+        fact = call_get_financial_fact(args, question=question)
+        if fact is None:
+            span.update(output={"found": False})
+            return _format_no_fact_message(args)
+        start_index = len(all_results) + 1
+        result = _fact_as_result(fact, args)
+        all_results.append(result)
+        span.update(output={"found": True, "value": fact.get("value")})
+        return _format_results_block([result], start_index)
+
+
+def _dispatch_compare_financial_metric(
+    name: str, args: dict, question: str, all_results: list[dict], verbose: bool
+) -> str:
+    """compare_financial_metric branch body of _dispatch_tool_call() --
+    same reasoning as _dispatch_get_financial_fact() above."""
+    if verbose:
+        print(f"  [tool call] compare_financial_metric({args!r})")
+    with traced_span("tool", name, input=args) as span:
+        data = call_compare_financial_metric(args, question=question)
+        if not data:
+            span.update(output={"found": False})
+            return _format_no_comparison_message(args)
+        start_index = len(all_results) + 1
+        results = _comparison_as_results(data, args.get("metric", ""))
+        all_results.extend(results)
+        span.update(output={"found": True, "companies": sorted(data)})
+        return _format_results_block(results, start_index)
+
+
+def _dispatch_calculate(name: str, args: dict, all_results: list[dict], verbose: bool) -> str:
+    """calculate branch body of _dispatch_tool_call() -- same reasoning
+    as _dispatch_get_financial_fact() above."""
+    if verbose:
+        print(f"  [tool call] calculate({args!r})")
+    with traced_span("tool", name, input=args) as span:
+        calc_result, error = call_calculate(args, all_results)
+        if calc_result is None:
+            assert error is not None  # call_calculate's contract: exactly one of the two is None
+            span.update(output={"found": False, "error": error})
+            return error
+        start_index = len(all_results) + 1
+        result = _calculation_as_result(calc_result, args)
+        all_results.append(result)
+        span.update(output={"found": True, "value": calc_result.get("value")})
+        return _format_results_block([result], start_index)
+
+
+def _dispatch_search_filings(
+    call: dict, question: str, all_results: list[dict], searched_tickers: set[str | None], verbose: bool
+) -> str:
+    """search_filings branch body of _dispatch_tool_call() -- same
+    reasoning as _dispatch_get_financial_fact() above; also absorbs the
+    validate_tool_args/ticker-rejection guard this branch runs first.
+    Unlike its three siblings, takes the whole `call` dict rather than
+    `name`/`args` split out -- this branch alone needs `searched_tickers`
+    too, which would put a split signature at 6 positional args, over
+    PLR0913's threshold.
+
+    soft_required={"query"}: query is schema-required (encourages the
+    model to include it), but _resolve_search_args below tolerates it
+    being absent by substituting the original question -- observed
+    live, not a bug (see that function's own docstring) -- so a
+    missing query must not be a hard rejection here.
+
+    Checked BEFORE _resolve_search_args() runs, not after -- that
+    function's own `ticker not in searched_tickers` (a set) would
+    crash on a non-hashable ticker like a list, the exact unhashable-
+    ticker crash class validate_tool_args is safe against (jsonschema's
+    type/enum checks use plain equality, never hashing the instance)."""
+    name, args = call["name"], call["args"]
+    if validate_tool_args("search_filings", SEARCH_TOOL_SCHEMA, args, soft_required=frozenset({"query"})):
+        raw_ticker = args.get("ticker")
+        if raw_ticker is not None and (not isinstance(raw_ticker, str) or raw_ticker not in COMPANIES):
+            # A hallucinated ticker gets its own actionable message
+            # (names the bad value, lists valid ones) rather than a
+            # generic one -- unlike get_financial_fact/
+            # compare_financial_metric's boundary rejections, this is
+            # the one case validate_tool_args's caller has enough
+            # schema/enum context in hand to do that cheaply.
+            return msg.SEARCH_INVALID_TICKER_TEMPLATE.format(ticker=raw_ticker, valid_tickers=sorted(COMPANIES))
+        return msg.SEARCH_INVALID_ARGS_MESSAGE
+    query, ticker = _resolve_search_args(args, fallback_query=question, searched_tickers=searched_tickers)
+    searched_tickers.add(ticker)
+    if verbose:
+        print(f"  [tool call] search_filings(query={query!r}, ticker={ticker!r})")
+    with traced_span("tool", name, input={"query": query, "ticker": ticker}) as span:
+        content, result_count = run_search(query, ticker, all_results)
+        span.update(output={"result_count": result_count})
+        return content
+
+
+def run_search(query: str, ticker: str | None, all_results: list[dict]) -> tuple[str, int]:
+    """Runs one already-validated, already-resolved search, appends its
+    chunks to `all_results`, and returns the content block the model
+    receives plus the chunk count. Public so an offline replay of a
+    traced run, which has only the resolved query/ticker, rebuilds
+    exactly what the live dispatch built."""
+    results = hybrid_search(query, ticker=ticker, top_k=CHUNKS_PER_SEARCH)
+    start_index = len(all_results) + 1
+    all_results.extend(results)
+    return _format_results_block(results, start_index), len(results)
+
+
+def run_agent(question: str, backend: str | None = None, verbose: bool = False) -> AgentResult:
+    """Thin traced wrapper around _run_agent_impl() -- a single choke
+    point for the top-level span (Langfuse when configured, always the
+    local JSONL log) regardless of which of _run_agent_impl's several
+    internal return paths fires (see its own docstring). Adds no
+    behavior change to the returned answer/results/citation_warnings for
+    any existing caller/test; the 4th field (AgentResult.withheld_answer)
+    is described in _finalize_answer's own docstring.
+
+    `backend=None` resolves to config.DEFAULT_BACKEND -- resolved HERE,
+    inside the function body, rather than as a literal `= DEFAULT_BACKEND`
+    parameter default: a parameter default is evaluated once at
+    module-import time, so a literal default would freeze in whatever
+    DEFAULT_BACKEND happened to be when agent.py was first imported and
+    silently ignore any later change to it.
+
+    `citation_checks` in the span output reads the per-check counts
+    straight from `result.citation_warning_details` (AgentResult's 5th
+    field) rather than re-deriving them from the answer text, so they
+    always name the checks that actually refused it. The withheld answer text itself is never put in this span's
+    output -- it goes to _finalize_answer's log_event call only, which is
+    local-JSONL-only by design (see tracing.log_event's docstring): the
+    whole point of withholding it is that it isn't trustworthy, so it
+    must not leave the machine via the Langfuse-forwarding path
+    traced_span() offers."""
+    backend = backend or DEFAULT_BACKEND
+    with traced_span("agent", "run_agent", input={"question": question, "backend": backend}) as span:
+        result = _run_agent_impl(question, backend, verbose)
+        span.update(
+            output={
+                "answer": result.answer,
+                "citation_warnings": result.citation_warnings,
+                "citation_checks": dict(Counter(d["check"] for d in result.citation_warning_details)),
+                "result_count": len(result.results),
+            }
+        )
+        return result
+
+
+@dataclass
+class _AgentLoopState:
+    """Mutable state threaded through _run_agent_impl()'s extracted
+    helper functions below, in place of loose locals ping-ponging
+    through each one's own signature. Per-field write ownership (so a
+    future reader can see at a glance which helper may touch what):
+    `calls_made` is written only by the parent loop's own central
+    increment (once per iteration, whenever a helper hands back a new
+    turn to continue with) -- no helper increments it itself.
+    `forced_submit_attempted`/`pre_retry_submit_args`/
+    `retried_for_citations` are each written by exactly one owning
+    helper. `final_turn_attempted` is the one reserved final round trip,
+    shared by two writers: _force_final_submit_turn (pending tool calls)
+    and _handle_no_tool_calls_turn (a text reply), so whichever spends it
+    first leaves none for the other.
+
+    `pre_retry_submit_args` deliberately caches the RAW submit_answer
+    args rather than pre-computed warnings: a pure function of
+    (submit_args, all_results) can't go stale the way a cached warnings
+    list could if all_results grows further before the budget runs out."""
+
+    calls_made: int
+    retried_for_citations: bool = False
+    forced_submit_attempted: bool = False
+    final_turn_attempted: bool = False
+    pre_retry_submit_args: dict | None = None
+
+
+@dataclass(frozen=True)
+class _AgentContext:
+    """Read-mostly context shared across _run_agent_impl()'s extracted
+    helpers below, bundled purely to keep each helper's own signature
+    under ruff's PLR0913 threshold -- question/backend/verbose never
+    change during a conversation; all_results/searched_tickers are
+    mutable but already passed by reference today (mutated in place via
+    append/extend/add, never reassigned), so bundling them here doesn't
+    change that. conv_state is the backend's own conversation handle;
+    send_tool_results/send_followup are the two backend functions used
+    to send it a reply -- both obtained once from BACKENDS[backend].
+    `frozen=True` (matching this file's own CitationWarning/AgentResult
+    NamedTuples and table_grounding.py's frozen dataclasses) enforces at
+    the type level what the paragraph above already claims: no field is
+    ever reassigned after construction -- mutating all_results'/
+    searched_tickers' own contents in place is unaffected, since
+    freezing a dataclass only blocks reassigning the attribute itself,
+    not mutating the mutable object it points to."""
+
+    question: str
+    backend: str
+    verbose: bool
+    all_results: list[dict]
+    searched_tickers: set[str | None]
+    conv_state: Any
+    send_tool_results: Any
+    send_followup: Any
+
+
+@dataclass(frozen=True)
+class _LoopStep:
+    """Outcome of one _run_agent_impl() loop-body helper (currently
+    _handle_submit_turn/_handle_no_tool_calls_turn): exactly one of
+    `next_turn`/`result` is ever set -- the parent continues the loop
+    with `next_turn` if set, else returns `result` immediately. Named
+    fields instead of a positional `tuple[Any, AgentResult | None]`
+    (an earlier version of this refactor used that shape) specifically
+    so a future call site can't silently transpose the two -- code
+    review flagged that a positional swap wouldn't even crash (`turn`
+    is never `None` on the continue path, so `if result is not None`
+    firing on every call after a swap would just silently return a
+    conversation-turn object as if it were the final AgentResult)."""
+
+    next_turn: Any = None
+    result: AgentResult | None = None
+
+
+def _handle_submit_turn(args: dict, ctx: _AgentContext, loop_state: _AgentLoopState) -> _LoopStep:
+    """Body of _run_agent_impl()'s submit-answer branch -- called only
+    once its own guard (a pure submission, or a mixed submit+search
+    turn on the last allowed round trip) is already true, at which
+    point the real code always either continues or returns, never
+    falls through to a later check. Pure relocation, no logic change.
+    Exactly one of the two return values is ever non-None."""
+    with traced_span("tool", "submit_answer", input=args) as span:
+        answer_text, warnings = submission_warnings(args, ctx.all_results, ctx.question)
+        messages = [w.message for w in warnings]
+        span.update(output={"warning_count": len(warnings), "checks": [w.check for w in warnings]})
+        if (
+            _should_retry_for_citations(messages, loop_state.retried_for_citations)
+            and loop_state.calls_made < MAX_TOOL_ITERATIONS
+        ):
+            loop_state.retried_for_citations = True
+            loop_state.pre_retry_submit_args = args
+            log_event("citation_retry", backend=ctx.backend, warnings=messages)
+            if ctx.verbose:
+                print(f"  [citation retry] {messages}")
+            feedback = _format_claim_retry_message(answer_text, warnings)
+            turn = ctx.send_tool_results(ctx.conv_state, [{"name": "submit_answer", "content": feedback}])
+            return _LoopStep(next_turn=turn)
+        result = _finalize_answer(
+            answer_text, warnings, ctx.all_results, backend=ctx.backend, retried=loop_state.retried_for_citations
+        )
+        return _LoopStep(result=result)
+
+
+def _handle_no_tool_calls_turn(turn: Any, ctx: _AgentContext, loop_state: _AgentLoopState) -> _LoopStep:
+    """Body of _run_agent_impl()'s `not turn.tool_calls` branch -- the
+    model replied in text. The first time it gets one forced
+    submit_answer-only follow-up, paid for by the dispatch budget or, once
+    that's spent, by the one reserved final round trip -- the same reserve
+    a pending tool call would get. After that there's nothing structured
+    to verify: a submission cached by an earlier retry is re-gated as the
+    model's last verifiable answer, otherwise the text is refused
+    (_NO_SUBMISSION_WARNING). Exactly one of _LoopStep's two fields is
+    ever set."""
+    has_budget = loop_state.calls_made < MAX_TOOL_ITERATIONS
+    if not loop_state.forced_submit_attempted and (
+        has_budget or _should_force_final_submit(loop_state.final_turn_attempted, loop_state.calls_made)
+    ):
+        loop_state.forced_submit_attempted = True
+        if not has_budget:
+            loop_state.final_turn_attempted = True
+            log_event("final_turn_forced", backend=ctx.backend, calls_made=loop_state.calls_made, pending_tools=[])
+        if ctx.verbose:
+            print("  [forcing submit_answer] model replied in text instead of calling a tool")
+        turn = ctx.send_followup(ctx.conv_state, msg.FORCE_SUBMIT_MESSAGE, force_tool="submit_answer")
+        return _LoopStep(next_turn=turn)
+    cached = _finalize_cached_submission(ctx, loop_state)
+    if cached is not None:
+        return _LoopStep(result=cached)
+    if ctx.verbose:
+        print("  [refusing] model replied in text instead of calling submit_answer")
+    result = _finalize_answer(
+        turn.text or "",
+        [_NO_SUBMISSION_WARNING],
+        ctx.all_results,
+        backend=ctx.backend,
+        retried=loop_state.retried_for_citations,
+    )
+    return _LoopStep(result=result)
+
+
+def _force_final_submit_turn(other: list[dict], ctx: _AgentContext, loop_state: _AgentLoopState) -> Any:
+    """Body of _run_agent_impl()'s reserved, submit-only final round
+    trip (BACKLOG.md's MAX_TOOL_ITERATIONS zero-slack bug) -- called
+    only after the parent has already confirmed via
+    _should_force_final_submit() that this turn IS being forced, so it
+    always returns a new turn, never None, never a break. `other` is
+    guaranteed non-empty here (an empty-tool-calls turn is already fully
+    handled by the parent's own `if not turn.tool_calls:` branch), so
+    every pending call gets answered with a synthetic "not run" result --
+    via send_tool_results, not send_followup, since those calls are
+    already recorded as pending/unanswered in the chat history and a
+    bare followup turn on top of them is exactly the "dangling function
+    call followed by a bare user turn" shape that's historically 400'd
+    on Gemini (see _run_agent_impl's own docstring). force_tool
+    hard-constrains the model's NEXT reply to submit_answer.
+
+    Fires a `final_turn_forced` log event (local JSONL only, mirroring
+    `_finalize_answer`'s `citation_gate_refused` -- diagnostic loop
+    mechanics, not conversation content) whenever this safety net
+    engages, since that was previously only visible under --verbose or
+    inferable by counting trace spans. No `question` field: log_event()
+    already tags every call with the current run's run_id, and
+    run_agent()'s own outermost span already records the question under
+    that same run_id, so repeating it here would just duplicate data
+    already joinable through run_id."""
+    loop_state.final_turn_attempted = True
+    if ctx.verbose:
+        print("  [final turn] dispatch budget exhausted with tool calls still pending -- forcing final submit")
+    pending_tool_names = [c["name"] for c in other]
+    log_event(
+        "final_turn_forced",
+        backend=ctx.backend,
+        calls_made=loop_state.calls_made,
+        pending_tools=pending_tool_names,
+    )
+    results = [{"name": name, "content": msg.FINAL_TURN_SUBMIT_MESSAGE} for name in pending_tool_names]
+    return ctx.send_tool_results(ctx.conv_state, results, force_tool="submit_answer")
+
+
+def _dispatch_pending_calls(other: list[dict], submit: dict | None, ctx: _AgentContext) -> Any:
+    """Body of _run_agent_impl()'s ordinary tool-dispatch fallthrough --
+    always returns a new turn. Pure relocation, no logic change."""
+    results = [
+        {
+            "name": c["name"],
+            "content": _dispatch_tool_call(c, ctx.question, ctx.all_results, ctx.searched_tickers, ctx.verbose),
+        }
+        for c in other
+    ]
+    if submit is not None:
+        # Mixed turn with budget still remaining: dispatch the
+        # searches, but the submission can't be trusted yet -- it
+        # can't be grounded in results the model hasn't read.
+        results.append({"name": "submit_answer", "content": msg.MIXED_TURN_RESUBMIT_MESSAGE})
+    return ctx.send_tool_results(ctx.conv_state, results)
+
+
+def _finalize_cached_submission(ctx: _AgentContext, loop_state: _AgentLoopState) -> AgentResult | None:
+    """Re-gates the submission cached at retry time, if any (else None),
+    against the run's current all_results, since searches after the retry
+    may have added the sources it cites. The cached args may be the
+    schema-invalid ones that triggered the retry, so they go back through
+    the full gate, not straight to verify_claims."""
+    if loop_state.pre_retry_submit_args is None:
+        return None
+    answer_text, warnings = submission_warnings(loop_state.pre_retry_submit_args, ctx.all_results, ctx.question)
+    return _finalize_answer(
+        answer_text, warnings, ctx.all_results, backend=ctx.backend, retried=loop_state.retried_for_citations
+    )
+
+
+def _finalize_after_budget_exhausted(ctx: _AgentContext, loop_state: _AgentLoopState) -> AgentResult:
+    """Body of _run_agent_impl()'s post-loop fallback -- called once,
+    after the while loop's own `break` exits it."""
+    cached = _finalize_cached_submission(ctx, loop_state)
+    if cached is not None:
+        return cached
+    return _finalize_answer(
+        msg.BUDGET_EXHAUSTED_ANSWER,
+        [],
+        ctx.all_results,
+        backend=ctx.backend,
+        retried=loop_state.retried_for_citations,
+    )
+
+
+def _run_agent_impl(question: str, backend: str, verbose: bool = False) -> AgentResult:
+    """Run the tool-calling loop until the model produces a final answer
+    (no more tool calls) or MAX_TOOL_ITERATIONS is hit. `backend`
+    selects which LLM answers (see llm_backends.BACKENDS) -- the loop
+    itself, and every tool-dispatch branch inside _dispatch_tool_call,
+    is identical regardless of which one is chosen. Returns an
+    AgentResult: the answer text, every chunk retrieved across all tool
+    calls (in the same global [n] order the model was shown them in —
+    this is what lets the printed citation key line up with the model's
+    citations), any citation-verification warnings, and the model's
+    actual withheld answer text whenever the hard gate refused. Every
+    return site routes through _finalize_answer(), which withholds the
+    model's actual answer text in favor of a refusal whenever those
+    warnings are non-empty.
+
+    A final answer arrives one of two ways:
+
+    - `submit_answer` (SUBMIT_TOOL_SCHEMA), the preferred path: claims
+      are structured data (value/unit/citation_index/quote), verified by
+      verify_claims() -- fuzzy quote grounding, value attribution, and a
+      coverage cross-check -- instead of regex-parsed out of prose.
+      Offered as a 4th tool alongside the other 3 from turn 1, under AUTO
+      mode.
+    - Plain text: a text reply first triggers ONE forced
+      ANY+submit_answer-only follow-up turn (using the reserved final
+      round trip if the budget is spent). Text again after that is
+      refused, since there's no structured claim to verify -- see
+      _handle_no_tool_calls_turn.
+
+    Known simplification: no deduplication if two tool calls happen to
+    surface the same chunk (e.g. two related queries against the same
+    company). Fine for now — a duplicate citation is cosmetic, not a
+    correctness problem — but worth revisiting if it gets noisy.
+
+    One self-correction retry on unverified claims
+    (retried_for_citations caps the conversation at one), sharing the
+    MAX_TOOL_ITERATIONS budget. It delivers its feedback as a
+    submit_answer tool RESULT instead of
+    a plain follow-up turn -- keeps the chat history well-formed (a
+    dangling function call followed by a bare user turn has historically
+    400'd on Gemini) and needs no new plumbing, since it's exactly what
+    send_tool_results already does."""
+    require_backend(backend)
+    start, send_tool_results, send_followup = BACKENDS[backend]
+    conv_state, turn = start(question, SYSTEM_PROMPT, list(AGENT_TOOL_SCHEMAS))
+    ctx = _AgentContext(
+        question=question,
+        backend=backend,
+        verbose=verbose,
+        all_results=[],
+        searched_tickers=set(),
+        conv_state=conv_state,
+        send_tool_results=send_tool_results,
+        send_followup=send_followup,
+    )
+    loop_state = _AgentLoopState(calls_made=1)
+
+    while True:
+        submit, other = _partition_submit_call(turn.tool_calls)
+
+        # A pure submission, OR a mixed submit+search turn that arrived
+        # on the LAST allowed round trip: no budget left to dispatch the
+        # extra searches and get a real resubmission back, so verify what
+        # was actually submitted rather than discarding it below for the
+        # generic timeout message.
+        if submit is not None and (not other or loop_state.calls_made >= MAX_TOOL_ITERATIONS):
+            step = _handle_submit_turn(submit["args"], ctx, loop_state)
+            if step.result is not None:
+                return step.result
+            turn = step.next_turn
+            loop_state.calls_made += 1
+            continue
+
+        if not turn.tool_calls:
+            step = _handle_no_tool_calls_turn(turn, ctx, loop_state)
+            if step.result is not None:
+                return step.result
+            turn = step.next_turn
+            loop_state.calls_made += 1
+            continue
+
+        if loop_state.calls_made >= MAX_TOOL_ITERATIONS:
+            if not _should_force_final_submit(loop_state.final_turn_attempted, loop_state.calls_made):
+                break
+            turn = _force_final_submit_turn(other, ctx, loop_state)
+            loop_state.calls_made += 1
+            continue
+
+        turn = _dispatch_pending_calls(other, submit, ctx)
+        loop_state.calls_made += 1
+
+    return _finalize_after_budget_exhausted(ctx, loop_state)
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("question", help="question to answer")
+    parser.add_argument(
+        "--backend", choices=list(BACKENDS), default=DEFAULT_BACKEND, help="which LLM backend to use"
+    )
+    parser.add_argument("--verbose", action="store_true", help="print each tool call as it happens")
+    args = parser.parse_args()
+
+    result = run_agent(args.question, backend=args.backend, verbose=args.verbose)
+
+    print(f"\nQ: {args.question}\n")
+    print(result.answer)
+    if result.results:
+        print("\nSources:")
+        print(_format_citation_key(result.results))
+    # No separate "Citation warnings:" print block: since the hard gate
+    # (_finalize_answer), non-empty citation_warnings always
+    # means `answer` IS the refusal message, which already lists every
+    # warning verbatim -- printing them again here would just repeat
+    # the same lines a second time.
+    flush()
+
+
+if __name__ == "__main__":
+    main()

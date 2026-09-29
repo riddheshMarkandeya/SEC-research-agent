@@ -27,13 +27,8 @@ Usage (from the repo root):
     python tests/manual/verify_calculate.py
 """
 
-import sys
-from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
-
-from agent import run_agent
-from config import GEMINI_API_KEY
+from sec_agent.agent.agent import run_agent
+from sec_agent.config import GEMINI_API_KEY
 
 CASES = [
     (

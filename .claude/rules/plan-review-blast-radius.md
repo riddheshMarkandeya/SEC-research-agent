@@ -1,14 +1,12 @@
 ---
 paths:
-  - "agent.py"
-  - "llm_backends.py"
-  - "xbrl_facts.py"
-  - "formulas.py"
-  - "retrieval.py"
-  - "numeric_utils.py"
-  - "eval_harness.py"
-  - "chunk_documents.py"
-  - "prompts/**"
+  - "src/sec_agent/agent/**"
+  - "src/sec_agent/llm/**"
+  - "src/sec_agent/sources/**"
+  - "src/sec_agent/retrieval/**"
+  - "src/sec_agent/verification/**"
+  - "src/sec_agent/eval/**"
+  - "src/sec_agent/prompts/**"
 ---
 
 # This project's high-blast-radius core
@@ -78,6 +76,14 @@ own history, not a speculative "this file feels important" argument:
   tracing the bug back through retrieval and table-grounding to the
   chunker, not by anything visible in the citation-verification code
   itself.
+
+**Scope is whole subpackages.** `paths:` above covers every module in a
+subpackage holding a listed entry, so files with no incident of their own
+(`table_grounding.py`, `edgar_ingest.py`, `companies.py`,
+`period_labels.py`, `index_chunks.py`) get the same scrutiny and coverage
+bar: they share a data path with the listed code, and a directory glob
+can't drift out of date as modules are added. The entries above say
+where the scrutiny should focus.
 
 **Keep this list current the same way `BACKLOG.md` keeps itself
 current** (see this project's own `CLAUDE.md`): add an entry the moment

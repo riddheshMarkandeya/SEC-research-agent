@@ -20,7 +20,7 @@ import json
 import pytest
 from mcp import types
 
-import mcp_server
+from sec_agent import mcp_server
 
 
 # ---------------------------------------------------------------------------
@@ -365,7 +365,7 @@ def test_listed_search_tool_is_the_mcp_variant():
     # MCP clients get their own search description: the agent's says the
     # first search per company uses the user's original question, which
     # is true only inside the agent loop.
-    from prompts.mcp import MCP_SEARCH_TOOL_SCHEMA
+    from sec_agent.prompts.mcp import MCP_SEARCH_TOOL_SCHEMA
 
     result = asyncio.run(mcp_server._handle_list_tools(None, None))
     [search] = [t for t in result.tools if t.name == "search_filings"]
@@ -375,8 +375,8 @@ def test_listed_search_tool_is_the_mcp_variant():
 
 
 def test_mcp_search_schema_differs_from_the_agents_only_in_descriptions():
-    from prompts.agent_tools import SEARCH_TOOL_SCHEMA
-    from prompts.mcp import MCP_SEARCH_TOOL_SCHEMA
+    from sec_agent.prompts.agent_tools import SEARCH_TOOL_SCHEMA
+    from sec_agent.prompts.mcp import MCP_SEARCH_TOOL_SCHEMA
 
     def without_descriptions(schema):
         schema = copy.deepcopy(schema)

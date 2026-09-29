@@ -24,16 +24,12 @@ Usage (from the repo root):
 """
 
 import json
-import sys
-from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
-
-from agent import _dispatch_tool_call
-from config import GEMINI_API_KEY
-from llm_backends import BACKENDS
-from prompts.agent_system import SYSTEM_PROMPT
-from prompts.agent_tools import COMPARE_TOOL_SCHEMA, FACT_TOOL_SCHEMA, SEARCH_TOOL_SCHEMA, SUBMIT_TOOL_SCHEMA
+from sec_agent.agent.agent import _dispatch_tool_call
+from sec_agent.config import GEMINI_API_KEY
+from sec_agent.llm.llm_backends import BACKENDS
+from sec_agent.prompts.agent_system import SYSTEM_PROMPT
+from sec_agent.prompts.agent_tools import COMPARE_TOOL_SCHEMA, FACT_TOOL_SCHEMA, SEARCH_TOOL_SCHEMA, SUBMIT_TOOL_SCHEMA
 
 TOOLS = [SEARCH_TOOL_SCHEMA, FACT_TOOL_SCHEMA, COMPARE_TOOL_SCHEMA, SUBMIT_TOOL_SCHEMA]
 QUESTION = "What was Apple's total revenue for fiscal year 2025?"

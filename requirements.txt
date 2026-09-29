@@ -32,3 +32,6 @@ mcp==2.1.1
 # tool calls to Langfuse when LANGFUSE_PUBLIC_KEY/LANGFUSE_SECRET_KEY
 # are set; a no-op otherwise. OTel-based v4 client.
 langfuse==4.15.1
+
+# The project itself, editable: puts sec_agent and tools on the path.
+-e .

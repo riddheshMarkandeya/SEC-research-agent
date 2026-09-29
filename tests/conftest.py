@@ -5,7 +5,7 @@ opting in individually.
 
 import pytest
 
-import tracing
+from sec_agent import tracing
 
 
 @pytest.fixture(autouse=True)

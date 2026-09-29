@@ -15,13 +15,8 @@ Usage (from the repo root):
     python tests/manual/verify_complete.py
 """
 
-import sys
-from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
-
-from config import GEMINI_API_KEY
-from llm_backends import complete
+from sec_agent.config import GEMINI_API_KEY
+from sec_agent.llm.llm_backends import complete
 
 
 def main():

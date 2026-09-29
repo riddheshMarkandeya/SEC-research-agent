@@ -34,14 +34,9 @@ Usage (from the repo root):
     python tests/manual/verify_crm_fiscal_year_lookup.py
 """
 
-import sys
-from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
-
-from agent import call_get_financial_fact
-from formulas import get_ratio
-from xbrl_facts import get_metric
+from sec_agent.agent.agent import call_get_financial_fact
+from sec_agent.sources.formulas import get_ratio
+from sec_agent.sources.xbrl_facts import get_metric
 
 EXPECTED_OPERATING_MARGIN = 20.1
 EXPECTED_GROSS_MARGIN = 77.7

@@ -25,12 +25,9 @@ Usage (from the repo root):
     python tests/manual/verify_retrieval.py
 """
 
-import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
-
-from retrieval import CHUNKS_DIR, bm25_search, hybrid_search, vector_search
+from sec_agent.retrieval.retrieval import CHUNKS_DIR, bm25_search, hybrid_search, vector_search
 
 # Real questions this project already asks in eval_questions.jsonl,
 # reused here rather than invented fresh -- they're already known to be
@@ -54,7 +51,7 @@ def _setup_missing() -> str | None:
     retrieval.py's own _load_bm25_index() RuntimeError."""
     if not any(CHUNKS_DIR.glob("*/*_chunks.jsonl")):
         return f"No chunks found under {CHUNKS_DIR.resolve()} -- run chunk_documents.py first."
-    from config import CHROMA_DIR
+    from sec_agent.config import CHROMA_DIR
 
     if not Path(CHROMA_DIR).exists():
         return f"No Chroma index found at {CHROMA_DIR} -- run index_chunks.py first."

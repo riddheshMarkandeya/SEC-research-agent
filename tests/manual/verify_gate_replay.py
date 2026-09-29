@@ -18,12 +18,10 @@ Usage (from the repo root):
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
-
-import analyze_gate_replay as replay  # noqa: E402
-import config  # noqa: E402
-import eval_harness  # noqa: E402
-import trace_query  # noqa: E402
+from sec_agent import config
+from sec_agent.eval import eval_harness
+from tools import analyze_gate_replay as replay
+from tools import trace_query
 
 # da3be66608ff: budget exhausted after a retry, tool spans after the last
 # submit. 981513aa83f1: a recent clean pass with search, fact and calculate.
