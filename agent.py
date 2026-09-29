@@ -1886,6 +1886,34 @@ def _count_citation_checks(warnings: list["CitationWarning"]) -> dict[str, int]:
     return dict(Counter(w.check for w in warnings))
 
 
+def submission_warnings(
+    args: dict, all_results: list[dict], question: str
+) -> tuple[str, list["CitationWarning"]]:
+    """The hard gate's verdict on one submit_answer call: its answer
+    text and the warnings that would refuse it (empty means it passes).
+    Every gate call site goes through here, and so does the offline
+    replay, so the replayed verdict can't drift from the live one.
+
+    Schema-invalid args get the same boundary check every other tool
+    gets, and they refuse like any other failed claim. The warning's
+    value/unit are sentinels (0.0/raw) because it isn't about any one
+    numeric claim."""
+    if validate_tool_args("submit_answer", SUBMIT_TOOL_SCHEMA, args):
+        answer_text = args.get("answer_text") or ""
+        return answer_text, [
+            CitationWarning(
+                check="no_structured_answer",
+                citation_index=None,
+                value=0.0,
+                unit="raw",
+                message=msg.SUBMIT_INVALID_ARGS_WARNING,
+                quote=None,
+            )
+        ]
+    answer_text = args["answer_text"]
+    return answer_text, verify_claims(args["claims"], all_results, question, answer_text)
+
+
 def _finalize_answer(
     answer: str, warnings: list["CitationWarning"], all_results: list[dict], *, backend: str, retried: bool
 ) -> AgentResult:
@@ -2068,11 +2096,21 @@ def _dispatch_search_filings(
     if verbose:
         print(f"  [tool call] search_filings(query={query!r}, ticker={ticker!r})")
     with traced_span("tool", name, input={"query": query, "ticker": ticker}) as span:
-        results = hybrid_search(query, ticker=ticker, top_k=CHUNKS_PER_SEARCH)
-        start_index = len(all_results) + 1
-        all_results.extend(results)
-        span.update(output={"result_count": len(results)})
-        return _format_results_block(results, start_index)
+        content, result_count = run_search(query, ticker, all_results)
+        span.update(output={"result_count": result_count})
+        return content
+
+
+def run_search(query: str, ticker: str | None, all_results: list[dict]) -> tuple[str, int]:
+    """Runs one already-validated, already-resolved search, appends its
+    chunks to `all_results`, and returns the content block the model
+    receives plus the chunk count. Public so an offline replay of a
+    traced run, which has only the resolved query/ticker, rebuilds
+    exactly what the live dispatch built."""
+    results = hybrid_search(query, ticker=ticker, top_k=CHUNKS_PER_SEARCH)
+    start_index = len(all_results) + 1
+    all_results.extend(results)
+    return _format_results_block(results, start_index), len(results)
 
 
 def run_agent(question: str, backend: str | None = None, verbose: bool = False) -> AgentResult:
@@ -2212,27 +2250,7 @@ def _handle_submit_turn(args: dict, ctx: _AgentContext, loop_state: _AgentLoopSt
     falls through to a later check. Pure relocation, no logic change.
     Exactly one of the two return values is ever non-None."""
     with traced_span("tool", "submit_answer", input=args) as span:
-        if validate_tool_args("submit_answer", SUBMIT_TOOL_SCHEMA, args):
-            # Defensive, not expected in practice (Gemini/Ollama both
-            # called this correctly on every live run tried -- see
-            # tests/manual/verify_submit_answer.py) -- same
-            # belt-and-suspenders boundary check every other tool
-            # already gets. value/unit are sentinel-valued (0.0/raw):
-            # this warning isn't about a specific numeric claim.
-            answer_text = args.get("answer_text") or ""
-            warnings = [
-                CitationWarning(
-                    check="no_structured_answer",
-                    citation_index=None,
-                    value=0.0,
-                    unit="raw",
-                    message=msg.SUBMIT_INVALID_ARGS_WARNING,
-                    quote=None,
-                )
-            ]
-        else:
-            answer_text = args["answer_text"]
-            warnings = verify_claims(args["claims"], ctx.all_results, ctx.question, answer_text)
+        answer_text, warnings = submission_warnings(args, ctx.all_results, ctx.question)
         messages = [w.message for w in warnings]
         span.update(output={"warning_count": len(warnings), "checks": [w.check for w in warnings]})
         if (

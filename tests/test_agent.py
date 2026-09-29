@@ -18,6 +18,7 @@ from typing import cast
 import pytest
 
 from agent import (
+    CHUNKS_PER_SEARCH,
     AgentResult,
     CitationWarning,
     call_calculate,
@@ -45,6 +46,8 @@ from agent import (
     _should_force_final_submit,
     _should_retry_for_citations,
     _strip_citation_header,
+    run_search,
+    submission_warnings,
     validate_tool_args,
     run_agent,
     value_is_citation_verified,
@@ -3004,6 +3007,68 @@ def test_run_agent_returns_answer_unchanged_when_no_citation_warnings(monkeypatc
 def _submit_turn(answer_text="The value was 100.", claims=None):
     claims = [{"value": 100.0, "unit": "raw", "citation_index": 1, "quote": "the reported value was 100"}] if claims is None else claims
     return ModelTurn(tool_calls=[{"name": "submit_answer", "args": {"answer_text": answer_text, "claims": claims}}], text=None)
+
+
+def test_submission_warnings_invalid_args_returns_no_structured_answer():
+    answer_text, warnings = submission_warnings({"answer_text": "The value was 100.", "claims": "not-a-list"}, [], "q")
+
+    assert answer_text == "The value was 100."
+    assert [w.check for w in warnings] == ["no_structured_answer"]
+
+
+def test_submission_warnings_invalid_args_without_answer_text_yields_empty_text():
+    answer_text, warnings = submission_warnings({}, [], "q")
+
+    assert answer_text == ""
+    assert [w.check for w in warnings] == ["no_structured_answer"]
+
+
+def test_submission_warnings_valid_args_delegates_to_verify_claims(monkeypatch):
+    seen = {}
+
+    def fake_verify_claims(claims, all_results, question, answer_text):
+        seen.update(claims=claims, all_results=all_results, question=question, answer_text=answer_text)
+        return []
+
+    monkeypatch.setattr("agent.verify_claims", fake_verify_claims)
+    claims = [{"value": 100.0, "unit": "raw", "citation_index": 1, "quote": "the reported value was 100"}]
+    results = [{"text": "x"}]
+
+    answer_text, warnings = submission_warnings({"answer_text": "It was 100 [1].", "claims": claims}, results, "q")
+
+    assert (answer_text, warnings) == ("It was 100 [1].", [])
+    assert seen == {"claims": claims, "all_results": results, "question": "q", "answer_text": "It was 100 [1]."}
+
+
+def test_run_search_appends_results_and_numbers_them_after_existing(monkeypatch):
+    fake_results = [
+        {
+            "text": "chunk text",
+            "metadata": {
+                "ticker": "AAPL",
+                "form": "10-K",
+                "filingDate": "2025-01-01",
+                "reportDate": "2024-12-31",
+                "accessionNumber": "acc-1",
+                "chunk_index": 0,
+            },
+        }
+    ]
+    captured = {}
+
+    def fake_hybrid_search(query, ticker, top_k):
+        captured.update(query=query, ticker=ticker, top_k=top_k)
+        return fake_results
+
+    monkeypatch.setattr("agent.hybrid_search", fake_hybrid_search)
+    all_results = [{"text": "earlier"}]
+
+    content, count = run_search("employees", None, all_results)
+
+    assert captured == {"query": "employees", "ticker": None, "top_k": CHUNKS_PER_SEARCH}
+    assert count == 1
+    assert all_results == [{"text": "earlier"}] + fake_results
+    assert "[2]" in content and "[1]" not in content
 
 
 def test_run_agent_spontaneous_submit_answer_with_valid_claims_passes(monkeypatch):
