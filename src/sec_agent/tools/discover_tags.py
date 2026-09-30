@@ -14,13 +14,13 @@ returned 503 us-gaap tags / ~3.8MB for AAPL alone). This is a research
 tool you run by hand, not something agent.py imports.
 
 Usage (library):
-    from tools.discover_tags import list_tags
+    from sec_agent.tools.discover_tags import list_tags
     list_tags("PLTR", keyword="inventory")
     list_tags("AAPL", recent_only=True)  # only tags AAPL still reports
 
 Usage (CLI):
-    python -m tools.discover_tags PLTR --keyword inventory
-    python -m tools.discover_tags AAPL --recent-only
+    python -m sec_agent.tools.discover_tags PLTR --keyword inventory
+    python -m sec_agent.tools.discover_tags AAPL --recent-only
 """
 
 import argparse

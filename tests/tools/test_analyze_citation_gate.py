@@ -7,7 +7,7 @@ counterpart needed.
 
 import json
 
-from tools.analyze_citation_gate import classify_row, load_rows, summarize
+from sec_agent.tools.analyze_citation_gate import classify_row, load_rows, summarize
 
 
 def _row(**overrides):

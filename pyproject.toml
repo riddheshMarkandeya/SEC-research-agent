@@ -3,16 +3,16 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 # Packaging exists only for the editable install (`pip install -e .`, pulled
-# in by requirements.txt): it puts `sec_agent` and `tools` on the path from
-# any working directory. Runtime dependencies stay in requirements.txt.
+# in by requirements.txt): it puts `sec_agent` on the path from any working
+# directory. Runtime dependencies stay in requirements.txt.
 [project]
 name = "sec-agent"
 version = "0.1.0"
 requires-python = ">=3.13"
 
 [tool.setuptools.packages.find]
-where = ["src", "."]
-include = ["sec_agent*", "tools*"]
+where = ["src"]
+include = ["sec_agent*"]
 
 [tool.setuptools.package-data]
 "*" = ["*.json"]
@@ -86,9 +86,6 @@ pythonVersion = "3.13"
 typeCheckingMode = "basic"
 venvPath = "."
 venv = ".venv"
-# Two package roots make setuptools install an import-hook finder, which
-# pyright can't follow, so the src root is named here.
-extraPaths = ["src"]
 exclude = [
     ".venv",
     "**/__pycache__",

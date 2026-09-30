@@ -4,9 +4,9 @@ import json
 import pytest
 
 from sec_agent.agent import agent
-from tools import analyze_gate_replay as replay
+from sec_agent.tools import analyze_gate_replay as replay
 from sec_agent import tracing
-from tools.analyze_gate_replay import (
+from sec_agent.tools.analyze_gate_replay import (
     RunFilter,
     RunTrace,
     compare_failed,

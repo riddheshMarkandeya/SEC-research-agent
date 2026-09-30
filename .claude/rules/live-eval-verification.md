@@ -81,7 +81,7 @@ runs by that fingerprint. For any change to what a model reads:
 - **Run the panel protocol, not a single question.** The panel, the
   screen → replicate → attribute decision rule and the thresholds are in
   `docs/plans/2026-09-24-prompt-audit-roadmap.md` ("Decision rule").
-  Screen with `python -m tools.compare_prompt_versions` (fingerprint mode).
+  Screen with `python -m sec_agent.tools.compare_prompt_versions` (fingerprint mode).
   For the replicate and attribute steps, always use explicit mode
   (`--base-files` / `--candidate-files`): a revert restores the base
   fingerprint, so fingerprint mode would pool reverted runs with the

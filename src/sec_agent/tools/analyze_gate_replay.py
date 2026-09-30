@@ -37,10 +37,10 @@ rerank. While iterating, replay a slice (--qid, repeatable, or a recent
 --since); run the full replay and --compare only as the final check.
 
 Usage:
-  python -m tools.analyze_gate_replay --qid nvda-revenue-fy26 --qid aapl-ai-risk
-  python -m tools.analyze_gate_replay --since 2026-09-19T03:12
-  python -m tools.analyze_gate_replay --out base.json            (on master)
-  python -m tools.analyze_gate_replay --compare base.json        (on the branch)
+  python -m sec_agent.tools.analyze_gate_replay --qid nvda-revenue-fy26 --qid aapl-ai-risk
+  python -m sec_agent.tools.analyze_gate_replay --since 2026-09-19T03:12
+  python -m sec_agent.tools.analyze_gate_replay --out base.json            (on master)
+  python -m sec_agent.tools.analyze_gate_replay --compare base.json        (on the branch)
 """
 
 import argparse
@@ -55,7 +55,7 @@ from pathlib import Path
 from sec_agent.agent import agent
 from sec_agent import config
 from sec_agent.eval import eval_harness
-from tools import trace_query
+from sec_agent.tools import trace_query
 from sec_agent import tracing
 from sec_agent.sources import xbrl_facts
 

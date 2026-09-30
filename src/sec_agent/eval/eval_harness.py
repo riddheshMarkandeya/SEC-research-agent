@@ -686,7 +686,7 @@ def main():
     print(f"\nFull report saved to {out_path}")
     # A print, not an import -- analyze_citation_gate.py stays a
     # standalone reader of the report file, not coupled to this module.
-    print(f"Citation-gate FP/FN breakdown: python -m tools.analyze_citation_gate {out_path}")
+    print(f"Citation-gate FP/FN breakdown: python -m sec_agent.tools.analyze_citation_gate {out_path}")
 
 
 if __name__ == "__main__":

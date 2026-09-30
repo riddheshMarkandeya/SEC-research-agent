@@ -42,11 +42,11 @@ each. To add a company: add a row to `companies.json`, then run
 
 **Layout and setup**: code lives in the `src/sec_agent/` package
 (`agent/`, `verification/`, `sources/`, `retrieval/`, `llm/`,
-`prompts/`, `eval/`, plus `config`, `tracing`, `mcp_server`); analysis
-CLIs and the gate replay tool in `tools/`; tests mirror the package
+`prompts/`, `eval/`, `tools/` for the analysis CLIs and the gate replay
+tool, plus `config`, `tracing`, `mcp_server`); tests mirror the package
 under `tests/`. `pip install -r requirements.txt` includes the required
 editable install (`-e .`), and CLIs run as `python -m
-sec_agent.<pkg>.<module>` or `python -m tools.<module>`. Generated data
+sec_agent.<pkg>.<module>`. Generated data
 (`data/`, `chunks/`, `chroma_db/`, `xbrl_cache/`, `trace_logs/`) lives
 in the gitignored `var/`, anchored to the project root; committed eval
 questions and results stay in `eval/`.

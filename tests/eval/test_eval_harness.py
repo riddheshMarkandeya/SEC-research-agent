@@ -20,7 +20,7 @@ from pathlib import Path
 
 import pytest
 
-from tools import compare_prompt_versions
+from sec_agent.tools import compare_prompt_versions
 from sec_agent.eval import eval_harness
 from sec_agent.llm import llm_backends
 from sec_agent.agent.agent import AgentResult
@@ -660,7 +660,7 @@ def test_main_parses_ids_and_orchestrates_run_eval_then_save_report(monkeypatch,
     assert calls["provenance"] == {"git_sha": "abc1234"}
     out = capsys.readouterr().out
     assert "Full report saved to" in out
-    assert "Citation-gate FP/FN breakdown: python -m tools.analyze_citation_gate" in out
+    assert "Citation-gate FP/FN breakdown: python -m sec_agent.tools.analyze_citation_gate" in out
 
 
 # ---------------------------------------------------------------------------
