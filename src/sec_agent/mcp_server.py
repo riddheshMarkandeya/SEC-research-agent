@@ -28,8 +28,8 @@ from sec_agent.agent.agent import (
     CHUNKS_PER_SEARCH,
     call_compare_financial_metric,
     call_get_financial_fact,
-    validate_tool_args,
 )
+from sec_agent.agent.tool_args import validate_tool_args
 from sec_agent.config import MCP_AUTH_TOKEN, MCP_RATE_LIMIT_REQUESTS, MCP_RATE_LIMIT_WINDOW_SECONDS
 from sec_agent.sources.edgar_ingest import get_filing_url
 from sec_agent.prompts.agent_tools import COMPARE_TOOL_SCHEMA, FACT_TOOL_SCHEMA
