@@ -34,7 +34,7 @@ Usage (from the repo root):
     python tests/manual/verify_crm_fiscal_year_lookup.py
 """
 
-from sec_agent.agent.agent import call_get_financial_fact
+from sec_agent.agent.fact_tools import call_get_financial_fact
 from sec_agent.sources.formulas import get_ratio
 from sec_agent.sources.xbrl_facts import get_metric
 

@@ -25,7 +25,7 @@ from pathlib import Path
 
 import pytest
 
-from sec_agent.agent import citations, tool_results
+from sec_agent.agent import citations, fact_tools, tool_results
 from sec_agent.config import PROJECT_ROOT
 from sec_agent.prompts import SNAPSHOT_PATH
 
@@ -132,10 +132,10 @@ def _render_result_formats(agent) -> dict:
         "accession": "acc-1",
     }
     fact_raw = dict(fact_usd, unit="raw", filed=None)
-    out["fact_usd"] = agent._fact_as_result(fact_usd, {"metric": "revenue", "ticker": "AAPL"})
-    out["fact_raw"] = agent._fact_as_result(fact_raw, {"metric": "asset_turnover", "ticker": "AAPL"})
+    out["fact_usd"] = fact_tools._fact_as_result(fact_usd, {"metric": "revenue", "ticker": "AAPL"})
+    out["fact_raw"] = fact_tools._fact_as_result(fact_raw, {"metric": "asset_turnover", "ticker": "AAPL"})
     frame_fact = {"value": 5.0, "unit": "USD", "period_end": "2025-06-30", "accession": "acc-2"}
-    out["comparison"] = agent._comparison_as_results({"MSFT": frame_fact, "AAPL": fact_usd}, "revenue")
+    out["comparison"] = fact_tools._comparison_as_results({"MSFT": frame_fact, "AAPL": fact_usd}, "revenue")
     base = {
         "operand_a": 150.0,
         "unit_a": "million",
@@ -234,7 +234,7 @@ def _render_retry_and_no_data(agent) -> dict:
     # Through the dispatcher, so the reply shows the year the lookup used
     # after a string year is converted.
     with pytest.MonkeyPatch.context() as mp:
-        mp.setattr(agent, "get_ratio", lambda *a, **k: None)
+        mp.setattr(fact_tools, "get_ratio", lambda *a, **k: None)
         out["dispatch_no_fact_string_year"] = agent._dispatch_tool_call(
             {"name": "get_financial_fact", "args": {"metric": "gross_margin", "ticker": "PLTR", "fiscal_year": "2025"}},
             "q",

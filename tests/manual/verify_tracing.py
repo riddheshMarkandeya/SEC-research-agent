@@ -28,7 +28,8 @@ import uuid
 from pathlib import Path
 
 from sec_agent import tracing
-from sec_agent.agent.agent import call_get_financial_fact, run_agent
+from sec_agent.agent.agent import run_agent
+from sec_agent.agent.fact_tools import call_get_financial_fact
 from sec_agent.config import LANGFUSE_BASE_URL, LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY, TRACE_LOG_PATH
 
 

@@ -3,7 +3,8 @@ Unit tests for tool_args.py: validate_tool_args against every agent tool
 schema, including the submit_answer and calculate payload shapes.
 """
 
-from sec_agent.agent.agent import call_get_financial_fact, _dispatch_tool_call
+from sec_agent.agent.agent import _dispatch_tool_call
+from sec_agent.agent.fact_tools import call_get_financial_fact
 from sec_agent.agent.tool_args import validate_tool_args
 from sec_agent.prompts.agent_tools import (
     CALCULATE_TOOL_SCHEMA,
@@ -142,7 +143,7 @@ def test_validate_tool_args_still_rejects_null_valued_extra_key(monkeypatch):
 def test_call_get_financial_fact_tolerates_null_fiscal_period(monkeypatch):
     # Regression case for the same null-optional-property fix, exercised
     # through the real call site rather than validate_tool_args directly.
-    monkeypatch.setattr("sec_agent.agent.agent.get_metric", lambda *a, **k: {"value": 42})
+    monkeypatch.setattr("sec_agent.agent.fact_tools.get_metric", lambda *a, **k: {"value": 42})
     result = call_get_financial_fact({"ticker": "AAPL", "metric": "revenue", "fiscal_period": None})
     assert result == {"value": 42}
 
