@@ -31,3 +31,26 @@ def _valid_calculate_args(**overrides):
     }
     args.update(overrides)
     return args
+
+
+# PLR0913: a test-fixture builder called almost exclusively with
+# keyword args for a subset of fields -- the same "idiomatic test
+# pattern, not a real finding" this project's pyproject.toml already
+# applies to PLR2004 in tests/*. Bundling these into a dict would
+# force-touch every one of the agent tests' many call sites for zero
+# behavioral benefit.
+def _fake_result(  # noqa: PLR0913
+    ticker="CRM", form="10-K", reportDate="2026-01-31", text="Some chunk text.",
+    filingDate="2026-03-02", accessionNumber="0001108524-26-000060", chunk_index: int | str = 95
+):
+    return {
+        "text": text,
+        "metadata": {
+            "ticker": ticker,
+            "form": form,
+            "reportDate": reportDate,
+            "filingDate": filingDate,
+            "accessionNumber": accessionNumber,
+            "chunk_index": chunk_index,
+        },
+    }

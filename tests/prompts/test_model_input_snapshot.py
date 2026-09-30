@@ -25,6 +25,7 @@ from pathlib import Path
 
 import pytest
 
+from sec_agent.agent import tool_results
 from sec_agent.config import PROJECT_ROOT
 from sec_agent.prompts import SNAPSHOT_PATH
 
@@ -118,9 +119,9 @@ def _results():
 # ---------------------------------------------------------------------------
 def _render_result_formats(agent) -> dict:
     out = {
-        "citation_header": agent._citation_header(7, META),
-        "results_block_empty": agent._format_results_block([], 1),
-        "results_block": agent._format_results_block(_results(), 3),
+        "citation_header": tool_results._citation_header(7, META),
+        "results_block_empty": tool_results._format_results_block([], 1),
+        "results_block": tool_results._format_results_block(_results(), 3),
     }
     fact_usd = {
         "value": 123.0,
@@ -229,7 +230,7 @@ def _render_retry_and_no_data(agent) -> dict:
         ("ratio_not_tagged_check", {"metric": "gross_margin", "ticker": "PLTR", "period_end_date": "2025-12-31"}),
         ("multi_year", {"metric": "gross_margin", "ticker": "PLTR", "start_fiscal_year": 2023}),
     ]:
-        out[f"no_fact_{name}"] = agent._format_no_fact_message(args)
+        out[f"no_fact_{name}"] = tool_results._format_no_fact_message(args)
     # Through the dispatcher, so the reply shows the year the lookup used
     # after a string year is converted.
     with pytest.MonkeyPatch.context() as mp:
@@ -245,8 +246,8 @@ def _render_retry_and_no_data(agent) -> dict:
         ("empty", {}),
         ("q4_never_tagged", {"metric": "inventory", "anchor_ticker": "PLTR", "fiscal_period": "Q4"}),
     ]:
-        out[f"no_comparison_{name}"] = agent._format_no_comparison_message(args)
-    out["never_tagged_hint"] = agent._never_tagged_hint("PLTR", "inventory")
+        out[f"no_comparison_{name}"] = tool_results._format_no_comparison_message(args)
+    out["never_tagged_hint"] = tool_results._never_tagged_hint("PLTR", "inventory")
     out["search_bad_ticker"] = agent._dispatch_search_filings(
         {"name": "search_filings", "args": {"query": "x", "ticker": "ZZZZ"}}, "q", [], set(), False
     )
@@ -444,7 +445,7 @@ def render_model_inputs() -> dict:
     with pytest.MonkeyPatch.context() as mp:
         mp.setattr(tracing, "TRACE_LOG_PATH", "")
         mp.setattr(tracing, "TRACING_ENABLED", False)
-        mp.setattr(agent, "is_metric_tagged", lambda ticker, metric: False)
+        mp.setattr(tool_results, "is_metric_tagged", lambda ticker, metric: False)
         return {"agent": _render_agent(), "judge": _render_judge(mp), "mcp": _render_mcp(mp)}
 
 
