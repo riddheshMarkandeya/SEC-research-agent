@@ -22,10 +22,9 @@ def _is_valid_int(value: Any) -> TypeGuard[int]:
     from numbers), so this gets that exclusion for free instead of
     writing `isinstance(x, int) and not isinstance(x, bool)` by hand --
     the exact shape of bug (isinstance(True, int) is True in Python) that
-    silently let fiscal_year=true through the old hand-rolled check. See
-    docs/decisions/2026-09-09-schema-driven-arg-validation.md. Shared by
+    silently let fiscal_year=true through the old hand-rolled check. Shared by
     _rejects_invalid_fiscal_year and the multi-year-average combo check
-    below, both of which read fiscal_year-shaped args outside of
+    in fact_tools.py, both of which read fiscal_year-shaped args outside of
     validate_tool_args's generic pass (see call_get_financial_fact's
     skip_properties)."""
     return _INT_TYPE_VALIDATOR.is_valid(value)

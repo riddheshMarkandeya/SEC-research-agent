@@ -73,6 +73,9 @@ New in this merge:
     4. **Split `agent.py` (2,516 lines) and `tests/test_agent.py` (4,669 lines)** (BACKLOG,
        long-standing user goal). This is a pure move, verified by the model-input snapshot, the
        full suite and the replay.
+       - **Done 2026-09-29** (`docs/plans/2026-09-29-agent-py-split.md`): seven new modules in
+         `sec_agent/agent/` (`tool_args`, `tool_results`, `citations`, `fact_tools`,
+         `calculate`, `dispatch`, `submission`); `agent.py` keeps only the loop.
     5. **Add a summary mode to `eval_harness.py`** (BACKLOG, Med). Every package below runs
        panels, and the full output has cost 2.4M characters of context across past sessions.
        Cheap, and it's outside the agent.
@@ -135,7 +138,9 @@ New in this merge:
     touch.
 - Type: grilling (self), then its own plan.
 - Blocked by: none (Ollama removal done 2026-09-29).
-- Status: open. **Frontier.**
+- Status: **resolved 2026-09-29.** The loop stays in `agent.py`; the S2 retry state spans
+  `agent.py` and `submission.py`; the gate packages land in `citations.py`. See
+  `docs/plans/2026-09-29-agent-py-split.md`.
 
 ### Tool-message citations on refusal questions (from the gate map)
 - Question: Should the refusal path need no numeric claims? It merges with review S3 (the
@@ -163,7 +168,7 @@ New in this merge:
 ## Proposed build order
 
 Prerequisites (Decisions 13 and 15): ~~NUMBER_PATTERN fix~~ → ~~replay tool~~ → ~~Ollama removal~~
-→ ~~`src/` layout move~~ → `agent.py` split (inside the package) → eval summary mode.
+→ ~~`src/` layout move~~ → ~~`agent.py` split~~ → eval summary mode.
 
 Then the improvement packages:
 1. **Retry slot** (gate D9): code, then the panel and a full run.

@@ -23,11 +23,12 @@ escalation) unless the task is independently tiered Substantial.
 Every entry here is grounded in a real incident from this project's
 own history, not a speculative "this file feels important" argument:
 
-- **`agent.py`** — the tool-calling loop (`_run_agent_impl`) and its
-  dispatch/backend-call sites (`_dispatch_tool_call`,
-  `_partition_submit_call`). Incident: the 2026-09-16 `MAX_TOOL_ITERATIONS`
-  fix, where a wire-protocol-shape mistake here would have produced a
-  live Gemini 400 on the exact questions the fix targeted.
+- **`agent/`** — the tool-calling loop (`agent.py`'s `_run_agent_impl`)
+  and its dispatch/backend-call sites (`dispatch.py`'s
+  `_dispatch_tool_call`, `submission.py`'s `_partition_submit_call`).
+  Incident: the 2026-09-16 `MAX_TOOL_ITERATIONS` fix, where a
+  wire-protocol-shape mistake here would have produced a live Gemini
+  400 on the exact questions the fix targeted.
 - **`llm_backends.py`** — the backend send functions (`_gemini_send`,
   `_gemini_send_followup`).
   Same incident — this is exactly where `send_followup` vs.

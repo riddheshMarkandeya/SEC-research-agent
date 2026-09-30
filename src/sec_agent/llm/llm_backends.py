@@ -32,10 +32,10 @@ ModelTurn = NamedTuple("ModelTurn", [("tool_calls", list[dict]), ("text", str | 
 
 # The normalized ModelTurn.tool_calls shape documented above -- the
 # JSON-native boundary every backend converges on, and exactly what
-# agent.py's _dispatch_tool_call indexes into (call["name"]/call["args"]).
+# dispatch.py's _dispatch_tool_call indexes into (call["name"]/call["args"]).
 # Validated at the end of _gemini_response_to_turn so a malformed
 # turn fails loudly here, with the backend name attached, rather than as
-# a confusing KeyError three layers away inside agent.py.
+# a confusing KeyError three layers away inside dispatch.py.
 _NORMALIZED_TOOL_CALLS_SCHEMA = {
     "type": "array",
     "items": {
@@ -53,7 +53,7 @@ def _validate_tool_calls(backend: str, tool_calls: list[dict]) -> None:
     the normalized {"name": str, "args": dict} shape ModelTurn's own
     docstring documents. This is a wire-format bug, not a recoverable
     per-request situation -- fail loudly rather than let a malformed
-    turn silently propagate into agent.py's dispatch."""
+    turn silently propagate into dispatch.py's _dispatch_tool_call."""
     error = next(_NORMALIZED_TOOL_CALLS_VALIDATOR.iter_errors(tool_calls), None)
     if error is None:
         return

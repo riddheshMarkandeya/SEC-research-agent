@@ -129,7 +129,7 @@ def get_ratio(
     """Generic entry point for any ratio in RATIO_DEFINITIONS -- see that
     dict's own comment for why this exists instead of one function per
     ratio. Raises KeyError for an unregistered ratio_name, same as a
-    plain dict lookup would; callers (agent.py) are expected to check
+    plain dict lookup would; callers (fact_tools.py) are expected to check
     `metric in RATIO_DEFINITIONS` first, same pattern already used for
     DEFAULT_METRIC_TAGS elsewhere."""
     d = RATIO_DEFINITIONS[ratio_name]

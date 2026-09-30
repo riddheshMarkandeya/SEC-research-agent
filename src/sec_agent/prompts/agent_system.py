@@ -16,7 +16,7 @@ from sec_agent.sources.xbrl_facts import DEFAULT_METRIC_TAGS
 # listed by hand, so the system prompt and the tool schemas stay accurate
 # automatically as new ratios are registered. A ratio whose
 # `supports_cross_company` flag is False has no compare_financial_metric
-# version; agent.call_compare_financial_metric falls through to the same
+# version; fact_tools.call_compare_financial_metric falls through to the same
 # graceful "not supported" result any other unrecognized metric gets.
 CROSS_COMPANY_RATIOS = sorted(name for name, d in RATIO_DEFINITIONS.items() if d.supports_cross_company)
 SINGLE_COMPANY_ONLY_RATIOS = sorted(name for name, d in RATIO_DEFINITIONS.items() if not d.supports_cross_company)

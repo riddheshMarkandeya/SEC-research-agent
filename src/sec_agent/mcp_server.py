@@ -1,6 +1,6 @@
 """
 MCP server: expose search_filings/get_financial_fact/
-compare_financial_metric over Streamable HTTP. Reuses agent.py's own
+compare_financial_metric over Streamable HTTP. Reuses the agent package's own
 tool-dispatch logic and the agent's fact/compare schemas rather than
 reimplementing either; search_filings is listed with its own MCP schema
 (prompts.mcp), whose descriptions are true for a direct MCP caller.
@@ -110,7 +110,7 @@ def _fact_source(ticker: str, fact: dict) -> dict:
 
 def _search_filings(args: dict) -> list[dict]:
     """Unlike get_financial_fact/compare_financial_metric above (which
-    inherit boundary validation for free by delegating into agent.py's
+    inherit boundary validation for free by delegating into fact_tools.py's
     already-validated call_get_financial_fact/call_compare_financial_metric),
     this handler builds its result directly from hybrid_search(), so it
     needs its own validate_tool_args() call. It validates against the
@@ -136,7 +136,7 @@ def _get_financial_fact(args: dict) -> dict:
     # call_get_financial_fact() records its own unmet-metric-request
     # event internally (no `question` here -- MCP tool calls carry no
     # free-text question) -- this span is just the general tool-call
-    # trace, same as agent.py's _dispatch_tool_call.
+    # trace, same as dispatch.py's _dispatch_tool_call.
     with traced_span("tool", "get_financial_fact", input=args) as span:
         fact = call_get_financial_fact(args)
         if fact is None:

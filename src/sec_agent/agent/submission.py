@@ -87,9 +87,8 @@ AgentResult = NamedTuple(
 
 def _count_citation_checks(warnings: list["CitationWarning"]) -> dict[str, int]:
     """How many warnings each check (`CitationWarning.check`) produced --
-    shared by _finalize_answer's log event and run_agent's span output
-    below so the two don't independently hand-roll the same accumulation
-    loop."""
+    shared by _finalize_answer's log event and the gate replay tool's
+    comparison, so both count checks the same way."""
     return dict(Counter(w.check for w in warnings))
 
 

@@ -66,7 +66,7 @@ CITATION_PATTERN = re.compile(r"\[\d+\]")
 # Numeric grading
 # ---------------------------------------------------------------------------
 # extract_numbers()/normalize() live in numeric_utils.py, shared with
-# agent.py's citation checks -- see that module's docstring for why.
+# citations.py's citation checks -- see numeric_utils.py's docstring for why.
 
 
 def grade_numeric(
@@ -350,7 +350,7 @@ def run_eval(
         try:
             result = run_agent(q["question"], backend=backend)
             answer_text, retrieved, citation_warnings = result.answer, result.results, result.citation_warnings
-            # Excludes hard-gated refusals: agent.py's _format_refusal_message()
+            # Excludes hard-gated refusals: submission.py's _format_refusal_message()
             # echoes each warning's own "[n] claims ..." text verbatim, which
             # still matches CITATION_PATTERN, so a refusal would otherwise get
             # has_citation=True -- a real answer's citation and a refusal's

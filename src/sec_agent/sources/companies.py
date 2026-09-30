@@ -22,7 +22,7 @@ class CompanyInfo(TypedDict):
 
 COMPANIES_PATH = Path(__file__).parent / "companies.json"
 
-# Downstream readers (agent.py, xbrl_facts.py, period_labels.py,
+# Downstream readers (the agent package, xbrl_facts.py, period_labels.py,
 # edgar_ingest.py) do raw info["name"]/info["cik"]/info["fiscal_year_end_month"]
 # indexing with no check of their own -- validating here catches a
 # malformed entry at load time instead of a confusing KeyError deep in
@@ -70,6 +70,6 @@ def load_companies() -> dict[str, CompanyInfo]:
 
 
 # Ticker -> company name for the covered companies, in companies.json's
-# order. Shared by agent.py's own logic and the prompts/ text built from
+# order. Shared by the agent package's own logic and the prompts/ text built from
 # it, so both see the same snapshot.
 COMPANIES = {ticker: info["name"] for ticker, info in load_companies().items()}

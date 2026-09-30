@@ -5,6 +5,7 @@ paths:
   - "src/sec_agent/retrieval/index_chunks.py"
   - "src/sec_agent/retrieval/retrieval.py"
   - "src/sec_agent/agent/agent.py"
+  - "src/sec_agent/agent/dispatch.py"
   - "src/sec_agent/llm/llm_backends.py"
   - "src/sec_agent/devtools/analyze_gate_replay.py"
 ---
@@ -16,7 +17,8 @@ concretely, in this repo:
 
 - **SEC EDGAR HTTP calls** (`edgar_ingest.py`, `xbrl_facts.py`)
 - **Chroma + embedding indexing/retrieval** (`index_chunks.py`,
-  `retrieval.py`, and `analyze_gate_replay.py`'s live search binding,
+  `retrieval.py`, `dispatch.py`'s `search_filings` path through
+  `hybrid_search`, and `analyze_gate_replay.py`'s live search binding,
   which replays traced runs against the real index and XBRL cache)
 - **LLM round-trips through the Gemini backend** (`agent.py`'s tool-calling
   loop, `llm_backends.py`)

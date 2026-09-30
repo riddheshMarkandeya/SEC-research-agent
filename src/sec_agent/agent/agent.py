@@ -41,7 +41,7 @@ def _should_retry_for_citations(citation_warnings: list[str], already_retried: b
     """Whether run_agent() should give the model one corrective retry
     turn for its own unverified citation(s). True only when there's
     something to correct, the single retry (see
-    _format_claim_retry_message below) hasn't already been spent this
+    submission._format_claim_retry_message) hasn't already been spent this
     conversation -- capped at one retry, sharing run_agent()'s existing
     MAX_TOOL_ITERATIONS budget rather than a separate one."""
     return bool(citation_warnings) and not already_retried
@@ -136,7 +136,7 @@ class _AgentContext:
     change that. conv_state is the backend's own conversation handle;
     send_tool_results/send_followup are the two backend functions used
     to send it a reply -- both obtained once from BACKENDS[backend].
-    `frozen=True` (matching this file's own CitationWarning/AgentResult
+    `frozen=True` (matching citations.CitationWarning/submission.AgentResult
     NamedTuples and table_grounding.py's frozen dataclasses) enforces at
     the type level what the paragraph above already claims: no field is
     ever reassigned after construction -- mutating all_results'/

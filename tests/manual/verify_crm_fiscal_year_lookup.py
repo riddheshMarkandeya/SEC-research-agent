@@ -16,7 +16,7 @@ recent 10-K (filed 2026-03-02, period ending 2026-01-31) self-tags
 and that the identical pattern appears in CRM's own 2010-2014 filings
 and NVDA's own 2011-2014 filings.
 
-Drives `xbrl_facts.get_metric`/`get_ratio` and `agent.call_get_financial_fact`
+Drives `xbrl_facts.get_metric`/`get_ratio` and `fact_tools.call_get_financial_fact`
 directly against the real cache (no mocking) for the exact values named
 in the bug report:
   1. get_metric('CRM', 'operating_income', fiscal_year=2026, fiscal_period='FY')
@@ -77,7 +77,7 @@ def check_ratio(metric: str, expected: float):
 
 
 def check_agent_tool_entry_point():
-    print("\n[3] agent.call_get_financial_fact -- the model-facing entry point")
+    print("\n[3] fact_tools.call_get_financial_fact -- the model-facing entry point")
     for metric, expected in [("operating_margin", EXPECTED_OPERATING_MARGIN), ("gross_margin", EXPECTED_GROSS_MARGIN)]:
         args = {"ticker": "CRM", "metric": metric, "fiscal_year": 2026, "fiscal_period": "FY"}
         result = call_get_financial_fact(args)

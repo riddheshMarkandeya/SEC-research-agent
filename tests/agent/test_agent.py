@@ -552,8 +552,7 @@ def test_run_agent_submit_answer_retry_exhausting_budget_reverifies_against_curr
     # MAX_TOOL_ITERATIONS bumped by 1 again (3, was already bumped once
     # for the citation-retry mechanism) to make room for the final-turn
     # safety net's own reserved round trip (2026-09-16) without changing
-    # what this test is actually regression-testing -- see the same
-    # pattern already noted on the sibling test above (line ~2351).
+    # what this test is actually regression-testing.
     monkeypatch.setattr("sec_agent.agent.agent.MAX_TOOL_ITERATIONS", 3)
     first_submit = _submit_turn(answer_text="The value was 100.")
     retry_makes_new_search = ModelTurn(tool_calls=[{"name": "search_filings", "args": {"query": "more"}}], text=None)
@@ -664,7 +663,7 @@ def test_run_agent_does_not_send_withheld_answer_to_the_span(monkeypatch):
     # answer is exactly the text the hard gate decided NOT to trust, so
     # it must never leave the machine via that path -- log_event() (local
     # JSONL only, see tracing.py) is the only place it's allowed to go
-    # (see _finalize_answer's own tests above).
+    # (see _finalize_answer's own tests in test_submission.py).
     final_answer_turn = ModelTurn(tool_calls=[], text="Apple's revenue was $100 billion [1].")
 
     def fake_start(question, system_prompt, tool_schemas):

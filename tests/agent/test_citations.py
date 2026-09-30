@@ -1113,3 +1113,35 @@ def test_verify_claims_rejects_nvidia_graphics_mislabel_of_computes_value():
     warnings = verify_claims(claims, results, "q", answer_text)
     assert len(warnings) == 1
     assert warnings[0].check == "quote_not_found"
+
+
+def test_quote_matches_accepts_a_long_bare_xbrl_number_quote():
+    # A quote of just an XBRL fact's bare number, with no surrounding
+    # "revenue = ... USD" context, must verify: "391035000000" is only 12
+    # normalized characters, under _QUOTE_MIN_CHARS (15), yet it is an
+    # exact, unambiguous match. A quote's DIGIT count, not character count, is
+    # what makes a bare number specific enough to trust -- a 12-digit
+    # XBRL value is astronomically unlikely to match by coincidence even
+    # though it's shorter (as text) than a genuinely vague quote like
+    # "$5" needs to be to mean anything.
+    source = "revenue = 391035000000 USD (structured XBRL data, not filing prose)"
+    assert _quote_matches("391035000000", source) is True
+
+
+def test_quote_matches_still_rejects_a_short_bare_number():
+    # Contrast with the fix above: a SHORT bare number ("$5", 1 digit)
+    # must still be rejected -- the digit-count exception is deliberately
+    # scoped to numbers long enough to be specific, not every number.
+    source = "Total revenue for fiscal year 2025 was $416,161 million according to the filing."
+    assert _quote_matches("$5", source) is False
+
+
+def test_verify_claims_accepts_a_long_bare_xbrl_number_quote_end_to_end():
+    # The bare-number digit-count exception must hold through the
+    # verify_claims() entry point too, not just in _quote_matches:
+    # verify_claims()/_verify_one_claim() have their own too-short
+    # pre-check that runs before _quote_matches is ever called.
+    results = [_fake_result(text="revenue = 391035000000 USD (structured XBRL data, not filing prose)")]
+    claims = [_valid_submitted_claim(value=391035000000.0, unit="raw", quote="391035000000")]
+    answer_text = "The value was 391035000000 [1]."
+    assert verify_claims(claims, results, "q", answer_text) == []

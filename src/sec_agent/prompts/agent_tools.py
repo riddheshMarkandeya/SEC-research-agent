@@ -262,10 +262,10 @@ SUBMIT_TOOL_SCHEMA = {
 # meaningful within one agent._run_agent_impl run's own all_results, not to a
 # standalone MCP caller with no such list.
 #
-# A hand-computed value can never pass agent._verify_one_claim, which
+# A hand-computed value can never pass citations._verify_one_claim, which
 # requires the claimed value to appear inside the quote. This tool is the
 # route for derived numbers instead: each operand must appear in its cited
-# source (agent._number_candidates, the same check claims use) and the
+# source (citations._number_candidates, the same check claims use) and the
 # operation runs in Python, never in the model's head. Its result is an
 # ordinary all_results entry the model cites like any other tool output.
 #

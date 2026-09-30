@@ -3,8 +3,6 @@ Unit tests for tool_args.py: validate_tool_args against every agent tool
 schema, including the submit_answer and calculate payload shapes.
 """
 
-from sec_agent.agent.dispatch import _dispatch_tool_call
-from sec_agent.agent.fact_tools import call_get_financial_fact
 from sec_agent.agent.tool_args import validate_tool_args
 from sec_agent.prompts.agent_tools import (
     CALCULATE_TOOL_SCHEMA,
@@ -22,7 +20,7 @@ from tests.agent.helpers import _valid_calculate_args, capture_events
 # schema-shape checks below exercise the generic function directly, walking
 # each *_TOOL_SCHEMA's declared properties rather than one hand-written test
 # per field -- the call_get_financial_fact/call_compare_financial_metric/
-# _dispatch_tool_call tests further down still cover the same schema-
+# _dispatch_tool_call tests in test_fact_tools.py/test_dispatch.py still cover the same schema-
 # violation cases end-to-end (unrecognized_extra_argument, ticker_not_in_enum,
 # etc.), so this section is additive, not a replacement for those.
 # ---------------------------------------------------------------------------
@@ -138,21 +136,6 @@ def test_validate_tool_args_still_rejects_null_valued_extra_key(monkeypatch):
 
     assert rejected is True
     assert calls[0][1]["reason"] == "unrecognized_extra_argument"
-
-
-def test_call_get_financial_fact_tolerates_null_fiscal_period(monkeypatch):
-    # Regression case for the same null-optional-property fix, exercised
-    # through the real call site rather than validate_tool_args directly.
-    monkeypatch.setattr("sec_agent.agent.fact_tools.get_metric", lambda *a, **k: {"value": 42})
-    result = call_get_financial_fact({"ticker": "AAPL", "metric": "revenue", "fiscal_period": None})
-    assert result == {"value": 42}
-
-
-def test_dispatch_tool_call_search_filings_tolerates_null_ticker(monkeypatch):
-    monkeypatch.setattr("sec_agent.agent.dispatch.hybrid_search", lambda query, ticker, top_k: [])
-    call = {"name": "search_filings", "args": {"query": "revenue", "ticker": None}}
-    content = _dispatch_tool_call(call, "q", [], set(), verbose=False)
-    assert "invalid" not in content
 
 
 def test_validate_tool_args_skip_properties_still_allows_the_property_itself(monkeypatch):

@@ -332,9 +332,8 @@ def get_metric(
     entries = data.get("units", {}).get("USD", [])
     # An empty string must be treated as "not provided" and fall through
     # to the fiscal_year/fiscal_period path, not as a date to match
-    # against -- see docs/decisions/2026-08-16-xbrl-structured-facts-tool.md
-    # (bug #4) and agent.py's own sibling case for the model quirk this
-    # guards against.
+    # against: the model sometimes sends period_end_date="" alongside a
+    # fiscal year. tool_results._no_fact_period treats "" the same way.
     if period_end_date:
         entry = _pick_entry_by_end_date(entries, period_end_date)
     elif fiscal_year is None:

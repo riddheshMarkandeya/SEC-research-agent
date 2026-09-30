@@ -29,8 +29,8 @@ def _ground_operand(
     retry with a corrected value/citation rather than getting a generic
     failure. Reuses _number_candidates() (not _quote_matches -- there's
     no quoted substring here, just a bare operand value) and the same
-    tolerance constant (max(0.01*abs(norm), 0.05)) used everywhere else
-    in this file.
+    tolerance constant (max(0.01*abs(norm), 0.05)) used by citations.py's
+    claim checks.
 
     On failure, distinguishes three real cases rather than returning one
     generic message for all of them -- a message that blames the wrong

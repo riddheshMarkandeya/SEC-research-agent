@@ -316,3 +316,10 @@ def test_dispatch_no_data_reply_names_the_converted_year_and_logs_once(monkeypat
     assert "'FY' FY2025" in content
     assert "FY'2025'" not in content
     assert [c for c, _ in events].count("tool_arg_coerced") == 1
+
+
+def test_dispatch_tool_call_search_filings_tolerates_null_ticker(monkeypatch):
+    monkeypatch.setattr("sec_agent.agent.dispatch.hybrid_search", lambda query, ticker, top_k: [])
+    call = {"name": "search_filings", "args": {"query": "revenue", "ticker": None}}
+    content = _dispatch_tool_call(call, "q", [], set(), verbose=False)
+    assert "invalid" not in content

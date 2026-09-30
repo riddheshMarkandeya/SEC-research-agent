@@ -117,7 +117,7 @@ def _results():
 # ---------------------------------------------------------------------------
 # Agent: formatters and messages, called directly
 # ---------------------------------------------------------------------------
-def _render_result_formats(agent) -> dict:
+def _render_result_formats() -> dict:
     out: dict[str, object] = {
         "citation_header": tool_results._citation_header(7, META),
         "results_block_empty": tool_results._format_results_block([], 1),
@@ -155,7 +155,7 @@ def _render_result_formats(agent) -> dict:
     return out
 
 
-def _render_calculate_messages(agent) -> dict:
+def _render_calculate_messages() -> dict:
     r = _results()
     out = {
         "ground_bad_index": calculate._ground_operand(100.0, "million", 9, r, "operand_a"),
@@ -189,7 +189,7 @@ def _render_calculate_messages(agent) -> dict:
     return out
 
 
-def _render_citation_warnings(agent) -> dict:
+def _render_citation_warnings() -> dict:
     r = _results()
     claims = [
         {"citation_index": 9, "value": 1.0, "unit": "million", "quote": "whatever"},
@@ -216,7 +216,7 @@ def _render_citation_warnings(agent) -> dict:
     }
 
 
-def _render_retry_and_no_data(agent) -> dict:
+def _render_retry_and_no_data() -> dict:
     warning = citations.CitationWarning("uncovered_number", None, 1.0, "raw", "msg {x} one", None)
     out: dict[str, object] = {
         "claim_retry": submission._format_claim_retry_message("answer_text {braces}", [warning]),
@@ -323,7 +323,7 @@ def _run(overrides, backend, start_turn, script, expected_calls=None) -> dict:
     }
 
 
-def _render_loop_runs(agent) -> dict:
+def _render_loop_runs() -> dict:
     from sec_agent.llm.llm_backends import ModelTurn
 
     bad_submit = _submit_turn("Sales were $777 million {x} [1].", [])
@@ -365,7 +365,6 @@ def _render_loop_runs(agent) -> dict:
 
 
 def _render_agent() -> dict:
-    from sec_agent.agent import agent
     from sec_agent.llm.llm_backends import _gemini_declaration_fields
     from sec_agent.prompts.agent_system import SYSTEM_PROMPT
     from sec_agent.prompts.agent_tools import AGENT_TOOL_SCHEMAS
@@ -382,7 +381,7 @@ def _render_agent() -> dict:
         _render_retry_and_no_data,
         _render_loop_runs,
     ):
-        rendered = part(agent)
+        rendered = part()
         assert not set(rendered) & set(out), set(rendered) & set(out)
         out.update(rendered)
     return out

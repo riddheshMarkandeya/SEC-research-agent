@@ -47,7 +47,7 @@ def call_get_financial_fact(args: dict, question: str | None = None) -> dict | N
     metric -- formulas._get_annual_value() dispatches any of them
     generically (see its own docstring).
 
-    `question` (optional -- only agent.py's tool-dispatch path has one;
+    `question` (optional -- only dispatch.py's tool-dispatch path has one;
     mcp_server.py's direct callers don't) is passed through to
     record_unmet_metric_request() purely for observability, see below.
 

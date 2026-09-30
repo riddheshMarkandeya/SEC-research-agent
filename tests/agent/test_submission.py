@@ -13,11 +13,11 @@ from sec_agent.agent.submission import (
     _format_refusal_message,
     submission_warnings,
 )
-from sec_agent.agent.citations import CitationWarning, _quote_matches, verify_claims
+from sec_agent.agent.citations import CitationWarning
 from sec_agent.prompts.agent_messages import (
     CITATION_RETRY_GUIDANCE,
 )
-from tests.agent.helpers import _fake_result, _valid_submitted_claim, capture_events
+from tests.agent.helpers import capture_events
 
 
 def test_submission_warnings_invalid_args_returns_no_structured_answer():
@@ -293,42 +293,3 @@ def test_partition_submit_call_mixed_turn():
 
 def test_partition_submit_call_empty():
     assert _partition_submit_call([]) == (None, [])
-
-
-def test_quote_matches_accepts_a_long_bare_xbrl_number_quote():
-    # Regression test for a real false-positive refusal found live
-    # (2026-09-10, running the newly-wired agent loop end to end): the
-    # model quoted JUST an XBRL fact's bare number, with no surrounding
-    # "revenue = ... USD" context -- "391035000000" is only 12
-    # NORMALIZED CHARACTERS, under _QUOTE_MIN_CHARS (15), so it was
-    # wrongly rejected as "too short to verify" despite being an exact,
-    # unambiguous match. A quote's DIGIT count, not character count, is
-    # what makes a bare number specific enough to trust -- a 12-digit
-    # XBRL value is astronomically unlikely to match by coincidence even
-    # though it's shorter (as text) than a genuinely vague quote like
-    # "$5" needs to be to mean anything.
-    source = "revenue = 391035000000 USD (structured XBRL data, not filing prose)"
-    assert _quote_matches("391035000000", source) is True
-
-
-def test_quote_matches_still_rejects_a_short_bare_number():
-    # Contrast with the fix above: a SHORT bare number ("$5", 1 digit)
-    # must still be rejected -- the digit-count exception is deliberately
-    # scoped to numbers long enough to be specific, not every number.
-    source = "Total revenue for fiscal year 2025 was $416,161 million according to the filing."
-    assert _quote_matches("$5", source) is False
-
-
-def test_verify_claims_accepts_a_long_bare_xbrl_number_quote_end_to_end():
-    # verify_claims()/_verify_one_claim() had their OWN separate
-    # too-short pre-check (agent.py, before ever calling _quote_matches)
-    # that was never updated when _BARE_NUMBER_MIN_DIGITS was added to
-    # _quote_matches -- so the exact live false positive
-    # test_quote_matches_accepts_a_long_bare_xbrl_number_quote regression-
-    # tests at the _quote_matches level was still reproducible one layer
-    # up, through the actual verify_claims() entry point every caller
-    # uses. Found in code review 2026-09-10.
-    results = [_fake_result(text="revenue = 391035000000 USD (structured XBRL data, not filing prose)")]
-    claims = [_valid_submitted_claim(value=391035000000.0, unit="raw", quote="391035000000")]
-    answer_text = "The value was 391035000000 [1]."
-    assert verify_claims(claims, results, "q", answer_text) == []

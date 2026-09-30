@@ -1,6 +1,6 @@
 """
-Measures the citation hard gate's (agent.py's verify_claims()/
-_finalize_answer()) false-positive/false-negative rate against ground
+Measures the citation hard gate's (citations.py's verify_claims() and
+submission.py's _finalize_answer()) false-positive/false-negative rate against ground
 truth, by reading eval_harness.py report JSON files rather than running
 anything live -- the report is the durable, committed artifact, so
 re-classifying from it is free and re-runnable any time the
@@ -24,11 +24,11 @@ ground-truth number to re-grade against, so they're excluded):
     none of the 4 new gate-evidence fields at all -- excluded from every
     rate, not silently counted as a pass.
 
-Known asymmetry, reported rather than hidden: agent.value_is_citation_
+Known asymmetry, reported rather than hidden: citations.value_is_citation_
 verified() treats "no citation at all" as verified, so a correct-but-
 uncited value and a correct-and-cited value both count as "would have
 passed" here. false_positive_by_check breaks false positives down by
-agent.CitationWarning.check, so each check's share stays visible instead
+citations.CitationWarning.check, so each check's share stays visible instead
 of collapsing into one rate. Older reports carry the retired prose
 checks ("cited_claim_unsupported", "uncited_claim"). A "no_submission"
 false positive is different in kind: the model answered in plain text

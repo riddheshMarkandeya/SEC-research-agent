@@ -1,7 +1,7 @@
 ---
 paths:
   - "src/sec_agent/verification/numeric_utils.py"
-  - "src/sec_agent/agent/agent.py"
+  - "src/sec_agent/agent/**"
   - "src/sec_agent/retrieval/retrieval.py"
   - "src/sec_agent/eval/eval_harness.py"
   - "src/sec_agent/retrieval/chunk_documents.py"
@@ -22,7 +22,7 @@ minus sign (U+2212), both only producible by a real model choosing its
 own notation in free text, not by anything a test author would think to
 construct by hand.
 
-**Rule**: after any change to `numeric_utils.py`, `agent.py`'s citation-
+**Rule**: after any change to `numeric_utils.py`, `citations.py`'s citation-
 verification functions (`verify_claims`, `_verify_one_claim`,
 `value_is_citation_verified`, and friends), `retrieval.py`'s ranking/rerank
 logic, `eval_harness.py`'s `grade_judged` and the judge prompts it
@@ -67,7 +67,7 @@ runs by that fingerprint. For any change to what a model reads:
   one edit.
 - **Regenerate the model-input snapshot in the same commit.** Any change
   that alters what a model receives, whether a `prompts/` constant or the
-  logic that picks, fills or converts it (`agent.py`, `llm_backends.py`,
+  logic that picks, fills or converts it (the `agent/` package, `llm_backends.py`,
   `eval_harness.grade_judged`, `mcp_server.py`), fails
   `tests/prompts/test_model_input_snapshot.py`. Read the diff it prints, then run
   `UPDATE_SNAPSHOT=1 pytest tests/prompts/test_model_input_snapshot.py` (PowerShell:

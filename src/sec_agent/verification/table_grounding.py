@@ -1,11 +1,9 @@
 """
 Structure-aware quote grounding for values that live in a markdown
-table. Used by agent._verify_one_claim() as a REPLACEMENT for
+table. Used by citations._verify_one_claim() as a REPLACEMENT for
 _quote_matches's flat-text anchor floor whenever a claim's value can be
 located in a parsed table cell; _quote_matches remains the path for
-prose. See
-docs/decisions/2026-09-12-structure-aware-table-quote-grounding.md and
-docs/decisions/2026-09-13-table-grounding-region-scoped-matching.md.
+prose.
 
 Why a flat string-similarity check over the WHOLE source can't do this
 job: verifying a claim about a table cell needs to tell a genuine,
@@ -31,8 +29,8 @@ all, since that content was never included in the region to begin with
 Split into its own module rather than added to agent.py (already 2000+
 lines) for the same reason numeric_utils.py exists as its own module
 (see that module's docstring): independently testable, no dependency on
-agent.py's tool-calling machinery, and importing FROM agent.py here would
-be circular (agent.py imports this module).
+agent.py's tool-calling machinery, and importing FROM the agent package here
+would be circular (citations.py imports this module).
 """
 
 import re
@@ -192,7 +190,7 @@ def extract_table_blocks(text: str) -> list[TableBlock]:
     repeating it inside any cell -- confirmed against the real AAPL
     segment-revenue table this module was built against, whose caption
     lives in the preceding paragraph, not inside its own <TABLE> tags.
-    Mirrors agent._number_candidates's own unit_source parameter for the
+    Mirrors citations._number_candidates's own unit_source parameter for the
     identical reason (see that function's docstring)."""
     caption_units = frozenset(cu for cu in UNIT_MULTIPLIERS if cu in text.lower())
     blocks = []
@@ -255,7 +253,7 @@ def _leading_header_multi_cell_token_sets(rows: list[_Row]) -> list[frozenset[st
 
 def _cell_value_candidates(cell_text: str, caption_units: frozenset[str]) -> list[tuple[float, str]]:
     """Every (value, unit) a table cell's bare number could plausibly
-    mean -- mirrors agent._number_candidates's own caption-unit
+    mean -- mirrors citations._number_candidates's own caption-unit
     reinterpretation exactly and for the identical reason: SEC tables
     routinely state a unit once, in prose near the table ("dollars in
     millions"), leaving every cell bare ("$178,353"), so a per-cell
@@ -274,7 +272,7 @@ def locate_value(blocks: list[TableBlock], value: float, unit: str) -> list[Grou
     """Every table cell across `blocks` whose own value matches (value,
     unit) within the same 1%-relative/0.05-floor tolerance used
     throughout this codebase's citation verification (see
-    numeric_utils.normalize's callers in agent.py and eval_harness.py).
+    numeric_utils.normalize's callers in citations.py and eval_harness.py).
     Returns [] if the value isn't in any cell -- callers treat that as
     "not a table claim" and fall back to the ordinary flat-text quote
     check, since the value may legitimately be stated in prose instead,

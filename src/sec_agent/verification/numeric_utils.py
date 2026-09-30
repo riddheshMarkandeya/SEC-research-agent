@@ -1,10 +1,11 @@
 """
 Shared numeric extraction/normalization, used by both eval_harness.py's
-numeric grading and agent.py's citation-verification pass.
+numeric grading and citations.py's citation-verification pass.
 
-Split out from eval_harness.py rather than having agent.py import from
-it (or vice versa) -- eval_harness.py already imports agent.run_agent,
-so agent.py importing back from eval_harness.py would be circular.
+Split out from eval_harness.py rather than having citations.py import
+from it -- eval_harness.py already imports agent.run_agent, which
+reaches citations.py through submission.py, so importing back from
+eval_harness.py would be circular.
 """
 
 import difflib
@@ -219,13 +220,11 @@ def normalize_for_match(text: str) -> str:
     than the source (a mid-sentence line break, doubled spaces from
     table formatting).
 
-    agent._normalize_for_match is a thin alias for this function, not a
-    second implementation -- lives here rather than in agent.py for the
+    citations._normalize_for_match is a thin alias for this function, not
+    a second implementation -- lives here rather than in citations.py for the
     same reason numeric_utils.py itself exists (this module's own
     docstring): table_grounding.py needs it too and cannot import from
-    agent.py without a circular import. See
-    docs/plans/2026-09-12-structure-aware-table-quote-grounding.md
-    ("New module: table_grounding.py").
+    citations.py without a circular import.
 
     NOTE: NFKC does NOT fold true Unicode dashes to ASCII '-' -- an em
     dash (U+2014), en dash (U+2013), hyphen (U+2010), non-breaking hyphen
@@ -234,7 +233,7 @@ def normalize_for_match(text: str) -> str:
     hyphen-minus (U+FF0D) folds to ASCII '-'. The existing curly-quote/
     en-dash regression test for this function
     (test_quote_matches_nfkc_curly_quote_and_en_dash_normalization in
-    tests/agent/test_agent.py) passes via the coverage/anchor fuzzy-match path,
+    tests/agent/test_citations.py) passes via the coverage/anchor fuzzy-match path,
     not via any dash folding."""
     text = unicodedata.normalize("NFKC", text)
     text = text.casefold()
@@ -242,7 +241,7 @@ def normalize_for_match(text: str) -> str:
 
 
 def text_coverage(quote: str, source: str) -> tuple[bool, float, int]:
-    """Core fuzzy-containment primitive shared by agent._quote_matches
+    """Core fuzzy-containment primitive shared by citations._quote_matches
     (whole-document prose matching) and table_grounding.quote_is_grounded
     (matching against one cell's own small permitted region) -- lives
     here rather than in either caller for the same circular-import
@@ -279,11 +278,11 @@ def text_coverage(quote: str, source: str) -> tuple[bool, float, int]:
     ordinary prose -- and match quality collapses silently (no error,
     just a wrong low score) whenever the quote also isn't a clean exact
     substring of the source. Covered by a dedicated regression test in
-    tests/agent/test_agent.py (which actually exercises this by building a
+    tests/agent/test_citations.py (which actually exercises this by building a
     200+ character QUOTE, not just a long source).
 
     Does NOT apply any length gate (e.g. a minimum quote length) --
-    that's caller-specific policy (agent._quote_is_long_enough has its
+    that's caller-specific policy (citations._quote_is_long_enough has its
     own bare-number-digit-count exception that doesn't belong in a
     shared text-matching primitive), applied by the caller before or
     after calling this."""

@@ -7,16 +7,16 @@ the eval judge also reads).
 Templates are filled in at the call site with `.format(...)`, passing
 already-computed keyword arguments. Where a message has conditional
 parts, each part is its own constant and the choosing logic stays in
-agent.py. Never call `.format` on text that already contains model- or
+the agent package. Never call `.format` on text that already contains model- or
 filing-supplied content (answers, quotes, chunks, warnings can contain
 `{`); pass that content in as a keyword argument instead."""
 
 # ---------------------------------------------------------------------------
 # Tool results
 # ---------------------------------------------------------------------------
-# The header above each numbered result. agent._strip_citation_header
+# The header above each numbered result. citations._strip_citation_header
 # reconstructs exactly this text to strip an echoed header from a quote,
-# via agent._citation_header, so the two can't drift apart. It also strips
+# via tool_results._citation_header, so the two can't drift apart. It also strips
 # the header minus its leading "[{i}] ", so that part must stay a prefix.
 CITATION_HEADER_TEMPLATE = "[{i}] {ticker} {form} (reportDate={report_date})"
 RESULT_BLOCK_TEMPLATE = "{header}\n{text}"
@@ -32,7 +32,7 @@ COMPARISON_RESULT_TEMPLATE = "{ticker} {metric} = {value} (structured XBRL data,
 # came from XBRL frames data, which carries no form of its own.
 COMPARISON_FRAME_FORM = "XBRL frame data"
 
-# A calculate result. agent.verify_claims exempts the operands of a
+# A calculate result. citations.verify_claims exempts the operands of a
 # calculate result from its coverage check by taking only the text
 # before the first "=" in CALCULATION_RESULT_TEMPLATE's rendering, so no
 # expression template may contain "=", and nothing but the operands may
@@ -137,7 +137,7 @@ SEARCH_INVALID_TICKER_TEMPLATE = (
 SEARCH_INVALID_ARGS_MESSAGE = "(search_filings arguments were invalid — check the tool schema)"
 
 # ---------------------------------------------------------------------------
-# Citation-check warnings (agent.CitationWarning.message)
+# Citation-check warnings (citations.CitationWarning.message)
 # ---------------------------------------------------------------------------
 # The model reads these inside CLAIM_RETRY_TEMPLATE below, and the user
 # and the eval judge read them inside REFUSAL_TEMPLATE.

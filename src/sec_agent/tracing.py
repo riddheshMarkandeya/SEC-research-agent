@@ -204,14 +204,14 @@ def traced_span(as_type: str, name: str, input: dict | None = None) -> Iterator[
 
 def record_unmet_metric_request(ticker: str, metric: str, reason: str, question: str | None = None) -> None:
     """Fires whenever call_get_financial_fact()/call_compare_financial_metric()
-    (agent.py) come back empty for a reason worth tracking: either
+    (fact_tools.py) come back empty for a reason worth tracking: either
     `metric` isn't a name this project knows at all (reason=
     "unknown_metric" -- the "let evidence decide" signal for adding a
     new RATIO_DEFINITIONS entry), or it's a known metric/ratio with no
     data for this specific ticker/period (reason="no_data_for_ticker" --
     the same shape of gap already found and documented for
     inventory_turnover/AAPL/MSFT). `question` is the free-text question
-    when known (agent.py's tool-dispatch path); mcp_server.py's direct
+    when known (dispatch.py's tool-dispatch path); mcp_server.py's direct
     tool callers have no question, so it's None there. Always goes
     through traced_span(), so it's recorded locally even when Langfuse
     isn't configured."""
@@ -231,7 +231,7 @@ def log_event(category: str, **fields) -> None:
     traced_span()'s shape, and this project doesn't want every one of
     these mirrored to a cloud dashboard anyway -- just kept locally for
     debugging. Tags `run_id` from the currently-open traced_span, if
-    any (agent.py's call sites are always inside one); None when called
+    any (the agent package's call sites are always inside one); None when called
     standalone (mcp_server.py's auth/rate-limit rejections happen
     before any span opens). Reuses _write_local_log's existing
     best-effort/never-raise behavior, so this also silently respects

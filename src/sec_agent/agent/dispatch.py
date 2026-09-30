@@ -153,7 +153,7 @@ def _dispatch_search_filings(
     PLR0913's threshold.
 
     soft_required={"query"}: query is schema-required (encourages the
-    model to include it), but _resolve_search_args below tolerates it
+    model to include it), but _resolve_search_args above tolerates it
     being absent by substituting the original question -- observed
     live, not a bug (see that function's own docstring) -- so a
     missing query must not be a hard rejection here.

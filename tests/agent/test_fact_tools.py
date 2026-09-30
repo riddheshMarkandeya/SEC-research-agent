@@ -902,3 +902,12 @@ def test_call_compare_financial_metric_dispatches_net_margin(monkeypatch):
     result = call_compare_financial_metric({"anchor_ticker": "NVDA", "metric": "net_margin"})
     assert result == {"NVDA": {"value": 45.0}}
     assert calls == ["net_margin"]
+
+
+def test_call_get_financial_fact_tolerates_null_fiscal_period(monkeypatch):
+    # Regression case for validate_tool_args's null-optional-property fix,
+    # exercised through the real call site rather than validate_tool_args
+    # directly.
+    monkeypatch.setattr("sec_agent.agent.fact_tools.get_metric", lambda *a, **k: {"value": 42})
+    result = call_get_financial_fact({"ticker": "AAPL", "metric": "revenue", "fiscal_period": None})
+    assert result == {"value": 42}

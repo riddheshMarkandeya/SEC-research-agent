@@ -140,11 +140,10 @@ _BARE_NUMBER_MIN_DIGITS = 6
 
 # Lives in numeric_utils.normalize_for_match so table_grounding.py can
 # share the exact same implementation without a circular import
-# (table_grounding is imported BY agent.py, so it can't import back from
-# agent.py). Kept as an alias, not re-exported under a new name, since
+# (table_grounding is imported BY citations.py, so it can't import back
+# from it). Kept as an alias, not re-exported under a new name, since
 # every existing call site and test in this module refers to it as
-# `_normalize_for_match`. See
-# docs/decisions/2026-09-12-structure-aware-table-quote-grounding.md.
+# `_normalize_for_match`.
 _normalize_for_match = normalize_for_match
 
 

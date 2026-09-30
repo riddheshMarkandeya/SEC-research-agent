@@ -1,7 +1,7 @@
 """
 Text the model receives back from its tools: the numbered citation header
-and results block for retrieved sources, the citation key, and the
-no-data messages for fact and comparison lookups.
+and results block for retrieved sources and the no-data messages for fact
+and comparison lookups, plus the CLI's printed citation key.
 """
 
 from sec_agent.sources.companies import COMPANIES
@@ -12,7 +12,7 @@ from sec_agent.sources.xbrl_facts import DEFAULT_METRIC_TAGS, is_metric_tagged
 def _citation_header(i: int, meta: dict) -> str:
     """The exact citation header text _format_results_block() shows the
     model above result [i]'s own text. Shared with
-    _strip_citation_header() below so the two can never independently
+    citations._strip_citation_header() so the two can never independently
     drift out of sync if this format ever changes -- the strip has to
     reconstruct precisely what the model was actually shown, not a
     close guess."""
