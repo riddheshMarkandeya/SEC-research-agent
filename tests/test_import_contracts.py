@@ -5,10 +5,20 @@ is invisible to them."""
 
 import subprocess
 import sys
+import tomllib
 
 import pytest
+from importlinter.cli import EXIT_STATUS_SUCCESS
 
 from sec_agent.config import PROJECT_ROOT
+
+PYPROJECT = PROJECT_ROOT / "pyproject.toml"
+
+# Read from the config, so a contract added there is gated with no test edit.
+CONTRACT_IDS = [
+    contract["id"]
+    for contract in tomllib.loads(PYPROJECT.read_text(encoding="utf-8"))["tool"]["importlinter"]["contracts"]
+]
 
 # lint_imports() puts the cwd on sys.path and reconfigures logging (which
 # disables every existing logger), so it runs in a child process.
@@ -19,14 +29,14 @@ LINT = (
 )
 
 
-@pytest.mark.parametrize("contract", ["acyclic", "tools-leaf"])
+@pytest.mark.parametrize("contract", CONTRACT_IDS)
 def test_import_contract_is_kept(contract):
     result = subprocess.run(
-        [sys.executable, "-c", LINT, str(PROJECT_ROOT / "pyproject.toml"), contract],
+        [sys.executable, "-c", LINT, str(PYPROJECT), contract],
         capture_output=True,
         text=True,
         cwd=PROJECT_ROOT,
         timeout=120,
         check=False,
     )
-    assert result.returncode == 0, result.stdout + result.stderr
+    assert result.returncode == EXIT_STATUS_SUCCESS, result.stdout + result.stderr

@@ -27,5 +27,5 @@ pytest-cov==7.1.0
 diff-cover==10.6.0
 
 # Import-cycle and layering contracts ([tool.importlinter] in
-# pyproject.toml), run by tests/test_import_contracts.py.
+# pyproject.toml), run from the pytest suite.
 import-linter==2.15

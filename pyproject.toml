@@ -113,22 +113,23 @@ omit = [".venv/*", "tests/*", "var/*"]
 show_missing = true
 exclude_lines = ["pragma: no cover", "if __name__ == .__main__.:"]
 
-# Import contracts, checked by tests/test_import_contracts.py (so the
-# pre-push pytest run gates them) or standalone with `lint-imports`.
+# Import contracts. A pytest test runs each one (so the pre-push gate
+# covers them); `lint-imports` runs them standalone.
 [tool.importlinter]
 root_package = "sec_agent"
 
 [[tool.importlinter.contracts]]
 id = "acyclic"
-name = "No import cycles between sibling modules or subpackages, at any depth"
+name = "No import cycles between sibling modules or subpackages"
 type = "acyclic_siblings"
 ancestors = ["sec_agent"]
 
-# The tools depend on core, never the reverse. Modules inside
-# sec_agent.tools may still import each other.
+# The tools depend on core, never the reverse. A protected package's own
+# modules may import each other (as_packages defaults to true), so no
+# importer needs allowing.
 [[tool.importlinter.contracts]]
 id = "tools-leaf"
 name = "Only sec_agent.tools imports sec_agent.tools"
 type = "protected"
 protected_modules = ["sec_agent.tools"]
-allowed_importers = ["sec_agent.tools"]
+allowed_importers = []

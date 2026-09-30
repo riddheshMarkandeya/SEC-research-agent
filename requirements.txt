@@ -33,5 +33,5 @@ mcp==2.1.1
 # are set; a no-op otherwise. OTel-based v4 client.
 langfuse==4.15.1
 
-# The project itself, editable: puts sec_agent and tools on the path.
+# The project itself, editable: puts sec_agent on the path.
 -e .
