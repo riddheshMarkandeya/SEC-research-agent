@@ -40,7 +40,7 @@ touched files. Nothing enforces these at commit time. All the tools are pinned i
   were noise from dict-shaped data flow. Revisiting it is a `BACKLOG.md` item.
 - **Import contracts: `import-linter`.** Config lives in `pyproject.toml` `[tool.importlinter]`:
   no import cycles between sibling modules or subpackages (checked down to 10 levels of
-  nesting), and nothing outside `sec_agent.tools` imports it. `tests/test_import_contracts.py`
+  nesting), and nothing outside `sec_agent.devtools` imports it. `tests/test_import_contracts.py`
   runs each contract listed there, so the pytest step below gates them. `lint-imports` runs
   them standalone. They see static imports only, so a dynamic `import_module()` (as in
   `prompts/__init__.py`) is invisible to them.

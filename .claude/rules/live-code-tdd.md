@@ -6,7 +6,7 @@ paths:
   - "src/sec_agent/retrieval/retrieval.py"
   - "src/sec_agent/agent/agent.py"
   - "src/sec_agent/llm/llm_backends.py"
-  - "src/sec_agent/tools/analyze_gate_replay.py"
+  - "src/sec_agent/devtools/analyze_gate_replay.py"
 ---
 
 # This project's live-code TDD carve-out

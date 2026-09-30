@@ -42,7 +42,7 @@ each. To add a company: add a row to `companies.json`, then run
 
 **Layout and setup**: code lives in the `src/sec_agent/` package
 (`agent/`, `verification/`, `sources/`, `retrieval/`, `llm/`,
-`prompts/`, `eval/`, `tools/` for the analysis CLIs and the gate replay
+`prompts/`, `eval/`, `devtools/` for the analysis CLIs and the gate replay
 tool, plus `config`, `tracing`, `mcp_server`); tests mirror the package
 under `tests/`. `pip install -r requirements.txt` includes the required
 editable install (`-e .`), and CLIs run as `python -m

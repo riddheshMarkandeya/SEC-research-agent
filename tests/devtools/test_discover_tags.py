@@ -9,7 +9,7 @@ available up front."
 
 from datetime import date, timedelta
 
-from sec_agent.tools.discover_tags import fetch_company_facts, list_tags
+from sec_agent.devtools.discover_tags import fetch_company_facts, list_tags
 
 RECENT_END = (date.today() - timedelta(days=30)).isoformat()
 STALE_END = (date.today() - timedelta(days=1000)).isoformat()
@@ -37,17 +37,17 @@ FAKE_COMPANY_FACTS = {
 
 
 def test_list_tags_returns_all_us_gaap_tags_by_default(monkeypatch):
-    monkeypatch.setattr("sec_agent.tools.discover_tags.fetch_company_facts", lambda ticker: FAKE_COMPANY_FACTS)
+    monkeypatch.setattr("sec_agent.devtools.discover_tags.fetch_company_facts", lambda ticker: FAKE_COMPANY_FACTS)
     assert list_tags("AAPL") == ["AccountsPayableCurrent", "InventoryNet", "Revenues"]
 
 
 def test_list_tags_filters_by_keyword_case_insensitive(monkeypatch):
-    monkeypatch.setattr("sec_agent.tools.discover_tags.fetch_company_facts", lambda ticker: FAKE_COMPANY_FACTS)
+    monkeypatch.setattr("sec_agent.devtools.discover_tags.fetch_company_facts", lambda ticker: FAKE_COMPANY_FACTS)
     assert list_tags("AAPL", keyword="inventory") == ["InventoryNet"]
 
 
 def test_list_tags_recent_only_excludes_tags_with_no_entry_in_the_last_year(monkeypatch):
-    monkeypatch.setattr("sec_agent.tools.discover_tags.fetch_company_facts", lambda ticker: FAKE_COMPANY_FACTS)
+    monkeypatch.setattr("sec_agent.devtools.discover_tags.fetch_company_facts", lambda ticker: FAKE_COMPANY_FACTS)
     # InventoryNet has a recent entry; AccountsPayableCurrent and Revenues
     # only have entries from ~1000 days ago -- same staleness pitfall
     # documented in xbrl_facts.py's DEFAULT_METRIC_TAGS comment (a tag
@@ -56,17 +56,17 @@ def test_list_tags_recent_only_excludes_tags_with_no_entry_in_the_last_year(monk
 
 
 def test_list_tags_reads_a_different_taxonomy_when_given(monkeypatch):
-    monkeypatch.setattr("sec_agent.tools.discover_tags.fetch_company_facts", lambda ticker: FAKE_COMPANY_FACTS)
+    monkeypatch.setattr("sec_agent.devtools.discover_tags.fetch_company_facts", lambda ticker: FAKE_COMPANY_FACTS)
     assert list_tags("AAPL", taxonomy="dei") == ["EntityCommonStockSharesOutstanding"]
 
 
 def test_list_tags_returns_empty_for_unknown_taxonomy(monkeypatch):
-    monkeypatch.setattr("sec_agent.tools.discover_tags.fetch_company_facts", lambda ticker: FAKE_COMPANY_FACTS)
+    monkeypatch.setattr("sec_agent.devtools.discover_tags.fetch_company_facts", lambda ticker: FAKE_COMPANY_FACTS)
     assert list_tags("AAPL", taxonomy="ifrs-full") == []
 
 
 def test_fetch_company_facts_caches_to_disk_and_skips_refetch(monkeypatch, tmp_path):
-    from sec_agent.tools import discover_tags
+    from sec_agent.devtools import discover_tags
 
     monkeypatch.setattr(discover_tags, "CACHE_DIR", tmp_path)
     calls = []
@@ -94,7 +94,7 @@ def test_fetch_company_facts_caches_to_disk_and_skips_refetch(monkeypatch, tmp_p
 
 
 def test_fetch_company_facts_uses_the_tickers_cik_in_the_url(monkeypatch, tmp_path):
-    from sec_agent.tools import discover_tags
+    from sec_agent.devtools import discover_tags
 
     monkeypatch.setattr(discover_tags, "CACHE_DIR", tmp_path)
     calls = []

@@ -9,7 +9,7 @@ import json
 
 import pytest
 
-from sec_agent.tools.analyze_flakiness import (
+from sec_agent.devtools.analyze_flakiness import (
     ClassificationThresholds,
     _count_transitions,
     _trailing_fail_streak,

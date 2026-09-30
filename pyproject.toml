@@ -124,12 +124,12 @@ name = "No import cycles between sibling modules or subpackages"
 type = "acyclic_siblings"
 ancestors = ["sec_agent"]
 
-# The tools depend on core, never the reverse. A protected package's own
+# The devtools depend on core, never the reverse. A protected package's own
 # modules may import each other (as_packages defaults to true), so no
 # importer needs allowing.
 [[tool.importlinter.contracts]]
-id = "tools-leaf"
-name = "Only sec_agent.tools imports sec_agent.tools"
+id = "devtools-leaf"
+name = "Only sec_agent.devtools imports sec_agent.devtools"
 type = "protected"
-protected_modules = ["sec_agent.tools"]
+protected_modules = ["sec_agent.devtools"]
 allowed_importers = []

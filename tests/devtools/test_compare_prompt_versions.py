@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from sec_agent.tools import compare_prompt_versions as cpv
+from sec_agent.devtools import compare_prompt_versions as cpv
 
 
 def _row(qid: str, passed: bool, answer: str | None = "an answer", withheld: bool = False) -> dict:

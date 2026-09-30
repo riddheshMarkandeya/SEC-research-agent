@@ -1,6 +1,6 @@
 """The import-linter contracts in pyproject.toml ([tool.importlinter]): no
 import cycles between sibling modules or subpackages, and nothing outside
-sec_agent.tools imports it. Static imports only -- a dynamic import_module()
+sec_agent.devtools imports it. Static imports only -- a dynamic import_module()
 is invisible to them."""
 
 import subprocess

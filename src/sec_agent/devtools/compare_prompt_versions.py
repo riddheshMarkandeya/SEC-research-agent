@@ -21,9 +21,9 @@ changes or an unverified model-input snapshot are excluded unless
 --include-dirty.
 
 Usage:
-    python -m sec_agent.tools.compare_prompt_versions
-    python -m sec_agent.tools.compare_prompt_versions --since 20260925T000000Z
-    python -m sec_agent.tools.compare_prompt_versions --base-files a.json b.json --candidate-files c.json
+    python -m sec_agent.devtools.compare_prompt_versions
+    python -m sec_agent.devtools.compare_prompt_versions --since 20260925T000000Z
+    python -m sec_agent.devtools.compare_prompt_versions --base-files a.json b.json --candidate-files c.json
 """
 
 import argparse
@@ -32,7 +32,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from sec_agent.config import RESULTS_DIR
-from sec_agent.tools.analyze_flakiness import is_infra_error, load_reports
+from sec_agent.devtools.analyze_flakiness import is_infra_error, load_reports
 
 
 # A question whose pass rate drops by at least this much is REGRESSED;

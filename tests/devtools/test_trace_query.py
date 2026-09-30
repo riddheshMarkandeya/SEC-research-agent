@@ -8,7 +8,7 @@ import json
 
 import pytest
 
-from sec_agent.tools.trace_query import (
+from sec_agent.devtools.trace_query import (
     Filters,
     count_lines,
     field,

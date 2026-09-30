@@ -20,8 +20,8 @@ from pathlib import Path
 
 from sec_agent import config
 from sec_agent.eval import eval_harness
-from sec_agent.tools import analyze_gate_replay as replay
-from sec_agent.tools import trace_query
+from sec_agent.devtools import analyze_gate_replay as replay
+from sec_agent.devtools import trace_query
 
 # da3be66608ff: budget exhausted after a retry, tool spans after the last
 # submit. 981513aa83f1: a recent clean pass with search, fact and calculate.
