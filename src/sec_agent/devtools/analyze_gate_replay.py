@@ -52,7 +52,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
-from sec_agent.agent import agent, citations
+from sec_agent.agent import agent, citations, dispatch
 from sec_agent import config
 from sec_agent.eval import eval_harness
 from sec_agent.devtools import trace_query
@@ -61,7 +61,7 @@ from sec_agent.sources import xbrl_facts
 
 _SEARCH = "search_filings"
 _SUBMIT = "submit_answer"
-# The span output fields each dispatch body logs (agent._dispatch_*), which
+# The span output fields each dispatch body logs (dispatch._dispatch_*), which
 # are what a replayed call is checked against.
 _OBSERVED_FIELDS = {
     _SEARCH: ("result_count",),
@@ -204,7 +204,7 @@ def _replay_call(name: str, args: dict, question: str, all_results: list[dict], 
         return content, {"result_count": count}
     if name not in _OBSERVED_FIELDS:
         raise ValueError(f"no replay route for tool {name!r}")
-    content = agent._dispatch_tool_call({"name": name, "args": args}, question, all_results, set(), False)
+    content = dispatch._dispatch_tool_call({"name": name, "args": args}, question, all_results, set(), False)
     span_output = next((r.get("output") for r in reversed(_CAPTURED) if r.get("name") == name), None) or {}
     return content, {key: span_output.get(key) for key in _OBSERVED_FIELDS[name]}
 
@@ -438,7 +438,7 @@ def memoized(search_fn):
     and extend what they get back."""
     cache: dict[tuple, list[dict]] = {}
 
-    def cached(query, ticker=None, top_k=agent.CHUNKS_PER_SEARCH):
+    def cached(query, ticker=None, top_k=dispatch.CHUNKS_PER_SEARCH):
         key = (query, ticker, top_k)
         if key not in cache:
             cache[key] = search_fn(query, ticker=ticker, top_k=top_k)
@@ -448,8 +448,8 @@ def memoized(search_fn):
 
 
 def install_live_search():  # pragma: no cover - binds the real Chroma search
-    agent.hybrid_search = memoized(agent.hybrid_search)
-    return agent.run_search
+    dispatch.hybrid_search = memoized(dispatch.hybrid_search)
+    return dispatch.run_search
 
 
 def cache_listing() -> set[str]:

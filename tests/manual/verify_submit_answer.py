@@ -25,7 +25,7 @@ Usage (from the repo root):
 
 import json
 
-from sec_agent.agent.agent import _dispatch_tool_call
+from sec_agent.agent.dispatch import _dispatch_tool_call
 from sec_agent.config import GEMINI_API_KEY
 from sec_agent.llm.llm_backends import BACKENDS
 from sec_agent.prompts.agent_system import SYSTEM_PROMPT

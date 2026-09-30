@@ -3,7 +3,7 @@ import json
 
 import pytest
 
-from sec_agent.agent import agent
+from sec_agent.agent import dispatch
 from sec_agent.devtools import analyze_gate_replay as replay
 from sec_agent import tracing
 from sec_agent.devtools.analyze_gate_replay import (
@@ -259,7 +259,7 @@ def test_rebuild_results_captures_dispatch_span_output(capture, monkeypatch):
         tracing.record_unmet_metric_request("AAPL", "m", "no_data_for_ticker")
         return "fact block"
 
-    monkeypatch.setattr(agent, "_dispatch_get_financial_fact", fake_dispatch)
+    monkeypatch.setattr(dispatch, "_dispatch_get_financial_fact", fake_dispatch)
     run = _run([_span("r1", "get_financial_fact", {"metric": "revenue"}, {"found": True, "value": 41.0})])
 
     all_results, calls, error = rebuild_results(run, _fake_search)
@@ -281,8 +281,8 @@ def test_rebuild_results_routes_calculate_and_compare(capture, monkeypatch):
             span.update(output={"found": True, "companies": ["AAPL"]})
         return "compare block"
 
-    monkeypatch.setattr(agent, "_dispatch_calculate", fake_calculate)
-    monkeypatch.setattr(agent, "_dispatch_compare_financial_metric", fake_compare)
+    monkeypatch.setattr(dispatch, "_dispatch_calculate", fake_calculate)
+    monkeypatch.setattr(dispatch, "_dispatch_compare_financial_metric", fake_compare)
     run = _run(
         [
             _span("r1", "calculate", {"operation": "ratio"}, {"found": False, "error": "no"}),
@@ -306,9 +306,9 @@ def test_rebuild_results_reads_the_fields_the_real_dispatch_bodies_log(capture, 
         "period_end": "2026-03-31",
         "accession": "a-1",
     }
-    monkeypatch.setattr("sec_agent.agent.agent.call_get_financial_fact", lambda args, question=None: fact)
-    monkeypatch.setattr("sec_agent.agent.agent.call_compare_financial_metric", lambda args, question=None: {"AAPL": fact, "MSFT": fact})
-    monkeypatch.setattr("sec_agent.agent.agent.call_calculate", lambda args, all_results: ({"value": 17.7, "unit": "percent"}, None))
+    monkeypatch.setattr("sec_agent.agent.dispatch.call_get_financial_fact", lambda args, question=None: fact)
+    monkeypatch.setattr("sec_agent.agent.dispatch.call_compare_financial_metric", lambda args, question=None: {"AAPL": fact, "MSFT": fact})
+    monkeypatch.setattr("sec_agent.agent.dispatch.call_calculate", lambda args, all_results: ({"value": 17.7, "unit": "percent"}, None))
     calculate_args = {
         "operation": "percent_of",
         "operand_a": 34550.0,

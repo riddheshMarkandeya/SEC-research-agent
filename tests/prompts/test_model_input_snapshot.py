@@ -25,7 +25,7 @@ from pathlib import Path
 
 import pytest
 
-from sec_agent.agent import calculate, citations, fact_tools, tool_results
+from sec_agent.agent import calculate, citations, dispatch, fact_tools, tool_results
 from sec_agent.config import PROJECT_ROOT
 from sec_agent.prompts import SNAPSHOT_PATH
 
@@ -118,7 +118,7 @@ def _results():
 # Agent: formatters and messages, called directly
 # ---------------------------------------------------------------------------
 def _render_result_formats(agent) -> dict:
-    out = {
+    out: dict[str, object] = {
         "citation_header": tool_results._citation_header(7, META),
         "results_block_empty": tool_results._format_results_block([], 1),
         "results_block": tool_results._format_results_block(_results(), 3),
@@ -235,7 +235,7 @@ def _render_retry_and_no_data(agent) -> dict:
     # after a string year is converted.
     with pytest.MonkeyPatch.context() as mp:
         mp.setattr(fact_tools, "get_ratio", lambda *a, **k: None)
-        out["dispatch_no_fact_string_year"] = agent._dispatch_tool_call(
+        out["dispatch_no_fact_string_year"] = dispatch._dispatch_tool_call(
             {"name": "get_financial_fact", "args": {"metric": "gross_margin", "ticker": "PLTR", "fiscal_year": "2025"}},
             "q",
             [],
@@ -248,10 +248,10 @@ def _render_retry_and_no_data(agent) -> dict:
     ]:
         out[f"no_comparison_{name}"] = tool_results._format_no_comparison_message(args)
     out["never_tagged_hint"] = tool_results._never_tagged_hint("PLTR", "inventory")
-    out["search_bad_ticker"] = agent._dispatch_search_filings(
+    out["search_bad_ticker"] = dispatch._dispatch_search_filings(
         {"name": "search_filings", "args": {"query": "x", "ticker": "ZZZZ"}}, "q", [], set(), False
     )
-    out["search_bad_args"] = agent._dispatch_search_filings(
+    out["search_bad_args"] = dispatch._dispatch_search_filings(
         {"name": "search_filings", "args": {"query": 5}}, "q", [], set(), False
     )
     return out

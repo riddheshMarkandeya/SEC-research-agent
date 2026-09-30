@@ -3,10 +3,9 @@ Unit tests for calculate.py: operand grounding, the arithmetic, and the
 result entry a calculation becomes.
 """
 
-from sec_agent.agent.agent import _dispatch_tool_call
 from sec_agent.agent.calculate import call_calculate, _calculation_as_result
 from sec_agent.agent.tool_results import _format_results_block
-from tests.agent.helpers import _fake_result, _valid_calculate_args, capture_events
+from tests.agent.helpers import _fake_result, _valid_calculate_args
 
 
 # ---------------------------------------------------------------------------
@@ -353,16 +352,3 @@ def test_calculation_as_result_has_metadata_required_by_format_results_block():
     # calculate result is ever rendered back to the model.
     block = _format_results_block([entry], 3)
     assert "[3]" in block
-
-
-def test_dispatch_no_data_reply_names_the_converted_year_and_logs_once(monkeypatch):
-    events = []
-    capture_events(monkeypatch, events)
-    monkeypatch.setattr("sec_agent.agent.fact_tools.get_ratio", lambda *a, **k: None)
-    call = {"name": "get_financial_fact", "args": {"ticker": "NVDA", "metric": "gross_margin", "fiscal_year": "2025"}}
-
-    content = _dispatch_tool_call(call, "q", [], set(), verbose=False)
-
-    assert "'FY' FY2025" in content
-    assert "FY'2025'" not in content
-    assert [c for c, _ in events].count("tool_arg_coerced") == 1
