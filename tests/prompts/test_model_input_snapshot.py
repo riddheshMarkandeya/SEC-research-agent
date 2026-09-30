@@ -25,7 +25,7 @@ from pathlib import Path
 
 import pytest
 
-from sec_agent.agent import tool_results
+from sec_agent.agent import citations, tool_results
 from sec_agent.config import PROJECT_ROOT
 from sec_agent.prompts import SNAPSHOT_PATH
 
@@ -210,14 +210,14 @@ def _render_citation_warnings(agent) -> dict:
         {"citation_index": 1, "quote": "short"},
         {"citation_index": 2, "quote": "A qualitative quote that does not appear in the source at all"},
     ]
-    structured = agent.verify_claims(claims, r, "What were Apple's sales?", "Sales were $777 million [1].")
+    structured = citations.verify_claims(claims, r, "What were Apple's sales?", "Sales were $777 million [1].")
     return {
         "structured_warnings": [w._asdict() for w in structured],
     }
 
 
 def _render_retry_and_no_data(agent) -> dict:
-    warning = agent.CitationWarning("uncovered_number", None, 1.0, "raw", "msg {x} one", None)
+    warning = citations.CitationWarning("uncovered_number", None, 1.0, "raw", "msg {x} one", None)
     out = {
         "claim_retry": agent._format_claim_retry_message("answer_text {braces}", [warning]),
         "refusal": agent._format_refusal_message(["a {b}", "c"]),
@@ -439,7 +439,6 @@ def render_model_inputs() -> dict:
     """Builds the whole snapshot in one call, so the result never depends
     on test order or selection. Tracing is disabled (no trace-log or
     Langfuse writes) and is_metric_tagged is stubbed (no SEC calls)."""
-    from sec_agent.agent import agent
     from sec_agent import tracing
 
     with pytest.MonkeyPatch.context() as mp:

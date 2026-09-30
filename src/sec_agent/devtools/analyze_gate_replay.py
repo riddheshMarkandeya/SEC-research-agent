@@ -52,7 +52,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
-from sec_agent.agent import agent
+from sec_agent.agent import agent, citations
 from sec_agent import config
 from sec_agent.eval import eval_harness
 from sec_agent.devtools import trace_query
@@ -117,7 +117,7 @@ def _final_submit(submits: list[dict], output: dict, withheld: str | None) -> di
     match against, so it falls back to the last submit. A logged
     no_submission check means the run ended on text, whatever the text
     happens to match."""
-    if (output.get("citation_checks") or {}).get(agent._NO_SUBMISSION_WARNING.check):
+    if (output.get("citation_checks") or {}).get(citations._NO_SUBMISSION_WARNING.check):
         return None
     final = withheld if output.get("citation_warnings") else output.get("answer")
     if final is None:

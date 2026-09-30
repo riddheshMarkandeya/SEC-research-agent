@@ -36,7 +36,8 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-from sec_agent.agent.agent import run_agent, value_is_citation_verified
+from sec_agent.agent.agent import run_agent
+from sec_agent.agent.citations import value_is_citation_verified
 from sec_agent.sources.companies import COMPANIES_PATH
 from sec_agent.config import (
     CHROMA_DIR,

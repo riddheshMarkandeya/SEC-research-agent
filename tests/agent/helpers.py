@@ -54,3 +54,14 @@ def _fake_result(  # noqa: PLR0913
             "chunk_index": chunk_index,
         },
     }
+
+
+def _valid_submitted_claim(**overrides):
+    claim = {
+        "value": 100.0,
+        "unit": "raw",
+        "citation_index": 1,
+        "quote": "the reported value for the period was exactly 100",
+    }
+    claim.update(overrides)
+    return claim
