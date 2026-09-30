@@ -2,10 +2,10 @@
 One-time (re-runnable) live verification of retrieval.py's model-calling
 half: bm25_search/vector_search/hybrid_search/rerank all require a real
 Chroma index, downloaded embedding/reranker models, and the actual
-ingested ./chunks/ corpus -- exactly the kind of live dependency this
+ingested var/chunks/ corpus -- exactly the kind of live dependency this
 project's CLAUDE.md carve-out says gets a manual script instead of a
 mocked unit test (mocking would only test the mock, not the code).
-tests/test_retrieval.py already covers the pure ranking-math half
+tests/retrieval/test_retrieval.py already covers the pure ranking-math half
 (_tokenize, _make_id, reciprocal_rank_fusion, _combine_fused_and_rerank)
 in full; this script is what was missing for the rest (review §14,
 docs/reviews/2026-09-06-full-codebase-review.md).

@@ -41,6 +41,10 @@ DATA_DIR = VAR_DIR / "data"
 CHUNKS_DIR = VAR_DIR / "chunks"
 XBRL_CACHE_DIR = VAR_DIR / "xbrl_cache"
 
+# Committed eval inputs and reports (not regenerable, so not under var/).
+QUESTIONS_PATH = PROJECT_ROOT / "eval" / "eval_questions.jsonl"
+RESULTS_DIR = PROJECT_ROOT / "eval" / "eval_results"
+
 # SEC EDGAR requires a descriptive, real-looking User-Agent header on
 # every request (edgar_ingest.py, xbrl_facts.py) or it will reject the
 # request — SEC checks that the email at least looks like a real one.

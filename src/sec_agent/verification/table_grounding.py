@@ -152,7 +152,7 @@ def _classify_row(cells: list[str]) -> str:
 
     Never assumed to come first by position -- derived purely
     structurally, so a table with no header row at all (see the AAPL
-    fixture in tests/test_table_grounding.py) never manufactures a
+    fixture in tests/verification/test_table_grounding.py) never manufactures a
     spurious one."""
     non_empty = [(i, c) for i, c in enumerate(cells) if c]
     if not non_empty:

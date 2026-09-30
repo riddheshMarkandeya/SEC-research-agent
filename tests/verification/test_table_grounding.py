@@ -392,7 +392,7 @@ def test_rejects_a_value_not_actually_present_anywhere_in_the_region():
 # documented, in favor of closing the real misattribution this same
 # mechanism exists to catch (see test_rejects_a_quote_cherry_picking_
 # one_year_from_the_header_row and the two end-to-end regression tests
-# in tests/test_agent.py for the real cases that motivated this).
+# in tests/agent/test_agent.py for the real cases that motivated this).
 # ---------------------------------------------------------------------------
 def test_quote_is_grounded_rejects_a_bare_year_with_no_label_at_all():
     cells = _cell(MSFT_SEGMENT_CHUNK, 34681.0, "million")

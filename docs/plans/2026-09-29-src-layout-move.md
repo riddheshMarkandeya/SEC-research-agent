@@ -267,7 +267,11 @@ silent breakages keep their explicit checklist.
 
 ## Review log
 
-(Filled in during `independent-review-pass`.)
+Full findings and dispositions: `docs/reviews/2026-09-29-src-layout-move.md`.
+
+- **Round 1** (diff `5f543a4..6f62735`): code-review high, arch (opus), security, simplify (4 agents). 14 findings: 8 fixed (headline: `var/xbrl_cache` mkdir lacked `parents=True`; eval paths now defined once in `config`; config test now checks the real defaults), 5 verified with no fix needed (including a one-time "config differs" warning against pre-move baselines, because `chroma_dir` changed), 1 deferred (`tools` package rename → BACKLOG, user's call). Security found nothing.
+- **Round 2** (delta vs `6f62735`): code-review low, arch (sonnet), security. 2 fixed: derived provenance pathspecs now resolve before `relative_to`, which symlinked or `subst` checkouts need; one stale doc pointer.
+- **Round 3** (the pathspec fix): code-review low, security. Clean, so the review is closed.
 
 ## Addendum (2026-09-29, during execution)
 

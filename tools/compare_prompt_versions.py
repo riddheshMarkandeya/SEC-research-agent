@@ -31,10 +31,9 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from sec_agent.config import PROJECT_ROOT
+from sec_agent.config import RESULTS_DIR
 from tools.analyze_flakiness import is_infra_error, load_reports
 
-RESULTS_DIR = PROJECT_ROOT / "eval" / "eval_results"
 
 # A question whose pass rate drops by at least this much is REGRESSED;
 # any smaller drop is only "watch".

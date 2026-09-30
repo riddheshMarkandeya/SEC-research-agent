@@ -1192,7 +1192,7 @@ def _quote_grounded_in_source(value: float, unit: str, quote: str, source_text: 
     stating Current/Noncurrent/Total together) isn't wrongly refused for
     citing sibling-column content, while still rejecting the row-splice/
     cross-segment-steal attacks this module exists to block (verified
-    directly, not assumed -- see tests/test_table_grounding.py). See
+    directly, not assumed -- see tests/verification/test_table_grounding.py). See
     docs/decisions/2026-09-13-table-grounding-region-scoped-matching.md
     for the region-scoped redesign this reflects.
 

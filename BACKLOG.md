@@ -51,6 +51,7 @@ reference:
 
 ## Backlog
 
+- [ ] **[misc, Low, Small]** **Rename the top-level `tools` package?** The editable install puts a generic top-level `tools` on the venv's path. Another distribution shipping `tools` would shadow it silently, and with the cwd set to `tests/`, `tests/tools` already does. Options: `sec_agent.tools` (tools depend only on `sec_agent`) or `sec_agent_tools`. Decide before the `agent.py` split adds more `tools.*` imports. Raised in the src-layout review: `docs/reviews/2026-09-29-src-layout-move.md`.
 
 ### From the 2026-09-24 prompt-audit roadmap
 

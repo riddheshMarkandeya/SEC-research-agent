@@ -4,11 +4,11 @@ Unit tests for eval_harness.py. Covers the deterministic grading logic
 response-PARSING logic with a mocked LLM call — the call itself isn't
 made, only the "split PASS/FAIL + reason out of the model's reply" logic
 is exercised. run_eval()'s end-to-end behavior (live retrieval + live
-LLM calls) is exercised by manual runs (python eval_harness.py) instead,
+LLM calls) is exercised by manual runs (python -m sec_agent.eval.eval_harness) instead,
 not here.
 
 extract_numbers()/normalize() moved to numeric_utils.py (shared with
-agent.py's citation checks) — see tests/test_numeric_utils.py.
+agent.py's citation checks) — see tests/verification/test_numeric_utils.py.
 """
 
 import ast
@@ -591,7 +591,7 @@ def test_run_eval_gate_fields_are_empty_when_the_gate_never_fired(monkeypatch, t
 def test_run_eval_backend_default_follows_config(monkeypatch, tmp_path):
     # A literal backend default would be bound at function-definition
     # time, ignoring config.DEFAULT_BACKEND entirely -- same gotcha as
-    # run_agent()'s matching test in tests/test_agent.py.
+    # run_agent()'s matching test in tests/agent/test_agent.py.
     questions_path = _write_one_numeric_question(tmp_path)
     backends_seen = []
 
@@ -693,6 +693,13 @@ _STATUS = (
 )
 
 
+def test_provenance_pathspecs_name_existing_repo_relative_paths():
+    # A pathspec that matches nothing never marks a report dirty, silently.
+    for spec in eval_harness.PROVENANCE_PATHSPECS[1:]:
+        assert not Path(spec).is_absolute()
+        assert (eval_harness.PROJECT_ROOT / spec).exists(), spec
+
+
 def test_git_state_clean_tree(monkeypatch):
     monkeypatch.setattr(
         eval_harness,
@@ -734,7 +741,7 @@ def test_snapshot_test_node_id_names_a_real_test():
     # If the test were renamed, pytest would find no such node and every
     # report would be marked unverified.
     path, name = eval_harness.SNAPSHOT_TEST.split("::")
-    tree = ast.parse((eval_harness.REPO_ROOT / path).read_text(encoding="utf-8"))
+    tree = ast.parse((eval_harness.PROJECT_ROOT / path).read_text(encoding="utf-8"))
     assert name in {node.name for node in tree.body if isinstance(node, ast.FunctionDef)}
 
 
@@ -774,7 +781,7 @@ def test_git_helper_decodes_stdout_as_utf8(monkeypatch):
     assert eval_harness._git("status") == " M prompts/caf\u00e9.py\0"
     command, kwargs = calls[0]
     assert command == ["git", "status"]
-    assert kwargs["cwd"] == eval_harness.REPO_ROOT
+    assert kwargs["cwd"] == eval_harness.PROJECT_ROOT
     assert "text" not in kwargs
 
 
@@ -793,7 +800,7 @@ def test_run_snapshot_check_compares_only_and_never_rewrites(monkeypatch):
     command, kwargs = calls[0]
     assert eval_harness.SNAPSHOT_TEST in command
     assert "UPDATE_SNAPSHOT" not in kwargs["env"]
-    assert kwargs["cwd"] == eval_harness.REPO_ROOT
+    assert kwargs["cwd"] == eval_harness.PROJECT_ROOT
     assert kwargs["timeout"] == eval_harness.SNAPSHOT_CHECK_TIMEOUT
 
 

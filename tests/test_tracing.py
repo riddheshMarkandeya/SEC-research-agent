@@ -265,7 +265,7 @@ def test_write_local_log_swallows_non_oserror_failures_too(monkeypatch, tmp_path
 
 def test_write_local_log_recovers_after_directory_deleted_mid_run(monkeypatch, tmp_path):
     # Found in code review: _ensured_log_dir was never invalidated on a
-    # write failure. trace_logs/ is documented as disposable/
+    # write failure. var/trace_logs/ is documented as disposable/
     # regenerable output someone might clean up externally while a
     # long-running process (mcp_server.py) is still writing to it --
     # without invalidating the cache, mkdir() would never be retried

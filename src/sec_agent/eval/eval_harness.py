@@ -37,13 +37,16 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from sec_agent.agent.agent import run_agent, value_is_citation_verified
+from sec_agent.sources.companies import COMPANIES_PATH
 from sec_agent.config import (
     CHROMA_DIR,
     DEFAULT_BACKEND,
     EMBED_MODEL_NAME,
     GEMINI_MODEL_NAME,
     PROJECT_ROOT,
+    QUESTIONS_PATH,
     RERANK_MODEL_NAME,
+    RESULTS_DIR,
 )
 
 # GEMINI_MODEL_NAME records which specific model actually answered/judged
@@ -53,12 +56,8 @@ from sec_agent.config import (
 from sec_agent.llm.llm_backends import BACKENDS, complete, require_backend
 from sec_agent.tracing import flush, log_event
 from sec_agent.verification.numeric_utils import extract_numbers, normalize
-from sec_agent.prompts import prompt_fingerprint
+from sec_agent.prompts import SNAPSHOT_PATH, prompt_fingerprint
 from sec_agent.prompts.judge import JUDGE_SYSTEM_PROMPT, JUDGE_USER_TEMPLATE
-
-QUESTIONS_PATH = PROJECT_ROOT / "eval" / "eval_questions.jsonl"
-# Anchored to this file, matching compare_prompt_versions.py, which reads it.
-RESULTS_DIR = PROJECT_ROOT / "eval" / "eval_results"
 
 CITATION_PATTERN = re.compile(r"\[\d+\]")
 
@@ -444,7 +443,6 @@ def _model_name_for(backend: str) -> str:
 # version that produced it. Collected before any quota is spent, and never
 # allowed to raise: a provenance failure must not cost the eval run.
 # ---------------------------------------------------------------------------
-REPO_ROOT = PROJECT_ROOT
 # Uncommitted edits to these make a report's git SHA misleading: code,
 # prompt text and its snapshot, the company list rendered into the
 # prompt, and the questions. `*.py` matches at any depth, so a tests-only
@@ -452,9 +450,10 @@ REPO_ROOT = PROJECT_ROOT
 # dirty too: the safe side, and the files are named in dirty_files.
 PROVENANCE_PATHSPECS = (
     "*.py",
-    "src/sec_agent/prompts",
-    "src/sec_agent/sources/companies.json",
-    "eval/eval_questions.jsonl",
+    *(
+        path.resolve().relative_to(PROJECT_ROOT).as_posix()
+        for path in (SNAPSHOT_PATH.parent, COMPANIES_PATH, QUESTIONS_PATH)
+    ),
 )
 SNAPSHOT_TEST = "tests/prompts/test_model_input_snapshot.py::test_model_input_matches_committed_snapshot"
 # The check normally takes about 20s; a hang (a locked model cache, a
@@ -469,7 +468,7 @@ class GitError(Exception):
 def _git(*args: str) -> str:
     # Binary mode plus an explicit UTF-8 decode: text mode would decode
     # with the Windows code page and garble non-ASCII paths.
-    result = subprocess.run(["git", *args], capture_output=True, check=False, cwd=REPO_ROOT)
+    result = subprocess.run(["git", *args], capture_output=True, check=False, cwd=PROJECT_ROOT)
     if result.returncode != 0:
         stderr = result.stderr.decode("utf-8", errors="replace").strip()
         raise GitError(f"git {' '.join(args)} failed: {stderr}")
@@ -527,7 +526,7 @@ def _run_snapshot_check() -> int:
     env = {k: v for k, v in os.environ.items() if k != "UPDATE_SNAPSHOT"}
     command = [sys.executable, "-m", "pytest", SNAPSHOT_TEST, "-q", "-p", "no:cacheprovider"]
     run = subprocess.run(
-        command, capture_output=True, check=False, cwd=REPO_ROOT, env=env, timeout=SNAPSHOT_CHECK_TIMEOUT
+        command, capture_output=True, check=False, cwd=PROJECT_ROOT, env=env, timeout=SNAPSHOT_CHECK_TIMEOUT
     )
     return run.returncode
 
@@ -628,7 +627,7 @@ def save_report(
     function's docstring). `provenance` (see _collect_provenance()) is
     written only when given."""
     judge_backend = judge_backend or backend
-    RESULTS_DIR.mkdir(exist_ok=True)
+    RESULTS_DIR.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     out_path = RESULTS_DIR / f"{timestamp}.json"
     report: dict = {

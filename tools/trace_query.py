@@ -1,5 +1,5 @@
 """
-Query trace_logs/traces.jsonl: filter records, pick fields, count, or list
+Query var/trace_logs/traces.jsonl: filter records, pick fields, count, or list
 each run's tool sequence, with capped output.
 
 Records come in two shapes. A span (tracing.traced_span) has `as_type` and
@@ -255,7 +255,7 @@ def _names(text: str) -> list[str]:
 def _parser() -> argparse.ArgumentParser:
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument("--file", type=Path, default=Path(config.TRACE_LOG_PATH))
-    common.add_argument("--questions", type=Path, default=config.PROJECT_ROOT / "eval" / "eval_questions.jsonl")
+    common.add_argument("--questions", type=Path, default=config.QUESTIONS_PATH)
     common.add_argument("--since", type=_iso_prefix, help="ISO UTC prefix, inclusive (e.g. 2026-09-26T08:53)")
     common.add_argument("--until", type=_iso_prefix, help="ISO UTC prefix, exclusive")
     common.add_argument("--run", action="append", help="run_id (repeatable)")

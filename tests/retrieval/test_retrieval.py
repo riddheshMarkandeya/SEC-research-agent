@@ -4,8 +4,8 @@ _make_id, reciprocal_rank_fusion, and _combine_fused_and_rerank (the
 ranking-math half of rerank(), split out specifically so it's testable
 without the live cross-encoder). bm25_search/vector_search/rerank's
 model-calling half require a live Chroma index and downloaded models,
-so they're exercised by manual runs (python retrieval.py "...")
-documented in PROJECT_CONTEXT.md, not here.
+so they're exercised by manual runs (python -m sec_agent.retrieval.retrieval "...")
+instead.
 """
 
 import pytest

@@ -50,7 +50,7 @@ def fetch_company_facts(ticker: str) -> dict:
     reported, across all taxonomies), cached to disk indefinitely -- same
     rationale as xbrl_facts.fetch_concept: SEC data for a past period
     doesn't change once filed, delete the cache file to force a refetch."""
-    CACHE_DIR.mkdir(exist_ok=True)
+    CACHE_DIR.mkdir(parents=True, exist_ok=True)
     cache_path = CACHE_DIR / f"{ticker}_companyfacts.json"
     if cache_path.exists():
         return json.loads(cache_path.read_text(encoding="utf-8"))

@@ -26,7 +26,7 @@ from tools import trace_query
 # da3be66608ff: budget exhausted after a retry, tool spans after the last
 # submit. 981513aa83f1: a recent clean pass with search, fact and calculate.
 DEFAULT_RUN_IDS = ["da3be66608ff", "981513aa83f1"]
-QUESTIONS = eval_harness.QUESTIONS_PATH
+QUESTIONS = config.QUESTIONS_PATH
 
 
 def main() -> None:

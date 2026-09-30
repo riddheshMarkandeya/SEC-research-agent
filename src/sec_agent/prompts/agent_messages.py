@@ -255,7 +255,7 @@ BUDGET_EXHAUSTED_ANSWER = (
 
 # Every constant above reaches the agent model, so all are hashed into
 # prompts.prompt_fingerprint(); a new constant must be added here or to
-# NOT_FINGERPRINTED, which tests/test_prompts.py enforces.
+# NOT_FINGERPRINTED, which tests/prompts/test_prompts.py enforces.
 FINGERPRINTED = (
     "CITATION_HEADER_TEMPLATE",
     "RESULT_BLOCK_TEMPLATE",

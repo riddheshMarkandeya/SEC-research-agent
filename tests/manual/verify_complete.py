@@ -3,7 +3,7 @@ One-time (re-runnable) live verification of llm_backends.complete()'s
 Gemini branch (see
 docs/decisions/2026-09-10-citation-gate-measurement-instrumentation.md)
 against the real API, per this project's CLAUDE.md carve-out: the unit
-tests in tests/test_llm_backends.py drive it through a fake client, but
+tests in tests/llm/test_llm_backends.py drive it through a fake client, but
 only a real call through the google-genai SDK shows the SDK accepts
 what it's given.
 

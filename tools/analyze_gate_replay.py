@@ -460,7 +460,7 @@ def cache_listing() -> set[str]:
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--file", type=Path, default=Path(config.TRACE_LOG_PATH))
-    parser.add_argument("--questions", type=Path, default=eval_harness.QUESTIONS_PATH)
+    parser.add_argument("--questions", type=Path, default=config.QUESTIONS_PATH)
     parser.add_argument("--since", type=trace_query._iso_prefix, help="ISO UTC prefix, inclusive")
     parser.add_argument("--until", type=trace_query._iso_prefix, help="ISO UTC prefix, exclusive")
     parser.add_argument("--qid", action="append", help="eval question ID (repeatable)")

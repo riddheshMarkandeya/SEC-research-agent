@@ -4,7 +4,7 @@ call_get_financial_fact/call_compare_financial_metric dispatch/
 boundary-validation logic (via monkeypatched xbrl_facts functions, no
 network). run_agent()'s actual model-facing behavior drives a live
 tool-calling loop against the selected backend (see llm_backends.py),
-so THAT is exercised by manual runs (python agent.py "...") and
+so THAT is exercised by manual runs (python -m sec_agent.agent.agent "...") and
 tests/manual/, not here -- but run_agent()'s own loop CONTROL FLOW (how it reacts to a
 scripted sequence of ModelTurns) is deterministic and doesn't need a
 live model, so a few targeted regression tests below drive it through
@@ -3859,7 +3859,7 @@ def test_verify_claims_does_not_duplicate_the_same_uncovered_number_twice():
 # label happened to be long enough to clear the anchor on its own.
 # Fixture is the real MSFT segment table (0001193125-26-191507, Q3
 # FY2026 10-Q), reproduced verbatim, not paraphrased -- also used in
-# tests/test_table_grounding.py.
+# tests/verification/test_table_grounding.py.
 # ---------------------------------------------------------------------------
 _MSFT_SEGMENT_TABLE_TEXT = """Segment revenue, cost of revenue, operating expenses, and operating income were as follows during the periods presented:
 

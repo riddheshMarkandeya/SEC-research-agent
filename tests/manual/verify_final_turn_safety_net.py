@@ -31,7 +31,7 @@ questions on Gemini:
      needs a human or the eval judge.
 
 Reads the tool-call sequence and citation results back from
-trace_logs/traces.jsonl by run_id, mirroring
+var/trace_logs/traces.jsonl by run_id, mirroring
 tests/manual/verify_tool_turn_waste.py's own helper exactly (traced_span
 always appends there synchronously -- see tracing.py).
 

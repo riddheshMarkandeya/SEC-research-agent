@@ -70,7 +70,7 @@ def test_extract_numbers_ignores_digit_glued_to_letter():
 # loss, negative YoY growth-- rendered via agent.py's _format_fact_value
 # uses plain str(), producing "-1234000000.0 million", which used to
 # round-trip back to a POSITIVE 1234000000.0). Design grounded in the
-# real ./chunks/*/*.jsonl corpus, not guessed: the accounting-parens
+# real var/chunks/*/*.jsonl corpus, not guessed: the accounting-parens
 # convention ("(433)", "$(1,122)", "(2.5)%", "(237)%") is the format SEC
 # filings actually use, confirmed live by grep before writing this fix.
 # ---------------------------------------------------------------------------
@@ -235,7 +235,7 @@ def test_extract_numbers_bare_year_in_parens_stays_positive():
     # Regression guard found live in the real corpus: "(2013)" is common
     # boilerplate (COSO framework citations in every 10-K's internal-
     # controls section; exhibit-index references), not an accounting
-    # negative -- confirmed via grep against ./chunks/*/*.jsonl before
+    # negative -- confirmed via grep against var/chunks/*/*.jsonl before
     # writing this guard, not assumed. A naive "any (NUM) is negative"
     # rule would have turned these into spurious -2013 candidates.
     assert extract_numbers("Internal Control - Integrated Framework (2013) issued by") == [(2013.0, "raw")]

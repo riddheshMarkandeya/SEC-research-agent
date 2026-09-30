@@ -5,7 +5,7 @@ truth, by reading eval_harness.py report JSON files rather than running
 anything live -- the report is the durable, committed artifact, so
 re-classifying from it is free and re-runnable any time the
 classification rules change, unlike re-running the whole eval or
-reading trace_logs/traces.jsonl (which has no ground truth).
+reading var/trace_logs/traces.jsonl (which has no ground truth).
 
 Definitions (numeric/comparison rows only -- judged rows have no
 ground-truth number to re-grade against, so they're excluded):
@@ -39,7 +39,7 @@ Caveat that matters for reading these numbers: the one-shot corrective
 retry is on for every Gemini run measured here -- so a report's numbers reflect the gate's
 behavior AFTER that self-correction, not on the model's first-pass
 answer. The first-pass picture (pre-retry warnings) is only in
-trace_logs/traces.jsonl's "citation_retry" event, keyed by run_id, which
+var/trace_logs/traces.jsonl's "citation_retry" event, keyed by run_id, which
 this script does not read.
 
 Usage:

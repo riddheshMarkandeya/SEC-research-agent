@@ -115,7 +115,7 @@ def fetch_concept(ticker: str, tag: str) -> dict | None:
     Returns None if the company doesn't tag this concept at all (a 404
     is a real, expected outcome — see METRIC_TAG_OVERRIDES above — not
     an error)."""
-    CACHE_DIR.mkdir(exist_ok=True)
+    CACHE_DIR.mkdir(parents=True, exist_ok=True)
     cache_path = CACHE_DIR / f"{ticker}_{tag}.json"
     if cache_path.exists():
         return json.loads(cache_path.read_text(encoding="utf-8"))
@@ -372,7 +372,7 @@ def fetch_frame(tag: str, frame: str) -> dict | None:  # pragma: no cover -- liv
     same rationale as fetch_concept(). Returns None on a 404 (the tag
     isn't reported for that particular frame at all, a real outcome for
     some tag/frame combinations, not an error)."""
-    CACHE_DIR.mkdir(exist_ok=True)
+    CACHE_DIR.mkdir(parents=True, exist_ok=True)
     cache_path = CACHE_DIR / f"frame_{tag}_{frame}.json"
     if cache_path.exists():
         return json.loads(cache_path.read_text(encoding="utf-8"))

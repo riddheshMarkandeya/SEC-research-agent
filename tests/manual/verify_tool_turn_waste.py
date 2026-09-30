@@ -25,7 +25,7 @@ the loop) for three questions, one per mechanism this fix targets:
      actually returns CRM), or five individual get_financial_fact calls
      (which cannot retrieve CRM's FY2026 margin at all)?
 
-Tool-call sequence is read back from trace_logs/traces.jsonl by run_id
+Tool-call sequence is read back from var/trace_logs/traces.jsonl by run_id
 (traced_span always appends there synchronously, regardless of whether
 Langfuse is configured -- see tracing.py) rather than parsed from
 verbose stdout, so the check is exact rather than string-matched.

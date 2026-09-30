@@ -234,7 +234,7 @@ def normalize_for_match(text: str) -> str:
     hyphen-minus (U+FF0D) folds to ASCII '-'. The existing curly-quote/
     en-dash regression test for this function
     (test_quote_matches_nfkc_curly_quote_and_en_dash_normalization in
-    tests/test_agent.py) passes via the coverage/anchor fuzzy-match path,
+    tests/agent/test_agent.py) passes via the coverage/anchor fuzzy-match path,
     not via any dash folding."""
     text = unicodedata.normalize("NFKC", text)
     text = text.casefold()
@@ -279,7 +279,7 @@ def text_coverage(quote: str, source: str) -> tuple[bool, float, int]:
     ordinary prose -- and match quality collapses silently (no error,
     just a wrong low score) whenever the quote also isn't a clean exact
     substring of the source. Covered by a dedicated regression test in
-    tests/test_agent.py (which actually exercises this by building a
+    tests/agent/test_agent.py (which actually exercises this by building a
     200+ character QUOTE, not just a long source).
 
     Does NOT apply any length gate (e.g. a minimum quote length) --
