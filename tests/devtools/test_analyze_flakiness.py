@@ -39,7 +39,7 @@ def _row(**overrides):
 
 
 def _infra_error_row(qid="q1", exception="ClientError: 429 RESOURCE_EXHAUSTED. {...}"):
-    """The shape eval_harness.py's run_eval() records from its broad
+    """The shape eval_harness.py's _run_one() records from its broad
     except-Exception handler -- answer=None, detail=the exception repr."""
     return {"id": qid, "type": "numeric", "passed": False, "detail": exception, "answer": None}
 

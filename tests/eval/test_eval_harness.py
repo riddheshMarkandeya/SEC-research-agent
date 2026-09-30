@@ -428,7 +428,7 @@ def test_run_eval_rejects_an_unknown_backend_before_any_question(monkeypatch, tm
     monkeypatch.setattr(eval_harness, "run_agent", lambda *a, **k: pytest.fail("run_agent was called"))
 
     with pytest.raises(ValueError, match="'ollama'.*gemini"):
-        run_eval(questions_path, **kwargs)
+        run_eval(load_questions(questions_path), **kwargs)
 
 
 # ---------------------------------------------------------------------------
@@ -465,7 +465,7 @@ def test_run_eval_isolates_one_questions_exception_from_the_rest(monkeypatch, tm
     flush_calls = []
     monkeypatch.setattr(eval_harness, "flush", lambda: flush_calls.append(1))
 
-    results = run_eval(questions_path)
+    results = run_eval(load_questions(questions_path))
 
     assert [r["id"] for r in results] == ["q1", "q2", "q3"]
     assert results[0]["passed"] is True
@@ -532,7 +532,7 @@ def test_run_eval_records_gate_withheld_would_have_passed_true_for_a_correct_but
 
     monkeypatch.setattr(eval_harness, "run_agent", fake_run_agent)
 
-    results = run_eval(questions_path)
+    results = run_eval(load_questions(questions_path))
 
     assert results[0]["passed"] is False  # user-facing verdict unchanged -- still a hard-gated refusal
     assert results[0]["withheld_answer"] == "The value was 100."
@@ -564,7 +564,7 @@ def test_run_eval_records_gate_withheld_would_have_passed_false_for_a_wrong_valu
 
     monkeypatch.setattr(eval_harness, "run_agent", fake_run_agent)
 
-    results = run_eval(questions_path)
+    results = run_eval(load_questions(questions_path))
 
     assert results[0]["passed"] is False
     assert results[0]["withheld_answer"] == "The value was 999."
@@ -579,7 +579,7 @@ def test_run_eval_gate_fields_are_empty_when_the_gate_never_fired(monkeypatch, t
 
     monkeypatch.setattr(eval_harness, "run_agent", fake_run_agent)
 
-    results = run_eval(questions_path)
+    results = run_eval(load_questions(questions_path))
 
     assert results[0]["passed"] is True
     assert results[0]["withheld_answer"] is None
@@ -603,9 +603,84 @@ def test_run_eval_backend_default_follows_config(monkeypatch, tmp_path):
     monkeypatch.setattr(eval_harness, "DEFAULT_BACKEND", "totally-custom-backend")
     monkeypatch.setitem(llm_backends.BACKENDS, "totally-custom-backend", (None, None, None))
 
-    run_eval(questions_path)
+    run_eval(load_questions(questions_path))
 
     assert backends_seen == ["totally-custom-backend"]
+
+
+@pytest.mark.parametrize("verbose", [False, True])
+def test_run_eval_prints_the_question_text_only_when_verbose(monkeypatch, tmp_path, capsys, verbose):
+    questions_path = _write_one_numeric_question(tmp_path)
+    monkeypatch.setattr(
+        eval_harness,
+        "run_agent",
+        lambda question, backend: AgentResult("The value was 100 [1].", [{"text": "value = 100 raw"}], [], None, []),
+    )
+
+    run_eval(load_questions(questions_path), verbose=verbose)
+
+    out = capsys.readouterr().out
+    if verbose:
+        assert out.startswith("[q1] Q1?\n  -> PASS (")
+    else:
+        assert out == "[1/1] q1 (numeric)  PASS\n"
+
+
+# ---------------------------------------------------------------------------
+# _progress_lines — the per-question stdout, compact by default
+# ---------------------------------------------------------------------------
+def _row(**overrides):
+    row = {
+        "id": "q1",
+        "question": "Q1?",
+        "type": "numeric",
+        "passed": True,
+        "detail": "found matching value: 1 (raw)",
+        "has_citation": True,
+        "citation_warnings": [],
+        "answer": "The answer is 1 [1].",
+    }
+    return {**row, **overrides}
+
+
+def test_question_prefix_pads_the_counter_to_the_total_width():
+    assert eval_harness._question_prefix(_row(), 3, 48) == "[ 3/48] q1 (numeric)  "
+
+
+def test_progress_lines_compact_pass_is_the_bare_outcome():
+    assert eval_harness._progress_lines(_row(), verbose=False) == ["PASS"]
+
+
+def test_progress_lines_compact_fail_shows_both_flags_and_no_detail():
+    row = _row(passed=False, detail="no value matching", has_citation=False, citation_warnings=["bad cite"])
+    assert eval_harness._progress_lines(row, verbose=False) == ["FAIL  [no citation]  [unverified citation]"]
+
+
+def test_progress_lines_compact_error_shows_truncated_detail_and_no_citation_flag():
+    detail = "ClientError: 429 RESOURCE_EXHAUSTED " + "x" * 100
+    row = _row(passed=False, detail=detail, has_citation=False, answer=None)
+    (line,) = eval_harness._progress_lines(row, verbose=False)
+    assert line == f"ERROR  {detail[:77]}..."
+    assert "[no citation]" not in line
+
+
+def test_truncate_flattens_a_multi_line_detail():
+    assert eval_harness._truncate("ClientError: 400 {\n  'error': 'bad'\n}") == "ClientError: 400 { 'error': 'bad' }"
+
+
+def test_progress_lines_verbose_keeps_the_full_per_question_output():
+    row = _row(passed=False, detail="no value matching", has_citation=False, citation_warnings=["w1", "w2"])
+    assert eval_harness._progress_lines(row, verbose=True) == [
+        "  -> FAIL (no value matching)",
+        "  -> WARNING: answer has no [n] citation marker at all",
+        "  -> CITATION WARNING: w1",
+        "  -> CITATION WARNING: w2",
+    ]
+
+
+def test_progress_lines_verbose_error_prints_no_citation_warning():
+    row = _row(passed=False, detail="RuntimeError: boom", has_citation=False, answer=None)
+    assert eval_harness._progress_lines(row, verbose=True) == ["  -> ERROR: RuntimeError: boom"]
 
 
 # ---------------------------------------------------------------------------
@@ -613,8 +688,8 @@ def test_run_eval_backend_default_follows_config(monkeypatch, tmp_path):
 # ---------------------------------------------------------------------------
 def test_print_summary_reports_aggregate_counts(capsys):
     results = [
-        {"id": "q1", "type": "numeric", "passed": True, "has_citation": True, "citation_warnings": []},
-        {"id": "q2", "type": "judged", "passed": False, "has_citation": False, "citation_warnings": ["bad cite"]},
+        _row(id="q1"),
+        _row(id="q2", type="judged", passed=False, has_citation=False, citation_warnings=["bad cite"]),
     ]
     eval_harness.print_summary(results)
     out = capsys.readouterr().out
@@ -623,25 +698,158 @@ def test_print_summary_reports_aggregate_counts(capsys):
     assert "1/2 had at least one unverified numeric citation" in out
 
 
-def test_print_summary_marks_no_citation_and_unverified_flags_per_row(capsys):
+def test_format_summary_tabulates_counts_per_type():
     results = [
-        {"id": "q1", "type": "numeric", "passed": True, "has_citation": False, "citation_warnings": ["w"]},
+        _row(id="n1"),
+        _row(id="n2", passed=False, detail="no value matching 5 raw", has_citation=False),
+        _row(id="n3", passed=False, detail="RuntimeError: boom", has_citation=False, answer=None),
+        _row(id="j1", type="judged", citation_warnings=["w"]),
     ]
-    eval_harness.print_summary(results)
-    out = capsys.readouterr().out
-    assert "[PASS] q1 (numeric)  [no citation]  [unverified citation]" in out
+    lines = eval_harness.format_summary(results).splitlines()
+    table = lines[lines.index("type        passed  no-cite  unverified  errors") :]
+    # n3's missing citation is counted in the errors column, not no-cite.
+    assert table[1] == "numeric        1/3        1           0       1"
+    assert table[2] == "judged         1/1        0           1       0"
+
+
+def test_format_summary_lists_only_failing_rows_with_truncated_detail():
+    long_detail = "no value matching " + "x" * 200
+    results = [
+        _row(id="ok"),
+        _row(id="bad", passed=False, detail=long_detail),
+        _row(id="err", passed=False, detail="RuntimeError: boom", has_citation=False, answer=None),
+    ]
+    out = eval_harness.format_summary(results)
+    tail = out[out.index("Not passed (2):") :].splitlines()
+    assert tail == [
+        "Not passed (2):",
+        f"  bad (numeric): {long_detail[:147]}...",
+        "  err (numeric) ERROR: RuntimeError: boom",
+    ]
+
+
+def test_format_summary_omits_not_passed_when_everything_passed():
+    assert "Not passed" not in eval_harness.format_summary([_row()])
+
+
+def test_format_summary_names_passed_rows_that_carry_citation_flags():
+    results = [
+        _row(id="clean"),
+        _row(id="uncited", type="judged", has_citation=False),
+        _row(id="unverified", citation_warnings=["w"]),
+        _row(id="failed", passed=False, has_citation=False),
+    ]
+    out = eval_harness.format_summary(results)
+    assert out[out.index("Passed with citation flags") :].splitlines() == [
+        "Passed with citation flags (2):",
+        "  uncited (judged)  [no citation]",
+        "  unverified (numeric)  [unverified citation]",
+    ]
+
+
+def test_format_summary_omits_the_flagged_section_when_no_passed_row_is_flagged():
+    assert "Passed with citation flags" not in eval_harness.format_summary([_row()])
+
+
+def test_format_summary_accepts_old_rows_without_citation_fields():
+    old_row = {"id": "q1", "type": "numeric", "passed": True, "detail": "ok", "answer": "1"}
+    out = eval_harness.format_summary([old_row])
+    assert "1/1 passed, 0/1 included a citation marker, 0/1 had at least one unverified" in out
+
+
+# ---------------------------------------------------------------------------
+# load_report / format_report_header -- summarizing a saved report
+# ---------------------------------------------------------------------------
+def test_load_report_reads_the_current_dict_shape(tmp_path):
+    path = tmp_path / "r.json"
+    path.write_text(json.dumps({"backend": "gemini", "results": [_row()]}), encoding="utf-8")
+    assert eval_harness.load_report(path) == {"backend": "gemini", "results": [_row()]}
+
+
+def test_load_report_wraps_an_old_bare_list_report(tmp_path):
+    path = tmp_path / "r.json"
+    path.write_text(json.dumps([_row()]), encoding="utf-8")
+    assert eval_harness.load_report(path) == {"results": [_row()]}
+
+
+@pytest.mark.parametrize("content", ['{"backend": "gemini"}', "42", '{"results": "nope"}'])
+def test_load_report_rejects_json_that_is_not_a_report(tmp_path, content):
+    path = tmp_path / "r.json"
+    path.write_text(content, encoding="utf-8")
+    with pytest.raises(ValueError, match="not an eval report"):
+        eval_harness.load_report(path)
+
+
+def test_load_report_missing_file_raises_oserror(tmp_path):
+    with pytest.raises(OSError):
+        eval_harness.load_report(tmp_path / "nope.json")
+
+
+def test_format_report_header_names_the_run():
+    report = {
+        "backend": "gemini",
+        "answer_model": "gemini-x",
+        "provenance": {
+            "git_sha": "abc1234",
+            "git_dirty": True,
+            "prompts": {"agent_system": "111111111111", "agent": "3f9a1c2e77d0", "judge": "9e8d7c6b5a41"},
+        },
+        "results": [],
+    }
+    assert eval_harness.format_report_header("r.json", report) == (
+        "Report r.json: backend=gemini answer_model=gemini-x git=abc1234 (dirty) "
+        "agent_prompts=3f9a1c2e77d0 judge_prompts=9e8d7c6b5a41"
+    )
+
+
+def test_format_report_header_clean_tree_has_no_dirty_marker():
+    provenance = {"git_sha": "abc", "git_dirty": False, "prompts": {"agent": "a1", "judge": "j1"}}
+    report = {"backend": "gemini", "answer_model": "m", "provenance": provenance}
+    assert "git=abc agent_prompts=a1" in eval_harness.format_report_header("r.json", report)
+
+
+def test_format_report_header_shows_a_failed_fingerprint():
+    report = {"provenance": {"git_sha": "abc", "prompts": "error"}}
+    assert eval_harness.format_report_header("r.json", report).endswith("agent_prompts=error judge_prompts=error")
+
+
+def test_format_report_header_marks_missing_fields_of_an_old_report():
+    assert eval_harness.format_report_header("r.json", {"results": []}) == (
+        "Report r.json: backend=? answer_model=? git=? agent_prompts=? judge_prompts=?"
+    )
 
 
 # ---------------------------------------------------------------------------
 # main — argparse + orchestration (run_eval/save_report mocked; the live
 # call itself is exercised by manual runs, per this module's own docstring)
 # ---------------------------------------------------------------------------
-def test_main_parses_ids_and_orchestrates_run_eval_then_save_report(monkeypatch, capsys):
-    calls = {}
+def _write_questions(tmp_path, ids):
+    questions_path = tmp_path / "questions.jsonl"
+    questions_path.write_text(
+        "\n".join(json.dumps({"id": i, "question": f"{i}?", "type": "numeric"}) for i in ids), encoding="utf-8"
+    )
+    return questions_path
 
-    def fake_run_eval(questions_path, ids, include_skipped, backend, judge_backend):
-        calls["run_eval_args"] = (ids, include_skipped, backend, judge_backend)
-        return [{"id": "q1", "type": "numeric", "passed": True, "has_citation": True, "citation_warnings": []}]
+
+def _forbid(monkeypatch, name):
+    def fail(*args, **kwargs):
+        pytest.fail(f"{name} was called")
+
+    monkeypatch.setattr(eval_harness, name, fail)
+
+
+def _main(monkeypatch, *argv):
+    monkeypatch.setattr(sys, "argv", ["eval_harness.py", *argv])
+    eval_harness.main()
+
+
+def test_main_parses_ids_and_orchestrates_run_eval_then_save_report(monkeypatch, capsys, tmp_path):
+    calls = {}
+    questions_path = _write_questions(tmp_path, ["q1", "q2", "q3"])
+
+    def fake_run_eval(questions, backend, judge_backend, verbose):
+        calls["run_eval_args"] = ([q["id"] for q in questions], backend, judge_backend, verbose)
+        return [_row()]
 
     def fake_save_report(results, backend, judge_backend, provenance):
         calls["save_report_args"] = (results, backend, judge_backend)
@@ -651,16 +859,72 @@ def test_main_parses_ids_and_orchestrates_run_eval_then_save_report(monkeypatch,
     monkeypatch.setattr(eval_harness, "run_eval", fake_run_eval)
     monkeypatch.setattr(eval_harness, "save_report", fake_save_report)
     monkeypatch.setattr(eval_harness, "_collect_provenance", lambda: {"git_sha": "abc1234"})
-    monkeypatch.setattr(sys, "argv", ["eval_harness.py", "--ids", "q1, q2", "--backend", "gemini"])
+    monkeypatch.setattr(eval_harness.hf_logging, "disable_progress_bar", lambda: calls.setdefault("bars_off", True))
 
-    eval_harness.main()
+    _main(monkeypatch, "--questions", str(questions_path), "--ids", "q1, q3", "--backend", "gemini")
 
-    assert calls["run_eval_args"] == (["q1", "q2"], False, "gemini", None)
+    assert calls["run_eval_args"] == (["q1", "q3"], "gemini", None, False)
     assert calls["save_report_args"][1:] == ("gemini", None)
     assert calls["provenance"] == {"git_sha": "abc1234"}
+    assert calls["bars_off"] is True
     out = capsys.readouterr().out
     assert "Full report saved to" in out
     assert "Citation-gate FP/FN breakdown: python -m sec_agent.devtools.analyze_citation_gate" in out
+
+
+def test_main_passes_verbose_through(monkeypatch, tmp_path):
+    seen = {}
+
+    def fake_run_eval(questions, backend, judge_backend, verbose):
+        seen["verbose"] = verbose
+        return []
+
+    monkeypatch.setattr(eval_harness, "run_eval", fake_run_eval)
+    monkeypatch.setattr(eval_harness, "save_report", lambda *a, **k: Path("fake.json"))
+    monkeypatch.setattr(eval_harness, "_collect_provenance", lambda: {})
+    monkeypatch.setattr(eval_harness.hf_logging, "disable_progress_bar", lambda: None)
+
+    _main(monkeypatch, "--questions", str(_write_questions(tmp_path, ["q1"])), "--verbose")
+
+    assert seen["verbose"] is True
+
+
+@pytest.mark.parametrize("argv_tail", [["--ids", "nope"], ["--questions", "missing.jsonl"]])
+def test_main_rejects_bad_question_selection_before_provenance(monkeypatch, tmp_path, capsys, argv_tail):
+    # Provenance runs a snapshot subprocess that can take minutes, so a
+    # typo must fail before it, as a usage error rather than a traceback.
+    _forbid(monkeypatch, "_collect_provenance")
+    _forbid(monkeypatch, "run_eval")
+    questions_path = _write_questions(tmp_path, ["q1"])
+
+    with pytest.raises(SystemExit) as exc:
+        _main(monkeypatch, "--questions", str(questions_path), *argv_tail)
+
+    assert exc.value.code == 2
+    assert "error:" in capsys.readouterr().err
+
+
+def test_main_summarize_prints_a_saved_report_without_running(monkeypatch, tmp_path, capsys):
+    for name in ("run_eval", "_collect_provenance", "save_report"):
+        _forbid(monkeypatch, name)
+    monkeypatch.setattr(eval_harness.hf_logging, "disable_progress_bar", lambda: pytest.fail("bars touched"))
+    path = tmp_path / "20260101T000000Z.json"
+    path.write_text(json.dumps({"backend": "gemini", "results": [_row(), _row(id="q2", passed=False)]}), encoding="utf-8")
+
+    _main(monkeypatch, "--summarize", str(path))
+
+    out = capsys.readouterr().out
+    assert out.startswith("Report 20260101T000000Z.json: backend=gemini")
+    assert "Results: 1/2 passed" in out
+    assert "  q2 (numeric): found matching value" in out
+
+
+def test_main_summarize_unreadable_report_is_a_usage_error(monkeypatch, tmp_path, capsys):
+    with pytest.raises(SystemExit) as exc:
+        _main(monkeypatch, "--summarize", str(tmp_path / "nope.json"))
+
+    assert exc.value.code == 2
+    assert "can't read report" in capsys.readouterr().err
 
 
 # ---------------------------------------------------------------------------

@@ -99,9 +99,6 @@ Full evidence/reasoning: `docs/decisions/2026-09-25-token-efficiency-workflow.md
   Substantial tier too. Today it escalates to Opus there.
 - [ ] **[design, Low, Trivial]** Consider lowering `PROJECT_INDEX.md`'s `Recent` cap (50 → ~25).
   It's read in full every session (~16KB).
-- [ ] **[feature, Med, Standard]** Add a summary mode to `eval_harness.py`: one line per question
-  plus a final table on stdout, with full detail left in the results JSON. Eval and pytest output
-  put 2.4M chars into context across past sessions (2026-09-25 read/grep audit).
 - [ ] **[refactor, Low, Standard]** Public names for the `sec_agent.agent` modules' cross-module
   API. The `agent.py` split (`docs/plans/2026-09-29-agent-py-split.md`) kept every `_`-prefixed
   name to stay a pure move, so modules and tests now import private names from siblings (e.g.

@@ -79,6 +79,9 @@ New in this merge:
     5. **Add a summary mode to `eval_harness.py`** (BACKLOG, Med). Every package below runs
        panels, and the full output has cost 2.4M characters of context across past sessions.
        Cheap, and it's outside the agent.
+       - **Done 2026-09-30** (commit body): compact output by default (one line per question
+         plus a per-type table), `--verbose` for the old output, `--summarize <report>` for a
+         saved report, and no Hugging Face progress bars.
 
     Why not the split first, as the user suggested? The split is right to do early, and it comes
     before every improvement package. But Ollama removal shrinks what gets split, per the user's
@@ -168,7 +171,7 @@ New in this merge:
 ## Proposed build order
 
 Prerequisites (Decisions 13 and 15): ~~NUMBER_PATTERN fix~~ → ~~replay tool~~ → ~~Ollama removal~~
-→ ~~`src/` layout move~~ → ~~`agent.py` split~~ → eval summary mode.
+→ ~~`src/` layout move~~ → ~~`agent.py` split~~ → ~~eval summary mode~~.
 
 Then the improvement packages:
 1. **Retry slot** (gate D9): code, then the panel and a full run.

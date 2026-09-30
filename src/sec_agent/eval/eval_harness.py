@@ -2,8 +2,7 @@
 Eval harness: runs every question in eval_questions.jsonl through
 agent.run_agent() and grades the result, so changes to retrieval/
 prompting/agent behavior can be measured against a fixed baseline
-instead of eyeballed. See
-docs/decisions/2026-08-13-eval-harness-scaffolding-and-early-bug-hunts.md.
+instead of eyeballed.
 
 Three grading strategies, chosen per-question by its "type" field:
   - "numeric": exact-match. The question has one verifiable ground-truth
@@ -23,6 +22,13 @@ Three grading strategies, chosen per-question by its "type" field:
 Usage:
     python -m sec_agent.eval.eval_harness
     python -m sec_agent.eval.eval_harness --questions custom_questions.jsonl
+    python -m sec_agent.eval.eval_harness --ids q1,q2 --verbose
+    python -m sec_agent.eval.eval_harness --summarize eval/eval_results/<UTC>.json
+
+Output is one line per question plus a summary table; the saved JSON
+report keeps every detail. --verbose prints each question and its full
+grading detail. --summarize reprints a saved report's summary without
+running anything.
 """
 
 import argparse
@@ -35,6 +41,8 @@ import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+
+from transformers.utils import logging as hf_logging
 
 from sec_agent.agent.agent import run_agent
 from sec_agent.agent.citations import value_is_citation_verified
@@ -145,7 +153,7 @@ def grade_judged(question: str, answer_text: str, criteria: str, backend: str = 
     correctly-cited current filing "hypothetical future data". This
     assumes grading happens contemporaneously with generation -- true for
     every call site today (grade_judged only ever runs synchronously
-    inside run_eval, right after the answer is generated); would need
+    inside _run_one, right after the answer is generated); would need
     revisiting if a regrade-from-saved-report tool is ever added.
 
     Output whose first line isn't exactly PASS or FAIL is graded exactly
@@ -318,11 +326,10 @@ def _citation_gate_evidence(
 
 
 def run_eval(
-    questions_path: Path,
-    ids: list[str] | None = None,
-    include_skipped: bool = False,
+    questions: list[dict],
     backend: str | None = None,
     judge_backend: str | None = None,
+    verbose: bool = False,
 ) -> list[dict]:
     """`backend=None` resolves to config.DEFAULT_BACKEND, resolved HERE
     rather than via a literal `= DEFAULT_BACKEND` parameter default -- a
@@ -335,102 +342,166 @@ def run_eval(
     and judges with the same backend unless --judge-backend says
     otherwise. Both are checked before the first question: argparse
     doesn't check a default against `choices`, and per question a bad
-    name would only be caught by the isolation below and saved as an
-    all-failed report."""
+    name would only be caught by _run_one()'s isolation and saved as an
+    all-failed report.
+
+    Prints one compact line per question, its id before the run and its
+    outcome after, so a slow or stuck question is named on screen.
+    `verbose` prints the question text instead and the full detail."""
     backend = backend or DEFAULT_BACKEND
     judge_backend = judge_backend or backend
     require_backend(backend)
     require_backend(judge_backend)
-    questions = load_questions(questions_path)
-    questions = _select_questions(questions, ids, include_skipped)
     results = []
 
-    for q in questions:
-        print(f"[{q['id']}] {q['question']}")
-        try:
-            result = run_agent(q["question"], backend=backend)
-            answer_text, retrieved, citation_warnings = result.answer, result.results, result.citation_warnings
-            # Excludes hard-gated refusals: submission.py's _format_refusal_message()
-            # echoes each warning's own "[n] claims ..." text verbatim, which
-            # still matches CITATION_PATTERN, so a refusal would otherwise get
-            # has_citation=True -- a real answer's citation and a refusal's
-            # description of a FAILED citation shouldn't count the same way in
-            # this stat.
-            has_citation = not citation_warnings and bool(CITATION_PATTERN.search(answer_text))
-
-            passed, detail = _grade(q, answer_text, citation_warnings, retrieved, judge_backend)
-            gate_fields = _citation_gate_evidence(
-                q, retrieved, result.withheld_answer, result.citation_warning_details
-            )
-        except Exception as e:
-            # Broad on purpose: a network error, exhausted retries, or an
-            # unexpected bug in run_agent()/_grade() should all fail just
-            # THIS question the same way, not silently discard every
-            # already-graded result in the batch before it (no partial
-            # report, no flush) -- this is a boundary where many
-            # different failure types should all degrade identically.
-            # See docs/decisions/2026-09-06-full-codebase-review.md.
-            print(f"  -> ERROR: {type(e).__name__}: {e}")
-            results.append(
-                {
-                    "id": q["id"],
-                    "ticker": q.get("ticker") or q.get("tickers"),
-                    "question": q["question"],
-                    "type": q["type"],
-                    "passed": False,
-                    "detail": f"{type(e).__name__}: {e}",
-                    "has_citation": False,
-                    "citation_warnings": [],
-                    "answer": None,
-                    "n_chunks_retrieved": 0,
-                    **_empty_citation_gate_evidence(),
-                }
-            )
-            continue
-
-        status = "PASS" if passed else "FAIL"
-        print(f"  -> {status} ({detail})")
-        if not has_citation:
-            print("  -> WARNING: answer has no [n] citation marker at all")
-        for w in citation_warnings:
-            print(f"  -> CITATION WARNING: {w}")
-
-        results.append(
-            {
-                "id": q["id"],
-                "ticker": q.get("ticker") or q.get("tickers"),
-                "question": q["question"],
-                "type": q["type"],
-                "passed": passed,
-                "detail": detail,
-                "has_citation": has_citation,
-                "citation_warnings": citation_warnings,
-                "answer": answer_text,
-                "n_chunks_retrieved": len(retrieved),
-                **gate_fields,
-            }
-        )
+    for index, q in enumerate(questions, start=1):
+        if verbose:
+            print(f"[{q['id']}] {q['question']}")
+        else:
+            print(_question_prefix(q, index, len(questions)), end="", flush=True)
+        row = _run_one(q, backend, judge_backend)
+        print("\n".join(_progress_lines(row, verbose)))
+        results.append(row)
 
     flush()
     return results
 
 
-def print_summary(results: list[dict]) -> None:
+def _run_one(q: dict, backend: str, judge_backend: str) -> dict:
+    """Answers and grades one question, returning its report row."""
+    row_id = {
+        "id": q["id"],
+        "ticker": q.get("ticker") or q.get("tickers"),
+        "question": q["question"],
+        "type": q["type"],
+    }
+    try:
+        result = run_agent(q["question"], backend=backend)
+        answer_text, retrieved, citation_warnings = result.answer, result.results, result.citation_warnings
+        # Excludes hard-gated refusals: submission.py's _format_refusal_message()
+        # echoes each warning's own "[n] claims ..." text verbatim, which
+        # still matches CITATION_PATTERN, so a refusal would otherwise get
+        # has_citation=True -- a real answer's citation and a refusal's
+        # description of a FAILED citation shouldn't count the same way in
+        # this stat.
+        has_citation = not citation_warnings and bool(CITATION_PATTERN.search(answer_text))
+
+        passed, detail = _grade(q, answer_text, citation_warnings, retrieved, judge_backend)
+        gate_fields = _citation_gate_evidence(q, retrieved, result.withheld_answer, result.citation_warning_details)
+    except Exception as e:
+        # Broad on purpose: a network error, exhausted retries, or an
+        # unexpected bug in run_agent()/_grade() should all fail just
+        # THIS question the same way, not silently discard every
+        # already-graded result in the batch before it (no partial
+        # report, no flush) -- this is a boundary where many
+        # different failure types should all degrade identically.
+        return {
+            **row_id,
+            "passed": False,
+            "detail": f"{type(e).__name__}: {e}",
+            "has_citation": False,
+            "citation_warnings": [],
+            "answer": None,
+            "n_chunks_retrieved": 0,
+            **_empty_citation_gate_evidence(),
+        }
+
+    return {
+        **row_id,
+        "passed": passed,
+        "detail": detail,
+        "has_citation": has_citation,
+        "citation_warnings": citation_warnings,
+        "answer": answer_text,
+        "n_chunks_retrieved": len(retrieved),
+        **gate_fields,
+    }
+
+
+def _is_error(row: dict) -> bool:
+    """True for a row from _run_one()'s exception branch: every graded
+    row has a real answer string, even a refusal."""
+    return row.get("answer") is None
+
+
+def _truncate(text: str, limit: int = 150) -> str:
+    """Also flattens whitespace: an exception message can span lines."""
+    text = " ".join(text.split())
+    return text if len(text) <= limit else text[: limit - 3] + "..."
+
+
+def _citation_flags(row: dict) -> str:
+    flags = "" if row.get("has_citation") else "  [no citation]"
+    return flags + ("  [unverified citation]" if row.get("citation_warnings") else "")
+
+
+def _question_prefix(q: dict, index: int, total: int) -> str:
+    return f"[{index:>{len(str(total))}}/{total}] {q['id']} ({q['type']})  "
+
+
+def _progress_lines(row: dict, verbose: bool) -> list[str]:
+    """The stdout for one finished question. Compact mode gives only the
+    outcome, ending the line _question_prefix() started, and leaves the
+    detail to the saved report; an error still shows the start of its
+    detail, so a quota error is visible mid-run."""
+    if verbose:
+        if _is_error(row):
+            return [f"  -> ERROR: {row['detail']}"]
+        lines = [f"  -> {'PASS' if row['passed'] else 'FAIL'} ({row['detail']})"]
+        if not row["has_citation"]:
+            lines.append("  -> WARNING: answer has no [n] citation marker at all")
+        lines.extend(f"  -> CITATION WARNING: {w}" for w in row["citation_warnings"])
+        return lines
+
+    if _is_error(row):
+        return [f"ERROR  {_truncate(row['detail'], 80)}"]
+    return [("PASS" if row["passed"] else "FAIL") + _citation_flags(row)]
+
+
+def _type_table(results: list[dict]) -> list[str]:
+    """Per-question-type counts, types in first-seen order. An error row
+    counts under errors only, not no-cite: it never produced an answer."""
+    lines = [f"{'type':<10}{'passed':>8}{'no-cite':>9}{'unverified':>12}{'errors':>8}"]
+    for qtype in dict.fromkeys(r["type"] for r in results):
+        rows = [r for r in results if r["type"] == qtype]
+        passed = sum(r["passed"] for r in rows)
+        errors = sum(_is_error(r) for r in rows)
+        no_cite = sum(not _is_error(r) and not r.get("has_citation", False) for r in rows)
+        unverified = sum(bool(r.get("citation_warnings")) for r in rows)
+        lines.append(f"{qtype:<10}{f'{passed}/{len(rows)}':>8}{no_cite:>9}{unverified:>12}{errors:>8}")
+    return lines
+
+
+def format_summary(results: list[dict]) -> str:
+    """Reads the citation fields with defaults so reports written before
+    they existed still summarize."""
     total = len(results)
     passed = sum(r["passed"] for r in results)
-    cited = sum(r["has_citation"] for r in results)
-    unverified = sum(bool(r["citation_warnings"]) for r in results)
+    cited = sum(bool(r.get("has_citation")) for r in results)
+    unverified = sum(bool(r.get("citation_warnings")) for r in results)
 
-    print(f"\n{'=' * 60}")
-    print(
+    lines = [
+        "=" * 60,
         f"Results: {passed}/{total} passed, {cited}/{total} included a citation marker, "
-        f"{unverified}/{total} had at least one unverified numeric citation"
-    )
-    for r in results:
-        mark = "PASS" if r["passed"] else "FAIL"
-        cite = "" if r["has_citation"] else "  [no citation]"
-        unverified_flag = "  [unverified citation]" if r["citation_warnings"] else ""
-        print(f"  [{mark}] {r['id']} ({r['type']}){cite}{unverified_flag}")
+        f"{unverified}/{total} had at least one unverified numeric citation",
+        *_type_table(results),
+    ]
+    failed = [r for r in results if not r["passed"]]
+    if failed:
+        lines.append(f"Not passed ({len(failed)}):")
+        for r in failed:
+            label = f"{r['id']} ({r['type']})"
+            separator = " ERROR:" if _is_error(r) else ":"
+            lines.append(f"  {label}{separator} {_truncate(r['detail'])}")
+    flagged = [r for r in results if r["passed"] and _citation_flags(r)]
+    if flagged:
+        lines.append(f"Passed with citation flags ({len(flagged)}):")
+        lines.extend(f"  {r['id']} ({r['type']}){_citation_flags(r)}" for r in flagged)
+    return "\n".join(lines)
+
+
+def print_summary(results: list[dict]) -> None:
+    print("\n" + format_summary(results))
 
 
 def _model_name_for(backend: str) -> str:
@@ -644,6 +715,36 @@ def save_report(
     return out_path
 
 
+def load_report(path: Path) -> dict:
+    """A saved report as {"results": [...], ...}. Reports written before
+    the dict wrapper existed are a bare list of rows. Raises ValueError
+    for JSON of any other shape."""
+    with path.open(encoding="utf-8") as f:
+        report = json.load(f)
+    if isinstance(report, list):
+        report = {"results": report}
+    if not isinstance(report, dict) or not isinstance(report.get("results"), list):
+        raise ValueError("not an eval report: expected a list of rows or a dict with a 'results' list")
+    return report
+
+
+def format_report_header(name: str, report: dict) -> str:
+    """`prompts` is _collect_provenance()'s per-module fingerprint dict, or
+    "error" when it couldn't be computed; the agent and judge entries are
+    the ones reports are compared by."""
+    provenance = report.get("provenance", {})
+    git = provenance.get("git_sha", "?") + (" (dirty)" if provenance.get("git_dirty") else "")
+    prompts = provenance.get("prompts", "?")
+    if isinstance(prompts, dict):
+        agent, judge = prompts.get("agent", "?"), prompts.get("judge", "?")
+    else:
+        agent = judge = prompts
+    return (
+        f"Report {name}: backend={report.get('backend', '?')} answer_model={report.get('answer_model', '?')} "
+        f"git={git} agent_prompts={agent} judge_prompts={judge}"
+    )
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--questions", type=Path, default=QUESTIONS_PATH)
@@ -667,21 +768,46 @@ def main():
         default=None,
         help="which LLM backend grades judged-type questions (default: same as --backend)",
     )
+    parser.add_argument(
+        "--verbose", action="store_true", help="print each question and its full grading detail as it runs"
+    )
+    parser.add_argument(
+        "--summarize",
+        type=Path,
+        metavar="REPORT",
+        help="print the summary of a saved report and exit, running nothing (other options are ignored)",
+    )
     args = parser.parse_args()
+
+    if args.summarize:
+        try:
+            report = load_report(args.summarize)
+        except (OSError, ValueError) as e:
+            parser.error(f"can't read report {args.summarize}: {e}")
+        print(format_report_header(args.summarize.name, report))
+        print(format_summary(report["results"]))
+        return
+
+    # Before provenance, whose snapshot check can take minutes, so a bad
+    # --ids or --questions fails at once.
+    ids = [i.strip() for i in args.ids.split(",")] if args.ids else None
+    try:
+        questions = _select_questions(load_questions(args.questions), ids, args.include_skipped)
+    except (OSError, ValueError) as e:
+        parser.error(str(e))
+
     # Before run_eval, so it records the code as it was when the run
     # started and costs nothing if it fails.
     provenance = _collect_provenance()
     for warning in _provenance_warnings(provenance):
         print(f"WARNING: {warning}")
 
-    ids = [i.strip() for i in args.ids.split(",")] if args.ids else None
-    results = run_eval(
-        args.questions,
-        ids=ids,
-        include_skipped=args.include_skipped,
-        backend=args.backend,
-        judge_backend=args.judge_backend,
-    )
+    # transformers reads its progress-bar switch once at import, which has
+    # already happened through run_agent's imports, so an environment
+    # variable set now would be too late. This also turns off the
+    # huggingface_hub bars.
+    hf_logging.disable_progress_bar()
+    results = run_eval(questions, backend=args.backend, judge_backend=args.judge_backend, verbose=args.verbose)
     print_summary(results)
     out_path = save_report(results, backend=args.backend, judge_backend=args.judge_backend, provenance=provenance)
     print(f"\nFull report saved to {out_path}")

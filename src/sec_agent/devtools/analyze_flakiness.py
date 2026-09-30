@@ -21,7 +21,7 @@ single-recent-report usage, but this script's whole point is to run
 against the full historical file set).
 
 Excludes infra-error rows from every rate: eval_harness.py's
-`run_eval()` has a deliberately broad `except Exception` (network
+`_run_one()` has a deliberately broad `except Exception` (network
 error, Gemini free-tier quota exhaustion, an unexpected bug) that
 records `answer: None` and a `detail` string describing the exception
 -- a real per-question verdict was never reached, so counting it as a
@@ -63,7 +63,7 @@ def load_rows(paths: list[Path]) -> list[dict]:
 
 
 def is_infra_error(row: dict) -> bool:
-    """True for a row eval_harness.py's run_eval() recorded from its
+    """True for a row eval_harness.py's _run_one() recorded from its
     broad except-Exception handler (network error, API quota
     exhaustion, an unexpected bug) rather than a real graded answer.
     `answer is None` is the reliable marker: every other code path
@@ -73,7 +73,7 @@ def is_infra_error(row: dict) -> bool:
 
 def _error_type(row: dict) -> str:
     """The exception class name from an infra-error row's `detail`
-    (eval_harness.py's run_eval() records f"{type(e).__name__}: {e}"),
+    (eval_harness.py's _run_one() records f"{type(e).__name__}: {e}"),
     or "unknown" if `detail` doesn't have the expected shape."""
     detail = row.get("detail") or ""
     return detail.split(":", 1)[0] if ":" in detail else "unknown"
