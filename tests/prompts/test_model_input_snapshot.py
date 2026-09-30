@@ -25,7 +25,7 @@ from pathlib import Path
 
 import pytest
 
-from sec_agent.agent import citations, fact_tools, tool_results
+from sec_agent.agent import calculate, citations, fact_tools, tool_results
 from sec_agent.config import PROJECT_ROOT
 from sec_agent.prompts import SNAPSHOT_PATH
 
@@ -151,18 +151,18 @@ def _render_result_formats(agent) -> dict:
         ("divide", {"value": 1.24, "unit": "raw"}),
         ("subtract", {"value": 1e18, "unit": "raw"}),
     ]:
-        out[f"calc_result_{op}"] = agent._calculation_as_result(res, dict(base, operation=op))
+        out[f"calc_result_{op}"] = calculate._calculation_as_result(res, dict(base, operation=op))
     return out
 
 
 def _render_calculate_messages(agent) -> dict:
     r = _results()
     out = {
-        "ground_bad_index": agent._ground_operand(100.0, "million", 9, r, "operand_a"),
-        "ground_wrong_unit": agent._ground_operand(100.0, "billion", 1, r, "operand_a"),
-        "ground_wrong_index": agent._ground_operand(200.0, "million", 1, r, "operand_b"),
-        "ground_ungroundable": agent._ground_operand(1000000000.0, "raw", 1, r, "operand_b"),
-        "calc_bad_schema": agent.call_calculate({"operation": "add"}, r),
+        "ground_bad_index": calculate._ground_operand(100.0, "million", 9, r, "operand_a"),
+        "ground_wrong_unit": calculate._ground_operand(100.0, "billion", 1, r, "operand_a"),
+        "ground_wrong_index": calculate._ground_operand(200.0, "million", 1, r, "operand_b"),
+        "ground_ungroundable": calculate._ground_operand(1000000000.0, "raw", 1, r, "operand_b"),
+        "calc_bad_schema": calculate.call_calculate({"operation": "add"}, r),
     }
     pct = [{"text": "Gross margin was 45.5% and revenue was $100 million.", "metadata": dict(META)}]
     mismatch = {
@@ -174,7 +174,7 @@ def _render_calculate_messages(agent) -> dict:
         "unit_b": "million",
         "citation_index_b": 1,
     }
-    out["calc_category_mismatch"] = agent.call_calculate(mismatch, pct)
+    out["calc_category_mismatch"] = calculate.call_calculate(mismatch, pct)
     zero = [{"text": "Revenue was $100 million and other income was $0 million.", "metadata": dict(META)}]
     divide_zero = {
         "operation": "percent_change",
@@ -185,7 +185,7 @@ def _render_calculate_messages(agent) -> dict:
         "unit_b": "million",
         "citation_index_b": 1,
     }
-    out["calc_divide_zero"] = agent.call_calculate(divide_zero, zero)
+    out["calc_divide_zero"] = calculate.call_calculate(divide_zero, zero)
     return out
 
 

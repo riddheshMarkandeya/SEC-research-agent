@@ -6,7 +6,7 @@ qualitative and table-grounded claims.
 
 import pytest
 
-from sec_agent.agent.agent import call_calculate, _calculation_as_result
+from sec_agent.agent.calculate import call_calculate, _calculation_as_result
 from sec_agent.agent.citations import (
     _CITATION_WINDOW_CHARS,
     _normalize_for_match,
