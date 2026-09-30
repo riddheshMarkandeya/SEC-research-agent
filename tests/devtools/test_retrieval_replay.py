@@ -97,9 +97,9 @@ def test_index_gold_lists_every_matching_chunk_with_its_period_tag_and_reports_u
     index, unmatched = rr.index_gold(chunks, rows)
     assert index == {
         ("q1", "value"): [
-            {"chunk": "A1_35", "own_period": True},
-            {"chunk": "A1_47", "own_period": True},
-            {"chunk": "B1_12", "own_period": False},
+            {"chunk": "A1_35", "ticker": "MSFT", "own_period": True},
+            {"chunk": "A1_47", "ticker": "MSFT", "own_period": True},
+            {"chunk": "B1_12", "ticker": "MSFT", "own_period": False},
         ]
     }
     assert unmatched == [rows[2]]
@@ -177,9 +177,10 @@ def test_classify(record, expected):
 
 def test_evaluate_query_scores_each_part_of_each_qid_on_its_best_gold_chunk():
     gold_index = {
-        ("q1", "PBP"): [{"chunk": "A1_35", "own_period": True}, {"chunk": "A1_47", "own_period": True}],
-        ("q1", "IC"): [{"chunk": "B1_3", "own_period": False}],
-        ("q2", "value"): [{"chunk": "A1_1", "own_period": True}],
+        ("q1", "PBP"): [{"chunk": "A1_35", "ticker": "MSFT", "own_period": True},
+                        {"chunk": "A1_47", "ticker": "MSFT", "own_period": True}],
+        ("q1", "IC"): [{"chunk": "B1_3", "ticker": "MSFT", "own_period": False}],
+        ("q2", "value"): [{"chunk": "A1_1", "ticker": "MSFT", "own_period": True}],
     }
     lists = {
         "bm25": _order("A1_47:A1:MSFT", "A1_35:A1:MSFT"),
@@ -195,6 +196,20 @@ def test_evaluate_query_scores_each_part_of_each_qid_on_its_best_gold_chunk():
     pbp = result["parts"][1]
     assert pbp["best"]["chunk"] == "A1_35"
     assert [c["chunk"] for c in pbp["chunks"]] == ["A1_35", "A1_47"]
+
+
+def test_evaluate_query_skips_parts_whose_gold_the_ticker_filter_excludes():
+    gold_index = {
+        ("q1", "AAPL"): [{"chunk": "X1_1", "ticker": "AAPL", "own_period": True}],
+        ("q1", "MSFT"): [{"chunk": "A1_1", "ticker": "MSFT", "own_period": True}],
+    }
+    lists = {"bm25": _order("A1_1:A1:MSFT"), "vector": _order("A1_1:A1:MSFT"), "pool": ["A1_1"], "final": ["A1_1"]}
+    filtered = rr.evaluate_query({"query": "q", "ticker": "MSFT", "qids": ["q1"]}, lists, gold_index)
+    assert [p["part"] for p in filtered["parts"]] == ["MSFT"]
+    assert filtered["out_of_scope"] == 1
+    unfiltered = rr.evaluate_query({"query": "q", "ticker": None, "qids": ["q1"]}, lists, gold_index)
+    assert [p["part"] for p in unfiltered["parts"]] == ["AAPL", "MSFT"]
+    assert unfiltered["out_of_scope"] == 0
 
 
 # ---------------------------------------------------------------------------

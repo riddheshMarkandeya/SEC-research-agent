@@ -140,7 +140,7 @@ def gold_matches(chunk_text: str, metadata: dict, gold_rows: list[dict]) -> list
 
 
 def index_gold(chunks: list[dict], gold_rows: list[dict]) -> tuple[dict, list[dict]]:
-    """(qid, part) -> its gold chunks as {chunk, own_period}, in corpus
+    """(qid, part) -> its gold chunks as {chunk, ticker, own_period}, in corpus
     order, plus the rows no chunk matched (a mistyped anchor or a
     re-chunked table)."""
     index: dict[tuple[str, str], list[dict]] = {}
@@ -151,7 +151,8 @@ def index_gold(chunks: list[dict], gold_rows: list[dict]) -> tuple[dict, list[di
             entries = index.setdefault((row["qid"], row["part"]), [])
             doc_id = retrieval._make_id(chunk["metadata"])
             if all(e["chunk"] != doc_id for e in entries):
-                entries.append({"chunk": doc_id, "own_period": bool(row["own_period"])})
+                entries.append({"chunk": doc_id, "ticker": chunk["metadata"].get("ticker"),
+                                "own_period": bool(row["own_period"])})
     return index, [row for row in gold_rows if id(row) not in matched]
 
 
@@ -240,17 +241,24 @@ def classify(record: dict) -> str:
 
 def evaluate_query(entry: dict, lists: dict, gold_index: dict) -> dict:
     """The query's result for every gold part of every qid it was logged
-    under, sorted by (qid, part)."""
+    under, sorted by (qid, part). A part none of whose gold chunks pass the
+    query's ticker filter (the other company of a comparison) can't be
+    retrieved by this query at all, so it's counted as out of scope rather
+    than scored as a miss."""
     parts = []
+    out_of_scope = 0
     for qid, part in sorted(k for k in gold_index if k[0] in entry["qids"]):
         gold = gold_index[(qid, part)]
+        if entry["ticker"] and all(g["ticker"] != entry["ticker"] for g in gold):
+            out_of_scope += 1
+            continue
         chunks = [gold_chunk_record(g["chunk"], lists) for g in gold]
         best = best_gold(chunks)
         own_period = next(g["own_period"] for g in gold if g["chunk"] == best["chunk"])
         cls = classify(best)
         parts.append({"qid": qid, "part": part, "hit": cls == "hit", "class": cls,
                       "own_period": own_period, "best": best, "chunks": chunks})
-    return {**entry, "parts": parts}
+    return {**entry, "parts": parts, "out_of_scope": out_of_scope}
 
 
 # ---------------------------------------------------------------------------
@@ -292,6 +300,7 @@ def summarize(results: list[dict]) -> dict:
         "coverage": coverage,
         "covered": sum(coverage.values()),
         "questions": len(coverage),
+        "out_of_scope": sum(r.get("out_of_scope", 0) for r in results),
     }
 
 
@@ -339,7 +348,7 @@ def format_summary(summary: dict, diff: dict | None = None) -> str:
     s = summary
     lines = [
         f"parts: {s['parts']}  hit@5: {s['hits']} ({s['hit_at_5']:.1%})  reach: {s['reached']} ({s['reach']:.1%})",
-        f"questions covered: {s['covered']}/{s['questions']}",
+        f"questions covered: {s['covered']}/{s['questions']}  out-of-scope parts skipped: {s['out_of_scope']}",
         "classes: " + ", ".join(f"{c} {n}" for c, n in sorted(s["classes"].items())),
         "own-period: " + ", ".join(f"{c} {n}" for c, n in sorted(s["by_period"]["own"].items())),
         "other-period: " + ", ".join(f"{c} {n}" for c, n in sorted(s["by_period"]["other"].items())),
@@ -551,6 +560,9 @@ def main(argv: list[str] | None = None) -> int:
     if not out.parent.is_dir():
         parser.error(f"--out directory does not exist: {out.parent}")
 
+    # Captured before the run: an edit to retrieval.py or a commit while a
+    # long run is in progress must not be attributed to its results.
+    provenance = {**eval_harness._git_state(), "retrieval_sha256": file_sha256(Path(retrieval.__file__))}
     gold_hash = file_sha256(args.gold)
     base = json.loads(args.compare.read_text(encoding="utf-8")) if args.compare else None
     if base is not None:
@@ -573,9 +585,8 @@ def main(argv: list[str] | None = None) -> int:
     queried = {qid for q in queries for qid in q["qids"]}
     header = {
         "created": stamp.isoformat(),
-        **eval_harness._git_state(),
+        **provenance,
         "gold_sha256": gold_hash,
-        "retrieval_sha256": file_sha256(Path(retrieval.__file__)),
         "trace_file": str(args.file),
         "qids": args.qid,
         "baseline": str(args.compare) if args.compare else None,
