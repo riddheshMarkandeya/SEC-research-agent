@@ -94,6 +94,8 @@ EXPECTED_KEYS = {
         "loop_final_turn",
         "loop_budget_exhausted",
         "loop_submit_schema_mismatch",
+        "loop_retry_after_final_turn",
+        "loop_mixed_turn_retry_at_budget",
     },
     "judge": {"judge"},
     "mcp": {"mcp_fact_missing", "mcp_compare_missing", "mcp_unknown_tool", "mcp_list_tools"},
@@ -361,6 +363,20 @@ def _render_loop_runs() -> dict:
         "loop_final_turn": final_turn,
         "loop_budget_exhausted": _run({"MAX_TOOL_ITERATIONS": 1}, "gemini", calc_turn, [calc_turn]),
         "loop_submit_schema_mismatch": _run(None, "gemini", broken_submit, [broken_submit]),
+        "loop_retry_after_final_turn": _run(
+            {"MAX_TOOL_ITERATIONS": 1},
+            "gemini",
+            calc_turn,
+            [bad_submit, bad_submit],
+            ["start", "send_tool_results", "send_tool_results"],
+        ),
+        "loop_mixed_turn_retry_at_budget": _run(
+            {"MAX_TOOL_ITERATIONS": 1},
+            "gemini",
+            ModelTurn(tool_calls=[BAD_CALC, bad_submit.tool_calls[0]], text=None),
+            [bad_submit],
+            ["start", "send_tool_results"],
+        ),
     }
 
 
