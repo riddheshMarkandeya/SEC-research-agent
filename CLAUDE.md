@@ -38,6 +38,11 @@ touched files. Nothing enforces these at commit time. All the tools are pinned i
 - **Types: `pyright` in basic mode.** Config lives in `pyproject.toml` `[tool.pyright]`.
   `pyright .` must report 0 errors. Strict mode was tried and rejected: about 94% of its errors
   were noise from dict-shaped data flow. Revisiting it is a `BACKLOG.md` item.
+- **Import contracts: `import-linter`.** Config lives in `pyproject.toml` `[tool.importlinter]`:
+  no import cycles between sibling modules or subpackages at any depth, and nothing outside
+  `sec_agent.tools` imports it. `tests/test_import_contracts.py` runs them, so the pytest step
+  below gates them. `lint-imports` runs them standalone. They see static imports only, so a
+  dynamic `import_module()` (as in `prompts/__init__.py`) is invisible to them.
 - **Coverage: `pytest-cov` + `diff-cover`.** Config lives in `pyproject.toml`
   `[tool.coverage.*]`. It measures branch coverage; `diff-cover`'s own `--branch-coverage` flag
   is deliberately left off. The gate runs `pytest --cov=. --cov-report=xml`, then `diff-cover

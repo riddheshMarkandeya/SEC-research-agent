@@ -25,3 +25,7 @@ lxml-stubs==0.5.1
 # test coverage" section for the current rollout stage.
 pytest-cov==7.1.0
 diff-cover==10.6.0
+
+# Import-cycle and layering contracts ([tool.importlinter] in
+# pyproject.toml), run by tests/test_import_contracts.py.
+import-linter==2.15

@@ -35,3 +35,6 @@ notes.md
 # implementer reports, review-package diffs) -- process artifacts, not
 # project content.
 .superpowers/
+
+# import-linter's cache from standalone `lint-imports` runs.
+.import_linter_cache/
