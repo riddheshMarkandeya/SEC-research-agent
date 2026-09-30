@@ -243,14 +243,14 @@ def evaluate_query(entry: dict, lists: dict, gold_index: dict) -> dict:
     """The query's result for every gold part of every qid it was logged
     under, sorted by (qid, part). A part none of whose gold chunks pass the
     query's ticker filter (the other company of a comparison) can't be
-    retrieved by this query at all, so it's counted as out of scope rather
+    retrieved by this query at all, so it's listed as out of scope rather
     than scored as a miss."""
     parts = []
-    out_of_scope = 0
+    out_of_scope = []
     for qid, part in sorted(k for k in gold_index if k[0] in entry["qids"]):
         gold = gold_index[(qid, part)]
         if entry["ticker"] and all(g["ticker"] != entry["ticker"] for g in gold):
-            out_of_scope += 1
+            out_of_scope.append([qid, part])
             continue
         chunks = [gold_chunk_record(g["chunk"], lists) for g in gold]
         best = best_gold(chunks)
@@ -271,7 +271,13 @@ def _part_rows(results: list[dict]):
 
 
 def _coverage(results: list[dict]) -> dict[str, bool]:
+    """qid -> whether every one of its parts is hit by some query. A part
+    that only ever appeared out of scope was never reachable, so it counts
+    as not hit instead of dropping out of the check."""
     hit_parts: dict[str, dict[str, bool]] = {}
+    for r in results:
+        for qid, part in r.get("out_of_scope", []):
+            hit_parts.setdefault(qid, {}).setdefault(part, False)
     for _, p in _part_rows(results):
         parts = hit_parts.setdefault(p["qid"], {})
         parts[p["part"]] = parts.get(p["part"], False) or p["hit"]
@@ -300,7 +306,7 @@ def summarize(results: list[dict]) -> dict:
         "coverage": coverage,
         "covered": sum(coverage.values()),
         "questions": len(coverage),
-        "out_of_scope": sum(r.get("out_of_scope", 0) for r in results),
+        "out_of_scope": sum(len(r.get("out_of_scope", [])) for r in results),
     }
 
 

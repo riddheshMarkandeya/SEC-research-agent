@@ -206,10 +206,10 @@ def test_evaluate_query_skips_parts_whose_gold_the_ticker_filter_excludes():
     lists = {"bm25": _order("A1_1:A1:MSFT"), "vector": _order("A1_1:A1:MSFT"), "pool": ["A1_1"], "final": ["A1_1"]}
     filtered = rr.evaluate_query({"query": "q", "ticker": "MSFT", "qids": ["q1"]}, lists, gold_index)
     assert [p["part"] for p in filtered["parts"]] == ["MSFT"]
-    assert filtered["out_of_scope"] == 1
+    assert filtered["out_of_scope"] == [["q1", "AAPL"]]
     unfiltered = rr.evaluate_query({"query": "q", "ticker": None, "qids": ["q1"]}, lists, gold_index)
     assert [p["part"] for p in unfiltered["parts"]] == ["AAPL", "MSFT"]
-    assert unfiltered["out_of_scope"] == 0
+    assert unfiltered["out_of_scope"] == []
 
 
 # ---------------------------------------------------------------------------
@@ -239,6 +239,13 @@ def test_summarize_counts_hits_reach_classes_and_question_coverage():
     assert s["by_period"] == {"own": {"hit": 1, "rerank": 2}, "other": {"hit": 1, "dilution": 1}}
     assert s["coverage"] == {"q1": True, "q2": False}
     assert (s["covered"], s["questions"]) == (1, 2)
+
+
+def test_coverage_counts_a_part_only_ever_out_of_scope_as_not_hit():
+    only_msft = {**_result("a", _part("q1", "MSFT", "hit")), "out_of_scope": [["q1", "AAPL"]]}
+    s = rr.summarize([only_msft])
+    assert s["coverage"] == {"q1": False}
+    assert (s["parts"], s["out_of_scope"]) == (1, 1)
 
 
 # ---------------------------------------------------------------------------
