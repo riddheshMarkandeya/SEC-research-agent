@@ -25,7 +25,7 @@ from pathlib import Path
 
 import pytest
 
-from sec_agent.agent import calculate, citations, dispatch, fact_tools, tool_results
+from sec_agent.agent import calculate, citations, dispatch, fact_tools, submission, tool_results
 from sec_agent.config import PROJECT_ROOT
 from sec_agent.prompts import SNAPSHOT_PATH
 
@@ -218,9 +218,9 @@ def _render_citation_warnings(agent) -> dict:
 
 def _render_retry_and_no_data(agent) -> dict:
     warning = citations.CitationWarning("uncovered_number", None, 1.0, "raw", "msg {x} one", None)
-    out = {
-        "claim_retry": agent._format_claim_retry_message("answer_text {braces}", [warning]),
-        "refusal": agent._format_refusal_message(["a {b}", "c"]),
+    out: dict[str, object] = {
+        "claim_retry": submission._format_claim_retry_message("answer_text {braces}", [warning]),
+        "refusal": submission._format_refusal_message(["a {b}", "c"]),
     }
     for name, args in [
         ("empty", {}),

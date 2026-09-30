@@ -2,7 +2,7 @@
 Replays traced agent runs through the current citation gate, offline: no
 LLM call and no Gemini quota. Each run's logged tool calls rebuild the
 sources it had, through the agent's own dispatch code, and its final
-submit_answer is re-gated with agent.submission_warnings(). The model's
+submit_answer is re-gated with submission.submission_warnings(). The model's
 decisions are held fixed, so the only thing that can change a verdict is
 the code.
 
@@ -52,7 +52,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
-from sec_agent.agent import agent, citations, dispatch
+from sec_agent.agent import citations, dispatch, submission
 from sec_agent import config
 from sec_agent.eval import eval_harness
 from sec_agent.devtools import trace_query
@@ -274,10 +274,12 @@ def replay_run(run: RunTrace, search, questions: dict[str, dict]) -> dict:
     }
     if error is not None:
         return record
-    answer_text, warnings = agent.submission_warnings(run.final_submit.get("input") or {}, all_results, run.question)
+    answer_text, warnings = submission.submission_warnings(
+        run.final_submit.get("input") or {}, all_results, run.question
+    )
     record.update(
         now_refused=bool(warnings),
-        now_checks=agent._count_citation_checks(warnings),
+        now_checks=submission._count_citation_checks(warnings),
         now_messages=[w.message for w in warnings],
         correct=grade(questions.get(run.qid), answer_text, all_results),
     )

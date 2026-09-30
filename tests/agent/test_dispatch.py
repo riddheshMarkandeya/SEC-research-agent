@@ -10,10 +10,10 @@ from sec_agent.agent.dispatch import (
     _resolve_search_args,
     run_search,
 )
-from tests.agent.helpers import _fake_result, _valid_calculate_args, capture_events
 from sec_agent.prompts.agent_messages import (
     SEARCH_INVALID_ARGS_MESSAGE,
 )
+from tests.agent.helpers import _fake_result, _valid_calculate_args, capture_events
 
 
 # ---------------------------------------------------------------------------

@@ -23,7 +23,7 @@ import pytest
 from sec_agent.devtools import compare_prompt_versions
 from sec_agent.eval import eval_harness
 from sec_agent.llm import llm_backends
-from sec_agent.agent.agent import AgentResult
+from sec_agent.agent.submission import AgentResult
 from sec_agent.eval.eval_harness import (
     _grade,
     _grade_by_type,
