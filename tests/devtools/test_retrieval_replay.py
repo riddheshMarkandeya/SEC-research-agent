@@ -231,6 +231,7 @@ def test_evaluate_query_scores_each_part_of_each_qid_on_its_best_gold_chunk():
     pbp = result["parts"][1]
     assert pbp["best"]["chunk"] == "A1_35"
     assert [c["chunk"] for c in pbp["chunks"]] == ["A1_35", "A1_47"]
+    assert result["final"] == ["A1_35"]
 
 
 def test_evaluate_query_skips_parts_whose_gold_the_ticker_filter_excludes():

@@ -265,7 +265,8 @@ def evaluate_query(entry: dict, lists: dict, gold_index: dict) -> dict:
     under, sorted by (qid, part). A part none of whose gold chunks pass the
     query's ticker filter (the other company of a comparison) can't be
     retrieved by this query at all, so it's listed as out of scope rather
-    than scored as a miss."""
+    than scored as a miss. The final top 5 is kept so a miss can be read
+    against the chunks that displaced its gold."""
     parts = []
     out_of_scope = []
     for qid, part in sorted(k for k in gold_index if k[0] in entry["qids"]):
@@ -280,7 +281,7 @@ def evaluate_query(entry: dict, lists: dict, gold_index: dict) -> dict:
         cause = rerank_cause(best, lists) if cls == "rerank" else None
         parts.append({"qid": qid, "part": part, "hit": cls == "hit", "class": cls, "rerank_cause": cause,
                       "own_period": own_period, "best": best, "chunks": chunks})
-    return {**entry, "parts": parts, "out_of_scope": out_of_scope}
+    return {**entry, "parts": parts, "out_of_scope": out_of_scope, "final": lists["final"]}
 
 
 # ---------------------------------------------------------------------------
