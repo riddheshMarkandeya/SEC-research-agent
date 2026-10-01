@@ -8,6 +8,7 @@ paths:
   - "src/sec_agent/agent/dispatch.py"
   - "src/sec_agent/llm/llm_backends.py"
   - "src/sec_agent/devtools/analyze_gate_replay.py"
+  - "src/sec_agent/devtools/retrieval_replay.py"
 ---
 
 # This project's live-code TDD carve-out
@@ -18,8 +19,10 @@ concretely, in this repo:
 - **SEC EDGAR HTTP calls** (`edgar_ingest.py`, `xbrl_facts.py`)
 - **Chroma + embedding indexing/retrieval** (`index_chunks.py`,
   `retrieval.py`, `dispatch.py`'s `search_filings` path through
-  `hybrid_search`, and `analyze_gate_replay.py`'s live search binding,
-  which replays traced runs against the real index and XBRL cache)
+  `hybrid_search`, `analyze_gate_replay.py`'s live search binding,
+  which replays traced runs against the real index and XBRL cache, and
+  `retrieval_replay.py`'s `_live_retriever`, which ranks every chunk
+  against the real BM25 index and Chroma embeddings)
 - **LLM round-trips through the Gemini backend** (`agent.py`'s tool-calling
   loop, `llm_backends.py`)
 
