@@ -51,6 +51,7 @@ reference:
 
 ## Backlog
 
+- [ ] **[bug, High, Standard]** The citation gate rejects a word-for-word quote that spans two table rows: `_quote_grounded_in_source(74550, "million", <the Compute & Networking and Graphics rows joined by a newline>, <NVDA 10-Q chunk 0001045810-26-000052>)` is False, while either row alone is True and the two-row text is a substring of the chunk. It cost nvda-segment-revenue-comparison-q1fy27 in the 2026-10-01 full run (`20261001T193130Z`): the citation retry resubmitted the same quote and was refused again. Reproducible offline, no quota. Likely the same cause as the Watch-list msft-segment-revenue-comparison `quote_not_found` item. Fits improvement-map package 2 (gate rules); check with `analyze_gate_replay --compare`. See `docs/decisions/2026-09-30-citation-retry-own-slot.md`.
 ### From the 2026-09-24 prompt-audit roadmap
 
 Design: `docs/plans/2026-09-24-prompt-audit-roadmap.md`. Findings: `docs/reviews/2026-09-24-prompt-audit.md`. The roadmap closed 2026-09-27 (WP8 bar met, 40/47). Summary: `docs/decisions/2026-09-27-prompt-audit-rollout.md`. What's left here are its open items. Anything that changes model-visible text still goes through the roadmap's panel-screen process.

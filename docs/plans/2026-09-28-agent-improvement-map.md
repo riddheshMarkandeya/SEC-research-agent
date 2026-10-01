@@ -174,7 +174,9 @@ Prerequisites (Decisions 13 and 15): ~~NUMBER_PATTERN fix~~ → ~~replay tool~~ 
 → ~~`src/` layout move~~ → ~~`agent.py` split~~ → ~~eval summary mode~~.
 
 Then the improvement packages:
-1. **Retry slot** (gate D9): code, then the panel and a full run.
+1. ~~**Retry slot** (gate D9): code, then the panel and a full run.~~ Done 2026-10-01: full run
+   42/48 (`20261001T193130Z`), matching the previous full run; see
+   `docs/decisions/2026-09-30-citation-retry-own-slot.md`.
 2. **Gate rules** (gate D4/D11, D3, then D12 a and b): code-only, checked with the replay plus a
    spot-check.
 3. **Uniform submit loop** (review S2 step 2): refactor, panel plus full run.
@@ -195,8 +197,8 @@ The packages above are **track A**: they run on master and spend Gemini quota. T
 spent or you're waiting on a run, do track B.
 
 Track A, next steps:
-1. Package 1: the full 48-question run from master at `f6a75db` (from 07:00Z 2026-10-01), a
-   refusal re-mine, then its docs commit.
+1. ~~Package 1: the full 48-question run from master at `f6a75db` (from 07:00Z 2026-10-01), a
+   refusal re-mine, then its docs commit.~~ Done 2026-10-01.
 2. Packages 2, 3 and 4, in order.
 3. Package 5 builds the variant track B picks. It keeps its place after package 4, because its
    live check spends quota and the packages change one thing at a time. Moving it up is decided
