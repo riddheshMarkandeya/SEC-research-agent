@@ -12,7 +12,10 @@ Checks, on 30 logged queries sampled with a fixed seed:
      recall miss, not a failure. A failure is an HNSW result the exact
      ordering ranks past BOUNDARY, which would mean the two rank by
      different similarities;
-  3. the final top 5 is drawn from the fused pool.
+  3. the final top 5 is drawn from the fused pool;
+  4. feeding the tool's cross-encoder ordering of the pool through rerank()'s
+     own combination step (_combine_fused_and_rerank) reproduces the final
+     top 5, so ce_rank is the ranking rerank() actually used.
 Then prints MSFT Q3 FY26 segment table chunk 35's ranks for the research
 note's three MSFT queries, whose BM25 ranks there were 40, 45 and 29.
 
@@ -30,7 +33,7 @@ from sec_agent import config
 from sec_agent.devtools import retrieval_replay as rr
 from sec_agent.devtools import trace_query
 from sec_agent.eval import eval_harness
-from sec_agent.retrieval.retrieval import _make_id, hybrid_search, vector_search
+from sec_agent.retrieval.retrieval import _combine_fused_and_rerank, _make_id, hybrid_search, vector_search
 
 SAMPLE = 30
 BOUNDARY = 30
@@ -76,6 +79,12 @@ def main() -> int:
         same_order += hnsw == [d for d, _, _ in lists["vector"][:25]]
         if not set(lists["final"]) <= set(lists["pool"]):
             problems.append(f"final not within pool for {query[:60]!r} [{ticker}]")
+        pool = hybrid_search(query, ticker=ticker, top_k=10**6, use_rerank=False)
+        candidates = [(_make_id(r["metadata"]), r["text"], r["metadata"], r["fused_score"]) for r in pool]
+        ce_scores = [-lists["ce"].index(d) for d, _, _, _ in candidates]
+        rebuilt = [_make_id(r["metadata"]) for r in _combine_fused_and_rerank(candidates, ce_scores, 5)]
+        if rebuilt != lists["final"]:
+            problems.append(f"ce ordering doesn't rebuild the top 5 for {query[:60]!r} [{ticker}]: {rebuilt} vs {lists['final']}")
     print(f"checked {len(sample)} queries; exact vector top 25 in HNSW's order for {same_order}; "
           f"HNSW recall misses (a closer chunk skipped) for {recall_misses}")
 
@@ -84,6 +93,7 @@ def main() -> int:
         record = rr.gold_chunk_record(TARGET, retrieve(query, ticker))
         bm25, vector = record["bm25"], record["vector"]
         print(f"  bm25 {bm25 and bm25['rank']}  vector {vector and vector['rank']}  pool {record['pool_pos']}  "
+              f"ce {record['ce_rank']}  "
               f"final {record['final_rank']}  class {rr.classify(record)}  <- {query[:70]!r}")
         print(f"      bm25 detail {bm25}  vector detail {vector}")
 

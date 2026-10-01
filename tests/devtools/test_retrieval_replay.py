@@ -125,6 +125,7 @@ def test_gold_chunk_record_takes_pool_position_and_final_rank_from_the_real_path
         "vector": _order("A1_1:A1:MSFT", "A1_35:A1:MSFT"),
         "pool": ["A1_1", "A1_35"],
         "final": ["A1_35"],
+        "ce": ["A1_35", "A1_1"],
     }
     record = rr.gold_chunk_record("A1_35", lists)
     assert record == {
@@ -133,15 +134,19 @@ def test_gold_chunk_record_takes_pool_position_and_final_rank_from_the_real_path
         "vector": {"rank": 2, "own_filing_rank": 2, "other_filing_ahead": 0},
         "pool_pos": 2,
         "final_rank": 1,
+        "ce_rank": 1,
     }
     missing = rr.gold_chunk_record("A1_9", lists)
-    assert (missing["bm25"], missing["vector"], missing["pool_pos"], missing["final_rank"]) == (None, None, None, None)
+    assert (missing["bm25"], missing["vector"], missing["pool_pos"], missing["final_rank"], missing["ce_rank"]) == (
+        None, None, None, None, None)
 
 
-def _rec(chunk="c", final=None, pool=None, bm25=None, vector=None):
+def _rec(chunk="c", final=None, pool=None, **ranks):
+    """`ranks` sets bm25 and vector as (rank, own_filing_rank, other_filing_ahead), and ce."""
     def stats(v):
         return None if v is None else {"rank": v[0], "own_filing_rank": v[1], "other_filing_ahead": v[2]}
-    return {"chunk": chunk, "bm25": stats(bm25), "vector": stats(vector), "pool_pos": pool, "final_rank": final}
+    return {"chunk": chunk, "bm25": stats(ranks.get("bm25")), "vector": stats(ranks.get("vector")),
+            "pool_pos": pool, "final_rank": final, "ce_rank": ranks.get("ce")}
 
 
 def test_best_gold_prefers_final_rank_then_pool_position_then_diagnostic_rank():
@@ -175,6 +180,32 @@ def test_classify(record, expected):
     assert rr.classify(record) == expected
 
 
+def _pool_lists(n=10, final=("p1", "p2", "p3", "p4", "p5"), tables=(), rescuable=()):
+    return {"pool": [f"p{i}" for i in range(1, n + 1)], "final": list(final),
+            "tables": set(tables), "rescuable": set(rescuable)}
+
+
+@pytest.mark.parametrize(
+    "record, lists, expected",
+    [
+        # the cross-encoder put it in its top 5; the max-of-ranks combination dropped it
+        (_rec("p8", pool=8, ce=3), _pool_lists(), "fusion"),
+        # a qualifying table the cross-encoder ranks low, with no table in the top 5, blocked
+        # from the rescue only by its fused rank past half the pool
+        (_rec("p8", pool=8, ce=9), _pool_lists(tables={"p8"}, rescuable={"p8"}), "rescue_threshold"),
+        # the same, but a table already made the top 5, so the rescue never runs
+        (_rec("p8", pool=8, ce=9), _pool_lists(tables={"p8", "p2"}, rescuable={"p8"}), "model"),
+        # within the threshold: the rescue could have picked it, so the threshold didn't block it
+        (_rec("p4", pool=4, ce=9), _pool_lists(final=("p1", "p2", "p3", "p5", "p6"), tables={"p4"},
+                                               rescuable={"p4"}), "model"),
+        # not a qualifying table
+        (_rec("p8", pool=8, ce=9), _pool_lists(tables={"p8"}), "model"),
+    ],
+)
+def test_rerank_cause(record, lists, expected):
+    assert rr.rerank_cause(record, lists) == expected
+
+
 def test_evaluate_query_scores_each_part_of_each_qid_on_its_best_gold_chunk():
     gold_index = {
         ("q1", "PBP"): [{"chunk": "A1_35", "ticker": "MSFT", "own_period": True},
@@ -187,12 +218,16 @@ def test_evaluate_query_scores_each_part_of_each_qid_on_its_best_gold_chunk():
         "vector": _order("A1_35:A1:MSFT"),
         "pool": ["A1_47", "A1_35"],
         "final": ["A1_35"],
+        "ce": ["A1_35", "A1_47"],
+        "tables": set(),
+        "rescuable": set(),
     }
     result = rr.evaluate_query({"query": "q", "ticker": "MSFT", "qids": ["q1"]}, lists, gold_index)
     assert [(p["qid"], p["part"], p["hit"], p["class"], p["own_period"]) for p in result["parts"]] == [
         ("q1", "IC", False, "unranked", False),
         ("q1", "PBP", True, "hit", True),
     ]
+    assert [p["rerank_cause"] for p in result["parts"]] == [None, None]
     pbp = result["parts"][1]
     assert pbp["best"]["chunk"] == "A1_35"
     assert [c["chunk"] for c in pbp["chunks"]] == ["A1_35", "A1_47"]
@@ -203,7 +238,8 @@ def test_evaluate_query_skips_parts_whose_gold_the_ticker_filter_excludes():
         ("q1", "AAPL"): [{"chunk": "X1_1", "ticker": "AAPL", "own_period": True}],
         ("q1", "MSFT"): [{"chunk": "A1_1", "ticker": "MSFT", "own_period": True}],
     }
-    lists = {"bm25": _order("A1_1:A1:MSFT"), "vector": _order("A1_1:A1:MSFT"), "pool": ["A1_1"], "final": ["A1_1"]}
+    lists = {"bm25": _order("A1_1:A1:MSFT"), "vector": _order("A1_1:A1:MSFT"), "pool": ["A1_1"], "final": ["A1_1"],
+             "ce": ["A1_1"], "tables": set(), "rescuable": set()}
     filtered = rr.evaluate_query({"query": "q", "ticker": "MSFT", "qids": ["q1"]}, lists, gold_index)
     assert [p["part"] for p in filtered["parts"]] == ["MSFT"]
     assert filtered["out_of_scope"] == [["q1", "AAPL"]]
@@ -215,9 +251,12 @@ def test_evaluate_query_skips_parts_whose_gold_the_ticker_filter_excludes():
 # ---------------------------------------------------------------------------
 # summarize and coverage
 # ---------------------------------------------------------------------------
-def _part(qid, part, cls, own_period=True, pool=None):
+def _part(qid, part, cls, own_period=True, **best):
+    """`best` sets the best gold's pool position (pool) and the rerank cause (cause)."""
     hit = cls == "hit"
+    pool = best.get("pool")
     return {"qid": qid, "part": part, "hit": hit, "class": cls, "own_period": own_period,
+            "rerank_cause": best.get("cause"),
             "best": _rec(final=1 if hit else None, pool=pool if pool is not None else (1 if hit else None))}
 
 
@@ -228,8 +267,8 @@ def _result(query, *parts, ticker="MSFT"):
 def test_summarize_counts_hits_reach_classes_and_question_coverage():
     results = [
         _result("a", _part("q1", "PBP", "hit"), _part("q1", "IC", "dilution", own_period=False)),
-        _result("b", _part("q1", "PBP", "rerank", pool=12), _part("q1", "IC", "hit", own_period=False)),
-        _result("c", _part("q2", "value", "rerank", pool=3)),
+        _result("b", _part("q1", "PBP", "rerank", pool=12, cause="model"), _part("q1", "IC", "hit", own_period=False)),
+        _result("c", _part("q2", "value", "rerank", pool=3, cause="fusion")),
     ]
     s = rr.summarize(results)
     assert (s["parts"], s["hits"], s["reached"]) == (5, 2, 4)
@@ -238,6 +277,7 @@ def test_summarize_counts_hits_reach_classes_and_question_coverage():
     assert s["classes"] == {"hit": 2, "rerank": 2, "dilution": 1}
     assert s["by_period"] == {"own": {"hit": 1, "rerank": 2}, "other": {"hit": 1, "dilution": 1}}
     assert s["coverage"] == {"q1": True, "q2": False}
+    assert s["rerank_causes"] == {"model": 1, "fusion": 1}
     assert (s["covered"], s["questions"]) == (1, 2)
 
 
@@ -366,7 +406,8 @@ def cli(tmp_path, monkeypatch):
 
     def retrieve(query, ticker):
         order = [("A1_35", "A1", "MSFT"), ("A1_36", "A1", "MSFT")]
-        return {"bm25": order, "vector": order, "pool": ["A1_35", "A1_36"], "final": final["ids"]}
+        return {"bm25": order, "vector": order, "pool": ["A1_35", "A1_36"], "final": final["ids"],
+                "ce": ["A1_36", "A1_35"], "tables": set(), "rescuable": set()}
 
     monkeypatch.setattr(rr, "_load_corpus", lambda: corpus)
     monkeypatch.setattr(rr, "_live_retriever", lambda c: retrieve)

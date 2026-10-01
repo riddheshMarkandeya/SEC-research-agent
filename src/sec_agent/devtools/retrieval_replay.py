@@ -185,14 +185,16 @@ def rank_stats(order: list[tuple], doc_id: str) -> dict | None:
 
 def gold_chunk_record(doc_id: str, lists: dict) -> dict:
     """One gold chunk's diagnostic ranks, its 1-based position in the fused
-    pool, and its final rank, each None when absent."""
-    pool, final = lists["pool"], lists["final"]
+    pool, its rank in the cross-encoder's own ordering of that pool, and its
+    final rank, each None when absent."""
+    pool, final, ce = lists["pool"], lists["final"], lists["ce"]
     return {
         "chunk": doc_id,
         "bm25": rank_stats(lists["bm25"], doc_id),
         "vector": rank_stats(lists["vector"], doc_id),
         "pool_pos": pool.index(doc_id) + 1 if doc_id in pool else None,
         "final_rank": final.index(doc_id) + 1 if doc_id in final else None,
+        "ce_rank": ce.index(doc_id) + 1 if doc_id in ce else None,
     }
 
 
@@ -239,6 +241,25 @@ def classify(record: dict) -> str:
     return "period_confusion" if better["other_filing_ahead"] >= 1 else "other_ticker"
 
 
+def rerank_cause(record: dict, lists: dict) -> str:
+    """Why a gold chunk in the pool was cut at rerank:
+      fusion            the cross-encoder ranks it in its top 5, but combining
+                        that rank with the fused rank (rerank keeps the better
+                        of the two) let other chunks outrank it
+      rescue_threshold  the cross-encoder ranks it lower, it's a table the
+                        rescue would accept, no table made the top 5, and only
+                        its fused rank (past half the pool) blocked the rescue
+      model             otherwise: the cross-encoder itself scores it low"""
+    top_n = len(lists["final"])
+    if record["ce_rank"] is not None and record["ce_rank"] <= top_n:
+        return "fusion"
+    no_table_in_final = not set(lists["final"]) & lists["tables"]
+    past_threshold = record["pool_pos"] > len(lists["pool"]) // 2
+    if record["chunk"] in lists["rescuable"] and no_table_in_final and past_threshold:
+        return "rescue_threshold"
+    return "model"
+
+
 def evaluate_query(entry: dict, lists: dict, gold_index: dict) -> dict:
     """The query's result for every gold part of every qid it was logged
     under, sorted by (qid, part). A part none of whose gold chunks pass the
@@ -256,7 +277,8 @@ def evaluate_query(entry: dict, lists: dict, gold_index: dict) -> dict:
         best = best_gold(chunks)
         own_period = next(g["own_period"] for g in gold if g["chunk"] == best["chunk"])
         cls = classify(best)
-        parts.append({"qid": qid, "part": part, "hit": cls == "hit", "class": cls,
+        cause = rerank_cause(best, lists) if cls == "rerank" else None
+        parts.append({"qid": qid, "part": part, "hit": cls == "hit", "class": cls, "rerank_cause": cause,
                       "own_period": own_period, "best": best, "chunks": chunks})
     return {**entry, "parts": parts, "out_of_scope": out_of_scope}
 
@@ -307,6 +329,7 @@ def summarize(results: list[dict]) -> dict:
         "covered": sum(coverage.values()),
         "questions": len(coverage),
         "out_of_scope": sum(len(r.get("out_of_scope", [])) for r in results),
+        "rerank_causes": dict(Counter(p["rerank_cause"] for p in rows if p.get("rerank_cause"))),
     }
 
 
@@ -358,6 +381,7 @@ def format_summary(summary: dict, diff: dict | None = None) -> str:
         "classes: " + ", ".join(f"{c} {n}" for c, n in sorted(s["classes"].items())),
         "own-period: " + ", ".join(f"{c} {n}" for c, n in sorted(s["by_period"]["own"].items())),
         "other-period: " + ", ".join(f"{c} {n}" for c, n in sorted(s["by_period"]["other"].items())),
+        "rerank causes: " + (", ".join(f"{c} {n}" for c, n in sorted(s["rerank_causes"].items())) or "none"),
         "uncovered: " + (", ".join(q for q, ok in s["coverage"].items() if not ok) or "none"),
     ]
     if diff is not None:
@@ -484,21 +508,33 @@ def _vector_orderer():  # pragma: no cover -- reads every embedding from the rea
 
 
 def _live_retriever(corpus: list[dict]):  # pragma: no cover -- binds the real retrieval stack, live-only
-    """A function returning one query's four lists: the full BM25 and vector
-    orderings, the fused pool the reranker sees, and the final top 5 exactly
-    as run_search asks for it. The pool and final lists come from
-    hybrid_search itself, so an experiment inside it is measured as is."""
+    """A function returning one query's lists: the full BM25 and vector
+    orderings, the fused pool the reranker sees, the final top 5 exactly as
+    run_search asks for it, the cross-encoder's own ordering of the pool,
+    and the pool's table and rescue-qualifying table chunk ids. The pool and
+    final lists come from hybrid_search itself, so an experiment inside it is
+    measured as is."""
     vector_order = _vector_orderer()
+    cross_encoder = retrieval._get_rerank_model()
 
     def retrieve(query: str, ticker: str | None) -> dict:
         bm25 = retrieval.bm25_search(query, len(corpus), ticker=ticker)
         pool = retrieval.hybrid_search(query, ticker=ticker, top_k=10**6, use_rerank=False)
         final = retrieval.hybrid_search(query, ticker=ticker, top_k=dispatch.CHUNKS_PER_SEARCH)
+        pool_ids = [retrieval._make_id(r["metadata"]) for r in pool]
+        scores = cross_encoder.predict([(query, r["text"]) for r in pool]).tolist() if pool else []
+        tables = {d for d, r in zip(pool_ids, pool) if r["metadata"].get("contains_table")}
         return {
             "bm25": [(d, m["accessionNumber"], m["ticker"]) for d, _, m in bm25],
             "vector": vector_order(query, ticker),
-            "pool": [retrieval._make_id(r["metadata"]) for r in pool],
+            "pool": pool_ids,
             "final": [retrieval._make_id(r["metadata"]) for r in final],
+            "ce": [d for _, d in sorted(zip(scores, pool_ids), key=lambda pair: pair[0], reverse=True)],
+            "tables": tables,
+            "rescuable": {
+                d for d, r in zip(pool_ids, pool)
+                if d in tables and r["text"].count("$") >= retrieval._MIN_DOLLAR_FIGURES_FOR_TABLE_RESCUE
+            },
         }
 
     return retrieve
