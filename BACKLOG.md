@@ -47,11 +47,19 @@ reference:
 
 ## In progress
 
-- [ ] **[misc, Med, Substantial]** **Agent-improvement map** — the active workstream: `docs/plans/2026-09-28-agent-improvement-map.md` (merged; supersedes the gate-refusal map and the structural review). Prerequisites in order (Decisions 13 and 15): ~~NUMBER_PATTERN fix~~ (done, `bf9e600`) → ~~replay tool~~ (done: `analyze_gate_replay.py`, `docs/plans/2026-09-28-gate-replay-tool.md`) → ~~Ollama removal~~ (done, incl. the prose fallback: `docs/plans/2026-09-29-remove-ollama-and-prose-fallback.md`) → ~~`src/` layout move~~ (done: `docs/plans/2026-09-29-src-layout-move.md`) → ~~`agent.py` split~~ (done: `docs/plans/2026-09-29-agent-py-split.md`) → **eval summary mode (next)**. Then the improvement packages in the map's "Proposed build order". Frontier tickets: segment-table ranking. No fallback backend after Ollama removal (user, 2026-09-28). Keep the model pin for its screens.
+- [ ] **[misc, Med, Substantial]** **Agent-improvement map** — the active workstream: `docs/plans/2026-09-28-agent-improvement-map.md` (merged; supersedes the gate-refusal map and the structural review). Prerequisites in order (Decisions 13 and 15): ~~NUMBER_PATTERN fix~~ (done, `bf9e600`) → ~~replay tool~~ (done: `analyze_gate_replay.py`, `docs/plans/2026-09-28-gate-replay-tool.md`) → ~~Ollama removal~~ (done, incl. the prose fallback: `docs/plans/2026-09-29-remove-ollama-and-prose-fallback.md`) → ~~`src/` layout move~~ (done: `docs/plans/2026-09-29-src-layout-move.md`) → ~~`agent.py` split~~ (done: `docs/plans/2026-09-29-agent-py-split.md`) → **eval summary mode (next)**. Then the improvement packages in the map's "Proposed build order". Segment-table ranking is resolved into package 5's spec (`docs/plans/2026-09-30-retrieval-gold-rank-harness.md`, step 7). No fallback backend after Ollama removal (user, 2026-09-28). Keep the model pin for its screens.
 
 ## Backlog
 
 - [ ] **[bug, High, Standard]** The citation gate rejects a word-for-word quote that spans two table rows: `_quote_grounded_in_source(74550, "million", <the Compute & Networking and Graphics rows joined by a newline>, <NVDA 10-Q chunk 0001045810-26-000052>)` is False, while either row alone is True and the two-row text is a substring of the chunk. It cost nvda-segment-revenue-comparison-q1fy27 in the 2026-10-01 full run (`20261001T193130Z`): the citation retry resubmitted the same quote and was refused again. Reproducible offline, no quota. Likely the same cause as the Watch-list msft-segment-revenue-comparison `quote_not_found` item. Fits improvement-map package 2 (gate rules); check with `analyze_gate_replay --compare`. See `docs/decisions/2026-09-30-citation-retry-own-slot.md`.
+
+### From the 2026-09-30 retrieval gold-rank harness
+
+Plan: `docs/plans/2026-09-30-retrieval-gold-rank-harness.md`. Review: `docs/reviews/2026-10-01-retrieval-harness.md`.
+
+- [ ] **[design, Low, Standard]** `retrieval_replay` classes a chunk that the table rescue pushes out of the cross-encoder's top 5 as `fusion`. Telling the two apart needs retrieval's own fused, ce and combined ranks, the seam that package 5's spec (item 11) already proposes. Do it with that seam.
+- [ ] **[performance, Low, Standard]** `retrieval_replay` runs the cross-encoder twice per query, and BM25 and the embedding three times. It costs runtime only, inside a 15-45 minute full run. Folding into the same seam would remove most of it.
+
 ### From the 2026-09-24 prompt-audit roadmap
 
 Design: `docs/plans/2026-09-24-prompt-audit-roadmap.md`. Findings: `docs/reviews/2026-09-24-prompt-audit.md`. The roadmap closed 2026-09-27 (WP8 bar met, 40/47). Summary: `docs/decisions/2026-09-27-prompt-audit-rollout.md`. What's left here are its open items. Anything that changes model-visible text still goes through the roadmap's panel-screen process.
@@ -277,3 +285,8 @@ detail. The fuller write-ups from before the 2026-09-26 cleanup are in
 - **[design, Med, Standard]** Audit finding 7: the judge verdict is parsed from a two-line format (`startswith("PASS")`), so `**PASS**` or a preamble would grade FAIL. Fix: structured output for the judge. It touches `grade_judged`, so it needs a panel screen. Trigger: `lenient parse disagrees` in any eval report (0 hits through WP8). `docs/reviews/2026-09-24-prompt-audit.md`
 - **[design, Low, TBD]** Pyright strict mode (rejected 2026-09-15: ~94% of its errors were noise from dict-shaped data). Trigger: less untyped-dict data flow (`TypedDict`/`dataclass`), or a scoped-down strict preset. `docs/decisions/2026-09-15-adopt-pyright.md`
 - **[design, Low, TBD]** A `PreToolUse`/`ExitPlanMode` hook backstop for the plan-review floor. Trigger: instruction-only enforcement caught missing a review. `docs/decisions/2026-09-17-mandatory-plan-review-floor.md`
+
+**Retrieval**
+- **[bug, Low, TBD]** ANN recall misses exist: in 2 of 30 logged queries, a chunk with an exact vector rank in the top 25 was left out by Chroma's HNSW search (`index_recall` class). This revisits `4c6850c`, which ruled HNSW tuning out because no failure had been an ANN-recall problem. That's no longer true, but the size is unmeasured. Trigger: the `index_recall` count in package 5's acceptance report is a material share of misses. `docs/reviews/2026-10-01-retrieval-harness.md`
+- **[feature, Low, TBD]** V3 (glued-month de-glue in the chunker) and V4 (tables as their own chunks) weren't measured: dilution fell from 66 misses (V0) to 17 under strict period scoping, against 414 rerank misses in V6. Trigger: dilution grows after package 5 ships. `docs/plans/2026-09-30-retrieval-gold-rank-harness.md`
+- **[misc, Low, Trivial]** `Alibaba-NLP/gte-multilingual-reranker-base` crashes under transformers 5.15 (its remote modeling code indexes RoPE with bad `position_ids`), so it was never timed. Trigger: a reranker model swap is reconsidered. `docs/research/2026-09-30-rerank-improvement.md`

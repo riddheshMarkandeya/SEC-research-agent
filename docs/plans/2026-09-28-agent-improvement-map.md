@@ -159,7 +159,34 @@ New in this merge:
   - tables as their own chunks.
 - Type: task (harness), then grilling.
 - Blocked by: none. Independent of `agent.py`; can run in parallel.
-- Status: open. **Frontier.**
+- Status: **resolved 2026-10-01** into package 5's spec. See
+  `docs/plans/2026-09-30-retrieval-gold-rank-harness.md`. Figures, on 901 in-scope query-part
+  pairs from 41 questions:
+  - V0 (today): hit@5 329, 31/40 questions covered. 478 of 572 misses happen at rerank, with gold
+    already in the pool.
+  - V6 (strict period scoping + windowed MaxP rerank, max-of-ranks rule): 469, 37/40.
+  - Combination rule on V6:
+
+    | Rule | hit@5 | Covered |
+    |---|---|---|
+    | max (today) | 469 | 37 |
+    | tiebreak | 482 | 37 |
+    | floor3 | 526 | 37 |
+    | floor2 | 579 | 35 |
+    | ce | 599 | 34 |
+
+  - The glued-month fix and tables as chunks (V3/V4) weren't needed: dilution is 17 misses under
+    strict scoping. They're on the BACKLOG Watch list.
+
+### Rerank (from the S5 harness)
+- Question: How much of the rerank loss can the reranker fix?
+- Type: research plus offline measurement.
+- Status: **resolved 2026-10-01.** The cross-encoder truncates long table chunks at 512 tokens.
+  Windowed MaxP with the caption and table header carried into each window fixes most of it, and
+  the carry is essential (without it, `ce` falls from 599 to 459). No stronger model fits the CPU
+  latency budget, over the full pool or as a second stage. See
+  `docs/research/2026-09-30-rerank-improvement.md`. The max-of-ranks rule is revisited in
+  package 5.
 
 ### Judge-model setting
 - Question: Add a separate judge-model setting (today the judge reads `GEMINI_MODEL_NAME`), as a
@@ -181,8 +208,8 @@ Then the improvement packages:
    spot-check.
 3. **Uniform submit loop** (review S2 step 2): refactor, panel plus full run.
 4. **Not-available answer** (review S3, with the tool-message ticket): prompt protocol.
-5. **Period-scoped retrieval plus the glued-month fix** (review S5): offline harness, then panel
-   plus full run.
+5. **Strict period scoping + windowed MaxP rerank + fused-floor rule** (review S5; spec in the
+   harness plan's step 7): offline acceptance on the harness, then a `floor3` full run.
 6. **Thinking-level A/B, then temperature** (review S4): one variable at a time, on a quiet
    quota day.
 
@@ -204,19 +231,9 @@ Track A, next steps:
    live check spends quota and the packages change one thing at a time. Moving it up is decided
    at track B's step 6, not before.
 
-Track B (plan: `docs/plans/2026-09-30-retrieval-gold-rank-harness.md`):
-1. V0/V1/V2 measured with the gold-rank harness, then the prototype stashed.
-2. A cross-encoder rank diagnostic: splits the rerank misses into the model scoring gold low vs.
-   the fusion step or table rescue dropping it.
-3. `/research` on rerank, narrowed by step 2.
-4. The research's candidates measured with `--compare` against V0.
-5. The review pass, then a docs commit: the S5 ticket's figures, a rerank ticket on this map, the
-   backlog items. Merge the branch after track A's step 1.
-6. Grilling to pick the variant, which becomes package 5's spec.
-
-V0 found that 478 of 572 retrieval misses happen at the rerank step, with gold already in the
-candidate pool. So package 5's content will be renamed to match the variant track B picks,
-instead of "period-scoped retrieval plus the glued-month fix".
+Track B (plan: `docs/plans/2026-09-30-retrieval-gold-rank-harness.md`): **done 2026-10-01.**
+The harness was measured, researched, reviewed and merged (`49e794f`), and the grilling wrote
+package 5's spec. Package 5 keeps its place after package 4.
 
 ## Not yet specified
 
