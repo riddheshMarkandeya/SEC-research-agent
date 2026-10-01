@@ -186,6 +186,36 @@ Then the improvement packages:
 
 After each package, re-mine the refusals with the replay tool before starting the next.
 
+### Two tracks (2026-09-30)
+
+The packages above are **track A**: they run on master and spend Gemini quota. The S5 ticket is
+**track B**: offline work on branch `retrieval-harness` with no quota. Neither blocks the other.
+
+**Rule of thumb:** when there's quota and a track A step is ready, do track A. When quota is
+spent or you're waiting on a run, do track B.
+
+Track A, next steps:
+1. Package 1: the full 48-question run from master at `f6a75db` (from 07:00Z 2026-10-01), a
+   refusal re-mine, then its docs commit.
+2. Packages 2, 3 and 4, in order.
+3. Package 5 builds the variant track B picks. It keeps its place after package 4, because its
+   live check spends quota and the packages change one thing at a time. Moving it up is decided
+   at track B's step 6, not before.
+
+Track B (plan: `docs/plans/2026-09-30-retrieval-gold-rank-harness.md`):
+1. V0/V1/V2 measured with the gold-rank harness, then the prototype stashed.
+2. A cross-encoder rank diagnostic: splits the rerank misses into the model scoring gold low vs.
+   the fusion step or table rescue dropping it.
+3. `/research` on rerank, narrowed by step 2.
+4. The research's candidates measured with `--compare` against V0.
+5. The review pass, then a docs commit: the S5 ticket's figures, a rerank ticket on this map, the
+   backlog items. Merge the branch after track A's step 1.
+6. Grilling to pick the variant, which becomes package 5's spec.
+
+V0 found that 478 of 572 retrieval misses happen at the rerank step, with gold already in the
+candidate pool. So package 5's content will be renamed to match the variant track B picks,
+instead of "period-scoped retrieval plus the glued-month fix".
+
 ## Not yet specified
 
 - Whether `compare_financial_metric` leaves the agent's tool list. It has 0 calls in 478 runs,
