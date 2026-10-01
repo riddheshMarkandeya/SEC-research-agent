@@ -66,6 +66,13 @@ _PROGRESS_EVERY = 25
 # ---------------------------------------------------------------------------
 # Query set
 # ---------------------------------------------------------------------------
+def search_key(record: dict) -> tuple | None:
+    """A search_filings span's (query, ticker), or None for any other record."""
+    if record.get("as_type") != "tool" or record.get("name") != _SEARCH:
+        return None
+    return trace_query.get(record, "input.query") or "", trace_query.get(record, "input.ticker")
+
+
 def build_query_set(records: list[dict], ids: dict, gold_qids: set[str]) -> tuple[list[dict], dict]:
     """The logged search queries, deduplicated on (query, ticker) in
     first-seen order, each with the sorted qids it was logged under. Spans
@@ -74,7 +81,8 @@ def build_query_set(records: list[dict], ids: dict, gold_qids: set[str]) -> tupl
     by_key: dict[tuple, set[str]] = {}
     dropped = {"unjoined": 0, "no_gold": 0}
     for r in records:
-        if r.get("as_type") != "tool" or r.get("name") != _SEARCH:
+        key = search_key(r)
+        if key is None:
             continue
         qid = ids.get(r.get("run_id"), "?")
         if qid == "?":
@@ -83,7 +91,6 @@ def build_query_set(records: list[dict], ids: dict, gold_qids: set[str]) -> tupl
         if qid not in gold_qids:
             dropped["no_gold"] += 1
             continue
-        key = (trace_query.get(r, "input.query") or "", trace_query.get(r, "input.ticker"))
         by_key.setdefault(key, set()).add(qid)
     queries = [{"query": q, "ticker": t, "qids": sorted(qids)} for (q, t), qids in by_key.items()]
     return queries, dropped
@@ -166,21 +173,21 @@ def file_sha256(path: Path) -> str:
 def rank_stats(order: list[tuple], doc_id: str) -> dict | None:
     """A chunk's 1-based rank in a retriever's full ordering of
     (doc_id, accession, ticker), its rank among its own filing's chunks,
-    and how many same-ticker chunks from other filings outrank it. None
-    when the retriever doesn't rank it."""
-    target = next((e for e in order if e[0] == doc_id), None)
-    if target is None:
-        return None
-    _, accession, ticker = target
-    own = other = 0
+    and how many chunks outrank it from the same ticker's other filings
+    and from other tickers. None when the retriever doesn't rank it.
+    Counts per filing and per ticker are kept as it goes, since the
+    target's own filing and ticker are known only once it's reached."""
+    by_filing: dict[str, int] = {}
+    by_ticker: dict[str, int] = {}
     for rank, (d, acc, tick) in enumerate(order, start=1):
         if d == doc_id:
-            return {"rank": rank, "own_filing_rank": own + 1, "other_filing_ahead": other}
-        if acc == accession:
-            own += 1
-        elif tick == ticker:
-            other += 1
-    return None  # pragma: no cover -- unreachable: target was found in order above
+            own = by_filing.get(acc, 0)
+            same_ticker = by_ticker.get(tick, 0)
+            return {"rank": rank, "own_filing_rank": own + 1, "other_filing_ahead": same_ticker - own,
+                    "other_ticker_ahead": rank - 1 - same_ticker}
+        by_filing[acc] = by_filing.get(acc, 0) + 1
+        by_ticker[tick] = by_ticker.get(tick, 0) + 1
+    return None
 
 
 def gold_chunk_record(doc_id: str, lists: dict) -> dict:
@@ -223,11 +230,15 @@ def classify(record: dict) -> str:
     of the two retrievers:
       hit              in the top 5
       rerank           in the fused pool, cut at rerank
+      index_recall     not in the pool, though its exact vector rank is
+                       within the vector search's candidate count: the
+                       approximate index skipped it
+      dilution         not in the pool; lost among its own filing's chunks
       period_confusion not in the pool; near the top of its own filing, but
                        other filings' chunks (another period) outrank it
-      dilution         not in the pool; lost among its own filing's chunks
-      other_ticker     not in the pool; only other tickers' chunks outrank
-                       it (a query with no ticker filter)
+                       at least as often as other tickers' chunks do
+      other_ticker     not in the pool; mostly other tickers' chunks
+                       outrank it (a query with no ticker filter)
       unranked         neither retriever ranks it"""
     if record["final_rank"] is not None:
         return "hit"
@@ -236,13 +247,22 @@ def classify(record: dict) -> str:
     better = _better_retriever(record)
     if better is None:
         return "unranked"
+    vector = record["vector"]
+    if vector is not None and vector["rank"] <= retrieval.CANDIDATE_POOL_SIZE:
+        return "index_recall"
     if better["own_filing_rank"] > _OWN_FILING_THRESHOLD:
         return "dilution"
-    return "period_confusion" if better["other_filing_ahead"] >= 1 else "other_ticker"
+    ahead = better["other_filing_ahead"]
+    return "period_confusion" if ahead >= max(better["other_ticker_ahead"], 1) else "other_ticker"
 
 
 def rerank_cause(record: dict, lists: dict) -> str:
-    """Why a gold chunk in the pool was cut at rerank:
+    """Why a gold chunk in the pool was cut at rerank. The rules restate
+    retrieval.py's max-of-ranks combination and table-rescue gate, so a
+    variant that changes either needs these rules changed with it; the
+    cross-encoder ranks come from retrieval's own rerank model, so a
+    scoring variant is measured as is. A table the rescue swapped in over
+    a chunk in the cross-encoder's top 5 shows up as fusion.
       fusion            the cross-encoder ranks it in its top 5, but combining
                         that rank with the fused rank (rerank keeps the better
                         of the two) let other chunks outrank it
@@ -258,6 +278,13 @@ def rerank_cause(record: dict, lists: dict) -> str:
     if record["chunk"] in lists["rescuable"] and no_table_in_final and past_threshold:
         return "rescue_threshold"
     return "model"
+
+
+def _part_rerank_cause(chunks: list[dict], lists: dict) -> str:
+    """The rerank cause of the part's pooled gold chunk the cross-encoder
+    ranked best: the one rerank came closest to keeping."""
+    pooled = [c for c in chunks if c["pool_pos"] is not None]
+    return rerank_cause(min(pooled, key=lambda c: _or_inf(c["ce_rank"])), lists)
 
 
 def evaluate_query(entry: dict, lists: dict, gold_index: dict) -> dict:
@@ -278,7 +305,7 @@ def evaluate_query(entry: dict, lists: dict, gold_index: dict) -> dict:
         best = best_gold(chunks)
         own_period = next(g["own_period"] for g in gold if g["chunk"] == best["chunk"])
         cls = classify(best)
-        cause = rerank_cause(best, lists) if cls == "rerank" else None
+        cause = _part_rerank_cause(chunks, lists) if cls == "rerank" else None
         parts.append({"qid": qid, "part": part, "hit": cls == "hit", "class": cls, "rerank_cause": cause,
                       "own_period": own_period, "best": best, "chunks": chunks})
     return {**entry, "parts": parts, "out_of_scope": out_of_scope, "final": lists["final"]}
@@ -414,7 +441,7 @@ def _decimals(value: float) -> int:
     return len(text.split(".")[1]) if "." in text else 0
 
 
-def figure_matches(text: str, value: float, unit: str) -> list[str]:
+def figure_matches(text: str, value: float, unit: str) -> list[re.Match]:
     """Every number in `text` that could be the expected figure, as written:
     at any money scale for million/billion, else as-is. A number matches when
     it rounds to the expected value at the expected value's own precision;
@@ -428,7 +455,7 @@ def figure_matches(text: str, value: float, unit: str) -> list[str]:
         digits = (m.group(1) or m.group(3)).replace(",", "")
         number = float(digits + (m.group(2) or m.group(4) or ""))
         if any(abs(number * s - target) <= tolerance for s in scales):
-            found.append(m.group(0))
+            found.append(m)
     return found
 
 
@@ -464,13 +491,12 @@ def propose_gold(questions: list[dict], chunks: list[dict]) -> list[dict]:
                 if meta.get("ticker") != ticker:
                     continue
                 text = chunk["text"]
-                for token in figure_matches(text, value, unit):
-                    at = text.find(token)
+                for m in figure_matches(text, value, unit):
                     rows.append({
                         "qid": q["id"], "part": part, "accession": meta["accessionNumber"],
                         "report_date": meta.get("reportDate"), "form": meta.get("form"),
-                        "chunk_index": meta["chunk_index"], "token": token,
-                        "snippet": _snippet(text, at, at + len(token)),
+                        "chunk_index": meta["chunk_index"], "token": m.group(0),
+                        "snippet": _snippet(text, m.start(), m.end()),
                     })
     return rows
 
@@ -513,8 +539,10 @@ def _live_retriever(corpus: list[dict]):  # pragma: no cover -- binds the real r
     orderings, the fused pool the reranker sees, the final top 5 exactly as
     run_search asks for it, the cross-encoder's own ordering of the pool,
     and the pool's table and rescue-qualifying table chunk ids. The pool and
-    final lists come from hybrid_search itself, so an experiment inside it is
-    measured as is."""
+    final lists come from hybrid_search itself, and the cross-encoder
+    ordering from retrieval's own rerank model, so an experiment in either
+    is measured as is. The rescue-qualifying set restates the rescue's
+    dollar-figure gate."""
     vector_order = _vector_orderer()
     cross_encoder = retrieval._get_rerank_model()
 
@@ -586,6 +614,16 @@ def _query_set(args, base: dict | None, gold_index: dict) -> tuple[list[dict], d
     return filter_qids(queries, args.qid), {**dropped, "malformed_lines": malformed}
 
 
+def _query_source(args, base: dict | None, gold_index: dict, queries: list[dict]) -> dict:
+    """Where the query set came from. A compare run replays the base's
+    queries, so it inherits the base's description of them."""
+    if base is not None:
+        return {k: base["header"][k] for k in ("trace_file", "qids", "gold_questions_without_queries")}
+    queried = {qid for q in queries for qid in q["qids"]}
+    without = sorted({qid for qid, _ in gold_index} - queried) if not args.qid else []
+    return {"trace_file": str(args.file), "qids": args.qid, "gold_questions_without_queries": without}
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = _parser()
     args = parser.parse_args(argv)
@@ -606,16 +644,20 @@ def main(argv: list[str] | None = None) -> int:
     # Captured before the run: an edit to retrieval.py or a commit while a
     # long run is in progress must not be attributed to its results.
     provenance = {**eval_harness._git_state(), "retrieval_sha256": file_sha256(Path(retrieval.__file__))}
-    gold_hash = file_sha256(args.gold)
-    base = json.loads(args.compare.read_text(encoding="utf-8")) if args.compare else None
-    if base is not None:
-        try:
+    try:
+        gold_hash = file_sha256(args.gold)
+        gold_rows = load_gold(args.gold)
+        base = json.loads(args.compare.read_text(encoding="utf-8")) if args.compare else None
+        if base is not None:
             check_base(base, gold_hash)
-        except ValueError as e:
-            print(f"retrieval_replay: {e}", file=sys.stderr)
-            return 2
+    except (OSError, ValueError) as e:  # json.JSONDecodeError is a ValueError
+        print(f"retrieval_replay: {e}", file=sys.stderr)
+        return 2
+    unknown = sorted(set(args.qid or ()) - {row["qid"] for row in gold_rows})
+    if unknown:
+        parser.error(f"--qid has no gold rows: {', '.join(unknown)}")
     corpus = _load_corpus()
-    gold_index, unmatched = index_gold(corpus, load_gold(args.gold))
+    gold_index, unmatched = index_gold(corpus, gold_rows)
     if unmatched:
         for row in unmatched:
             print(f"retrieval_replay: gold row matches no chunk: {json.dumps(row)}", file=sys.stderr)
@@ -625,16 +667,13 @@ def main(argv: list[str] | None = None) -> int:
 
     summary = summarize(results)
     diff = compare(base["results"], results) if base is not None else None
-    queried = {qid for q in queries for qid in q["qids"]}
     header = {
         "created": stamp.isoformat(),
         **provenance,
         "gold_sha256": gold_hash,
-        "trace_file": str(args.file),
-        "qids": args.qid,
+        **_query_source(args, base, gold_index, queries),
         "baseline": str(args.compare) if args.compare else None,
         "dropped": dropped,
-        "gold_questions_without_queries": sorted({qid for qid, _ in gold_index} - queried) if not args.qid else [],
         "runtime_s": round(time.monotonic() - started, 1),
     }
     report = {"header": header, "summary": summary, "diff": diff, "queries": queries, "results": results}

@@ -45,8 +45,9 @@ KEYWORD_PREFIX = "Note Segment Information Three Months Ended March 31"
 def _logged_queries(records: list[dict]) -> list[tuple[str, str | None]]:
     seen: dict[tuple, None] = {}
     for r in records:
-        if r.get("as_type") == "tool" and r.get("name") == "search_filings":
-            seen.setdefault((trace_query.get(r, "input.query") or "", trace_query.get(r, "input.ticker")), None)
+        key = rr.search_key(r)
+        if key is not None:
+            seen.setdefault(key, None)
     return list(seen)
 
 

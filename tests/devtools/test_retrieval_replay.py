@@ -115,7 +115,8 @@ def _order(*entries):
 
 def test_rank_stats_counts_own_filing_rank_and_same_ticker_other_filings_ahead():
     order = _order("B1_1:B1:MSFT", "X1_1:X1:AAPL", "A1_2:A1:MSFT", "B1_2:B1:MSFT", "A1_35:A1:MSFT")
-    assert rr.rank_stats(order, "A1_35") == {"rank": 5, "own_filing_rank": 2, "other_filing_ahead": 2}
+    assert rr.rank_stats(order, "A1_35") == {"rank": 5, "own_filing_rank": 2, "other_filing_ahead": 2,
+                                             "other_ticker_ahead": 1}
     assert rr.rank_stats(order, "A1_99") is None
 
 
@@ -130,8 +131,8 @@ def test_gold_chunk_record_takes_pool_position_and_final_rank_from_the_real_path
     record = rr.gold_chunk_record("A1_35", lists)
     assert record == {
         "chunk": "A1_35",
-        "bm25": {"rank": 1, "own_filing_rank": 1, "other_filing_ahead": 0},
-        "vector": {"rank": 2, "own_filing_rank": 2, "other_filing_ahead": 0},
+        "bm25": {"rank": 1, "own_filing_rank": 1, "other_filing_ahead": 0, "other_ticker_ahead": 0},
+        "vector": {"rank": 2, "own_filing_rank": 2, "other_filing_ahead": 0, "other_ticker_ahead": 0},
         "pool_pos": 2,
         "final_rank": 1,
         "ce_rank": 1,
@@ -142,9 +143,11 @@ def test_gold_chunk_record_takes_pool_position_and_final_rank_from_the_real_path
 
 
 def _rec(chunk="c", final=None, pool=None, **ranks):
-    """`ranks` sets bm25 and vector as (rank, own_filing_rank, other_filing_ahead), and ce."""
+    """`ranks` sets bm25 and vector as (rank, own_filing_rank, other_filing_ahead), and ce.
+    Every other chunk ahead is another ticker's."""
     def stats(v):
-        return None if v is None else {"rank": v[0], "own_filing_rank": v[1], "other_filing_ahead": v[2]}
+        return None if v is None else {"rank": v[0], "own_filing_rank": v[1], "other_filing_ahead": v[2],
+                                       "other_ticker_ahead": v[0] - v[1] - v[2]}
     return {"chunk": chunk, "bm25": stats(ranks.get("bm25")), "vector": stats(ranks.get("vector")),
             "pool_pos": pool, "final_rank": final, "ce_rank": ranks.get("ce")}
 
@@ -174,6 +177,10 @@ def test_best_gold_prefers_final_rank_then_pool_position_then_diagnostic_rank():
         (_rec(vector=(30, 2, 0)), "other_ticker"),
         # the better retriever decides: vector's rank 30 beats bm25's 50
         (_rec(bm25=(50, 2, 20), vector=(30, 14, 1)), "dilution"),
+        # inside the vector top 25 by exact rank, yet the approximate index left it out
+        (_rec(vector=(12, 4, 8)), "index_recall"),
+        # unfiltered query: one same-ticker chunk from another filing ahead, 56 other tickers' chunks
+        (_rec(vector=(60, 3, 1)), "other_ticker"),
     ],
 )
 def test_classify(record, expected):
@@ -204,6 +211,18 @@ def _pool_lists(n=10, final=("p1", "p2", "p3", "p4", "p5"), tables=(), rescuable
 )
 def test_rerank_cause(record, lists, expected):
     assert rr.rerank_cause(record, lists) == expected
+
+
+def test_evaluate_query_takes_the_rerank_cause_from_the_gold_chunk_the_cross_encoder_ranked_best():
+    gold_index = {("q1", "value"): [{"chunk": "p3", "ticker": "MSFT", "own_period": True},
+                                    {"chunk": "p12", "ticker": "MSFT", "own_period": True}]}
+    pool = [f"p{i}" for i in range(1, 21)]
+    lists = {"bm25": [], "vector": [], "pool": pool, "final": ["p1", "p2", "p4", "p5", "p6"],
+             "ce": ["p7", "p12", *[p for p in pool if p not in ("p7", "p12", "p3")], "p3"],
+             "tables": set(), "rescuable": set()}
+    result = rr.evaluate_query({"query": "q", "ticker": "MSFT", "qids": ["q1"]}, lists, gold_index)
+    part = result["parts"][0]
+    assert (part["class"], part["best"]["chunk"], part["rerank_cause"]) == ("rerank", "p3", "fusion")
 
 
 def test_evaluate_query_scores_each_part_of_each_qid_on_its_best_gold_chunk():
@@ -255,10 +274,9 @@ def test_evaluate_query_skips_parts_whose_gold_the_ticker_filter_excludes():
 def _part(qid, part, cls, own_period=True, **best):
     """`best` sets the best gold's pool position (pool) and the rerank cause (cause)."""
     hit = cls == "hit"
-    pool = best.get("pool")
     return {"qid": qid, "part": part, "hit": hit, "class": cls, "own_period": own_period,
             "rerank_cause": best.get("cause"),
-            "best": _rec(final=1 if hit else None, pool=pool if pool is not None else (1 if hit else None))}
+            "best": _rec(final=1 if hit else None, pool=best.get("pool", 1 if hit else None))}
 
 
 def _result(query, *parts, ticker="MSFT"):
@@ -355,7 +373,7 @@ def test_format_summary_names_the_losses():
     ],
 )
 def test_figure_matches(text, value, unit, expected):
-    assert rr.figure_matches(text, value, unit) == expected
+    assert [m.group(0) for m in rr.figure_matches(text, value, unit)] == expected
 
 
 def test_question_parts_maps_comparison_labels_to_tickers_and_skips_judged():
@@ -383,6 +401,16 @@ def test_propose_gold_lists_each_matching_chunk_of_the_parts_ticker():
     assert (row["qid"], row["part"], row["accession"], row["chunk_index"], row["report_date"], row["token"]) == (
         "n", "value", "A1", 35, "2026-03-31", "35,013")
     assert "35,013" in row["snippet"] and len(row["snippet"]) <= 200
+
+
+def test_propose_gold_centres_each_snippet_on_its_own_match():
+    question = {"id": "n", "type": "numeric", "ticker": "MSFT", "expected_value": 72.4, "expected_unit": "raw"}
+    text = "a" * 300 + " 172.4 " + "b" * 300 + " 72.4 " + "c" * 300 + " 72.4 " + "d" * 300
+    chunks = [{"text": text, "metadata": {"accessionNumber": "A1", "chunk_index": 1, "ticker": "MSFT"}}]
+    rows = rr.propose_gold([question], chunks)
+    assert len(rows) == 2
+    assert "b" in rows[0]["snippet"] and "c" in rows[0]["snippet"] and "a" not in rows[0]["snippet"]
+    assert "c" in rows[1]["snippet"] and "d" in rows[1]["snippet"]
 
 
 # ---------------------------------------------------------------------------
@@ -451,3 +479,34 @@ def test_main_propose_gold_writes_candidates(cli):
 def test_main_rejects_compare_with_qid(cli):
     with pytest.raises(SystemExit):
         rr.main([*cli["args"], "--compare", "x.json", "--qid", "q1"])
+
+
+def test_main_rejects_a_qid_with_no_gold(cli, capsys):
+    with pytest.raises(SystemExit):
+        rr.main([*cli["args"], "--out", str(cli["tmp"] / "r.json"), "--qid", "q1-typo"])
+    assert "q1-typo" in capsys.readouterr().err
+
+
+def test_main_reports_unreadable_gold_and_base_files_without_a_traceback(cli, capsys):
+    out = ["--out", str(cli["tmp"] / "r.json")]
+    missing = cli["tmp"] / "missing.json"
+    bad = cli["tmp"] / "bad.json"
+    bad.write_text("{not json", encoding="utf-8")
+    args = [a if a != str(cli["gold"]) else str(missing) for a in cli["args"]]
+    assert rr.main([*args, *out]) == 2
+    assert rr.main([*cli["args"], *out, "--compare", str(missing)]) == 2
+    assert rr.main([*cli["args"], *out, "--compare", str(bad)]) == 2
+    err = capsys.readouterr().err
+    assert err.count("retrieval_replay: ") == 3 and "Traceback" not in err
+
+
+def test_main_compare_header_describes_the_base_query_set(cli):
+    base = cli["tmp"] / "base.json"
+    assert rr.main([*cli["args"], "--out", str(base), "--qid", "q1"]) == 0
+    new = cli["tmp"] / "new.json"
+    other = ["--file", str(cli["tmp"] / "unused.jsonl"), *cli["args"][2:]]
+    assert rr.main([*other, "--out", str(new), "--compare", str(base)]) == 0
+    base_header = json.loads(base.read_text(encoding="utf-8"))["header"]
+    header = json.loads(new.read_text(encoding="utf-8"))["header"]
+    assert (header["trace_file"], header["qids"], header["gold_questions_without_queries"]) == (
+        base_header["trace_file"], ["q1"], base_header["gold_questions_without_queries"])
