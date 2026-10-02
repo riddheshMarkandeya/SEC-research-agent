@@ -51,8 +51,6 @@ reference:
 
 ## Backlog
 
-- [ ] **[bug, High, Standard]** The citation gate rejects a word-for-word quote that spans two table rows: `_quote_grounded_in_source(74550, "million", <the Compute & Networking and Graphics rows joined by a newline>, <NVDA 10-Q chunk 0001045810-26-000052>)` is False, while either row alone is True and the two-row text is a substring of the chunk. It cost nvda-segment-revenue-comparison-q1fy27 in the 2026-10-01 full run (`20261001T193130Z`): the citation retry resubmitted the same quote and was refused again. Reproducible offline, no quota. Likely the same cause as the Watch-list msft-segment-revenue-comparison `quote_not_found` item. Fits improvement-map package 2 (gate rules); check with `analyze_gate_replay --compare`. See `docs/decisions/2026-09-30-citation-retry-own-slot.md`.
-
 ### From the 2026-09-30 retrieval gold-rank harness
 
 Plan: `docs/plans/2026-09-30-retrieval-gold-rank-harness.md`. Review: `docs/reviews/2026-10-01-retrieval-harness.md`.
@@ -262,15 +260,19 @@ detail. The fuller write-ups from before the 2026-09-26 cleanup are in
 - **[bug (latent), Low, Standard]** `_verify_one_claim` checks quote-to-value grounding, not whether the answer's own prose labels the cell's period correctly. A fix needs a `period` field on the claim schema. Trigger: a live false accept. `docs/plans/2026-09-12-structure-aware-table-quote-grounding.md`
 - **[bug (latent), Low, Trivial]** `_quote_matches`'s flat anchor path can accept a wrong-period or digit-inflated quote for a prose-only value (table sources no longer use it). Trigger: a prose-path false accept. `docs/reviews/2026-09-13-table-grounding-region-scoped-matching.md`
 - **[bug (latent), Low, Standard]** `table_grounding`'s fuzzy coverage could accept a similar-but-wrong segment label from a different table block. Trigger: a tracked filing with near-identical sibling labels. `docs/reviews/2026-09-13-table-grounding-region-scoped-matching.md`
-- **[bug (latent), Low, Trivial]** A large `header_context` inflates `quote_is_grounded`'s coverage (25% → 88% in synthetic testing, never past the 90% threshold). Trigger: a fabricated quote crossing it. `docs/reviews/2026-09-13-table-grounding-region-scoped-matching.md`
+- **[bug (latent), Low, Trivial]** A large `header_context` inflates `quote_is_grounded`'s coverage (25% → 88% in synthetic testing, never past the 90% threshold). Trigger: a fabricated quote crossing it. Package 2's D12a (2026-10-01) widens the header context of tables whose first row is a period header; the trigger is unchanged. `docs/reviews/2026-09-13-table-grounding-region-scoped-matching.md`
 - **[bug (latent), Low, Trivial]** `_classify_row` treats a data row with a blank first cell as a header and drops it from `locate_value` (fails safe to `_quote_matches`). Trigger: a real filing with that shape. `docs/reviews/2026-09-13-table-grounding-region-scoped-matching.md`
 - **[feature, Low, TBD]** `NUMBER_PATTERN` doesn't recognize `M`/`B`/`K` abbreviations. Rule 9 bans them; if ever added, recognize `MM`/`Bn`, not bare letters. Trigger: an abbreviation in a live answer. `docs/decisions/2026-09-17-uncovered-number-gap-fixes.md`
 - **[test-coverage, Low, Standard]** Citation stress modes: the two-nearby-percentages question (`nvda-revenue-yoy-growth-q1fy27`) cited the risky sentence in only 1 of 3 runs, and a paraphrased quote near the 0.90 threshold is untested. Trigger: `analyze_flakiness.py` history showing the risky sentence exercised reliably (then close it), or a way to force a paraphrase. `docs/decisions/2026-09-23-restore-nvda-yoy-stress-question.md`
 
+- **[feature, Low, Standard]** Gate rules D3 (a verified quote covers its own numbers) and D4/D11 (placeholder values become qualitative), deferred from improvement-map package 2: both loosen the gate and none of the 17 post-package-1 retries needed them. Trigger: a re-mine showing a placeholder or quote-number refusal. `docs/plans/2026-10-01-gate-rules-package-2.md`
+- **[bug (latent), Low, Standard]** `locate_value(74550, "million")` on NVDA `0001045810-26-000052` chunk 34 also matches a percentage-table cell (`74.9` read as billions, within 1%), so a quote of that cell could ground a wrong value. Trigger: a live accept citing it. `docs/plans/2026-10-01-gate-rules-package-2.md`
+- **[bug (latent), Low, Standard]** `quote_is_grounded` accepts a foreign group label that differs from the cell's own by a single letter: `| Segment A |` over Segment B's `Revenue | $34,681` grounds, while `Cloud`/`Gaming` and `Level 1:`/`Level 2:` are refused. The one-letter token is probably dropped as noise. Found in the package-2 review. Trigger: a live filing with letter-suffixed group labels. `docs/reviews/2026-10-01-gate-rules-package-2.md`
+
 **Refusals that need the failing quote captured** (check the `submit_answer` span's `checks` in `trace_logs/traces.jsonl` first; the trace query script item helps)
 
 - **[bug (latent), Low, Standard]** `nvda-cost-of-revenue-fy2026`: a `quote_not_found` refusal via `search_filings` prose, then clean via XBRL on re-run. Trigger: a recurrence. `e45de8b:BACKLOG.md`
-- **[bug (latent), Low, Standard]** `msft-segment-revenue-comparison-q3fy2026`: `quote_not_found` on the real segment values `35013`/`34681`/`13192` (2026-09-14 baseline). Trigger: a recurrence. `e45de8b:BACKLOG.md`
+- **[bug (latent), Low, Standard]** `msft-segment-revenue-comparison-q3fy2026`: `quote_not_found` on the real segment values `35013`/`34681`/`13192` (2026-09-14 baseline). Not a gate false positive: the 2026-10-01 replay shows the cited source is the summary-of-results chunk, which lacks the segment table (the quote is verbatim in the MD&A table and grounds there). Trigger: a recurrence citing the right chunk. `e45de8b:BACKLOG.md`
 
 **Agent loop and code structure**
 

@@ -1,0 +1,45 @@
+{
+  "backend": "gemini",
+  "answer_model": "gemini-3.5-flash-lite",
+  "judge_model": "gemini-3.5-flash-lite",
+  "provenance": {
+    "git_sha": "03e8087",
+    "git_dirty": false,
+    "dirty_files": [],
+    "snapshot_verified": true,
+    "config": {
+      "gemini_model": "gemini-3.5-flash-lite",
+      "embed_model": "BAAI/bge-small-en-v1.5",
+      "rerank_model": "cross-encoder/ms-marco-MiniLM-L-6-v2",
+      "chroma_dir": "var/chroma_db",
+      "google_genai": "2.18.1",
+      "mcp": "2.1.1"
+    },
+    "prompts": {
+      "agent_system": "12a028f88e84",
+      "agent_tools": "d0e198d4dd09",
+      "agent_messages": "2ba395d24642",
+      "judge": "2ee29f234c91",
+      "mcp": "b34024a4d17d",
+      "agent": "4051dbdc19a7"
+    }
+  },
+  "results": [
+    {
+      "id": "nvda-segment-revenue-comparison-q1fy27",
+      "ticker": "NVDA",
+      "question": "For the quarter ended April 26, 2026, did NVIDIA's Compute & Networking segment generate more revenue than its Graphics segment?",
+      "type": "judged",
+      "passed": true,
+      "detail": "The answer correctly states that the Compute & Networking segment had higher revenue than the Graphics segment, provides the correct corresponding figures, and includes citation markers.",
+      "has_citation": true,
+      "citation_warnings": [],
+      "answer": "Yes, for the quarter ended April 26, 2026, NVIDIA's Compute & Networking segment generated more revenue than its Graphics segment [10].\n\nFor the three months ended April 26, 2026:\n- Compute & Networking revenue was $74,550 million (or $74.55 billion) [10].\n- Graphics revenue was $7,065 million (or $7.07 billion) [10].",
+      "n_chunks_retrieved": 10,
+      "withheld_answer": null,
+      "gate_withheld_would_have_passed": null,
+      "gate_withheld_detail": null,
+      "citation_warning_details": []
+    }
+  ]
+}

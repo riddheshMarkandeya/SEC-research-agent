@@ -76,16 +76,17 @@ Rejected probes:
    `calls_made < MAX_TOOL_ITERATIONS`. When a retry runs it rescues 82% of runs. That projects
    about 20 rescues from giving the retry its own turn, and nothing about what the gate proves
    changes. It costs 1 extra LLM request, only on refused turns. Detailed design: Decision 9.
-3. **P2: a verified claim's quote covers the numbers in it.** Adopt, **needs user OK** (loosens
-   coverage). If a claim's quote passed verification, every number in that quote is text from the
+3. **P2: a verified claim's quote covers the numbers in it.** Deferred to the BACKLOG Watch list
+   (user, 2026-10-01; package 2's re-mine found no retry it would fix). Was: adopt, needs user OK
+   (loosens coverage). If a claim's quote passed verification, every number in that quote is text from the
    cited filing. Coverage only asks that the answer's numbers trace to a filing, and this
    satisfies it. The risk (a number from the quote restated with the wrong meaning) is the same
    one every claim already carries, since value checks can't read semantics. Live cases:
    - "$5.1 billion or 17%" with only 17 claimed;
    - "Agentforce 360" in a quoted risk sentence;
    - the H20 "$4.5 billion" in a quoted gross-margin sentence.
-4. **P7: a claim value that the answer never states is verified as qualitative.** Adopt, **needs
-   user OK**. A claim's value matters only as coverage for a number the reader sees. A value
+4. **P7: a claim value that the answer never states is verified as qualitative.** Deferred to the
+   BACKLOG Watch list with D3 (user, 2026-10-01). Was: adopt, needs user OK. A claim's value matters only as coverage for a number the reader sees. A value
    missing from `answer_text` asserts nothing, but today it can refuse the whole answer. Live
    cases are placeholder values in qualitative claims: 2025/2024 for "As of December 31,2025", 10
    for "Condensed Consolidated Balance Sheets", 2003, and unit "raw" with a null value. That's
@@ -168,7 +169,8 @@ Rejected probes:
     (`docs/decisions/2026-09-15-qualitative-claims-schema.md`), and would need a live check that
     Gemini accepts it. It's not pursued: it couldn't stop these values anyway.
 
-12. **Verbatim multi-row table quotes: two changes, header parse first.** **Needs user OK**. This
+12. **Verbatim multi-row table quotes: two changes, header parse first.** Approved and shipped
+    (user, 2026-10-01; `docs/decisions/2026-10-01-verbatim-table-row-span.md`). This
     revisits the 2026-09-13 revert of the "exact substring" shortcut. Research note:
     `docs/research/2026-09-28-table-quote-grounding.md`.
     - **(a) Header parse fix.** `_classify_row` reads a leading single-cell row such as

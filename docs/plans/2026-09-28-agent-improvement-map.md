@@ -46,9 +46,11 @@ ordered in BACKLOG, and this map is frozen.
 Carried over, still needing the user's OK where marked:
 - **Retry slot (gate D9, review S2 step 1):** the citation retry no longer needs spare tool
   budget. Needs user OK.
-- **Placeholder claims verified as qualitative (gate D4, D11):** code-only. Needs user OK.
-- **Verified-quote coverage (gate D3):** needs user OK.
-- **Row-anchored verbatim table quotes plus header-parse fix (gate D12):** needs user OK.
+- **Placeholder claims verified as qualitative (gate D4, D11):** deferred to the BACKLOG Watch
+  list (user, 2026-10-01): none of the 17 post-package-1 retries needed it.
+- **Verified-quote coverage (gate D3):** deferred to the Watch list, same reason.
+- **Row-anchored verbatim table quotes plus header-parse fix (gate D12):** approved and shipped in
+  package 2; see `docs/decisions/2026-10-01-verbatim-table-row-span.md`.
 - **Upheld: verbatim quotes as the grounding unit (review C1),** and coverage of every answer
   number (review C2).
 - **Rejected:** covering any number in a cited source (gate D5), and auto-reattributing
@@ -204,8 +206,9 @@ Then the improvement packages:
 1. ~~**Retry slot** (gate D9): code, then the panel and a full run.~~ Done 2026-10-01: full run
    42/48 (`20261001T193130Z`), matching the previous full run; see
    `docs/decisions/2026-09-30-citation-retry-own-slot.md`.
-2. **Gate rules** (gate D4/D11, D3, then D12 a and b): code-only, checked with the replay plus a
-   spot-check.
+2. ~~**Gate rules** (gate D4/D11, D3, then D12 a and b): code-only, checked with the replay plus a
+   spot-check.~~ Done 2026-10-01: the re-mine rescoped it to D12a, D12b, the paren-gloss and
+   `10-Qs` fixes; D3 and D4/D11 deferred to Watch. See `docs/plans/2026-10-01-gate-rules-package-2.md`.
 3. **Uniform submit loop** (review S2 step 2): refactor, panel plus full run.
 4. **Not-available answer** (review S3, with the tool-message ticket): prompt protocol.
 5. **Strict period scoping + windowed MaxP rerank + fused-floor rule** (review S5; spec in the
@@ -235,8 +238,8 @@ spent or you're waiting on a run, do track B.
 Track A, next steps:
 1. ~~Package 1: the full 48-question run from master at `f6a75db` (from 07:00Z 2026-10-01), a
    refusal re-mine, then its docs commit.~~ Done 2026-10-01.
-2. Package 2 (next), then package 5, then packages 3 and 4, in the order above. Each package
-   gets its own live measurement.
+2. ~~Package 2~~ (done 2026-10-01), then package 5 (next), then packages 3 and 4, in the order
+   above. Each package gets its own live measurement.
 
 Track B (plan: `docs/plans/2026-09-30-retrieval-gold-rank-harness.md`): **done 2026-10-01.**
 The harness was measured, researched, reviewed and merged (`49e794f`), and the grilling wrote

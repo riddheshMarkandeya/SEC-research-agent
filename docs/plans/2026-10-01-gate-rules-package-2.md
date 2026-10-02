@@ -218,7 +218,18 @@ replay CLI flags.
 
 ## Review log
 
-(Filled in during `independent-review-pass`.)
+Full record: `docs/reviews/2026-10-01-gate-rules-package-2.md`.
+
+- **Round 1** (diff `b6f0307..03e8087`; `/code-review` high, `arch-reviewer` opus,
+  `security-reviewer`, `/simplify`): 3 fixed (D12a guard missed dash-only data rows; R accepted
+  a span running into a later group's label; R accepted a span ending partway through a later
+  row), 4 nits fixed, 1 `/simplify` edit, the rest verified or skipped with a reason.
+- **Round 2** (delta `git diff HEAD`; `/code-review` low, `arch-reviewer` opus,
+  `security-reviewer`): the round-1 label fix was stricter than rule 5 and refused whole-table
+  quotes of multi-group tables. Narrowed to "the last label row in the span is the cell's own
+  governing label" `[Fixed]`; 2 docstring nits fixed; 1 false positive (empty `cells`).
+- **Round 3** (the narrowed rule only; `/code-review` low, `arch-reviewer` opus,
+  `security-reviewer`): clean. Review closed.
 
 ## Addendum
 
@@ -240,3 +251,15 @@ with a number, so they still qualify. Results:
   those labels.
 - The test `test_a_data_row_with_em_dash_cells_keeps_the_first_row_a_label` fails with the guard
   disabled.
+
+**2026-10-02, review fixes.** Two rules changed after the review:
+- **D12a guard.** A row also counts as data when any cell past column 0 is a dash value (`—`,
+  `$—`, `–`, `-`, optionally `%`), labelled or not. The first-row rule otherwise promoted a
+  real group label above a dash-only data row. The corpus re-scan now promotes 278 blocks (243
+  with data rows), down from 284; 13 residual value-like token sets, down from 14.
+- **Rule R, steps 3 and 5.** A span that runs past the claimed row must hold every later row
+  whole: it ends at the row's last non-empty cell. If the span holds any label row, the last one
+  must be the cell's own governing label. That keeps rule 5's "includes the governing label" and
+  also refuses any label after the claimed row, for a governed cell too.
+- Re-verified: 1197 tests; the full replay compare is unchanged (refused 50 → 46, 4 recovered,
+  0 newly refused, 1 check change).
