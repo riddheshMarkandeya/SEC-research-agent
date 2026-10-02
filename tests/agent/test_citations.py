@@ -605,6 +605,16 @@ def test_verify_claims_still_flags_a_parenthesized_number_nobody_claimed():
     assert _uncovered(verify_claims(claims, results, "q", answer_text)) == {(-5000.0, "raw")}
 
 
+@pytest.mark.parametrize("form", ["10-Qs", "10-Ks", "Form 10-Q", "10-K"])
+def test_verify_claims_does_not_count_a_form_name_as_a_number(form):
+    # nvda-rd-expense-q4fy26-refusal (run 6b208b525a77): "Q1 through Q3
+    # are filed via standalone Form 10-Qs" left a bare 10 uncovered.
+    results = [_fake_result(text="the reported value for the period was exactly 100 raw units")]
+    claims = [_valid_submitted_claim()]
+    answer_text = f"The value was 100 [1], as filed in its {form}."
+    assert verify_claims(claims, results, "q", answer_text) == []
+
+
 def test_verify_claims_multi_index_citation_bracket_digits_not_treated_as_uncovered_numbers():
     # Real false positive found live 2026-09-11 (41-question baseline
     # re-run after the structured-claims redesign): _CITATION_MARKER
