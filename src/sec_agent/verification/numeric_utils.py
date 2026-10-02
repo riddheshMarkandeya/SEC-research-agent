@@ -140,12 +140,11 @@ def _preceded_by_number(text: str, pos: int) -> bool:
 
 
 def _is_negative(text: str, match: re.Match, digits: str, unit_word: str | None, percent_sign: str | None) -> bool:
-    """Whether one NUMBER_PATTERN match represents a negative value --
-    pulled out of extract_numbers_with_spans()'s loop so the base
-    sign/paren rule and both carve-outs (bare year, reference number --
-    see NUMBER_PATTERN's own comment) live in one obviously-named place
-    instead of a dense inline conditional. See
-    docs/decisions/2026-09-11-negative-number-support.md."""
+    """Whether one NUMBER_PATTERN match represents a negative value: a
+    "-"/"−" sign not preceded by a number (that's subtraction), or
+    accounting parentheses, minus both carve-outs (bare year, reference
+    number -- see NUMBER_PATTERN's own comment). _scan_numbers() applies it
+    to every match, so every extractor shares one sign rule."""
     if match.group("sign"):
         return not _preceded_by_number(text, match.start("sign"))
     wrapped_in_parens = bool(match.group("open_paren")) and bool(match.group("close_paren"))
@@ -187,7 +186,7 @@ def extract_numbers_with_spans(text: str) -> list[tuple[float, str, int, int]]:
     """Like extract_numbers() below, but also returns each candidate's
     (start, end) character span (of the digit group only, e.g. "72.4" in
     "$72.4 billion") in `text`. extract_numbers() is the span-free
-    projection of this."""
+    projection of the same scan."""
     return [(value, unit, match.start("digits"), match.end("digits")) for value, unit, match in _scan_numbers(text)]
 
 
@@ -205,7 +204,7 @@ def extract_numbers_with_paren_flag(text: str) -> list[tuple[float, str, bool]]:
 def extract_numbers(text: str) -> list[tuple[float, str]]:
     """Return every (value, unit) candidate found in text. unit is one of
     'raw', 'thousand', 'million', 'billion', 'percent'."""
-    return [(value, unit) for value, unit, _, _ in extract_numbers_with_spans(text)]
+    return [(value, unit) for value, unit, _ in _scan_numbers(text)]
 
 
 def normalize(value: float, unit: str) -> tuple[str, float]:

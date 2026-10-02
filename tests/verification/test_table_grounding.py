@@ -538,6 +538,20 @@ def test_a_data_row_with_em_dash_cells_keeps_the_first_row_a_label():
     assert "$26,686" not in cell.permitted_region
 
 
+@pytest.mark.parametrize("dash_row", ["| Impairment | — | — |", "| Impairment | $— | $— |", "|  | — | — |"])
+def test_a_dash_only_data_row_keeps_the_first_row_a_label(dash_row):
+    # A data row with no number at all (every value an em-dash) still
+    # classifies as "header"; promoting "Cloud" over it would put that
+    # label into Gaming's permitted region.
+    chunk = (
+        f"<TABLE>\n| Cloud |  |  |\n{dash_row}\n| Revenue | $100 | $200 |\n"
+        "| Gaming |  |  |\n| Revenue | $34,681 | $300 |\n</TABLE>"
+    )
+    (block,) = extract_table_blocks(chunk)
+    assert block.rows[0].kind == "label"
+    assert _accepts(chunk, 34681.0, "raw", "| Cloud |  |  |\n| Revenue | $34,681 | $300 |") is False
+
+
 def test_a_lone_single_cell_row_stays_a_label():
     (block,) = extract_table_blocks("<TABLE>\n| Three Months Ended |  |\n| --- | --- |\n</TABLE>")
     assert [row.kind for row in block.rows] == ["label", "separator"]
@@ -665,6 +679,49 @@ def test_rejects_an_own_row_plus_a_trailing_label_when_the_cell_has_no_group():
         "| Total revenue | $500 | $400 |\n| Cloud |  |  |\n| Revenue | $300 | $200 |\n</TABLE>"
     )
     assert _accepts(chunk, 500.0, "million", "| Total revenue | $500 | $400 |\n| Cloud |  |  |") is False
+
+
+_TWO_GROUP_CHUNK = (
+    "<TABLE>\n| | Q1 | Q2 |\n| --- | --- | --- |\n| Cloud |  |  |\n| Revenue | $34,681 | $300 |\n"
+    "| | Nine Months | Year |\n| Operating income | $900 | $800 |\n| Gaming |  |  |\n| Revenue | $700 | $600 |\n</TABLE>"
+)
+
+
+@pytest.mark.parametrize(
+    "quote",
+    [
+        # Its own governing label, then on into the next group's label:
+        # reads as "Gaming revenue was $34,681".
+        "| Cloud |  |  |\n| Revenue | $34,681 | $300 |\n| | Nine Months | Year |\n"
+        "| Operating income | $900 | $800 |\n| Gaming |",
+        # Ends partway through a later header row, keeping one period label.
+        "| Revenue | $34,681 | $300 |\n| | Nine Months",
+        # Ends on the next data row's own label.
+        "| Revenue | $34,681 | $300 |\n| | Nine Months | Year |\n| Operating income",
+    ],
+)
+def test_rejects_a_span_that_ends_partway_into_a_later_row_or_a_foreign_label(quote):
+    assert _accepts(_TWO_GROUP_CHUNK, 34681.0, "raw", quote) is False
+
+
+_TWO_GROUP_WHOLE = (
+    "| Cloud |  |  |\n| Revenue | $34,681 | $300 |\n| | Nine Months | Year |\n"
+    "| Operating income | $900 | $800 |\n| Gaming |  |  |\n| Revenue | $700 | $600 |"
+)
+
+
+def test_accepts_a_span_with_an_earlier_group_above_the_cells_own_label():
+    # The Gaming label re-scopes the rows below it, so Cloud above is harmless.
+    assert _accepts(_TWO_GROUP_CHUNK, 700.0, "raw", _TWO_GROUP_WHOLE) is True
+
+
+def test_rejects_the_same_span_for_a_cell_above_a_later_groups_label():
+    assert _accepts(_TWO_GROUP_CHUNK, 34681.0, "raw", _TWO_GROUP_WHOLE) is False
+
+
+def test_accepts_a_span_through_whole_later_rows_under_its_own_label():
+    quote = "| Cloud |  |  |\n| Revenue | $34,681 | $300 |\n| | Nine Months | Year |\n| Operating income | $900 | $800 |"
+    assert _accepts(_TWO_GROUP_CHUNK, 34681.0, "raw", quote) is True
 
 
 def test_verbatim_span_refuses_a_row_whose_normalized_pipes_do_not_match_its_cells():

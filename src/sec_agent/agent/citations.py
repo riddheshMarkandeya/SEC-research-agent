@@ -367,8 +367,7 @@ def _quote_grounded_in_source(value: float, unit: str, quote: str, source_text: 
     label happens to be long enough (wrong fiscal period, a 10x-inflated
     value, a nine-month figure misquoted as a quarterly one), so letting
     it rescue a structural rejection would silently reopen exactly the
-    holes this module closes. See
-    docs/decisions/2026-09-12-structure-aware-table-quote-grounding.md.
+    holes this module closes.
 
     `quote_is_grounded()` matches against a tightly-scoped per-cell
     region (the table's own leading caption/header rows, plus the cell's
@@ -378,9 +377,7 @@ def _quote_grounded_in_source(value: float, unit: str, quote: str, source_text: 
     stating Current/Noncurrent/Total together) isn't wrongly refused for
     citing sibling-column content, while still rejecting the row-splice/
     cross-segment-steal attacks this module exists to block (verified
-    directly, not assumed -- see tests/verification/test_table_grounding.py). See
-    docs/decisions/2026-09-13-table-grounding-region-scoped-matching.md
-    for the region-scoped redesign this reflects.
+    directly by tests, not assumed).
 
     A quote that copies several consecutive rows word for word (the
     claimed row plus its neighbors) fails that one-row region, so each

@@ -245,13 +245,17 @@ def _reclassify_leading_period_label(rows: list[_Row]) -> list[_Row]:
     return [*rows[:first], promoted, *rows[first + 1 :]]
 
 
+_DASH_CELL = re.compile(r"\$?\s*[—–-]\s*%?")
+
+
 def _looks_like_data(cells: list[str]) -> bool:
-    """A row with its own text label in column 0 and a number in some other
-    cell: a data row, whatever its other cells hold. A period row ("2026 |
-    2025") starts with a number, so it never matches."""
-    return bool(cells) and bool(cells[0]) and not _cell_is_numeric(cells[0]) and any(
-        _cell_is_numeric(c) for c in cells[1:] if c
-    )
+    """A data row, whatever its other cells hold: one with a dash value cell
+    past column 0 ("Impairment | — | —", labelled or not), or one with its
+    own text label in column 0 and a number in some other cell. A period row ("2026 | 2025") starts with a
+    number, and a period or caption row never holds a dash value."""
+    if any(_DASH_CELL.fullmatch(c) for c in cells[1:]):
+        return True
+    return bool(cells[0]) and not _cell_is_numeric(cells[0]) and any(map(_cell_is_numeric, cells[1:]))
 
 
 def _leading_header_context(rows: list[_Row]) -> str:
@@ -536,24 +540,29 @@ def _block_text(block: TableBlock) -> _BlockText | None:
 def _span_covers_cell(cell: GroundedCell, first_row: int, last_row: int, last_col: int) -> bool:
     """Whether a verbatim span over rows `first_row`..`last_row` (through
     cell `last_col` of the last row) attributes `cell` honestly: it holds
-    the cell's row from its first cell through the cell itself, and if it
-    holds any group label row, it holds the cell's own governing one."""
+    the cell's row from its first cell through the cell itself, every row
+    after it whole, and, if it holds any group label row, the cell's own
+    governing label as the last one. An earlier group's label above that is
+    harmless (the governing label re-scopes the rows below it); any label
+    after it would read as the cell's group."""
     if not first_row <= cell.row_index <= last_row:
         return False
-    if last_row == cell.row_index and last_col < cell.col_index:
+    rows = cell.block.rows
+    if last_row == cell.row_index:
+        if last_col < cell.col_index:
+            return False
+    elif any(rows[last_row].cells[last_col + 1 :]):
         return False
-    if any(cell.block.rows[i].kind == "label" for i in range(first_row, last_row + 1)):
-        governing = cell.group_label_row_index
-        return governing is not None and first_row <= governing <= last_row
-    return True
+    labels = [i for i in range(first_row, last_row + 1) if rows[i].kind == "label"]
+    return not labels or labels[-1] == cell.group_label_row_index
 
 
 def verbatim_row_span_grounded(quote: str, cell: GroundedCell) -> bool:
     """True if `quote` is a verbatim copy of consecutive rows of the cell's
     own table, located by POSITION: it starts at a row, ends at a cell
     boundary, covers the claimed row from its first cell through the
-    claimed cell, and names no group label other than through the cell's
-    own. Every occurrence in the block is tried.
+    claimed cell, holds any row after that one whole, and holds no group
+    label row after the cell's own. Every occurrence in the block is tried.
 
     The citation gate ORs this with quote_is_grounded(), whose permitted
     region holds only the cell's own row, so a faithful quote of several
@@ -562,12 +571,12 @@ def verbatim_row_span_grounded(quote: str, cell: GroundedCell) -> bool:
     ("| |"), so checking the quote merely exists somewhere in the source
     reopens the row splice (a value's cell followed by another group's
     label); anchoring it to row and cell boundaries in the source is what
-    tells them apart. Starting at a row keeps any header row in the span
-    whole, so a period label can't be cherry-picked out of it; ending at a
-    cell boundary keeps a truncated number ("$39,5") out.
-
-    A span that holds a label row below an ungoverned cell is refused: that
-    label would read as the cell's group."""
+    tells them apart. Starting at a row, and holding later rows whole, keeps
+    every header row in the span whole, so a period label can't be
+    cherry-picked out of it; ending at a cell boundary keeps a truncated
+    number ("$39,5") out. A label row after the cell's own governing label
+    (or any label, for an ungoverned cell) would read as the cell's group,
+    so it's refused."""
     needle = normalize_for_match(quote)
     block_text = _block_text(cell.block) if needle else None
     if block_text is None:
