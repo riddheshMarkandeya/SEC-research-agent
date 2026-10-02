@@ -441,3 +441,103 @@ def test_two_table_blocks_in_one_chunk_do_not_leak_context_between_them():
     # Each still grounds correctly against its OWN block.
     assert quote_is_grounded("Intelligent Cloud\nRevenue $34,681", ic_cell) is True
     assert quote_is_grounded("Americas $178,353", americas_cell) is True
+
+
+# ---------------------------------------------------------------------------
+# A period header whose colspan was lost. NVIDIA's Q1 FY2027 10-Q
+# (0001045810-26-000052, chunk 34) renders "Three Months Ended" as its own
+# single-cell FIRST row, above the multi-cell period row. Read as a group
+# label, it would end the table's leading header context before the period
+# and "($ in millions)" rows, so neither would reach any permitted region.
+# ---------------------------------------------------------------------------
+NVDA_SEGMENT_TRANSPOSED_CHUNK = """Reportable Segments
+Revenue by Reportable Segments
+
+<TABLE>
+| Three Months Ended |  |  |  |  |
+| --- | --- | --- | --- | --- |
+| Apr 26, 2026 | Apr 27, 2025 | $Change | %Change |  |
+| ($ in millions) |  |  |  |  |
+| Compute & Networking | $74,550 | $39,589 | $34,961 | 88% |
+| Graphics | 7,065 | 4,473 | 2,592 | 58% |
+| Total | $81,615 | $44,062 | $37,553 | 85% |
+</TABLE>"""
+
+# Real AAPL marketable-securities table, Q3 FY2025 10-Q
+# (0000320193-25-000073, chunk 9). Its first row is a period label over a
+# header row too, but "Level 1:" and "Level 2(1):" further down are real
+# group labels, and must stay labels: as table-wide context, "Level 1:"
+# would let a Level 2 value be quoted under it.
+AAPL_FAIR_VALUE_CHUNK = """<TABLE>
+| June 28, 2025 |  |  |  |  |  |  |  |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| AdjustedCost | UnrealizedGains | UnrealizedLosses | FairValue | Cash andCashEquivalents | CurrentMarketableSecurities | Non-CurrentMarketableSecurities |  |
+| Cash | $26,686 | $— | $— | $26,686 | $26,686 | $— | $— |
+| Level 1: |  |  |  |  |  |  |  |
+| Money market funds | 3,779 | — | — | 3,779 | 3,779 | — | — |
+| Mutual funds | 646 | 134 | (3) | 777 | — | 777 | — |
+| Subtotal | 4,425 | 134 | (3) | 4,556 | 3,779 | 777 | — |
+| Level 2(1): |  |  |  |  |  |  |  |
+| U.S. Treasury securities | 15,775 | 46 | (362) | 15,459 | 1,030 | 3,649 | 10,780 |
+| U.S. agency securities | 5,383 | — | (189) | 5,194 | 647 | 2,030 | 2,517 |
+| Subtotal | 105,159 | 391 | (3,806) | 101,744 | 5,804 | 18,326 | 77,614 |
+| Total | $136,270 | $525 | $(3,809) | $132,986 | $36,269 | $19,103 | $77,614 |
+</TABLE>"""
+
+# Real MSFT investments table, Q3 FY2026 10-Q (0001193125-26-191507,
+# chunk 16), trimmed to the rows these tests read. Its first row is a real
+# header, and its group labels sit below a non-first period label.
+MSFT_INVESTMENTS_CHUNK = """<TABLE>
+| (In millions) | FairValueLevel | AdjustedCostBasis | UnrealizedGains | UnrealizedLosses | RecordedBasis | Cashand CashEquivalents | Short-termInvestments | Equityand OtherInvestments |  |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| March 31, 2026 |  |  |  |  |  |  |  |  |  |
+| Changes in Fair Value Recorded in Other Comprehensive Income |  |  |  |  |  |  |  |  |  |
+| Commercial paper | Level 2 | $5,544 | $0 | $0 | $5,544 | $5,543 | $1 | $0 |  |
+| Total debt investments | $75,718 | $231 | $(1,199 | ) | $74,750 | $18,281 | $46,123 | $10,346 |  |
+| Changes in Fair Value Recorded in Net Income |  |  |  |  |  |  |  |  |  |
+| Equity investments | Level 1 | $3,911 | $1,093 | $0 | $2,818 |  |  |  |  |
+| Total equity investments | $24,430 | $1,093 | $0 | $23,337 |  |  |  |  |  |
+</TABLE>"""
+
+
+def test_a_leading_single_cell_period_row_over_a_header_row_is_header_context():
+    (cell,) = _cell(NVDA_SEGMENT_TRANSPOSED_CHUNK, 74550.0, "million")
+    assert cell.group_label is None
+    assert "| Apr 26, 2026 | Apr 27, 2025 | $Change | %Change |  |" in cell.permitted_region
+    assert "| ($ in millions) |" in cell.permitted_region
+
+
+def test_a_real_group_label_below_the_first_row_stays_a_label():
+    (cell,) = _cell(AAPL_FAIR_VALUE_CHUNK, 15775.0, "raw")
+    assert cell.group_label == "Level 2(1):"
+    assert "Level 1:" not in cell.permitted_region
+
+
+def test_a_level_2_value_quoted_under_level_1_is_rejected():
+    (cell,) = _cell(AAPL_FAIR_VALUE_CHUNK, 15775.0, "raw")
+    assert quote_is_grounded("Level 1: U.S. Treasury securities | 15,775", cell) is False
+
+
+def test_a_group_label_under_a_non_first_period_label_stays_a_label():
+    (cell,) = _cell(MSFT_INVESTMENTS_CHUNK, 24430.0, "million")
+    assert cell.group_label == "Changes in Fair Value Recorded in Net Income"
+
+
+def test_a_data_row_with_em_dash_cells_keeps_the_first_row_a_label():
+    # "Cash | $26,686 | $—" classifies as a header row (its em-dash cells
+    # aren't numbers). Promoting "June 28, 2025" would make that row
+    # table-wide context, so the label must stay a label.
+    (cell,) = _cell(AAPL_FAIR_VALUE_CHUNK, 15775.0, "raw")
+    assert "$26,686" not in cell.permitted_region
+
+
+def test_a_lone_single_cell_row_stays_a_label():
+    (block,) = extract_table_blocks("<TABLE>\n| Three Months Ended |  |\n| --- | --- |\n</TABLE>")
+    assert [row.kind for row in block.rows] == ["label", "separator"]
+
+
+def test_a_leading_period_label_over_header_rows_only_is_promoted():
+    (block,) = extract_table_blocks(
+        "<TABLE>\n| Year Ended |  |  |\n| --- | --- | --- |\n| Jan 25, 2026 | Jan 26, 2025 |  |\n</TABLE>"
+    )
+    assert [row.kind for row in block.rows] == ["header", "separator", "header"]

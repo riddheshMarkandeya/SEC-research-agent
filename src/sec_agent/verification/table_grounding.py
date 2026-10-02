@@ -202,8 +202,48 @@ def extract_table_blocks(text: str) -> list[TableBlock]:
                 continue
             rows.append(_Row(cells=cells, kind=_classify_row(cells), raw_text=line))
         if rows:
-            blocks.append(TableBlock(rows=rows, caption_units=caption_units))
+            blocks.append(TableBlock(rows=_reclassify_leading_period_label(rows), caption_units=caption_units))
     return blocks
+
+
+def _reclassify_leading_period_label(rows: list[_Row]) -> list[_Row]:
+    """A block's FIRST content row, when it's a single-cell label directly
+    above a header row, is a period header whose colspan was lost
+    ("Three Months Ended" over "Apr 26, 2026 | Apr 27, 2025 | ..."), not a
+    group label: a group label governs data rows, and this one governs
+    only more header rows. Reclassified as "header", so the period rows
+    below it stay in the table's leading header context.
+
+    Only the first row qualifies, and only when every header row the
+    promotion would add to that context is a real header, not a data row
+    that classified as "header" because of an em-dash cell ("Cash |
+    $26,686 | $—"). Any row with an em-dash cell classifies as "header",
+    so promoting a label above one would put another row's values, or a
+    real group label further down ("Level 1:"), into every cell's
+    permitted region, letting a value be quoted under the wrong row or
+    group."""
+    content = [i for i, row in enumerate(rows) if row.kind not in ("blank", "separator")]
+    if not content[1:]:
+        return rows
+    first, second = content[0], content[1]
+    if rows[first].kind != "label" or rows[second].kind != "header":
+        return rows
+    for i in content[1:]:
+        if rows[i].kind in ("label", "data"):
+            break
+        if _looks_like_data(rows[i].cells):
+            return rows
+    promoted = _Row(cells=rows[first].cells, kind="header", raw_text=rows[first].raw_text)
+    return [*rows[:first], promoted, *rows[first + 1 :]]
+
+
+def _looks_like_data(cells: list[str]) -> bool:
+    """A row with its own text label in column 0 and a number in some other
+    cell: a data row, whatever its other cells hold. A period row ("2026 |
+    2025") starts with a number, so it never matches."""
+    return bool(cells) and bool(cells[0]) and not _cell_is_numeric(cells[0]) and any(
+        _cell_is_numeric(c) for c in cells[1:] if c
+    )
 
 
 def _leading_header_context(rows: list[_Row]) -> str:
