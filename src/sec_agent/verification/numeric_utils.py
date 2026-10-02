@@ -159,11 +159,9 @@ def _is_negative(text: str, match: re.Match, digits: str, unit_word: str | None,
     return True
 
 
-def extract_numbers_with_spans(text: str) -> list[tuple[float, str, int, int]]:
-    """Like extract_numbers() below, but also returns each candidate's
-    (start, end) character span (of the digit group only, e.g. "72.4" in
-    "$72.4 billion") in `text`. extract_numbers() is the span-free
-    projection of this."""
+def _scan_numbers(text: str) -> list[tuple[float, str, re.Match]]:
+    """Every NUMBER_PATTERN match in `text` as a signed (value, unit), with
+    the match itself for callers that need its span or sign source."""
     candidates = []
     for match in NUMBER_PATTERN.finditer(text):
         digits = match.group("digits")
@@ -181,8 +179,27 @@ def extract_numbers_with_spans(text: str) -> list[tuple[float, str, int, int]]:
             unit = unit_word.lower()
         else:
             unit = "raw"
-        candidates.append((value, unit, match.start("digits"), match.end("digits")))
+        candidates.append((value, unit, match))
     return candidates
+
+
+def extract_numbers_with_spans(text: str) -> list[tuple[float, str, int, int]]:
+    """Like extract_numbers() below, but also returns each candidate's
+    (start, end) character span (of the digit group only, e.g. "72.4" in
+    "$72.4 billion") in `text`. extract_numbers() is the span-free
+    projection of this."""
+    return [(value, unit, match.start("digits"), match.end("digits")) for value, unit, match in _scan_numbers(text)]
+
+
+def extract_numbers_with_paren_flag(text: str) -> list[tuple[float, str, bool]]:
+    """Like extract_numbers(), plus whether each number's negative sign
+    came only from accounting parentheses ("($1,234)"), not from a "-" or
+    "−" sign. In a filing that convention means negative; in a
+    model's prose, "$44.06 billion ($44,062,000,000)" restates a positive
+    figure the same way, so a caller can choose to accept either sign."""
+    return [
+        (value, unit, value < 0 and not match.group("sign")) for value, unit, match in _scan_numbers(text)
+    ]
 
 
 def extract_numbers(text: str) -> list[tuple[float, str]]:

@@ -569,6 +569,42 @@ def test_verify_claims_uncovered_number_in_answer_text():
     assert warnings[0].quote is None
 
 
+def test_verify_claims_covers_a_parenthesized_restatement_of_a_claimed_figure():
+    # The shape behind 6 of the 17 citation retries after package 1
+    # (e.g. run 44723e36b383): a figure restated in full inside
+    # parentheses, which the accounting convention reads as negative.
+    results = [
+        _fake_result(text="Total revenue for the quarter was $81,615 million."),
+        _fake_result(text="Total revenue for the quarter was $44,062 million."),
+    ]
+    claims = [
+        _valid_submitted_claim(value=81615.0, unit="million", quote="Total revenue for the quarter was $81,615 million."),
+        _valid_submitted_claim(
+            value=44062.0, unit="million", citation_index=2, quote="Total revenue for the quarter was $44,062 million."
+        ),
+    ]
+    answer_text = (
+        "NVIDIA's total revenue was $81.62 billion ($81,615,000,000) [1], up from "
+        "$44.06 billion ($44,062,000,000) [2]."
+    )
+    assert verify_claims(claims, results, "q", answer_text) == []
+
+
+def test_verify_claims_still_flags_a_signed_negative_whose_magnitude_is_claimed():
+    # Either-sign coverage is for parentheses only: a "-" is a real sign.
+    results = [_fake_result(text="the reported value for the period was exactly 100 raw units")]
+    claims = [_valid_submitted_claim()]
+    answer_text = "The value was 100 [1], against -100 a year earlier."
+    assert _uncovered(verify_claims(claims, results, "q", answer_text)) == {(-100.0, "raw")}
+
+
+def test_verify_claims_still_flags_a_parenthesized_number_nobody_claimed():
+    results = [_fake_result(text="the reported value for the period was exactly 100 raw units")]
+    claims = [_valid_submitted_claim()]
+    answer_text = "The value was 100 [1], net of a ($5,000) adjustment."
+    assert _uncovered(verify_claims(claims, results, "q", answer_text)) == {(-5000.0, "raw")}
+
+
 def test_verify_claims_multi_index_citation_bracket_digits_not_treated_as_uncovered_numbers():
     # Real false positive found live 2026-09-11 (41-question baseline
     # re-run after the structured-claims redesign): _CITATION_MARKER

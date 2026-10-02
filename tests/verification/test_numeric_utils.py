@@ -10,7 +10,13 @@ import time
 
 import pytest
 
-from sec_agent.verification.numeric_utils import NUMBER_PATTERN, extract_numbers, extract_numbers_with_spans, normalize
+from sec_agent.verification.numeric_utils import (
+    NUMBER_PATTERN,
+    extract_numbers,
+    extract_numbers_with_paren_flag,
+    extract_numbers_with_spans,
+    normalize,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -383,3 +389,24 @@ def test_number_pattern_fullmatch_on_padded_cells(cell, matches):
     # table_grounding decides "is this cell a number" with fullmatch; leading
     # whitespace before "(" has never matched.
     assert (NUMBER_PATTERN.fullmatch(cell) is not None) is matches
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        # Accounting parentheses are the only source of the sign.
+        ("($1,234)", [(-1234.0, "raw", True)]),
+        ("$(1,234) million", [(-1234.0, "million", True)]),
+        # A bare "(1)" reads as negative: the footnote-marker carve-out
+        # needs a word right before it.
+        ("(1)", [(-1.0, "raw", True)]),
+        # A sign, a bare year, or a footnote marker: no paren flag.
+        ("-1,234", [(-1234.0, "raw", False)]),
+        ("(-1,234)", [(-1234.0, "raw", False)]),
+        ("(2024)", [(2024.0, "raw", False)]),
+        ("Registrant (1)", [(1.0, "raw", False)]),
+        ("$44.06 billion ($44,062,000,000)", [(44.06, "billion", False), (-44062000000.0, "raw", True)]),
+    ],
+)
+def test_extract_numbers_with_paren_flag_marks_only_paren_negatives(text, expected):
+    assert extract_numbers_with_paren_flag(text) == expected
