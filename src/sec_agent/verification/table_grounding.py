@@ -77,7 +77,11 @@ class GroundedCell:
     is the table's own multi-column header rows' own distinct cell
     texts (e.g. {"Compute & Networking", "Graphics", "Total"}), used by
     quote_is_grounded()'s cherry-pick check -- see that function's own
-    docstring for why this exists."""
+    docstring for why this exists.
+
+    `block`, `row_index`, `col_index` and `group_label_row_index` place the
+    cell in its own table (indexes into `block.rows`), for
+    verbatim_row_span_grounded()'s position check."""
 
     cell_text: str
     row_label: str
@@ -85,6 +89,10 @@ class GroundedCell:
     permitted_region: str
     caption_units: frozenset[str]
     multi_cell_context_tokens: list[frozenset[str]]
+    block: "TableBlock"
+    row_index: int
+    col_index: int
+    group_label_row_index: int | None
 
 
 @dataclass(frozen=True)
@@ -334,10 +342,12 @@ def locate_value(blocks: list[TableBlock], value: float, unit: str) -> list[Grou
 
         group_label: str | None = None
         group_label_raw: str | None = None
-        for row in block.rows:
+        group_label_row_index: int | None = None
+        for row_index, row in enumerate(block.rows):
             if row.kind == "label":
                 group_label = row.cells[0]
                 group_label_raw = row.raw_text
+                group_label_row_index = row_index
                 continue
             if row.kind != "data":
                 continue
@@ -360,6 +370,10 @@ def locate_value(blocks: list[TableBlock], value: float, unit: str) -> list[Grou
                         permitted_region=permitted_region,
                         caption_units=block.caption_units,
                         multi_cell_context_tokens=multi_cell_context_tokens,
+                        block=block,
+                        row_index=row_index,
+                        col_index=col_idx,
+                        group_label_row_index=group_label_row_index,
                     ))
                     break  # one match per cell is enough
     return found
@@ -474,3 +488,95 @@ def quote_is_grounded(quote: str, cell: GroundedCell) -> bool:
         if not found:
             return False
     return True
+
+
+@dataclass(frozen=True)
+class _BlockText:
+    """A table block normalized row by row (normalize_for_match) and joined
+    with single spaces, the form a normalized quote is searched in, with
+    the offsets where a verbatim span may start or end.
+
+    `starts` maps an offset to the row starting there: a row's leading
+    "|", or its first cell's text. `ends` maps an offset to the (row, cell)
+    a span ending there covers through: just after a cell's text, or just
+    after the pipe that closes that cell."""
+
+    text: str
+    starts: dict[int, int]
+    ends: dict[int, tuple[int, int]]
+
+
+def _block_text(block: TableBlock) -> _BlockText | None:
+    """None when a normalized row's pipes don't line up with its parsed
+    cells (normalization produced a "|"), so offsets can't be trusted."""
+    parts: list[str] = []
+    starts: dict[int, int] = {}
+    ends: dict[int, tuple[int, int]] = {}
+    base = 0
+    for row_index, row in enumerate(block.rows):
+        norm = normalize_for_match(row.raw_text)
+        pipes = [i for i, ch in enumerate(norm) if ch == "|"]
+        if len(pipes) != len(row.cells) + 1:
+            return None
+        starts[base + pipes[0]] = row_index
+        for col, (left, right) in enumerate(zip(pipes, pipes[1:])):
+            segment = norm[left + 1 : right]
+            if segment.strip():
+                text_start = left + 1 + len(segment) - len(segment.lstrip())
+                text_end = right - (len(segment) - len(segment.rstrip()))
+                if col == 0:
+                    starts[base + text_start] = row_index
+                ends[base + text_end] = (row_index, col)
+            ends[base + right + 1] = (row_index, col)
+        parts.append(norm)
+        base += len(norm) + 1
+    return _BlockText(text=" ".join(parts), starts=starts, ends=ends)
+
+
+def _span_covers_cell(cell: GroundedCell, first_row: int, last_row: int, last_col: int) -> bool:
+    """Whether a verbatim span over rows `first_row`..`last_row` (through
+    cell `last_col` of the last row) attributes `cell` honestly: it holds
+    the cell's row from its first cell through the cell itself, and if it
+    holds any group label row, it holds the cell's own governing one."""
+    if not first_row <= cell.row_index <= last_row:
+        return False
+    if last_row == cell.row_index and last_col < cell.col_index:
+        return False
+    if any(cell.block.rows[i].kind == "label" for i in range(first_row, last_row + 1)):
+        governing = cell.group_label_row_index
+        return governing is not None and first_row <= governing <= last_row
+    return True
+
+
+def verbatim_row_span_grounded(quote: str, cell: GroundedCell) -> bool:
+    """True if `quote` is a verbatim copy of consecutive rows of the cell's
+    own table, located by POSITION: it starts at a row, ends at a cell
+    boundary, covers the claimed row from its first cell through the
+    claimed cell, and names no group label other than through the cell's
+    own. Every occurrence in the block is tried.
+
+    The citation gate ORs this with quote_is_grounded(), whose permitted
+    region holds only the cell's own row, so a faithful quote of several
+    rows (the claimed segment's row and its neighbors) failed there.
+    Normalization makes a row break and an empty cell read the same
+    ("| |"), so checking the quote merely exists somewhere in the source
+    reopens the row splice (a value's cell followed by another group's
+    label); anchoring it to row and cell boundaries in the source is what
+    tells them apart. Starting at a row keeps any header row in the span
+    whole, so a period label can't be cherry-picked out of it; ending at a
+    cell boundary keeps a truncated number ("$39,5") out.
+
+    A span that holds a label row below an ungoverned cell is refused: that
+    label would read as the cell's group."""
+    needle = normalize_for_match(quote)
+    block_text = _block_text(cell.block) if needle else None
+    if block_text is None:
+        return False
+    start = block_text.text.find(needle)
+    while start != -1:
+        first_row = block_text.starts.get(start)
+        end = block_text.ends.get(start + len(needle))
+        if first_row is not None and end is not None and _span_covers_cell(cell, first_row, *end):
+            return True
+        start = block_text.text.find(needle, start + 1)
+    return False

@@ -415,6 +415,33 @@ def test_verify_claims_value_not_in_quote():
     assert warnings[0].quote == "Revenue was $100 million in Q1"
 
 
+_NVDA_SEGMENT_REVENUE_TABLE = """Revenue by Reportable Segments
+
+<TABLE>
+| Three Months Ended |  |  |  |  |
+| --- | --- | --- | --- | --- |
+| Apr 26, 2026 | Apr 27, 2025 | $Change | %Change |  |
+| ($ in millions) |  |  |  |  |
+| Compute & Networking | $74,550 | $39,589 | $34,961 | 88% |
+| Graphics | 7,065 | 4,473 | 2,592 | 58% |
+| Total | $81,615 | $44,062 | $37,553 | 85% |
+</TABLE>"""
+
+
+def test_verify_claims_accepts_a_verbatim_two_row_table_quote():
+    # nvda-segment-revenue-comparison-q1fy27's refused answer in the
+    # 2026-10-01 full run (run 607e58e8f7f0): both claims quote the two
+    # segment rows word for word.
+    quote = "Compute & Networking | $74,550 | $39,589 | $34,961 | 88% |\n| Graphics | 7,065 | 4,473 | 2,592 | 58% |"
+    results = [_fake_result(ticker="NVDA", form="10-Q", text=_NVDA_SEGMENT_REVENUE_TABLE)]
+    claims = [
+        _valid_submitted_claim(value=74550.0, unit="million", quote=quote),
+        _valid_submitted_claim(value=7065.0, unit="million", quote=quote),
+    ]
+    answer_text = "Compute & Networking revenue was $74,550 million [1], above Graphics at $7,065 million [1]."
+    assert verify_claims(claims, results, "q", answer_text) == []
+
+
 # ---------------------------------------------------------------------------
 # Qualitative claims (2026-09-15) -- a claims entry with no value/unit,
 # used for a citation marker supporting a purely qualitative fact (e.g.

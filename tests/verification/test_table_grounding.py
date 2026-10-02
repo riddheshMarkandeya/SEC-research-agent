@@ -33,7 +33,14 @@ against the real source during each investigation, not typed from
 memory.
 """
 
-from sec_agent.verification.table_grounding import extract_table_blocks, locate_value, quote_is_grounded
+import pytest
+
+from sec_agent.verification.table_grounding import (
+    extract_table_blocks,
+    locate_value,
+    quote_is_grounded,
+    verbatim_row_span_grounded,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -541,3 +548,133 @@ def test_a_leading_period_label_over_header_rows_only_is_promoted():
         "<TABLE>\n| Year Ended |  |  |\n| --- | --- | --- |\n| Jan 25, 2026 | Jan 26, 2025 |  |\n</TABLE>"
     )
     assert [row.kind for row in block.rows] == ["header", "separator", "header"]
+
+
+
+# ---------------------------------------------------------------------------
+# Verbatim multi-row quotes (verbatim_row_span_grounded, OR-ed with
+# quote_is_grounded per cell, as the citation gate does). A quote copied
+# word for word from the table, located by POSITION in the cell's own
+# block, starting at a row and ending at a cell, and covering the claimed
+# row from its first cell through the claimed cell. Normalization makes a
+# row break and an empty cell look the same ("| |"), so it's the source
+# position that keeps a splice across rows from passing as verbatim.
+# ---------------------------------------------------------------------------
+def _accepts(chunk, value, unit, quote):
+    return any(
+        quote_is_grounded(quote, cell) or verbatim_row_span_grounded(quote, cell)
+        for cell in _cell(chunk, value, unit)
+    )
+
+
+_NVDA_THREE_ROWS = (
+    "| Compute & Networking | $74,550 | $39,589 | $34,961 | 88% |\n"
+    "| Graphics | 7,065 | 4,473 | 2,592 | 58% |\n"
+    "| Total | $81,615 | $44,062 | $37,553 | 85% |"
+)
+
+_MSFT_PBP_ROWS = (
+    "| Revenue | $35,013 | $29,944 | $102,149 | $87,698 |\n"
+    "| Cost of revenue | 6,197 | 5,517 | 18,028 | 16,380 |\n"
+    "| Operating expenses | 7,843 | 7,048 | 22,142 | 20,538 |\n"
+    "| Operating income | $20,973 | $17,379 | $61,979 | $50,780 |"
+)
+
+
+@pytest.mark.parametrize("value", [74550.0, 7065.0, 81615.0])
+def test_accepts_a_verbatim_three_row_segment_quote_for_each_row(value):
+    assert _accepts(NVDA_SEGMENT_TRANSPOSED_CHUNK, value, "million", _NVDA_THREE_ROWS) is True
+
+
+@pytest.mark.parametrize(
+    "quote",
+    [
+        # The two quotes nvda-segment-revenue-comparison-q1fy27 submitted
+        # in the 2026-10-01 full run (run 607e58e8f7f0), both refused.
+        "Compute & Networking | $74,550 | $39,589 | $34,961 | 88% |\n| Graphics | 7,065 | 4,473 | 2,592 | 58% |",
+        "| Compute & Networking | $74,550 | $39,589 | $34,961 | 88% |\n| Graphics | 7,065 | 4,473 | 2,592 | 58% |",
+    ],
+)
+@pytest.mark.parametrize("value", [74550.0, 7065.0])
+def test_accepts_the_real_two_row_quotes_from_the_refused_run(quote, value):
+    assert _accepts(NVDA_SEGMENT_TRANSPOSED_CHUNK, value, "million", quote) is True
+
+
+def test_accepts_the_whole_table_quoted_verbatim():
+    whole = NVDA_SEGMENT_TRANSPOSED_CHUNK.split("<TABLE>\n", 1)[1].split("\n</TABLE>", 1)[0]
+    assert _accepts(NVDA_SEGMENT_TRANSPOSED_CHUNK, 74550.0, "million", whole) is True
+
+
+def test_accepts_a_verbatim_multi_row_quote_with_its_group_label():
+    quote = "| Productivity and Business Processes |  |  |  |  |\n" + _MSFT_PBP_ROWS
+    assert _accepts(MSFT_SEGMENT_CHUNK, 50780.0, "million", quote) is True
+
+
+def test_accepts_a_verbatim_multi_row_quote_without_any_label_row():
+    assert _accepts(MSFT_SEGMENT_CHUNK, 50780.0, "million", _MSFT_PBP_ROWS) is True
+
+
+@pytest.mark.parametrize(
+    ("value", "quote"),
+    [
+        # The raw slice that reopened the splice on 2026-09-13.
+        (50780.0, "$50,780 |\n| Intelligent Cloud |  |  |  |  |\n| R"),
+        # The same splice, aligned to cells: starts mid-row.
+        (34681.0, "$50,780 |\n| Intelligent Cloud |  |  |  |  |\n| Revenue | $34,681 |"),
+        # A complete own row plus a trailing foreign group label.
+        (50780.0, "| Operating income | $20,973 | $17,379 | $61,979 | $50,780 |\n| Intelligent Cloud |  |  |  |  |"),
+        # Own row starting mid-row, plus the foreign label.
+        (50780.0, "$61,979 | $50,780 |\n| Intelligent Cloud |"),
+        # Verbatim, but starting partway through the multi-cell header
+        # row, so it names the nine-month period alone over a
+        # three-month value.
+        (
+            35013.0,
+            "Nine Months EndedMarch 31, |  |  |\n| --- | --- | --- | --- | --- |\n| 2026 | 2025 | 2026 | 2025 |  |\n"
+            "| Productivity and Business Processes |  |  |  |  |\n| Revenue | $35,013 |",
+        ),
+        # Across the end of one block into the next.
+        (94205.0, "| Operating income | $38,398 | $32,000 | $114,634 | $94,205 |\n| 2025 |"),
+    ],
+)
+def test_rejects_msft_splices_and_misaligned_verbatim_spans(value, quote):
+    chunk = MSFT_SEGMENT_CHUNK + "\n\n" + AAPL_SEGMENT_CHUNK
+    assert _accepts(chunk, value, "million", quote) is False
+
+
+@pytest.mark.parametrize(
+    ("value", "quote"),
+    [
+        # Starts mid-row: a Graphics change figure spliced onto the total.
+        (81615.0, "2,592 | 58% |\n| Total | $81,615"),
+        # Ends inside a cell, so it states a number the table doesn't hold.
+        (74550.0, "| Compute & Networking | $74,550 | $39,5"),
+        # Covers the claimed row only up to a cell before the claimed one.
+        (37553.0, "| Graphics | 7,065 | 4,473 | 2,592 | 58% |\n| Total | $81,615 | $44,062 |"),
+    ],
+)
+def test_rejects_nvda_splices_and_short_spans(value, quote):
+    assert _accepts(NVDA_SEGMENT_TRANSPOSED_CHUNK, value, "million", quote) is False
+
+
+def test_rejects_an_own_row_plus_a_trailing_label_when_the_cell_has_no_group():
+    # A label row below an ungoverned row: the quote would read the value
+    # as belonging to that label's group.
+    chunk = (
+        "<TABLE>\n| (In millions) | 2026 | 2025 |\n| --- | --- | --- |\n"
+        "| Total revenue | $500 | $400 |\n| Cloud |  |  |\n| Revenue | $300 | $200 |\n</TABLE>"
+    )
+    assert _accepts(chunk, 500.0, "million", "| Total revenue | $500 | $400 |\n| Cloud |  |  |") is False
+
+
+def test_verbatim_span_refuses_a_row_whose_normalized_pipes_do_not_match_its_cells():
+    # NFKC folds a fullwidth vertical line (U+FF5C) inside a cell to "|",
+    # so the row's cell offsets can't be trusted: fail closed.
+    chunk = "<TABLE>\n| Cloud ｜ AI | $5 | $4 |\n| Other | $1 | $2 |\n</TABLE>"
+    (cell,) = _cell(chunk, 5.0, "raw")
+    assert verbatim_row_span_grounded("| Cloud ｜ AI | $5 | $4 |\n| Other | $1 | $2 |", cell) is False
+
+
+def test_verbatim_span_refuses_an_empty_quote():
+    (cell,) = _cell(NVDA_SEGMENT_TRANSPOSED_CHUNK, 74550.0, "million")
+    assert verbatim_row_span_grounded("   ", cell) is False

@@ -17,7 +17,12 @@ from sec_agent.verification.numeric_utils import (
     text_coverage,
 )
 from sec_agent.prompts import agent_messages as msg
-from sec_agent.verification.table_grounding import extract_table_blocks, locate_value, quote_is_grounded
+from sec_agent.verification.table_grounding import (
+    extract_table_blocks,
+    locate_value,
+    quote_is_grounded,
+    verbatim_row_span_grounded,
+)
 from sec_agent.agent.tool_results import _citation_header
 
 _CITATION_MARKER = re.compile(r"\[(\d+)\]")
@@ -375,12 +380,17 @@ def _quote_grounded_in_source(value: float, unit: str, quote: str, source_text: 
     docs/decisions/2026-09-13-table-grounding-region-scoped-matching.md
     for the region-scoped redesign this reflects.
 
+    A quote that copies several consecutive rows word for word (the
+    claimed row plus its neighbors) fails that one-row region, so each
+    cell also accepts it through verbatim_row_span_grounded(), which
+    anchors the quote to row and cell boundaries in the table itself.
+
     If the value isn't in any table cell (no table in this source, or a
     genuinely prose-stated value), that's not evidence of anything --
     it falls through to the ordinary flat-text check unchanged."""
     cells = locate_value(extract_table_blocks(source_text), value, unit)
     if cells:
-        return any(quote_is_grounded(quote, cell) for cell in cells)
+        return any(quote_is_grounded(quote, cell) or verbatim_row_span_grounded(quote, cell) for cell in cells)
     return _quote_matches(quote, source_text)
 
 
