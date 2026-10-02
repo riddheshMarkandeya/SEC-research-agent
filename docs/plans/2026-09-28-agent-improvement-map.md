@@ -213,6 +213,15 @@ Then the improvement packages:
 6. **Thinking-level A/B, then temperature** (review S4): one variable at a time, on a quiet
    quota day.
 
+**Order (user, 2026-10-01): 2 → 5 → 3 → 4 → 6.** The numbers stay as names, since other records
+cite them. Package 5 moves up for four reasons:
+- it's the largest measured gain (31/40 to 37/40 on the harness);
+- the full run's retrieval loss (`aapl-msft-employee-comparison`) is where `floor3` gains most;
+- its build and offline acceptance cost no quota;
+- packages 3 and 4 then get measured on the retrieval layer that ships.
+
+Package 2 goes first: it's offline, it fixes a known live loss, and it doesn't touch retrieval.
+
 After each package, re-mine the refusals with the replay tool before starting the next.
 
 ### Two tracks (2026-09-30)
@@ -226,14 +235,12 @@ spent or you're waiting on a run, do track B.
 Track A, next steps:
 1. ~~Package 1: the full 48-question run from master at `f6a75db` (from 07:00Z 2026-10-01), a
    refusal re-mine, then its docs commit.~~ Done 2026-10-01.
-2. Packages 2, 3 and 4, in order.
-3. Package 5 builds the variant track B picks. It keeps its place after package 4, because its
-   live check spends quota and the packages change one thing at a time. Moving it up is decided
-   at track B's step 6, not before.
+2. Package 2 (next), then package 5, then packages 3 and 4, in the order above. Each package
+   gets its own live measurement.
 
 Track B (plan: `docs/plans/2026-09-30-retrieval-gold-rank-harness.md`): **done 2026-10-01.**
 The harness was measured, researched, reviewed and merged (`49e794f`), and the grilling wrote
-package 5's spec. Package 5 keeps its place after package 4.
+package 5's spec.
 
 ## Not yet specified
 

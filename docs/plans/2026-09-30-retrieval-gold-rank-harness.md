@@ -25,7 +25,8 @@
      - `BACKLOG` items: the HNSW recall miss, V3/V4 deferred, the two deferred review findings
        (rescue-displacement class, duplicate cross-encoder pass), and gte-multilingual's
        incompatibility with transformers 5.15.
-  5. Then track A packages 2-4 on master. Package 2 should take the new High backlog bug: the
+  5. Then track A on master, in the order the user set on 2026-10-01: package 2, then package 5,
+     then packages 3 and 4. Original step: track A packages 2-4 on master. Package 2 should take the new High backlog bug: the
      gate rejects a verbatim two-row table quote.
 - **Prototypes:** `stash@{0}` holds all the V6/V7 prototypes (also in
   `%TEMP%/claude/gold/protos.patch`); `stash@{1}` and `stash@{2}` hold the older V5 and V1/V2.
