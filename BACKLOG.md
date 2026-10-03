@@ -51,12 +51,14 @@ reference:
 
 ## Backlog
 
-### From the 2026-09-30 retrieval gold-rank harness
+### From the 2026-10-02 package 5 review
 
-Plan: `docs/plans/2026-09-30-retrieval-gold-rank-harness.md`. Review: `docs/reviews/2026-10-01-retrieval-harness.md`.
+Plan: `docs/plans/2026-10-02-package-5-retrieval.md`. Review: `docs/reviews/2026-10-02-package-5-retrieval.md`.
 
-- [ ] **[design, Low, Standard]** `retrieval_replay` classes a chunk that the table rescue pushes out of the cross-encoder's top 5 as `fusion`. Telling the two apart needs retrieval's own fused, ce and combined ranks, the seam that package 5's spec (item 11) already proposes. Do it with that seam.
-- [ ] **[performance, Low, Standard]** `retrieval_replay` runs the cross-encoder twice per query, and BM25 and the embedding three times. It costs runtime only, inside a 15-45 minute full run. Folding into the same seam would remove most of it.
+- [ ] **[design, Low, Standard]** `rerank_windows.split_windows` carries a table header with no token budget, and its caption is the last non-blank line, which after one table is that table's `</TABLE>`. A long caption or wide header rows can push a window past 512 tokens with the query, so the cross-encoder truncates the row the window exists for. Both are faithful to the prototype the acceptance figures were measured on. A fix needs a cap (or the caption reset at `</TABLE>`) and a fresh `retrieval_replay` measurement, not a silent change.
+- [ ] **[design, Low, Standard]** Period scoping matches on report dates alone. A search with no ticker scoped to a date also admits every other company's filing with the same report date (calendar quarter ends are shared), though only some companies' filings matched. Scoping by `(ticker, reportDate)` or accession number would be exact. Prototype semantics; measure with `retrieval_replay` before changing.
+- [ ] **[refactor, Low, Standard]** `retrieval.search_details` returns an untyped 12-key dict that `retrieval_replay` reads by string key. A `TypedDict` would let pyright check the harness's reads.
+- [ ] **[refactor, Low, Trivial]** `retrieval_replay.main` and `analyze_gate_replay.install_trace_capture` each swap the private `tracing._write_local_log` by hand. A small public context manager in `tracing` would cover both.
 
 ### From the 2026-09-24 prompt-audit roadmap
 

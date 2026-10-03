@@ -13,9 +13,9 @@ Checks, on 30 logged queries sampled with a fixed seed:
      ordering ranks past BOUNDARY, which would mean the two rank by
      different similarities;
   3. the final top 5 is drawn from the fused pool;
-  4. feeding the tool's cross-encoder ordering of the pool through rerank()'s
-     own combination step (_combine_fused_and_rerank) reproduces the final
-     top 5, so ce_rank is the ranking rerank() actually used.
+  4. feeding the tool's cross-encoder ordering of the pool through retrieval's
+     combination step (_combine_fused_and_rerank) reproduces the final
+     top 5, so ce_rank is the ranking retrieval actually used.
 Then prints MSFT Q3 FY26 segment table chunk 35's ranks for the research
 note's three MSFT queries, whose BM25 ranks there were 40, 45 and 29.
 
@@ -62,7 +62,7 @@ def main() -> int:
     logged = _logged_queries(records)
     sample = random.Random(0).sample(logged, min(SAMPLE, len(logged)))
     corpus = rr._load_corpus()
-    retrieve = rr._live_retriever(corpus)
+    retrieve = rr._live_retriever(corpus, None)
 
     problems = []
     same_order = recall_misses = 0
@@ -83,7 +83,7 @@ def main() -> int:
         pool = hybrid_search(query, ticker=ticker, top_k=10**6, use_rerank=False)
         candidates = [(_make_id(r["metadata"]), r["text"], r["metadata"], r["fused_score"]) for r in pool]
         ce_scores = [-lists["ce"].index(d) for d, _, _, _ in candidates]
-        rebuilt = [_make_id(r["metadata"]) for r in _combine_fused_and_rerank(candidates, ce_scores, 5)]
+        rebuilt = [_make_id(r["metadata"]) for r in _combine_fused_and_rerank(candidates, ce_scores, 5)["results"]]
         if rebuilt != lists["final"]:
             problems.append(f"ce ordering doesn't rebuild the top 5 for {query[:60]!r} [{ticker}]: {rebuilt} vs {lists['final']}")
     print(f"checked {len(sample)} queries; exact vector top 25 in HNSW's order for {same_order}; "

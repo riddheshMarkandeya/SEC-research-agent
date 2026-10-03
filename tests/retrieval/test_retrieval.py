@@ -10,7 +10,17 @@ instead.
 
 import pytest
 
-from sec_agent.retrieval.retrieval import RRF_K, _combine_fused_and_rerank, _make_id, _tokenize, reciprocal_rank_fusion
+from sec_agent.retrieval import retrieval
+from sec_agent.retrieval.period_scope import Scope
+from sec_agent.retrieval.retrieval import (
+    RRF_K,
+    _choose_lists,
+    _combine_fused_and_rerank,
+    _make_id,
+    _search_record,
+    _tokenize,
+    reciprocal_rank_fusion,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -106,7 +116,8 @@ def test_combine_rescues_a_candidate_great_by_one_signal_but_terrible_by_the_oth
     # the relevant sentence was diluted among unrelated content. A pure
     # cross-encoder override, or even a straight RRF-sum of the two
     # rankings, both still buried this candidate in real testing; only
-    # taking the max of the two RRF contributions rescued it.
+    # taking the max of the two RRF contributions rescued it. The fused
+    # floor keeps that max for fused ranks up to _FUSED_FLOOR_RANKS (3).
     # Fused order (as passed in) = candidates' list order: target is #2.
     candidates = [
         _fake_candidate("good_by_both"),
@@ -121,7 +132,7 @@ def test_combine_rescues_a_candidate_great_by_one_signal_but_terrible_by_the_oth
     # merely "OK" by both signals while the target was great-then-terrible.
     cross_encoder_scores = [0.5, -9.0, 0.6, 0.4, 0.3, 0.2]  # target's score is the outlier
 
-    result = _combine_fused_and_rerank(candidates, cross_encoder_scores, top_n=3)
+    result = _combine_fused_and_rerank(candidates, cross_encoder_scores, top_n=3)["results"]
     result_ids = [r["metadata"]["id"] for r in result]
 
     assert "target" in result_ids
@@ -132,11 +143,11 @@ def test_combine_top_result_favors_agreement_between_both_signals():
     # "a" is fused rank 1; cross-encoder scores put "b" first.
     cross_encoder_scores = [0.1, 0.9]  # a=0.1 (rank2), b=0.9 (rank1)
 
-    result = _combine_fused_and_rerank(candidates, cross_encoder_scores, top_n=2)
+    result = _combine_fused_and_rerank(candidates, cross_encoder_scores, top_n=2)["results"]
 
-    # a: max(1/(k+1), 1/(k+2)) = 1/(k+1) (its fused rank)
-    # b: max(1/(k+2), 1/(k+1)) = 1/(k+1) (its rerank rank)
-    # Tied under this scoring scheme — both should be present in the top 2.
+    # Both are inside the fused floor and score 1/(k+1): a by its fused rank,
+    # b by its rerank rank. b's cross-encoder tie-break puts it first; both
+    # make the top 2.
     result_ids = {r["metadata"]["id"] for r in result}
     assert result_ids == {"a", "b"}
 
@@ -145,7 +156,7 @@ def test_combine_respects_top_n():
     candidates = [_fake_candidate(cid) for cid in ["a", "b", "c", "d"]]
     cross_encoder_scores = [0.4, 0.3, 0.2, 0.1]
 
-    result = _combine_fused_and_rerank(candidates, cross_encoder_scores, top_n=2)
+    result = _combine_fused_and_rerank(candidates, cross_encoder_scores, top_n=2)["results"]
     assert len(result) == 2
 
 
@@ -194,7 +205,7 @@ def test_combine_rescues_a_table_chunk_that_ranked_well_pre_rerank_but_got_reran
     ]
     cross_encoder_scores = [0.9, 0.8, 0.7, -9.0, 0.6, 0.5, 0.4, 0.3]
 
-    result = _combine_fused_and_rerank(candidates, cross_encoder_scores, top_n=3)
+    result = _combine_fused_and_rerank(candidates, cross_encoder_scores, top_n=3)["results"]
     result_ids = [r["metadata"]["id"] for r in result]
 
     assert "table" in result_ids
@@ -218,7 +229,7 @@ def test_combine_does_not_rescue_a_table_chunk_that_also_ranked_poorly_pre_reran
     ]
     cross_encoder_scores = [0.9, 0.8, 0.7, 0.6, 0.5, 0.4, 0.3, -9.0]
 
-    result = _combine_fused_and_rerank(candidates, cross_encoder_scores, top_n=3)
+    result = _combine_fused_and_rerank(candidates, cross_encoder_scores, top_n=3)["results"]
     result_ids = [r["metadata"]["id"] for r in result]
 
     assert "table" not in result_ids
@@ -236,7 +247,7 @@ def test_combine_does_not_double_rescue_when_a_table_already_survived_naturally(
     ]
     cross_encoder_scores = [0.9, 0.8, 0.7, 0.6]
 
-    result = _combine_fused_and_rerank(candidates, cross_encoder_scores, top_n=3)
+    result = _combine_fused_and_rerank(candidates, cross_encoder_scores, top_n=3)["results"]
     result_ids = [r["metadata"]["id"] for r in result]
 
     assert result_ids == ["table", "c2", "c3"]
@@ -268,7 +279,7 @@ def test_combine_rescue_prefers_a_dollar_dense_table_over_a_glossary_table():
     ]
     cross_encoder_scores = [0.9, 0.8, 0.7, -8.0, -9.0, 0.6, 0.5, 0.4, 0.3, 0.2]
 
-    result = _combine_fused_and_rerank(candidates, cross_encoder_scores, top_n=3)
+    result = _combine_fused_and_rerank(candidates, cross_encoder_scores, top_n=3)["results"]
     result_ids = [r["metadata"]["id"] for r in result]
 
     assert "financial" in result_ids
@@ -297,7 +308,149 @@ def test_combine_rescue_does_not_fire_when_only_a_glossary_table_is_available():
     ]
     cross_encoder_scores = [0.9, 0.8, 0.7, -9.0, 0.6, 0.5, 0.4, 0.3]
 
-    result = _combine_fused_and_rerank(candidates, cross_encoder_scores, top_n=3)
+    result = _combine_fused_and_rerank(candidates, cross_encoder_scores, top_n=3)["results"]
     result_ids = [r["metadata"]["id"] for r in result]
 
     assert result_ids == ["c1", "c2", "c3"]
+
+
+# ---------------------------------------------------------------------------
+# _combine_fused_and_rerank -- the fused floor
+#
+# The cross-encoder's rank decides, except that a chunk in the fused pool's
+# top `fused_floor` keeps the better of its two RRF terms. Measured on 901
+# logged query parts: max-of-ranks for every rank (the old rule) squeezed out
+# chunks the cross-encoder ranked in its top 5, while dropping the fused
+# rank entirely lost a few chunks both base retrievers ranked at the top.
+# ---------------------------------------------------------------------------
+def _ids(results: list[dict]) -> list[str]:
+    return [r["metadata"]["id"] for r in results]
+
+
+def test_floor_zero_is_the_cross_encoders_order():
+    candidates = [_fake_candidate(cid) for cid in ["a", "b", "c", "d"]]
+    combined = _combine_fused_and_rerank(candidates, [0.1, 0.4, 0.3, 0.2], top_n=3, fused_floor=0)
+    assert _ids(combined["results"]) == ["b", "c", "d"]
+    assert combined["ce"] == ["b", "c", "d", "a"]
+
+
+def test_floor_keeps_a_fused_top_chunk_the_cross_encoder_ranks_low():
+    # "a" is fused rank 1 but the cross-encoder's last: under the floor it
+    # keeps its fused term, 1/(k+1), tying "b" (the cross-encoder's first),
+    # which takes the tie. Without the floor "a" would drop out.
+    candidates = [_fake_candidate(cid) for cid in ["a", "b", "c", "d"]]
+    combined = _combine_fused_and_rerank(candidates, [0.1, 0.4, 0.3, 0.2], top_n=3, fused_floor=3)
+    assert _ids(combined["results"]) == ["b", "a", "c"]
+
+
+def test_floor_does_not_reach_past_its_fused_rank():
+    # 16 candidates; "deep" is fused rank 4 and the cross-encoder's last.
+    # A floor of 3 doesn't cover it, so the cross-encoder's top 5 win.
+    ids = ["c1", "c2", "c3", "deep"] + [f"x{i}" for i in range(12)]
+    candidates = [_fake_candidate(cid) for cid in ids]
+    scores = [0.9, 0.8, 0.7, -9.0] + [0.6 - i * 0.01 for i in range(12)]
+    combined = _combine_fused_and_rerank(candidates, scores, top_n=5, fused_floor=3)
+    assert "deep" not in _ids(combined["results"])
+
+
+def test_floor_keeps_fused_rank_two_with_cross_encoder_rank_fifteen():
+    ids = ["top", "target"] + [f"x{i}" for i in range(14)]
+    candidates = [_fake_candidate(cid) for cid in ids]
+    scores = [0.99, -5.0] + [0.9 - i * 0.01 for i in range(13)] + [-9.0]  # target is ce rank 15 of 16
+    combined = _combine_fused_and_rerank(candidates, scores, top_n=5, fused_floor=3)
+    assert combined["ce"].index("target") == 14
+    assert "target" in _ids(combined["results"])
+
+
+def test_a_tie_on_the_floor_goes_to_the_cross_encoder():
+    # "a" is fused 1 / ce 3 and "c" fused 3 / ce 1: both score 1/(k+1)
+    # under the floor; the cross-encoder breaks the tie for "c".
+    candidates = [_fake_candidate(cid) for cid in ["a", "b", "c"]]
+    combined = _combine_fused_and_rerank(candidates, [0.1, 0.5, 0.9], top_n=3, fused_floor=3)
+    assert _ids(combined["results"])[:2] == ["c", "a"]
+
+
+def test_the_default_floor_is_read_when_called(monkeypatch):
+    monkeypatch.setattr(retrieval, "_FUSED_FLOOR_RANKS", 0)
+    candidates = [_fake_candidate(cid) for cid in ["a", "b", "c", "d"]]
+    assert _ids(_combine_fused_and_rerank(candidates, [0.1, 0.4, 0.3, 0.2], top_n=3)["results"]) == ["b", "c", "d"]
+
+
+def test_the_rescue_still_applies_under_both_floors_and_is_reported():
+    candidates = [_fake_candidate(c) for c in ["c1", "c2", "c3"]] + [_fake_table_candidate("table")] + [
+        _fake_candidate(c) for c in ["c5", "c6", "c7", "c8"]
+    ]
+    scores = [0.9, 0.8, 0.7, -9.0, 0.6, 0.5, 0.4, 0.3]
+    for floor in (0, 3):
+        combined = _combine_fused_and_rerank(candidates, scores, top_n=3, fused_floor=floor)
+        assert _ids(combined["results"]) == ["c1", "c2", "table"]
+        assert combined["rescued"] == "table"
+        assert combined["combined"][:3] == ["c1", "c2", "c3"]  # the order before the rescue
+
+
+def test_no_rescue_is_reported_as_none():
+    candidates = [_fake_candidate(cid) for cid in ["a", "b", "c", "d"]]
+    assert _combine_fused_and_rerank(candidates, [0.4, 0.3, 0.2, 0.1], top_n=2)["rescued"] is None
+
+
+# ---------------------------------------------------------------------------
+# _choose_lists -- strict period scoping and its fallbacks
+# ---------------------------------------------------------------------------
+def _searcher(filtered: list[list], unfiltered: list[list]):
+    calls = []
+
+    def search(report_dates):
+        calls.append(report_dates)
+        return unfiltered if report_dates is None else filtered
+
+    return search, calls
+
+
+HIT = [("id", "text", {})]
+
+
+def test_scoped_query_uses_only_the_filtered_lists():
+    search, calls = _searcher([HIT, []], [HIT, HIT])
+    lists, label = _choose_lists(Scope(("2025-04-27",), "dates", ()), search)
+    assert (lists, label, calls) == ([HIT, []], "dates", [("2025-04-27",)])
+
+
+def test_unscoped_query_searches_unfiltered_once():
+    search, calls = _searcher([HIT, HIT], [HIT, []])
+    lists, label = _choose_lists(Scope((), "no_date", ()), search)
+    assert (lists, label, calls) == ([HIT, []], "no_date", [None])
+
+
+def test_both_filtered_lists_empty_falls_back_to_unfiltered():
+    search, calls = _searcher([[], []], [HIT, HIT])
+    lists, label = _choose_lists(Scope(("1999-12-31",), "dates", ()), search)
+    assert (lists, label, calls) == ([HIT, HIT], "filtered_empty", [("1999-12-31",), None])
+
+
+# ---------------------------------------------------------------------------
+# _search_record -- what search_details returns and logs
+# ---------------------------------------------------------------------------
+def test_search_record_exposes_the_pool_scores_tables_scope_and_floor():
+    fused = [_fake_candidate("a"), _fake_table_candidate("t"), _fake_glossary_table_candidate("g")]
+    scope_record = {"label": "dates", "report_dates": ["2025-04-27"], "invalid_dates": []}
+    record = _search_record(fused, [0.1, 0.9, 0.5], scope_record, top_k=2)
+    # t and a tie at 1/(k+1) (t's cross-encoder rank, a's fused rank under the
+    # default floor); t wins on the cross-encoder, a still outranks g
+    assert _ids(record["results"]) == ["t", "a"]
+    assert record["pool"] == ["a", "t", "g"]
+    assert record["scores"] == [0.1, 0.9, 0.5]
+    assert record["ce"] == ["t", "g", "a"]
+    assert (record["tables"], record["rescuable"]) == ({"t", "g"}, {"t"})
+    assert (record["scope"], record["fused_floor"]) == (scope_record, 3)
+
+
+def test_search_record_reports_the_floor_it_ran():
+    fused = [_fake_candidate("a"), _fake_candidate("b")]
+    record = _search_record(fused, [0.1, 0.9], {"label": "no_date", "report_dates": [], "invalid_dates": []},
+                            top_k=1, fused_floor=0)
+    assert (_ids(record["results"]), record["fused_floor"]) == (["b"], 0)
+
+
+def test_search_record_of_an_empty_pool_is_empty():
+    record = _search_record([], [], {"label": "no_date", "report_dates": [], "invalid_dates": []}, top_k=5)
+    assert (record["results"], record["pool"], record["rescued"]) == ([], [], None)
