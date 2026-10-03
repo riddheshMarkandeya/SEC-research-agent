@@ -104,7 +104,8 @@ round 4 ran.
   log line was read.
 - Offline acceptance re-run at F = 3 (`var/retrieval_replay/pkg5-f3-r2.json`): 526/901 and
   37/40, identical to step 10.
-- The live 48-question eval (plan steps 13–14) is still pending and needs quota.
+- Live 48-question eval: 44/48 against the 42/48 baseline, with no drop from retrieval. The
+  figures are in the plan's "Testing and verification" section.
 
 ## Outcome
 

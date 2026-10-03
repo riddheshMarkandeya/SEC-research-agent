@@ -279,6 +279,36 @@ normalisation, env switches.
   `{"category": "retrieval_scope_unknown_tickers", "tickers": ["NVDA"]}`.
 - **Final gates (2026-10-02):** ruff clean, pyright 0 errors, 1252 passed, diff coverage 100%
   overall and on `retrieval/`.
+- **Step 13, live full eval (2026-10-03 UTC, commit `903e179`, clean tree):** report
+  `eval/eval_results/20261003T030904Z.json`, run window 02:58:37–03:12 UTC, about 380 Gemini
+  requests used that quota day. Result **44/48**, against the replay-adjusted 42/48.
+- **Step 14, comparison against the step 0 baseline:**
+  - Gained 4: `aapl-msft-employee-comparison` (the retrieval loss the map assigned to this
+    package), `crm-buyback-and-liquidity-q1fy27`, `msft-three-segments-revenue-q3fy2026`, and
+    `nvda-segment-revenue-comparison-q1fy27` (unknown in the baseline).
+  - Dropped 2, both citation-gate refusals of a verbatim quote cited to the wrong source
+    number. The quote is in a source the agent did retrieve, so neither is a retrieval drop and
+    shipping isn't blocked:
+    - `nvda-revenue-yoy-growth-q1fy27`: all four searches scoped correctly to `2026-04-26`. The
+      model cited [12] (`0001045810-26-000052_34`, the segment table) for the income-statement
+      `Total revenue` row quoted from [2], [14], [16] and [19].
+    - `crm-ai-risk`: the quote cited as [13] (`0001108524-26-000060_51`) is verbatim in [15]
+      (`_52`, the next chunk of the same risk factor). The gate's retry repeated it.
+  - Still failing in both runs: `pltr-dividend-2019-refusal` and
+    `msft-segment-revenue-comparison-q3fy2026` (judged).
+  - Re-mine (`analyze_gate_replay --since 2026-10-03T02:58:37 --until 2026-10-03T03:12`,
+    `var/trace_logs/replay-pkg5-live.json`): 48 replayed, errored 0, drifted 0; refused 2 then
+    and 2 now, recovered 0, newly refused 0, check changes 0, tool-result drift 0. Today's gate
+    agrees with the run.
+- **Step 15, offline replay of the live run's queries** (`retrieval_replay --since
+  2026-10-03T02:58:37`; 45 parts, 4 out-of-scope skipped, 16 questions):
+  - **F = 3** (`var/retrieval_replay/pkg5-live-f3.json`): hit@5 25/45, reach 44, **16/16**
+    covered. Classes: hit 25, rerank 19, dilution 1. Rerank causes: fusion 9, model 10.
+  - **F = 0** (`pkg5-live-f0.json`): hit@5 30/45, reach 44, **13/16** covered. Uncovered:
+    `aapl-cash-and-buyback-q3fy2026`, `aapl-employees-fy25-indirect`,
+    `aapl-msft-employee-comparison`.
+  - F = 0 newly covers no question that F = 3 missed, so `ce` is not run live and F = 3 ships.
+    The live queries repeat the offline pattern: F = 0 gains part hits and loses whole questions.
 
 ## Plan review
 

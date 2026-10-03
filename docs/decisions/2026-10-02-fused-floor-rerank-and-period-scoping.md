@@ -78,8 +78,14 @@ Two other deviations from the prototype:
   - F = 0: 599 and 34/40.
 - **Live script:** green on all 6 checks.
 - **Gates:** 1252 tests pass, and diff coverage is 100%.
-- **Not yet run:** the live 48-question eval against the replay-adjusted 42/48 baseline is
-  still pending (plan steps 13–14). See the plan's "Testing and verification" section.
+- **Live 48-question eval** (`eval/eval_results/20261003T030904Z.json`): 44/48, against the
+  replay-adjusted 42/48 baseline. It gained 4 questions and dropped 2. Both drops are
+  citation-gate refusals of a quote cited to the wrong source number, where the quote was in
+  another retrieved source, so neither drop comes from retrieval. The gate re-mine of the run
+  showed no verdict changes.
+- **Post-live replay of the run's own queries:** F = 3 covered 16/16 questions and F = 0
+  covered 13/16. F = 0 newly covered nothing, so F = 3 stands. Details are in the plan's
+  "Testing and verification" section.
 
 ## Related
 

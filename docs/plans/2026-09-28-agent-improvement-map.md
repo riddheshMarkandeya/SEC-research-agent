@@ -211,8 +211,11 @@ Then the improvement packages:
    `10-Qs` fixes; D3 and D4/D11 deferred to Watch. See `docs/plans/2026-10-01-gate-rules-package-2.md`.
 3. **Uniform submit loop** (review S2 step 2): refactor, panel plus full run.
 4. **Not-available answer** (review S3, with the tool-message ticket): prompt protocol.
-5. **Strict period scoping + windowed MaxP rerank + fused-floor rule** (review S5; spec in the
-   harness plan's step 7): offline acceptance on the harness, then a `floor3` full run.
+5. ~~**Strict period scoping + windowed MaxP rerank + fused-floor rule** (review S5; spec in the
+   harness plan's step 7): offline acceptance on the harness, then a `floor3` full run.~~ Done
+   2026-10-03: offline 526/901 hits and 37/40 covered (from 329 and 31/40); full run 44/48
+   (`20261003T030904Z`) against the replay-adjusted 42/48, with both drops from mis-cited
+   quotes rather than retrieval. See `docs/decisions/2026-10-02-fused-floor-rerank-and-period-scoping.md`.
 6. **Thinking-level A/B, then temperature** (review S4): one variable at a time, on a quiet
    quota day.
 
@@ -238,8 +241,8 @@ spent or you're waiting on a run, do track B.
 Track A, next steps:
 1. ~~Package 1: the full 48-question run from master at `f6a75db` (from 07:00Z 2026-10-01), a
    refusal re-mine, then its docs commit.~~ Done 2026-10-01.
-2. ~~Package 2~~ (done 2026-10-01), then package 5 (next), then packages 3 and 4, in the order
-   above. Each package gets its own live measurement.
+2. ~~Package 2~~ (done 2026-10-01), ~~package 5~~ (done 2026-10-03), then package 3 (next)
+   and package 4, in the order above. Each package gets its own live measurement.
 
 Track B (plan: `docs/plans/2026-09-30-retrieval-gold-rank-harness.md`): **done 2026-10-01.**
 The harness was measured, researched, reviewed and merged (`49e794f`), and the grilling wrote
