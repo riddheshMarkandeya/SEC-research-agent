@@ -46,11 +46,12 @@ from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 
-from sec_agent import config
+from sec_agent import config, tracing
 from sec_agent.agent import dispatch
 from sec_agent.devtools import trace_query
 from sec_agent.eval import eval_harness
 from sec_agent.retrieval import retrieval
+from sec_agent.sources import companies, period_labels
 
 GOLD_PATH = config.PROJECT_ROOT / "eval" / "retrieval_gold.jsonl"
 _GOLD_FIELDS = ("qid", "part", "accession", "report_date", "anchor", "own_period", "note")
@@ -147,7 +148,7 @@ def gold_matches(chunk_text: str, metadata: dict, gold_rows: list[dict]) -> list
 
 
 def index_gold(chunks: list[dict], gold_rows: list[dict]) -> tuple[dict, list[dict]]:
-    """(qid, part) -> its gold chunks as {chunk, ticker, own_period}, in corpus
+    """(qid, part) -> its gold chunks as {chunk, ticker, own_period, report_date}, in corpus
     order, plus the rows no chunk matched (a mistyped anchor or a
     re-chunked table)."""
     index: dict[tuple[str, str], list[dict]] = {}
@@ -159,7 +160,8 @@ def index_gold(chunks: list[dict], gold_rows: list[dict]) -> tuple[dict, list[di
             doc_id = retrieval._make_id(chunk["metadata"])
             if all(e["chunk"] != doc_id for e in entries):
                 entries.append({"chunk": doc_id, "ticker": chunk["metadata"].get("ticker"),
-                                "own_period": bool(row["own_period"])})
+                                "own_period": bool(row["own_period"]),
+                                "report_date": chunk["metadata"].get("reportDate")})
     return index, [row for row in gold_rows if id(row) not in matched]
 
 
@@ -190,11 +192,13 @@ def rank_stats(order: list[tuple], doc_id: str) -> dict | None:
     return None
 
 
-def gold_chunk_record(doc_id: str, lists: dict) -> dict:
+def gold_chunk_record(doc_id: str, lists: dict, report_date: str | None = None) -> dict:
     """One gold chunk's diagnostic ranks, its 1-based position in the fused
     pool, its rank in the cross-encoder's own ordering of that pool, and its
-    final rank, each None when absent."""
-    pool, final, ce = lists["pool"], lists["final"], lists["ce"]
+    final rank, each None when absent; and whether the search's period
+    scope (lists["scope_dates"], None when unscoped) left out its filing,
+    which the unscoped diagnostic ranks can't show."""
+    pool, final, ce, scope_dates = lists["pool"], lists["final"], lists["ce"], lists["scope_dates"]
     return {
         "chunk": doc_id,
         "bm25": rank_stats(lists["bm25"], doc_id),
@@ -202,6 +206,7 @@ def gold_chunk_record(doc_id: str, lists: dict) -> dict:
         "pool_pos": pool.index(doc_id) + 1 if doc_id in pool else None,
         "final_rank": final.index(doc_id) + 1 if doc_id in final else None,
         "ce_rank": ce.index(doc_id) + 1 if doc_id in ce else None,
+        "scope_excluded": scope_dates is not None and report_date is not None and report_date not in scope_dates,
     }
 
 
@@ -216,11 +221,13 @@ def _better_retriever(record: dict) -> dict | None:
 
 def best_gold(records: list[dict]) -> dict:
     """The gold chunk that did best: final rank, then pool position, then
-    the better diagnostic rank."""
+    one the period scope searched over one it left out, then the better
+    diagnostic rank."""
 
     def key(r: dict) -> tuple:
         better = _better_retriever(r)
-        return (_or_inf(r["final_rank"]), _or_inf(r["pool_pos"]), _or_inf(better["rank"] if better else None))
+        return (_or_inf(r["final_rank"]), _or_inf(r["pool_pos"]), r["scope_excluded"],
+                _or_inf(better["rank"] if better else None))
 
     return min(records, key=key)
 
@@ -230,6 +237,8 @@ def classify(record: dict) -> str:
     of the two retrievers:
       hit              in the top 5
       rerank           in the fused pool, cut at rerank
+      scope_excluded   not in the pool; the query's period scope left its
+                       filing out of the search
       index_recall     not in the pool, though its exact vector rank is
                        within the vector search's candidate count: the
                        approximate index skipped it
@@ -244,6 +253,14 @@ def classify(record: dict) -> str:
         return "hit"
     if record["pool_pos"] is not None:
         return "rerank"
+    if record["scope_excluded"]:
+        return "scope_excluded"
+    return _pool_miss_class(record)
+
+
+def _pool_miss_class(record: dict) -> str:
+    """classify's verdict on a gold chunk the period scope didn't exclude
+    but that never reached the pool."""
     better = _better_retriever(record)
     if better is None:
         return "unranked"
@@ -257,20 +274,22 @@ def classify(record: dict) -> str:
 
 
 def rerank_cause(record: dict, lists: dict) -> str:
-    """Why a gold chunk in the pool was cut at rerank. The rules restate
-    retrieval.py's max-of-ranks combination and table-rescue gate, so a
-    variant that changes either needs these rules changed with it; the
-    cross-encoder ranks come from retrieval's own rerank model, so a
-    scoring variant is measured as is. A table the rescue swapped in over
-    a chunk in the cross-encoder's top 5 shows up as fusion.
-      fusion            the cross-encoder ranks it in its top 5, but combining
-                        that rank with the fused rank (rerank keeps the better
-                        of the two) let other chunks outrank it
+    """Why a gold chunk in the pool was cut at rerank. The cross-encoder
+    order, the order before the table rescue and the rescue-qualifying
+    tables all come from retrieval itself (search_details), so only the
+    rescue's fused-rank threshold is restated here.
+      rescue            it made the top 5 before the table rescue, which
+                        swapped it out for a table
+      fusion            the cross-encoder ranks it in its top 5, but the fused
+                        floor (top fused ranks keep the better of their two
+                        ranks) let other chunks outrank it
       rescue_threshold  the cross-encoder ranks it lower, it's a table the
                         rescue would accept, no table made the top 5, and only
                         its fused rank (past half the pool) blocked the rescue
       model             otherwise: the cross-encoder itself scores it low"""
     top_n = len(lists["final"])
+    if record["chunk"] in lists["combined"][:top_n]:
+        return "rescue"  # in the pre-rescue top 5 and not in the final one
     if record["ce_rank"] is not None and record["ce_rank"] <= top_n:
         return "fusion"
     no_table_in_final = not set(lists["final"]) & lists["tables"]
@@ -281,9 +300,13 @@ def rerank_cause(record: dict, lists: dict) -> str:
 
 
 def _part_rerank_cause(chunks: list[dict], lists: dict) -> str:
-    """The rerank cause of the part's pooled gold chunk the cross-encoder
-    ranked best: the one rerank came closest to keeping."""
+    """"rescue" when the table rescue swapped out one of the part's gold
+    chunks: the part had made the top 5 until then. Otherwise the rerank
+    cause of its pooled gold chunk the cross-encoder ranked best: the one
+    rerank came closest to keeping."""
     pooled = [c for c in chunks if c["pool_pos"] is not None]
+    if any(rerank_cause(c, lists) == "rescue" for c in pooled):
+        return "rescue"
     return rerank_cause(min(pooled, key=lambda c: _or_inf(c["ce_rank"])), lists)
 
 
@@ -301,7 +324,7 @@ def evaluate_query(entry: dict, lists: dict, gold_index: dict) -> dict:
         if entry["ticker"] and all(g["ticker"] != entry["ticker"] for g in gold):
             out_of_scope.append([qid, part])
             continue
-        chunks = [gold_chunk_record(g["chunk"], lists) for g in gold]
+        chunks = [gold_chunk_record(g["chunk"], lists, g["report_date"]) for g in gold]
         best = best_gold(chunks)
         own_period = next(g["own_period"] for g in gold if g["chunk"] == best["chunk"])
         cls = classify(best)
@@ -534,36 +557,32 @@ def _vector_orderer():  # pragma: no cover -- reads every embedding from the rea
     return order
 
 
-def _live_retriever(corpus: list[dict]):  # pragma: no cover -- binds the real retrieval stack, live-only
+def _live_retriever(corpus: list[dict], fused_floor: int | None):  # pragma: no cover -- real retrieval stack
     """A function returning one query's lists: the full BM25 and vector
-    orderings, the fused pool the reranker sees, the final top 5 exactly as
-    run_search asks for it, the cross-encoder's own ordering of the pool,
-    and the pool's table and rescue-qualifying table chunk ids. The pool and
-    final lists come from hybrid_search itself, and the cross-encoder
-    ordering from retrieval's own rerank model, so an experiment in either
-    is measured as is. The rescue-qualifying set restates the rescue's
-    dollar-figure gate."""
+    orderings (diagnostic, unscoped), then from one retrieval.search_details
+    call, as run_search asks for it: the fused pool the reranker sees, the
+    final top 5, the cross-encoder's order of the pool, the order before
+    the table rescue, the pool's table and rescue-qualifying chunk ids, and
+    the report dates the search was limited to (None when it wasn't). A
+    change in retrieval is measured as is.
+    fused_floor None runs retrieval's own floor."""
     vector_order = _vector_orderer()
-    cross_encoder = retrieval._get_rerank_model()
 
     def retrieve(query: str, ticker: str | None) -> dict:
         bm25 = retrieval.bm25_search(query, len(corpus), ticker=ticker)
-        pool = retrieval.hybrid_search(query, ticker=ticker, top_k=10**6, use_rerank=False)
-        final = retrieval.hybrid_search(query, ticker=ticker, top_k=dispatch.CHUNKS_PER_SEARCH)
-        pool_ids = [retrieval._make_id(r["metadata"]) for r in pool]
-        scores = cross_encoder.predict([(query, r["text"]) for r in pool]).tolist() if pool else []
-        tables = {d for d, r in zip(pool_ids, pool) if r["metadata"].get("contains_table")}
+        details = retrieval.search_details(
+            query, ticker=ticker, top_k=dispatch.CHUNKS_PER_SEARCH, fused_floor=fused_floor
+        )
         return {
             "bm25": [(d, m["accessionNumber"], m["ticker"]) for d, _, m in bm25],
             "vector": vector_order(query, ticker),
-            "pool": pool_ids,
-            "final": [retrieval._make_id(r["metadata"]) for r in final],
-            "ce": [d for _, d in sorted(zip(scores, pool_ids), key=lambda pair: pair[0], reverse=True)],
-            "tables": tables,
-            "rescuable": {
-                d for d, r in zip(pool_ids, pool)
-                if d in tables and r["text"].count("$") >= retrieval._MIN_DOLLAR_FIGURES_FOR_TABLE_RESCUE
-            },
+            "pool": details["pool"],
+            "final": [retrieval._make_id(r["metadata"]) for r in details["results"]],
+            "ce": details["ce"],
+            "combined": details["combined"],
+            "scope_dates": details["scope"]["report_dates"] if details["scope"]["label"] == "dates" else None,
+            "tables": details["tables"],
+            "rescuable": details["rescuable"],
         }
 
     return retrieve
@@ -592,7 +611,18 @@ def _parser() -> argparse.ArgumentParser:
         "--compare", type=Path, help="a base report; replays its queries and exits 1 on any lost hit or coverage"
     )
     parser.add_argument("--propose-gold", type=Path, help="write candidate gold chunks for hand review, then stop")
+    parser.add_argument(
+        "--since", type=trace_query._iso_prefix, help="only queries logged at or after this ISO UTC prefix"
+    )
+    parser.add_argument(
+        "--fused-floor", type=int, help="fused ranks that keep the better of both ranks (default: retrieval's own)"
+    )
     return parser
+
+
+def records_since(records: list[dict], since: str | None) -> list[dict]:
+    """The records logged at or after the ISO prefix `since` (all when None)."""
+    return records if since is None else [r for r in records if r.get("timestamp", "") >= since]
 
 
 def _propose(args) -> int:
@@ -609,8 +639,10 @@ def _query_set(args, base: dict | None, gold_index: dict) -> tuple[list[dict], d
     if base is not None:
         return queries_from_report(base), base["header"]["dropped"]
     records, malformed = trace_query.load(args.file)
+    # Question ids come from every record: a run whose agent span was logged
+    # before --since still owns the searches it logged after it.
     ids = trace_query.question_ids(records, args.questions)
-    queries, dropped = build_query_set(records, ids, {qid for qid, _ in gold_index})
+    queries, dropped = build_query_set(records_since(records, args.since), ids, {qid for qid, _ in gold_index})
     return filter_qids(queries, args.qid), {**dropped, "malformed_lines": malformed}
 
 
@@ -627,8 +659,8 @@ def _query_source(args, base: dict | None, gold_index: dict, queries: list[dict]
 def main(argv: list[str] | None = None) -> int:
     parser = _parser()
     args = parser.parse_args(argv)
-    if args.compare and args.qid:
-        parser.error("--compare replays the base report's queries; drop --qid")
+    if args.compare and (args.qid or args.since):
+        parser.error("--compare replays the base report's queries; drop --qid and --since")
     if args.propose_gold:
         return _propose(args)
     started = time.monotonic()
@@ -641,9 +673,16 @@ def main(argv: list[str] | None = None) -> int:
     if not out.parent.is_dir():
         parser.error(f"--out directory does not exist: {out.parent}")
 
-    # Captured before the run: an edit to retrieval.py or a commit while a
-    # long run is in progress must not be attributed to its results.
-    provenance = {**eval_harness._git_state(), "retrieval_sha256": file_sha256(Path(retrieval.__file__))}
+    # Captured before the run: an edit to retrieval or a commit while a
+    # long run is in progress must not be attributed to its results. Period
+    # scoping also reads the fiscal-period labels and companies' fiscal
+    # year ends, so those files count as retrieval too.
+    retrieval_files = [*sorted(Path(retrieval.__file__).parent.glob("*.py")), Path(period_labels.__file__),
+                       companies.COMPANIES_PATH]
+    provenance = {
+        **eval_harness._git_state(),
+        "retrieval_sha256": {p.name: file_sha256(p) for p in retrieval_files},
+    }
     try:
         gold_hash = file_sha256(args.gold)
         gold_rows = load_gold(args.gold)
@@ -663,7 +702,14 @@ def main(argv: list[str] | None = None) -> int:
             print(f"retrieval_replay: gold row matches no chunk: {json.dumps(row)}", file=sys.stderr)
         return 2
     queries, dropped = _query_set(args, base, gold_index)
-    results = run_all(queries, gold_index, _live_retriever(corpus))
+    # Retrieval logs an event per search; a run's ~900 would land in the
+    # trace log this tool reads its queries from.
+    write_local_log = tracing._write_local_log
+    tracing._write_local_log = lambda record: None
+    try:
+        results = run_all(queries, gold_index, _live_retriever(corpus, args.fused_floor))
+    finally:
+        tracing._write_local_log = write_local_log
 
     summary = summarize(results)
     diff = compare(base["results"], results) if base is not None else None
@@ -673,6 +719,8 @@ def main(argv: list[str] | None = None) -> int:
         "gold_sha256": gold_hash,
         **_query_source(args, base, gold_index, queries),
         "baseline": str(args.compare) if args.compare else None,
+        "since": args.since,
+        "fused_floor": retrieval._FUSED_FLOOR_RANKS if args.fused_floor is None else args.fused_floor,
         "dropped": dropped,
         "runtime_s": round(time.monotonic() - started, 1),
     }

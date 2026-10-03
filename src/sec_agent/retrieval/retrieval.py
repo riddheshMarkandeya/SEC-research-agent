@@ -1,22 +1,30 @@
 """
 Hybrid retrieval: BM25 (lexical) + Chroma (vector) + reranking. This is
 the retrieval layer other code (the eval harness, the agent) should
-import, rather than reimplementing search. See
-docs/decisions/2026-08-13-hybrid-retrieval-and-reranker-fix.md.
+import, rather than reimplementing search.
 
 Pipeline per query:
-  1. Pull a wide candidate pool (default 25) from BM25 and from Chroma's
+  1. Scope by period: when the query names a period ("Q1 fiscal 2026",
+     "the quarter ended April 27, 2025"), search only the matching
+     filings' chunks (period_scope.py). Other periods' near-identical
+     tables otherwise crowd the pool. With no period named, or nothing
+     found inside the named filings, search everything.
+  2. Pull a wide candidate pool (default 25) from BM25 and from Chroma's
      vector search, independently.
-  2. Fuse the two rankings with Reciprocal Rank Fusion (RRF) — combines
+  3. Fuse the two rankings with Reciprocal Rank Fusion (RRF) — combines
      rankings, not raw scores, which sidesteps the fact that BM25 scores
      and cosine similarities live on completely different, incomparable
      scales.
-  3. Rerank the fused candidate set with a cross-encoder, which scores
+  4. Rerank the fused candidate set with a cross-encoder, which scores
      each (query, passage) pair jointly rather than independently
      embedding them — slower, so only run over the ~25-40 fused
      candidates, not the full corpus, but meaningfully more accurate at
      the top of the ranking, which is what matters for citation-grounded
-     answers downstream.
+     answers downstream. Long chunks are scored by their best window
+     (rerank_windows.py), since the model reads only 512 tokens.
+  5. Order by the cross-encoder's rank, with a floor for the fused
+     pool's top few (_combine_fused_and_rerank), then rescue a demoted
+     financial table if none survived.
 
 Usage as a library:
     from sec_agent.retrieval.retrieval import hybrid_search
@@ -29,7 +37,7 @@ Usage from the command line (manual spot-checking):
 import argparse
 import json
 import re
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 
 import chromadb
 from chromadb import Where
@@ -37,6 +45,10 @@ from rank_bm25 import BM25Okapi
 from sentence_transformers import CrossEncoder, SentenceTransformer
 
 from sec_agent.config import CHROMA_DIR, CHUNKS_DIR, EMBED_MODEL_NAME, RERANK_MODEL_NAME
+from sec_agent.retrieval.period_scope import Scope, filing_list, query_report_dates
+from sec_agent.retrieval.rerank_windows import max_per_owner, split_windows
+from sec_agent.sources.companies import load_companies
+from sec_agent.tracing import log_event
 
 COLLECTION_NAME = "sec_filings"
 
@@ -50,12 +62,19 @@ QUERY_INSTRUCTION = "Represent this sentence for searching relevant passages: "
 RRF_K = 60  # standard constant from the original Reciprocal Rank Fusion paper
 CANDIDATE_POOL_SIZE = 25  # per-method pool size, before fusion/reranking
 
-# See _rescue_demoted_table_chunk's docstring: distinguishes a real
-# financial data table (32-37 "$" occurrences in verified real chunks)
-# from a glossary/definitions table (0) that's also flagged
-# contains_table=True. Set well below the observed real minimum to leave
-# margin for smaller-but-genuine tables.
+# Fused-pool ranks that keep the better of their fused and cross-encoder
+# RRF terms; every other chunk is ranked by the cross-encoder alone. See
+# _combine_fused_and_rerank. 0 would be the cross-encoder's order outright.
+_FUSED_FLOOR_RANKS = 3
+
+# See _is_rescuable_table: distinguishes a real financial data table
+# (32-37 "$" occurrences in verified real chunks) from a
+# glossary/definitions table (0) that's also flagged contains_table=True.
+# Set well below the observed real minimum to leave margin for
+# smaller-but-genuine tables.
 _MIN_DOLLAR_FIGURES_FOR_TABLE_RESCUE = 5
+
+SearchHits = list[tuple[str, str, dict]]  # (doc_id, text, metadata), best match first
 
 
 # ---------------------------------------------------------------------------
@@ -82,6 +101,13 @@ def _get_rerank_model() -> CrossEncoder:  # pragma: no cover -- loads a real cro
     if _rerank_model is None:
         _rerank_model = CrossEncoder(RERANK_MODEL_NAME)
     return _rerank_model
+
+
+def _token_counter(model: CrossEncoder) -> Callable[[str], int]:  # pragma: no cover -- real tokenizer, live-only
+    """Counts tokens the way the cross-encoder will, without the special
+    tokens it adds once per (query, window) pair."""
+    tokenizer = model.tokenizer
+    return lambda text: len(tokenizer(text, add_special_tokens=False)["input_ids"])
 
 
 def _get_chroma_collection():  # pragma: no cover -- opens a real Chroma collection, live-only
@@ -134,11 +160,12 @@ def _make_id(metadata: Mapping[str, object]) -> str:
 
 # ---------------------------------------------------------------------------
 # Individual search methods — each returns an ordered list of
-# (doc_id, text, metadata), best match first.
+# (doc_id, text, metadata), best match first. report_dates, when given,
+# keeps only chunks from those filings.
 # ---------------------------------------------------------------------------
 def bm25_search(  # pragma: no cover -- queries the real BM25 index, live-only
-    query: str, n: int, ticker: str | None = None
-) -> list[tuple[str, str, dict]]:
+    query: str, n: int, ticker: str | None = None, report_dates: tuple[str, ...] | None = None
+) -> SearchHits:
     _load_bm25_index()
     assert _bm25_index is not None and _bm25_records is not None  # _load_bm25_index() always sets both
     scores = _bm25_index.get_scores(_tokenize(query))
@@ -149,6 +176,8 @@ def bm25_search(  # pragma: no cover -- queries the real BM25 index, live-only
         record = _bm25_records[i]
         if ticker and record["metadata"]["ticker"] != ticker:
             continue
+        if report_dates is not None and record["metadata"]["reportDate"] not in report_dates:
+            continue
         if scores[i] <= 0:
             break  # BM25Okapi returns 0 for no term overlap at all — not a real match
         results.append((_make_id(record["metadata"]), record["text"], record["metadata"]))
@@ -158,13 +187,22 @@ def bm25_search(  # pragma: no cover -- queries the real BM25 index, live-only
 
 
 def vector_search(  # pragma: no cover -- queries the real Chroma collection, live-only
-    query: str, n: int, ticker: str | None = None
-) -> list[tuple[str, str, dict]]:
+    query: str, n: int, ticker: str | None = None, report_dates: tuple[str, ...] | None = None
+) -> SearchHits:
     model = _get_embed_model()
     collection = _get_chroma_collection()
     query_embedding = model.encode(QUERY_INSTRUCTION + query, normalize_embeddings=True).tolist()
 
-    where: Where | None = {"ticker": {"$eq": ticker}} if ticker else None
+    clauses: list[Where] = []
+    if report_dates is not None:
+        clauses.append({"reportDate": {"$in": list(report_dates)}})
+    if ticker:
+        clauses.append({"ticker": {"$eq": ticker}})
+    where: Where | None = None
+    if len(clauses) == 1:
+        where = clauses[0]
+    elif clauses:
+        where = {"$and": clauses}
     hits = collection.query(query_embeddings=[query_embedding], n_results=n, where=where)
 
     documents = hits["documents"]
@@ -177,10 +215,54 @@ def vector_search(  # pragma: no cover -- queries the real Chroma collection, li
 
 
 # ---------------------------------------------------------------------------
+# Period scoping
+# ---------------------------------------------------------------------------
+def _query_scope(query: str, ticker: str | None) -> Scope:  # pragma: no cover -- reads the real chunk index, live-only
+    _load_bm25_index()
+    assert _bm25_records is not None  # _load_bm25_index() always sets it
+    filings = filing_list((r["metadata"] for r in _bm25_records), ticker)
+    months = {t: info["fiscal_year_end_month"] for t, info in load_companies().items()}
+    unknown = sorted({t for t, _, _ in filings} - months.keys())
+    if unknown:
+        # their filings can't be scoped by fiscal period; the chunk files
+        # hold a company the company list no longer does
+        log_event("retrieval_scope_unknown_tickers", tickers=unknown)
+    return query_report_dates(query, filings, months)
+
+
+def _choose_lists(
+    scope: Scope, search: Callable[[tuple[str, ...] | None], list[SearchHits]]
+) -> tuple[list[SearchHits], str]:
+    """The ranked lists to fuse, and a label for how they were chosen.
+    search(report_dates) runs every retriever, limited to those filings, or
+    unfiltered for None. A scoped query uses the filtered lists only; when
+    all of them come back empty (the chunk files and the Chroma index out
+    of step, say) it falls back to unfiltered rather than return nothing."""
+    if not scope.report_dates:
+        return search(None), scope.reason
+    filtered = search(scope.report_dates)
+    if any(filtered):
+        return filtered, "dates"
+    return search(None), "filtered_empty"
+
+
+def _scoped_pool(  # pragma: no cover -- runs the live retrievers
+    query: str, ticker: str | None, n: int
+) -> tuple[list[tuple[str, str, dict, float]], dict]:
+    """The fused candidate pool, and a JSON-ready record of its scoping."""
+    scope = _query_scope(query, ticker)
+    lists, label = _choose_lists(
+        scope, lambda dates: [bm25_search(query, n, ticker, dates), vector_search(query, n, ticker, dates)]
+    )
+    record = {"label": label, "report_dates": list(scope.report_dates), "invalid_dates": list(scope.invalid_dates)}
+    return reciprocal_rank_fusion(lists), record
+
+
+# ---------------------------------------------------------------------------
 # Fusion
 # ---------------------------------------------------------------------------
 def reciprocal_rank_fusion(
-    ranked_lists: list[list[tuple[str, str, dict]]], k: int = RRF_K
+    ranked_lists: list[SearchHits], k: int = RRF_K
 ) -> list[tuple[str, str, dict, float]]:
     """
     Combine multiple ranked result lists into one, scoring each document
@@ -206,38 +288,63 @@ def reciprocal_rank_fusion(
 # Reranking
 # ---------------------------------------------------------------------------
 def _combine_fused_and_rerank(
-    candidates: list[tuple[str, str, dict, float]], cross_encoder_scores: list[float], top_n: int
-) -> list[dict]:
-    """Pure ranking-math half of rerank() — separated out so it's unit-
-    testable with fake scores, without needing the live cross-encoder.
+    candidates: list[tuple[str, str, dict, float]],
+    cross_encoder_scores: list[float],
+    top_n: int,
+    fused_floor: int | None = None,
+) -> dict:
+    """Pure ranking-math half of reranking, testable with fake scores.
 
-    Combines the original fused (BM25+vector) ranking with the cross-
-    encoder's ranking by taking, per candidate, the BETTER of the two
-    RRF contributions — not letting the cross-encoder's ranking fully
-    replace the fused one, and not simply summing the two either (a sum
-    still buries a chunk that's excellent by only one signal, since
-    several merely-decent-by-both competitors can outscore it). See
-    docs/decisions/2026-08-13-hybrid-retrieval-and-reranker-fix.md for
-    the regression this fixes and why summing didn't work.
+    A chunk scores the RRF term of its cross-encoder rank. A chunk in the
+    fused pool's top `fused_floor` (default _FUSED_FLOOR_RANKS, read at
+    call time) scores the better of that and its fused rank's term, plus a
+    1e-9 share of the cross-encoder term: a tie between two such chunks
+    goes to the cross-encoder, and one with a chunk outside the floor goes
+    to the floor chunk.
+    The floor keeps a chunk both base retrievers put at the top (such as a
+    long, many-topic passage the cross-encoder scores poorly) without
+    letting every fused rank compete. On 901 logged query parts, the
+    better-of-two for every rank pushed out many chunks the cross-encoder
+    ranked in its top 5, while no floor at all lost a few top fused
+    chunks; a floor of 3 kept the question coverage of the first.
+
+    Returns the top_n "results" (after the table rescue), the cross-
+    encoder's order "ce" and the pre-rescue order "combined" as ids, the
+    id the rescue swapped in ("rescued", or None) and the "fused_floor"
+    that ran.
     """
+    floor = _FUSED_FLOOR_RANKS if fused_floor is None else fused_floor
     fused_rank = {doc_id: i for i, (doc_id, _, _, _) in enumerate(candidates, start=1)}
-    rerank_rank = {
-        doc_id: i
-        for i, ((doc_id, _, _, _), _) in enumerate(
-            sorted(zip(candidates, cross_encoder_scores), key=lambda pair: pair[1], reverse=True), start=1
-        )
-    }
+    ce_order = [
+        c[0] for c, _ in sorted(zip(candidates, cross_encoder_scores), key=lambda pair: pair[1], reverse=True)
+    ]
+    rerank_rank = {doc_id: i for i, doc_id in enumerate(ce_order, start=1)}
 
     def combined_score(doc_id: str) -> float:
-        return max(1.0 / (RRF_K + fused_rank[doc_id]), 1.0 / (RRF_K + rerank_rank[doc_id]))
+        ce_term = 1.0 / (RRF_K + rerank_rank[doc_id])
+        if fused_rank[doc_id] > floor:
+            return ce_term
+        return max(1.0 / (RRF_K + fused_rank[doc_id]), ce_term) + 1e-9 * ce_term
 
     ranked = sorted(candidates, key=lambda c: combined_score(c[0]), reverse=True)
-    ranked = _rescue_demoted_table_chunk(candidates, fused_rank, ranked, top_n)
+    final, rescued = _rescue_demoted_table_chunk(candidates, fused_rank, ranked, top_n)
 
-    return [
-        {"text": text, "metadata": metadata, "combined_score": combined_score(doc_id)}
-        for doc_id, text, metadata, _fused_score in ranked[:top_n]
-    ]
+    return {
+        "results": [
+            {"text": text, "metadata": metadata, "combined_score": combined_score(doc_id)}
+            for doc_id, text, metadata, _fused_score in final[:top_n]
+        ],
+        "ce": ce_order,
+        "combined": [c[0] for c in ranked],
+        "rescued": rescued,
+        "fused_floor": floor,
+    }
+
+
+def _is_rescuable_table(text: str, metadata: Mapping) -> bool:
+    """A financial data table, not a glossary/definitions table (term ->
+    definition, no figures) that is flagged contains_table all the same."""
+    return bool(metadata.get("contains_table")) and text.count("$") >= _MIN_DOLLAR_FIGURES_FOR_TABLE_RESCUE
 
 
 def _rescue_demoted_table_chunk(
@@ -245,64 +352,105 @@ def _rescue_demoted_table_chunk(
     fused_rank: dict[str, int],
     ranked: list[tuple[str, str, dict, float]],
     top_n: int,
-) -> list[tuple[str, str, dict, float]]:
-    """If the reranker's top_n contains no table chunk at all, but a table
-    chunk already ranked in the top half of the fused BM25+vector pool
-    (i.e. both base retrievers considered it relevant), swap it in for the
-    weakest surviving slot.
+) -> tuple[list[tuple[str, str, dict, float]], str | None]:
+    """If the reranker's top_n contains no table chunk at all, but a
+    rescuable table chunk already ranked in the top half of the fused
+    BM25+vector pool (i.e. both base retrievers considered it relevant),
+    swap it in for the weakest surviving slot. Returns the ranking and the
+    swapped-in id, or None when nothing was swapped.
 
     Deliberately gated on the base retrievers' OWN pre-rerank confidence,
     not on guessing the question is fact/metric-seeking -- self-limiting
     by construction: a table with no lexical/semantic match to a prose
     question won't rank in the top half of the fused pool to begin with,
-    so the rescue never fires for it.
-
-    `contains_table` alone isn't enough of a filter: a glossary/
-    definitions table (term -> definition, no real figures) is also
-    flagged contains_table=True, so a minimum dollar-figure count
-    (_MIN_DOLLAR_FIGURES_FOR_TABLE_RESCUE) distinguishes a genuine
-    financial data table from one merely shaped like a table. See
-    docs/decisions/2026-08-19-table-chunk-rescue-in-reranking.md."""
+    so the rescue never fires for it. `contains_table` alone isn't enough:
+    a glossary table is flagged too and can outrank a data table in the
+    fused pool, so only _is_rescuable_table's figure count tells them
+    apart."""
     if any(metadata.get("contains_table") for _, _, metadata, _ in ranked[:top_n]):
-        return ranked  # a table chunk already survived on its own merits
+        return ranked, None  # a table chunk already survived on its own merits
 
     threshold = len(candidates) // 2
     top_n_ids = {doc_id for doc_id, _, _, _ in ranked[:top_n]}
     table_candidates = [
         c
         for c in candidates
-        if c[2].get("contains_table")
-        and fused_rank[c[0]] <= threshold
-        and c[0] not in top_n_ids
-        and c[1].count("$") >= _MIN_DOLLAR_FIGURES_FOR_TABLE_RESCUE
+        if _is_rescuable_table(c[1], c[2]) and fused_rank[c[0]] <= threshold and c[0] not in top_n_ids
     ]
     if not table_candidates:
-        return ranked
+        return ranked, None
 
     best_table = min(table_candidates, key=lambda c: fused_rank[c[0]])
-    return ranked[: top_n - 1] + [best_table]
+    return ranked[: top_n - 1] + [best_table], best_table[0]
 
 
-def rerank(  # pragma: no cover -- scores with the real cross-encoder model, live-only
-    query: str, candidates: list[tuple[str, str, dict, float]], top_n: int
-) -> list[dict]:
-    """Score each (query, passage) pair jointly with a cross-encoder, then
-    combine with the fused ranking via _combine_fused_and_rerank() — see
-    that function's docstring for why a straight override or sum of the
-    two rankings both failed in testing."""
-    if not candidates:
-        return []
-
+def _window_scores(query: str, texts: list[str]) -> tuple[list[float], int]:  # pragma: no cover -- real cross-encoder
+    """Each text's best cross-encoder score over its windows, and the
+    number of windows scored, from one predict call over every window."""
     model = _get_rerank_model()
-    pairs = [(query, text) for _, text, _, _ in candidates]
-    scores = model.predict(pairs).tolist()
+    count_tokens = _token_counter(model)
+    pairs, owner = [], []
+    for i, text in enumerate(texts):
+        for window in split_windows(text, count_tokens):
+            pairs.append((query, window))
+            owner.append(i)
+    scores = model.predict(pairs).tolist() if pairs else []
+    return max_per_owner(owner, scores, len(texts)), len(pairs)
 
-    return _combine_fused_and_rerank(candidates, scores, top_n)
+
+def _search_record(
+    fused: list[tuple[str, str, dict, float]],
+    scores: list[float],
+    scope_record: dict,
+    top_k: int,
+    fused_floor: int | None = None,
+) -> dict:
+    """search_details' return value without "windows", from the fused
+    pool, its window scores and its scoping (see search_details)."""
+    return {
+        **_combine_fused_and_rerank(fused, scores, top_k, fused_floor),
+        "pool": [doc_id for doc_id, _, _, _ in fused],
+        "scores": scores,
+        "tables": {doc_id for doc_id, _, metadata, _ in fused if metadata.get("contains_table")},
+        "rescuable": {doc_id for doc_id, text, metadata, _ in fused if _is_rescuable_table(text, metadata)},
+        "scope": scope_record,
+    }
 
 
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
+def search_details(  # pragma: no cover -- orchestrates the live-only functions above
+    query: str,
+    ticker: str | None = None,
+    top_k: int = 5,
+    candidate_pool_size: int = CANDIDATE_POOL_SIZE,
+    fused_floor: int | None = None,
+) -> dict:
+    """One reranked search with everything that decided it, so a
+    measurement tool reads retrieval's own ranks instead of restating its
+    rules: the top_k "results" (what hybrid_search returns), the fused
+    "pool" ids with their window "scores" in pool order, the "ce",
+    "combined", "rescued" and "fused_floor" fields of
+    _combine_fused_and_rerank, the pool's "tables" and "rescuable" ids,
+    the period "scope" and the number of "windows" scored. fused_floor
+    None uses _FUSED_FLOOR_RANKS; a measurement tool passes another to
+    compare rules on one search. Logs one retrieval_search event."""
+    fused, scope_record = _scoped_pool(query, ticker, candidate_pool_size)
+    scores, windows = _window_scores(query, [text for _, text, _, _ in fused]) if fused else ([], 0)
+    record = {**_search_record(fused, scores, scope_record, top_k, fused_floor), "windows": windows}
+    log_event(
+        "retrieval_search",
+        ticker=ticker,
+        scope=scope_record,
+        pool_size=len(fused),
+        windows=windows,
+        fused_floor=record["fused_floor"],
+        rescued=record["rescued"] is not None,
+    )
+    return record
+
+
 def hybrid_search(  # pragma: no cover -- orchestrates the live-only functions above
     query: str,
     ticker: str | None = None,
@@ -310,15 +458,13 @@ def hybrid_search(  # pragma: no cover -- orchestrates the live-only functions a
     use_rerank: bool = True,
     candidate_pool_size: int = CANDIDATE_POOL_SIZE,
 ) -> list[dict]:
-    """Run BM25 + vector search, fuse with RRF, optionally rerank, and
-    return the top_k results as {"text", "metadata", ...score...} dicts."""
-    bm25_hits = bm25_search(query, candidate_pool_size, ticker=ticker)
-    vector_hits = vector_search(query, candidate_pool_size, ticker=ticker)
-    fused = reciprocal_rank_fusion([bm25_hits, vector_hits])
-
+    """Run the period-scoped BM25 + vector search, fuse with RRF,
+    optionally rerank, and return the top_k results as
+    {"text", "metadata", ...score...} dicts."""
     if use_rerank:
-        return rerank(query, fused, top_k)
+        return search_details(query, ticker, top_k, candidate_pool_size)["results"]
 
+    fused, _ = _scoped_pool(query, ticker, candidate_pool_size)
     return [
         {"text": text, "metadata": metadata, "fused_score": score}
         for _, text, metadata, score in fused[:top_k]

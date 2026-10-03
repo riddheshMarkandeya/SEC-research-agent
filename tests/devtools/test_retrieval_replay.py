@@ -22,8 +22,9 @@ def _gold(qid="q1", part="value", accession="A1", anchor="Revenue 35,013", own_p
             "anchor": anchor, "own_period": own_period, "note": "", **extra}
 
 
-def _chunk(accession, index, text, ticker="MSFT"):
-    return {"text": text, "metadata": {"accessionNumber": accession, "chunk_index": index, "ticker": ticker}}
+def _chunk(accession, index, text, ticker="MSFT", report_date="2026-03-31"):
+    return {"text": text, "metadata": {"accessionNumber": accession, "chunk_index": index, "ticker": ticker,
+                                       "reportDate": report_date}}
 
 
 # ---------------------------------------------------------------------------
@@ -92,14 +93,14 @@ def test_index_gold_lists_every_matching_chunk_with_its_period_tag_and_reports_u
         _chunk("A1", 35, "segment note Revenue 35,013"),
         _chunk("A1", 47, "MD&A table Revenue   35,013"),
         _chunk("A1", 48, "unrelated"),
-        _chunk("B1", 12, "prior period Revenue 35,013"),
+        _chunk("B1", 12, "prior period Revenue 35,013", report_date="2025-03-31"),
     ]
     index, unmatched = rr.index_gold(chunks, rows)
     assert index == {
         ("q1", "value"): [
-            {"chunk": "A1_35", "ticker": "MSFT", "own_period": True},
-            {"chunk": "A1_47", "ticker": "MSFT", "own_period": True},
-            {"chunk": "B1_12", "ticker": "MSFT", "own_period": False},
+            {"chunk": "A1_35", "ticker": "MSFT", "own_period": True, "report_date": "2026-03-31"},
+            {"chunk": "A1_47", "ticker": "MSFT", "own_period": True, "report_date": "2026-03-31"},
+            {"chunk": "B1_12", "ticker": "MSFT", "own_period": False, "report_date": "2025-03-31"},
         ]
     }
     assert unmatched == [rows[2]]
@@ -127,6 +128,7 @@ def test_gold_chunk_record_takes_pool_position_and_final_rank_from_the_real_path
         "pool": ["A1_1", "A1_35"],
         "final": ["A1_35"],
         "ce": ["A1_35", "A1_1"],
+        "scope_dates": None,
     }
     record = rr.gold_chunk_record("A1_35", lists)
     assert record == {
@@ -136,20 +138,35 @@ def test_gold_chunk_record_takes_pool_position_and_final_rank_from_the_real_path
         "pool_pos": 2,
         "final_rank": 1,
         "ce_rank": 1,
+        "scope_excluded": False,
     }
     missing = rr.gold_chunk_record("A1_9", lists)
     assert (missing["bm25"], missing["vector"], missing["pool_pos"], missing["final_rank"], missing["ce_rank"]) == (
         None, None, None, None, None)
 
 
-def _rec(chunk="c", final=None, pool=None, **ranks):
+@pytest.mark.parametrize(
+    "scope_dates, report_date, expected",
+    [
+        (["2026-03-31"], "2025-03-31", True),  # the period scope left its filing out of the search
+        (["2026-03-31"], "2026-03-31", False),
+        (None, "2025-03-31", False),  # an unscoped search excludes no filing
+        (["2026-03-31"], None, False),  # its filing's date unknown: not judged excluded
+    ],
+)
+def test_gold_chunk_record_marks_a_chunk_outside_the_period_scope(scope_dates, report_date, expected):
+    lists = {"bm25": [], "vector": [], "pool": [], "final": [], "ce": [], "scope_dates": scope_dates}
+    assert rr.gold_chunk_record("A1_35", lists, report_date)["scope_excluded"] is expected
+
+
+def _rec(chunk="c", final=None, pool=None, scope_excluded=False, **ranks):
     """`ranks` sets bm25 and vector as (rank, own_filing_rank, other_filing_ahead), and ce.
     Every other chunk ahead is another ticker's."""
     def stats(v):
         return None if v is None else {"rank": v[0], "own_filing_rank": v[1], "other_filing_ahead": v[2],
                                        "other_ticker_ahead": v[0] - v[1] - v[2]}
     return {"chunk": chunk, "bm25": stats(ranks.get("bm25")), "vector": stats(ranks.get("vector")),
-            "pool_pos": pool, "final_rank": final, "ce_rank": ranks.get("ce")}
+            "pool_pos": pool, "final_rank": final, "ce_rank": ranks.get("ce"), "scope_excluded": scope_excluded}
 
 
 def test_best_gold_prefers_final_rank_then_pool_position_then_diagnostic_rank():
@@ -163,6 +180,15 @@ def test_best_gold_prefers_final_rank_then_pool_position_then_diagnostic_rank():
     f = _rec("f", vector=(40, 12, 3))
     g = _rec("g")
     assert rr.best_gold([g, e, f])["chunk"] == "f"
+
+
+def test_best_gold_prefers_a_chunk_the_period_scope_searched_when_neither_reached_the_pool():
+    excluded = _rec("x", vector=(2, 1, 0), scope_excluded=True)
+    searched = _rec("s", vector=(80, 30, 5))
+    assert rr.best_gold([excluded, searched])["chunk"] == "s"
+    # pool position still comes first: an unscoped fallback pooled the excluded chunk
+    pooled = _rec("p", pool=8, scope_excluded=True)
+    assert rr.best_gold([searched, pooled])["chunk"] == "p"
 
 
 @pytest.mark.parametrize(
@@ -179,6 +205,10 @@ def test_best_gold_prefers_final_rank_then_pool_position_then_diagnostic_rank():
         (_rec(bm25=(50, 2, 20), vector=(30, 14, 1)), "dilution"),
         # inside the vector top 25 by exact rank, yet the approximate index left it out
         (_rec(vector=(12, 4, 8)), "index_recall"),
+        # the period scope left its filing out, whatever its unscoped ranks say
+        (_rec(vector=(12, 4, 8), scope_excluded=True), "scope_excluded"),
+        # in the pool all the same (an unscoped fallback): judged at rerank
+        (_rec(pool=8, scope_excluded=True), "rerank"),
         # unfiltered query: one same-ticker chunk from another filing ahead, 56 other tickers' chunks
         (_rec(vector=(60, 3, 1)), "other_ticker"),
     ],
@@ -187,16 +217,26 @@ def test_classify(record, expected):
     assert rr.classify(record) == expected
 
 
-def _pool_lists(n=10, final=("p1", "p2", "p3", "p4", "p5"), tables=(), rescuable=()):
-    return {"pool": [f"p{i}" for i in range(1, n + 1)], "final": list(final),
-            "tables": set(tables), "rescuable": set(rescuable)}
+def _pool_lists(n=10, final=("p1", "p2", "p3", "p4", "p5"), tables=(), rescuable=(), combined=None):
+    """`combined` is retrieval's order before the table rescue; by default
+    the rescue didn't fire, so its top 5 is `final`."""
+    pool = [f"p{i}" for i in range(1, n + 1)]
+    if combined is None:
+        combined = list(final) + [p for p in pool if p not in final]
+    return {"pool": pool, "final": list(final), "tables": set(tables), "rescuable": set(rescuable),
+            "combined": list(combined), "scope_dates": None}
 
 
 @pytest.mark.parametrize(
     "record, lists, expected",
     [
-        # the cross-encoder put it in its top 5; the max-of-ranks combination dropped it
+        # the cross-encoder put it in its top 5; the fused floor let other chunks outrank it
         (_rec("p8", pool=8, ce=3), _pool_lists(), "fusion"),
+        # it made the top 5 before the table rescue, which swapped it out for a table
+        (_rec("p5", pool=5, ce=3),
+         _pool_lists(final=("p1", "p2", "p3", "p4", "p9"), tables={"p9"}, rescuable={"p9"},
+                     combined=["p1", "p2", "p3", "p4", "p5", "p6", "p7", "p8", "p9", "p10"]),
+         "rescue"),
         # a qualifying table the cross-encoder ranks low, with no table in the top 5, blocked
         # from the rescue only by its fused rank past half the pool
         (_rec("p8", pool=8, ce=9), _pool_lists(tables={"p8"}, rescuable={"p8"}), "rescue_threshold"),
@@ -214,23 +254,36 @@ def test_rerank_cause(record, lists, expected):
 
 
 def test_evaluate_query_takes_the_rerank_cause_from_the_gold_chunk_the_cross_encoder_ranked_best():
-    gold_index = {("q1", "value"): [{"chunk": "p3", "ticker": "MSFT", "own_period": True},
-                                    {"chunk": "p12", "ticker": "MSFT", "own_period": True}]}
+    gold_index = {("q1", "value"): [{"chunk": "p3", "ticker": "MSFT", "own_period": True, "report_date": None},
+                                    {"chunk": "p12", "ticker": "MSFT", "own_period": True, "report_date": None}]}
     pool = [f"p{i}" for i in range(1, 21)]
     lists = {"bm25": [], "vector": [], "pool": pool, "final": ["p1", "p2", "p4", "p5", "p6"],
              "ce": ["p7", "p12", *[p for p in pool if p not in ("p7", "p12", "p3")], "p3"],
-             "tables": set(), "rescuable": set()}
+             "tables": set(), "rescuable": set(), "combined": ["p1", "p2", "p4", "p5", "p6"], "scope_dates": None}
     result = rr.evaluate_query({"query": "q", "ticker": "MSFT", "qids": ["q1"]}, lists, gold_index)
     part = result["parts"][0]
     assert (part["class"], part["best"]["chunk"], part["rerank_cause"]) == ("rerank", "p3", "fusion")
 
 
+def test_a_part_whose_gold_chunk_the_table_rescue_swapped_out_is_lost_to_the_rescue():
+    # p12 is the cross-encoder's best gold chunk, but p3 sat in the top 5 before the rescue
+    gold_index = {("q1", "value"): [{"chunk": "p3", "ticker": "MSFT", "own_period": True, "report_date": None},
+                                    {"chunk": "p12", "ticker": "MSFT", "own_period": True, "report_date": None}]}
+    pool = [f"p{i}" for i in range(1, 21)]
+    lists = {"bm25": [], "vector": [], "pool": pool, "final": ["p1", "p2", "p4", "p5", "p9"],
+             "ce": ["p12", *[p for p in pool if p not in ("p12", "p3")], "p3"],
+             "tables": {"p9"}, "rescuable": {"p9"}, "combined": ["p1", "p2", "p4", "p5", "p3", "p9"],
+             "scope_dates": None}
+    part = rr.evaluate_query({"query": "q", "ticker": "MSFT", "qids": ["q1"]}, lists, gold_index)["parts"][0]
+    assert part["rerank_cause"] == "rescue"
+
+
 def test_evaluate_query_scores_each_part_of_each_qid_on_its_best_gold_chunk():
     gold_index = {
-        ("q1", "PBP"): [{"chunk": "A1_35", "ticker": "MSFT", "own_period": True},
-                        {"chunk": "A1_47", "ticker": "MSFT", "own_period": True}],
-        ("q1", "IC"): [{"chunk": "B1_3", "ticker": "MSFT", "own_period": False}],
-        ("q2", "value"): [{"chunk": "A1_1", "ticker": "MSFT", "own_period": True}],
+        ("q1", "PBP"): [{"chunk": "A1_35", "ticker": "MSFT", "own_period": True, "report_date": None},
+                        {"chunk": "A1_47", "ticker": "MSFT", "own_period": True, "report_date": None}],
+        ("q1", "IC"): [{"chunk": "B1_3", "ticker": "MSFT", "own_period": False, "report_date": None}],
+        ("q2", "value"): [{"chunk": "A1_1", "ticker": "MSFT", "own_period": True, "report_date": None}],
     }
     lists = {
         "bm25": _order("A1_47:A1:MSFT", "A1_35:A1:MSFT"),
@@ -240,6 +293,7 @@ def test_evaluate_query_scores_each_part_of_each_qid_on_its_best_gold_chunk():
         "ce": ["A1_35", "A1_47"],
         "tables": set(),
         "rescuable": set(),
+        "scope_dates": None,
     }
     result = rr.evaluate_query({"query": "q", "ticker": "MSFT", "qids": ["q1"]}, lists, gold_index)
     assert [(p["qid"], p["part"], p["hit"], p["class"], p["own_period"]) for p in result["parts"]] == [
@@ -255,11 +309,11 @@ def test_evaluate_query_scores_each_part_of_each_qid_on_its_best_gold_chunk():
 
 def test_evaluate_query_skips_parts_whose_gold_the_ticker_filter_excludes():
     gold_index = {
-        ("q1", "AAPL"): [{"chunk": "X1_1", "ticker": "AAPL", "own_period": True}],
-        ("q1", "MSFT"): [{"chunk": "A1_1", "ticker": "MSFT", "own_period": True}],
+        ("q1", "AAPL"): [{"chunk": "X1_1", "ticker": "AAPL", "own_period": True, "report_date": None}],
+        ("q1", "MSFT"): [{"chunk": "A1_1", "ticker": "MSFT", "own_period": True, "report_date": None}],
     }
     lists = {"bm25": _order("A1_1:A1:MSFT"), "vector": _order("A1_1:A1:MSFT"), "pool": ["A1_1"], "final": ["A1_1"],
-             "ce": ["A1_1"], "tables": set(), "rescuable": set()}
+             "ce": ["A1_1"], "tables": set(), "rescuable": set(), "scope_dates": None}
     filtered = rr.evaluate_query({"query": "q", "ticker": "MSFT", "qids": ["q1"]}, lists, gold_index)
     assert [p["part"] for p in filtered["parts"]] == ["MSFT"]
     assert filtered["out_of_scope"] == [["q1", "AAPL"]]
@@ -435,14 +489,17 @@ def cli(tmp_path, monkeypatch):
 
     def retrieve(query, ticker):
         order = [("A1_35", "A1", "MSFT"), ("A1_36", "A1", "MSFT")]
-        return {"bm25": order, "vector": order, "pool": ["A1_35", "A1_36"], "final": final["ids"],
-                "ce": ["A1_36", "A1_35"], "tables": set(), "rescuable": set()}
+        pool = ["A1_35", "A1_36"]
+        return {"bm25": order, "vector": order, "pool": pool, "final": final["ids"],
+                "ce": ["A1_36", "A1_35"], "tables": set(), "rescuable": set(),
+                "combined": final["ids"] + [p for p in pool if p not in final["ids"]], "scope_dates": None}
 
     monkeypatch.setattr(rr, "_load_corpus", lambda: corpus)
-    monkeypatch.setattr(rr, "_live_retriever", lambda c: retrieve)
+    floors = []
+    monkeypatch.setattr(rr, "_live_retriever", lambda c, fused_floor: floors.append(fused_floor) or retrieve)
     monkeypatch.setattr(rr.eval_harness, "_git_state", lambda: {"git_sha": "abc", "git_dirty": False, "dirty_files": []})
     args = ["--file", str(traces), "--questions", str(questions), "--gold", str(gold)]
-    return {"tmp": tmp_path, "args": args, "final": final, "gold": gold}
+    return {"tmp": tmp_path, "args": args, "final": final, "gold": gold, "floors": floors, "traces": traces}
 
 
 def test_main_writes_a_base_report_and_compare_exits_1_on_a_lost_hit(cli, capsys):
@@ -457,6 +514,30 @@ def test_main_writes_a_base_report_and_compare_exits_1_on_a_lost_hit(cli, capsys
     cli["final"]["ids"] = ["A1_36"]
     assert rr.main([*cli["args"], "--out", str(cli["tmp"] / "new.json"), "--compare", str(base)]) == 1
     assert "LOST q1/value" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("fail", [False, True])
+def test_main_drops_retrievals_trace_events_during_the_run_and_restores_the_writer(cli, monkeypatch, fail):
+    written, calls = [], []
+    monkeypatch.setattr(rr.tracing, "_write_local_log", written.append)
+    recorder = rr.tracing._write_local_log
+    stub = rr._live_retriever([], None)  # the cli fixture's stub
+
+    def retrieve(query, ticker):
+        calls.append(query)
+        rr.retrieval.log_event("retrieval_search")  # what a live search logs
+        if fail:
+            raise RuntimeError("retriever failed mid-run")
+        return stub(query, ticker)
+
+    monkeypatch.setattr(rr, "_live_retriever", lambda c, fused_floor: retrieve)
+    if fail:
+        with pytest.raises(RuntimeError):
+            rr.main([*cli["args"], "--out", str(cli["tmp"] / "r.json")])
+    else:
+        assert rr.main([*cli["args"], "--out", str(cli["tmp"] / "r.json")]) == 0
+    assert calls and written == []
+    assert rr.tracing._write_local_log is recorder
 
 
 def test_main_refuses_a_base_measured_against_other_gold_and_unmatched_gold_rows(cli, capsys):
@@ -510,3 +591,47 @@ def test_main_compare_header_describes_the_base_query_set(cli):
     header = json.loads(new.read_text(encoding="utf-8"))["header"]
     assert (header["trace_file"], header["qids"], header["gold_questions_without_queries"]) == (
         base_header["trace_file"], ["q1"], base_header["gold_questions_without_queries"])
+
+
+# ---------------------------------------------------------------------------
+# --since and --fused-floor
+# ---------------------------------------------------------------------------
+def test_records_since_keeps_records_at_or_after_the_prefix():
+    records = [{"timestamp": "2026-10-01T19:20:00"}, {"timestamp": "2026-10-02T08:00:00"}, {"timestamp": "2026-10-03"}]
+    assert rr.records_since(records, "2026-10-02") == records[1:]
+    assert rr.records_since(records, None) == records
+
+
+def test_since_keeps_a_search_whose_run_started_before_the_window(cli, capsys):
+    # The run's agent span is logged before the window starts; its search
+    # inside the window must still be joined to its question.
+    cli["traces"].write_text("\n".join(json.dumps(r) for r in [
+        {"timestamp": "2026-09-19T23:59:00", "run_id": "r1", "as_type": "agent", "name": "run_agent",
+         "input": {"question": "rev?"}},
+        _search("r1", "msft revenue"),
+        _search("r0", "old query", timestamp="2026-09-01T00:00:00"),
+    ]) + "\n", encoding="utf-8")
+    out = cli["tmp"] / "since.json"
+    assert rr.main([*cli["args"], "--out", str(out), "--since", "2026-09-20"]) == 0
+    report = json.loads(out.read_text(encoding="utf-8"))
+    assert report["queries"] == [{"query": "msft revenue", "ticker": "MSFT", "qids": ["q1"]}]
+    assert report["header"]["since"] == "2026-09-20"
+
+
+def test_main_rejects_compare_with_since(cli):
+    with pytest.raises(SystemExit):
+        rr.main([*cli["args"], "--compare", "x.json", "--since", "2026-09-20"])
+
+
+def test_fused_floor_is_passed_to_the_retriever_and_recorded(cli):
+    out = cli["tmp"] / "f0.json"
+    assert rr.main([*cli["args"], "--out", str(out), "--fused-floor", "0"]) == 0
+    assert cli["floors"] == [0]
+    assert json.loads(out.read_text(encoding="utf-8"))["header"]["fused_floor"] == 0
+
+
+def test_fused_floor_defaults_to_retrievals_own(cli):
+    out = cli["tmp"] / "fd.json"
+    assert rr.main([*cli["args"], "--out", str(out)]) == 0
+    assert cli["floors"] == [None]
+    assert json.loads(out.read_text(encoding="utf-8"))["header"]["fused_floor"] == rr.retrieval._FUSED_FLOOR_RANKS
