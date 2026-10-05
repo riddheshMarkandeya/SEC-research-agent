@@ -62,6 +62,7 @@ prepend them (verbatim, still reverse-chronological) to the top of
 
 ## Recent
 
+- 2026-10-05 [plan] Package 3, uniform submit loop (map order 2 → 5 → 3 → 4 → 6; review S2 step 2): one rule for every extra turn (budget left + a shared reserve of 2 forced turns, worst case MAX+2 unchanged), no one-retry cap, and "forcing failed, the run ends"; 4 of 17 retried runs since package 1 were refused after the retry; base panel, candidate panel, full run → `docs/plans/2026-10-05-package-3-uniform-submit-loop.md`
 - 2026-10-02 [decision] Fused-floor rerank (F=3; revisits the 08-13 MAX-of-RRF rule), windowed MaxP cross-encoder scoring with table-header carry, and strict period scoping; offline 526/901, 37/40 (was 329, 31/40); live eval pending → `docs/decisions/2026-10-02-fused-floor-rerank-and-period-scoping.md`
 - 2026-10-02 [review] Package 5 retrieval, 3 rounds: 19 fixed (unknown-ticker KeyError, scope-excluded miss class, best_gold ordering, pure search_details seam), 4 deferred (header budget, date-only scoping, TypedDict, tracing helper) → `docs/reviews/2026-10-02-package-5-retrieval.md`
 - 2026-10-02 [plan] Package 5 (map order 2 → 5 → 3 → 4 → 6): strict period scoping + windowed MaxP rerank with header carry + fused-floor rule (F=3), ported from the harness prototypes; offline acceptance must reproduce 526/901, 37/40 (F=0: 599, 34/40); live baseline is the 20261001T193130Z run replay-adjusted under today's gate → `docs/plans/2026-10-02-package-5-retrieval.md`
