@@ -16,8 +16,8 @@ so re-read the ones that apply.**
 - `live-eval-verification.md`: which files need a live eval spot-check after any change, the
   Gemini free-tier quota note, and how to record regressions.
 - `plan-review-blast-radius.md`: this project's high-blast-radius core. Every entry comes from a
-  real incident. A plan touching it gets deeper plan-review scrutiny, a diff touching it gets
-  `arch-reviewer` on Opus, and its `paths:` frontmatter doubles as the 90% critical-core
+  real incident. A plan touching it gets deeper plan-review scrutiny, a small diff touching it
+  is reviewed at least at Standard, and its `paths:` frontmatter doubles as the 90% critical-core
   coverage list (mirrored in `githooks/pre-push`).
 
 These are living lists. When a plan or code review finds a real issue that none of them covers,
@@ -92,9 +92,6 @@ This project's version of the records from `documentation-backlog-hygiene`:
   file that links back under `Related`.
 - **`docs/plans/YYYY-MM-DD-<slug>.md`**: saved plans, for Substantial or multi-session work only.
   The plan review and review log live inside the plan.
-- **Exemption from the decision, plan and review rules here**: the prompt-audit roadmap's work packages
-  (`docs/plans/2026-09-24-prompt-audit-roadmap.md`, WP5–WP8) keep the per-WP plan, review and
-  decision files that roadmap specifies, because later WPs read their eval baselines from them.
 - **`docs/reviews/YYYY-MM-DD-<slug>.md`**: only for Substantial work, or when a finding is
   deferred or disputed.
 - Start each of these three from its directory's `TEMPLATE.md`.
