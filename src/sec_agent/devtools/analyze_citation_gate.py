@@ -35,12 +35,13 @@ false positive is different in kind: the model answered in plain text
 with the right number but never submitted it, so no citation check
 judged that text -- read it as a submission failure, not a misjudgement.
 
-Caveat that matters for reading these numbers: the one-shot corrective
-retry is on for every Gemini run measured here -- so a report's numbers reflect the gate's
-behavior AFTER that self-correction, not on the model's first-pass
-answer. The first-pass picture (pre-retry warnings) is only in
-var/trace_logs/traces.jsonl's "citation_retry" event, keyed by run_id, which
-this script does not read.
+Caveat that matters for reading these numbers: the corrective citation
+retry is on for every Gemini run measured here, and a run can take
+several -- so a report's numbers reflect the gate's verdict on the
+model's last submission, not on its first-pass answer. The earlier
+attempts' warnings are only in var/trace_logs/traces.jsonl's
+"citation_retry" events (one per attempt, keyed by run_id), which this
+script does not read.
 
 Usage:
     python -m sec_agent.devtools.analyze_citation_gate eval/eval_results/20260910T120000Z.json

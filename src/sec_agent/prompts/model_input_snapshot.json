@@ -464,36 +464,6 @@
    "warnings": [],
    "withheld": null
   },
-  "loop_force_claimretry_refusal": {
-   "answer": "I can't confirm this answer against the sources I retrieved -- the following claim(s) don't hold up under citation verification:\n- claims 777.0 (million) but no claim in your submit_answer call covers it\n\nRather than give you a number I can't verify, I'm refusing this answer.",
-   "capture": [
-    {
-     "call": "start",
-     "question": "What were sales?",
-     "system_prompt": "<agent.system_prompt>",
-     "tool_schemas": "<agent.tool_schemas>"
-    },
-    {
-     "call": "send_followup",
-     "force_tool": "submit_answer",
-     "text": "Please provide your final answer now by calling submit_answer."
-    },
-    {
-     "call": "send_tool_results",
-     "force_tool": null,
-     "results": [
-      {
-       "content": "Your previous submit_answer call had at least one claim that doesn't hold up:\n- claims 777.0 (million) but no claim in your submit_answer call covers it\n\nYour previous answer_text was:\nSales were $777 million {x} [1].\n\nBefore answering again, check whether any of the search results ALREADY shown earlier in this conversation actually support each flagged claim -- the right source may already be there under a different citation number. If you find proper support, restate the claim with the correct citation. If, after checking, a value genuinely isn't supported by any result shown, say so plainly and refuse that specific claim instead of guessing -- an honest answer that the sources don't support it is a completely acceptable outcome here. Do not invent, estimate, or approximate a number to replace an unverified one.\n\nCall submit_answer again with the corrected answer_text and claims.",
-       "name": "submit_answer"
-      }
-     ]
-    }
-   ],
-   "warnings": [
-    "claims 777.0 (million) but no claim in your submit_answer call covers it"
-   ],
-   "withheld": "Sales were $777 million {x} [1]."
-  },
   "loop_mixed_turn": {
    "answer": "No data was found.",
    "capture": [
@@ -538,6 +508,66 @@
        "content": "No more tool calls are available for this question -- nothing else will be dispatched, so this request was not run. Call submit_answer now using only what you've already retrieved above.\n\nBefore you do, check rule 6: did you actually get data for every company, period, or quantity this question asks about? If something is missing or came back unavailable, do not present a partial result as if it fully answers the question -- name what's missing per rule 7, or refuse per rule 2 if the missing piece could change the answer (e.g. you can't rank or compare without it). An honest refusal, or an answer that explicitly says what you could and couldn't verify, is a completely acceptable outcome here -- do not guess, estimate, or invent a value for anything you didn't actually retrieve.",
        "name": "calculate"
       },
+      {
+       "content": "Your previous submit_answer call had at least one claim that doesn't hold up:\n- claims 777.0 (million) but no claim in your submit_answer call covers it\n\nYour previous answer_text was:\nSales were $777 million {x} [1].\n\nBefore answering again, check whether any of the search results ALREADY shown earlier in this conversation actually support each flagged claim -- the right source may already be there under a different citation number. If you find proper support, restate the claim with the correct citation. If, after checking, a value genuinely isn't supported by any result shown, say so plainly and refuse that specific claim instead of guessing -- an honest answer that the sources don't support it is a completely acceptable outcome here. Do not invent, estimate, or approximate a number to replace an unverified one.\n\nCall submit_answer again with the corrected answer_text and claims.",
+       "name": "submit_answer"
+      }
+     ]
+    },
+    {
+     "call": "send_tool_results",
+     "force_tool": "submit_answer",
+     "results": [
+      {
+       "content": "Your previous submit_answer call had at least one claim that doesn't hold up:\n- claims 777.0 (million) but no claim in your submit_answer call covers it\n\nYour previous answer_text was:\nSales were $777 million {x} [1].\n\nBefore answering again, check whether any of the search results ALREADY shown earlier in this conversation actually support each flagged claim -- the right source may already be there under a different citation number. If you find proper support, restate the claim with the correct citation. If, after checking, a value genuinely isn't supported by any result shown, say so plainly and refuse that specific claim instead of guessing -- an honest answer that the sources don't support it is a completely acceptable outcome here. Do not invent, estimate, or approximate a number to replace an unverified one.\n\nCall submit_answer again with the corrected answer_text and claims.",
+       "name": "submit_answer"
+      }
+     ]
+    }
+   ],
+   "warnings": [
+    "claims 777.0 (million) but no claim in your submit_answer call covers it"
+   ],
+   "withheld": "Sales were $777 million {x} [1]."
+  },
+  "loop_retries_until_turns_run_out": {
+   "answer": "I can't confirm this answer against the sources I retrieved -- the following claim(s) don't hold up under citation verification:\n- claims 777.0 (million) but no claim in your submit_answer call covers it\n\nRather than give you a number I can't verify, I'm refusing this answer.",
+   "capture": [
+    {
+     "call": "start",
+     "question": "What were sales?",
+     "system_prompt": "<agent.system_prompt>",
+     "tool_schemas": "<agent.tool_schemas>"
+    },
+    {
+     "call": "send_followup",
+     "force_tool": "submit_answer",
+     "text": "Please provide your final answer now by calling submit_answer."
+    },
+    {
+     "call": "send_tool_results",
+     "force_tool": null,
+     "results": [
+      {
+       "content": "Your previous submit_answer call had at least one claim that doesn't hold up:\n- claims 777.0 (million) but no claim in your submit_answer call covers it\n\nYour previous answer_text was:\nSales were $777 million {x} [1].\n\nBefore answering again, check whether any of the search results ALREADY shown earlier in this conversation actually support each flagged claim -- the right source may already be there under a different citation number. If you find proper support, restate the claim with the correct citation. If, after checking, a value genuinely isn't supported by any result shown, say so plainly and refuse that specific claim instead of guessing -- an honest answer that the sources don't support it is a completely acceptable outcome here. Do not invent, estimate, or approximate a number to replace an unverified one.\n\nCall submit_answer again with the corrected answer_text and claims.",
+       "name": "submit_answer"
+      }
+     ]
+    },
+    {
+     "call": "send_tool_results",
+     "force_tool": "submit_answer",
+     "results": [
+      {
+       "content": "Your previous submit_answer call had at least one claim that doesn't hold up:\n- claims 777.0 (million) but no claim in your submit_answer call covers it\n\nYour previous answer_text was:\nSales were $777 million {x} [1].\n\nBefore answering again, check whether any of the search results ALREADY shown earlier in this conversation actually support each flagged claim -- the right source may already be there under a different citation number. If you find proper support, restate the claim with the correct citation. If, after checking, a value genuinely isn't supported by any result shown, say so plainly and refuse that specific claim instead of guessing -- an honest answer that the sources don't support it is a completely acceptable outcome here. Do not invent, estimate, or approximate a number to replace an unverified one.\n\nCall submit_answer again with the corrected answer_text and claims.",
+       "name": "submit_answer"
+      }
+     ]
+    },
+    {
+     "call": "send_tool_results",
+     "force_tool": "submit_answer",
+     "results": [
       {
        "content": "Your previous submit_answer call had at least one claim that doesn't hold up:\n- claims 777.0 (million) but no claim in your submit_answer call covers it\n\nYour previous answer_text was:\nSales were $777 million {x} [1].\n\nBefore answering again, check whether any of the search results ALREADY shown earlier in this conversation actually support each flagged claim -- the right source may already be there under a different citation number. If you find proper support, restate the claim with the correct citation. If, after checking, a value genuinely isn't supported by any result shown, say so plainly and refuse that specific claim instead of guessing -- an honest answer that the sources don't support it is a completely acceptable outcome here. Do not invent, estimate, or approximate a number to replace an unverified one.\n\nCall submit_answer again with the corrected answer_text and claims.",
        "name": "submit_answer"
@@ -597,6 +627,26 @@
     {
      "call": "send_tool_results",
      "force_tool": null,
+     "results": [
+      {
+       "content": "Your previous submit_answer call had at least one claim that doesn't hold up:\n- your submit_answer call didn't match the required schema (answer_text/claims)\n\nYour previous answer_text was:\nhi\n\nBefore answering again, check whether any of the search results ALREADY shown earlier in this conversation actually support each flagged claim -- the right source may already be there under a different citation number. If you find proper support, restate the claim with the correct citation. If, after checking, a value genuinely isn't supported by any result shown, say so plainly and refuse that specific claim instead of guessing -- an honest answer that the sources don't support it is a completely acceptable outcome here. Do not invent, estimate, or approximate a number to replace an unverified one.\n\nCall submit_answer again with the corrected answer_text and claims.",
+       "name": "submit_answer"
+      }
+     ]
+    },
+    {
+     "call": "send_tool_results",
+     "force_tool": "submit_answer",
+     "results": [
+      {
+       "content": "Your previous submit_answer call had at least one claim that doesn't hold up:\n- your submit_answer call didn't match the required schema (answer_text/claims)\n\nYour previous answer_text was:\nhi\n\nBefore answering again, check whether any of the search results ALREADY shown earlier in this conversation actually support each flagged claim -- the right source may already be there under a different citation number. If you find proper support, restate the claim with the correct citation. If, after checking, a value genuinely isn't supported by any result shown, say so plainly and refuse that specific claim instead of guessing -- an honest answer that the sources don't support it is a completely acceptable outcome here. Do not invent, estimate, or approximate a number to replace an unverified one.\n\nCall submit_answer again with the corrected answer_text and claims.",
+       "name": "submit_answer"
+      }
+     ]
+    },
+    {
+     "call": "send_tool_results",
+     "force_tool": "submit_answer",
      "results": [
       {
        "content": "Your previous submit_answer call had at least one claim that doesn't hold up:\n- your submit_answer call didn't match the required schema (answer_text/claims)\n\nYour previous answer_text was:\nhi\n\nBefore answering again, check whether any of the search results ALREADY shown earlier in this conversation actually support each flagged claim -- the right source may already be there under a different citation number. If you find proper support, restate the claim with the correct citation. If, after checking, a value genuinely isn't supported by any result shown, say so plainly and refuse that specific claim instead of guessing -- an honest answer that the sources don't support it is a completely acceptable outcome here. Do not invent, estimate, or approximate a number to replace an unverified one.\n\nCall submit_answer again with the corrected answer_text and claims.",

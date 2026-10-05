@@ -1,6 +1,6 @@
 """
-Unit tests for agent.py: the loop's retry and forced-submit predicates,
-and run_agent()'s control flow. run_agent()'s model-facing behavior needs
+Unit tests for agent.py: the turn rule (_next_turn_mode) and
+run_agent()'s control flow. run_agent()'s model-facing behavior needs
 a live backend (manual runs and tests/manual/), but its loop control flow
 -- how it reacts to a scripted sequence of ModelTurns -- is deterministic,
 so these tests drive it through monkeypatched BACKENDS entries.
@@ -10,11 +10,15 @@ from contextlib import contextmanager
 
 import pytest
 
-from sec_agent.agent.agent import _should_force_final_submit, _should_retry_for_citations, run_agent
+from sec_agent.agent.agent import (
+    _next_turn_mode,
+    run_agent,
+)
 from sec_agent.agent.citations import CitationWarning
 from sec_agent.llm import llm_backends
 from sec_agent.llm.llm_backends import ModelTurn
 from sec_agent.prompts.agent_messages import (
+    BUDGET_EXHAUSTED_ANSWER,
     FINAL_TURN_SUBMIT_MESSAGE,
     NO_SUBMISSION_REFUSAL,
     NO_SUBMISSION_WARNING,
@@ -32,44 +36,23 @@ from tests.agent.helpers import capture_events
 
 
 # ---------------------------------------------------------------------------
-# _should_retry_for_citations / _format_claim_retry_message
-# (citation-verification retry loop, revisited Week 5j -> 2026-08-24 --
-# see PROJECT_CONTEXT.md and docs/plans/2026-08-24-citation-
-# retry-loop-design.md)
+# _next_turn_mode: the one rule for every extra turn -- free while dispatch
+# budget is left, forced while the reserve lasts, else none.
 # ---------------------------------------------------------------------------
-def test_should_retry_for_citations_true_with_warnings_and_not_yet_retried():
-    assert (
-        _should_retry_for_citations(["[1] claims 6478.0 (million) ..."], already_retried=False)
-        is True
-    )
+@pytest.mark.parametrize(
+    ("calls_made", "reserve_left", "expected"),
+    [
+        (5, 2, "free"),
+        (5, 0, "free"),
+        (6, 2, "forced"),
+        (7, 1, "forced"),
+        (8, 0, None),
+        (6, 0, None),
+    ],
+)
+def test_next_turn_mode(calls_made, reserve_left, expected):
+    assert _next_turn_mode(calls_made, reserve_left) == expected
 
-
-def test_should_retry_for_citations_false_once_already_retried():
-    assert (
-        _should_retry_for_citations(["[1] claims 6478.0 (million) ..."], already_retried=True)
-        is False
-    )
-
-
-def test_should_retry_for_citations_false_with_no_warnings_regardless_of_retried_flag():
-    assert _should_retry_for_citations([], already_retried=False) is False
-    assert _should_retry_for_citations([], already_retried=True) is False
-
-# ---------------------------------------------------------------------------
-# _should_force_final_submit (final-turn safety net for the
-# MAX_TOOL_ITERATIONS zero-slack bug -- BACKLOG.md, docs/decisions/
-# 2026-09-16-final-turn-safety-net.md)
-# ---------------------------------------------------------------------------
-def test_should_force_final_submit_true_when_budget_exhausted_and_not_yet_attempted():
-    assert _should_force_final_submit(already_attempted=False, calls_made=6) is True
-
-
-def test_should_force_final_submit_false_once_already_attempted():
-    assert _should_force_final_submit(already_attempted=True, calls_made=6) is False
-
-
-def test_should_force_final_submit_false_when_budget_not_yet_exhausted():
-    assert _should_force_final_submit(already_attempted=False, calls_made=5) is False
 
 def _repeating_backend(fake_start):
     """A BACKENDS entry whose every later turn (tool results, forced
@@ -178,7 +161,13 @@ def test_run_agent_forces_submit_on_a_text_answer_at_the_budget_edge(monkeypatch
     # Spending the reserve is logged like the pending-tool path's, with
     # no pending tools.
     [forced] = [fields for category, fields in log_calls if category == "final_turn_forced"]
-    assert forced == {"backend": "gemini", "calls_made": 1, "pending_tools": []}
+    assert forced == {
+        "backend": "gemini",
+        "calls_made": 1,
+        "pending_tools": [],
+        "reserve_left": 1,
+        "trigger": "text",
+    }
 
 
 def test_run_agent_refuses_a_text_answer_once_the_final_turn_is_spent(monkeypatch):
@@ -310,16 +299,22 @@ def test_run_agent_final_turn_safety_net_rescues_a_clean_refusal(monkeypatch):
     assert withheld_answer is None
     # Local-only debug event: the safety net engaging is now directly
     # queryable instead of only inferable from counting trace spans.
-    assert ("final_turn_forced", {"backend": "gemini", "calls_made": 2, "pending_tools": ["search_filings"]}) in (
-        log_calls
-    )
+    assert (
+        "final_turn_forced",
+        {
+            "backend": "gemini",
+            "calls_made": 2,
+            "pending_tools": ["search_filings"],
+            "reserve_left": 1,
+            "trigger": "pending_tools",
+        },
+    ) in log_calls
 
 
-def test_run_agent_final_turn_safety_net_fires_at_most_once(monkeypatch):
-    # An uncooperative model (Gemini ignoring the nudge) keeps requesting
-    # tool calls even
-    # on the forced final turn -- the safety net must not fire a second
-    # time; the loop falls through to the unmodified generic timeout.
+def test_run_agent_tool_calls_after_the_forced_final_turn_end_the_run(monkeypatch):
+    # An uncooperative model keeps requesting tool calls even on the
+    # forced final turn: forcing failed, so the run ends on the generic
+    # budget message instead of spending the second reserve turn.
     monkeypatch.setattr("sec_agent.agent.agent.MAX_TOOL_ITERATIONS", 2)
 
     keeps_calling_tools = ModelTurn(tool_calls=[{"name": "search_filings", "args": {}}], text=None)
@@ -557,10 +552,9 @@ def test_run_agent_submit_answer_retry_exhausting_budget_reverifies_against_curr
     first_submit = _submit_turn(answer_text="The value was 100.")
     retry_makes_new_search = ModelTurn(tool_calls=[{"name": "search_filings", "args": {"query": "more"}}], text=None)
     another_search_turn = ModelTurn(tool_calls=[{"name": "search_filings", "args": {"query": "even more"}}], text=None)
-    # The model ignores the forced final-turn nudge too (realistic mock
-    # scenario -- Gemini's real hard constraint isn't exercised by this
-    # fake), so the loop still falls through to the unmodified post-loop
-    # fallback this test actually verifies.
+    # The model ignores the forced final-turn nudge too (Gemini's real
+    # hard constraint isn't exercised by this fake), so the run ends by
+    # re-gating the cached submission, which this test verifies.
     ignores_forced_nudge = ModelTurn(tool_calls=[{"name": "search_filings", "args": {"query": "still"}}], text=None)
 
     def fake_start(question, system_prompt, tool_schemas):
@@ -606,8 +600,8 @@ def test_run_agent_submit_answer_retry_exhausting_budget_reverifies_against_curr
 
 def test_run_agent_invalid_submit_then_exhausted_budget_refuses_instead_of_crashing(monkeypatch):
     # A schema-invalid submit triggers the corrective retry, which caches
-    # those invalid args; if the budget then runs out, the post-loop
-    # fallback must re-gate them through the same boundary check, not
+    # those invalid args; if the run then ends without a submit, the
+    # cached re-gate must put them back through the same boundary check, not
     # index their missing keys.
     monkeypatch.setattr("sec_agent.agent.agent.MAX_TOOL_ITERATIONS", 3)
     invalid_submit = ModelTurn(tool_calls=[{"name": "submit_answer", "args": {"claims": "not-a-list"}}], text=None)
@@ -632,8 +626,8 @@ def test_run_agent_invalid_submit_then_exhausted_budget_refuses_instead_of_crash
 
 
 # ---------------------------------------------------------------------------
-# Citation-retry slot: the one retry runs whether or not dispatch budget is
-# left. Past the budget it's forced to submit_answer, since no search could run.
+# Citation-retry slot: a citation retry runs whether or not dispatch budget
+# is left. Past the budget it's forced to submit_answer, since no search could run.
 # ---------------------------------------------------------------------------
 _SEARCH_TURN = ModelTurn(tool_calls=[{"name": "search_filings", "args": {"query": "more"}}], text=None)
 _BAD = CitationWarning(check="quote_not_found", citation_index=1, value=100.0, unit="raw", message="bad", quote=None)
@@ -768,9 +762,10 @@ def test_run_agent_mixed_turn_at_the_budget_edge_retries_and_answers_every_pendi
     assert retry["pending_tools"] == ["search_filings"]
 
 
-def test_run_agent_mixed_edge_retry_spends_the_final_turn(monkeypatch):
-    # The retry already sent the "not run" replies, so a tool call after it
-    # ends the run instead of drawing a second forced final turn.
+def test_run_agent_tool_call_after_a_forced_mixed_edge_retry_ends_the_run(monkeypatch):
+    # The forced retry already sent the "not run" replies, so a tool call
+    # after it is a forcing failure: the run ends instead of drawing a
+    # forced final turn.
     monkeypatch.setattr("sec_agent.agent.agent.MAX_TOOL_ITERATIONS", 1)
     sends = _install_scripted_backend(monkeypatch, _MIXED_TURN, [_SEARCH_TURN])
     verify_calls = _verify_sequence(monkeypatch, [[_BAD], [_BAD]])
@@ -794,10 +789,10 @@ def test_run_agent_tool_call_after_a_retry_past_the_spent_final_turn_regates_the
     assert answer == "The value was 100."
 
 
-def test_run_agent_forced_retry_spends_the_final_turn(monkeypatch):
-    # A bad submit exactly at the budget, final turn still unspent: the forced
-    # retry is that turn, so a tool call after it ends the run on the cached
-    # answer instead of drawing another forced round trip.
+def test_run_agent_tool_call_after_a_forced_retry_ends_the_run(monkeypatch):
+    # A bad submit exactly at the budget gets a forced retry; a tool call
+    # after it is a forcing failure, so the run ends on the cached answer
+    # instead of drawing another forced round trip.
     monkeypatch.setattr("sec_agent.agent.agent.MAX_TOOL_ITERATIONS", 2)
     sends = _install_scripted_backend(monkeypatch, _SEARCH_TURN, [_submit_turn("The value was 100."), _SEARCH_TURN])
     verify_calls = _verify_sequence(monkeypatch, [[_BAD], [_BAD]])
@@ -912,3 +907,161 @@ def test_run_agent_does_not_send_withheld_answer_to_the_span(monkeypatch):
     assert output["citation_checks"] == {"no_submission": 1}
 
 
+# ---------------------------------------------------------------------------
+# Uniform submit loop: a failing submit is answered like any tool error for
+# as long as _next_turn_mode grants a turn, and a non-submit reply to a
+# forced send ends the run.
+# ---------------------------------------------------------------------------
+_RETRY = ("tool_results", ["submit_answer"], None)
+_FORCED_RETRY = ("tool_results", ["submit_answer"], "submit_answer")
+
+
+def _events(log_calls, category):
+    return [fields for name, fields in log_calls if name == category]
+
+
+def test_run_agent_retries_every_failing_submit_inside_the_budget(monkeypatch):
+    sends = _install_scripted_backend(
+        monkeypatch,
+        _submit_turn("The value was 100."),
+        [_submit_turn("The value was 100."), _submit_turn("The value was 100."), _submit_turn("Fixed.")],
+    )
+    _verify_sequence(monkeypatch, [[_BAD], [_BAD], [_BAD], []])
+    log_calls = []
+    capture_events(monkeypatch, log_calls)
+
+    answer, *_ = run_agent("What was the value?", backend="gemini", verbose=True)
+
+    assert sends[1:] == [_RETRY, _RETRY, _RETRY]
+    assert answer == "Fixed."
+    retries = _events(log_calls, "citation_retry")
+    assert [r["attempt"] for r in retries] == [1, 2, 3]
+    assert [r["forced"] for r in retries] == [False, False, False]
+    assert [r["reserve_left"] for r in retries] == [2, 2, 2]
+
+
+def test_run_agent_spends_both_reserve_turns_on_retries_past_the_budget(monkeypatch):
+    monkeypatch.setattr("sec_agent.agent.agent.MAX_TOOL_ITERATIONS", 1)
+    sends = _install_scripted_backend(
+        monkeypatch, _submit_turn("The value was 100."), [_submit_turn("The value was 100."), _submit_turn("Fixed.")]
+    )
+    _verify_sequence(monkeypatch, [[_BAD], [_BAD], []])
+    log_calls = []
+    capture_events(monkeypatch, log_calls)
+
+    answer, *_ = run_agent("What was the value?", backend="gemini")
+
+    assert sends[1:] == [_FORCED_RETRY, _FORCED_RETRY]
+    assert answer == "Fixed."
+    retries = _events(log_calls, "citation_retry")
+    assert [(r["attempt"], r["forced"], r["reserve_left"]) for r in retries] == [(1, True, 1), (2, True, 0)]
+
+
+def test_run_agent_text_after_an_unforced_retry_gets_another_forced_followup(monkeypatch):
+    # The follow-up cap is gone: the retry before the second text reply
+    # wasn't forced, so forcing hasn't failed yet.
+    text = ModelTurn(tool_calls=[], text="thinking")
+    sends = _install_scripted_backend(
+        monkeypatch, text, [_submit_turn("The value was 100."), text, _submit_turn("Fixed.")]
+    )
+    _verify_sequence(monkeypatch, [[_BAD], []])
+    log_calls = []
+    capture_events(monkeypatch, log_calls)
+
+    answer, *_ = run_agent("What was the value?", backend="gemini", verbose=True)
+
+    assert sends[1:] == [("followup", [], "submit_answer"), _RETRY, ("followup", [], "submit_answer")]
+    assert answer == "Fixed."
+    forced = _events(log_calls, "final_turn_forced")
+    assert [(f["trigger"], f["calls_made"], f["reserve_left"]) for f in forced] == [("text", 1, 2), ("text", 3, 2)]
+
+
+def test_run_agent_always_failing_submits_stay_within_max_plus_two_requests(monkeypatch):
+    max_iterations = 3
+    monkeypatch.setattr("sec_agent.agent.agent.MAX_TOOL_ITERATIONS", max_iterations)
+    sends = _install_scripted_backend(
+        monkeypatch, _submit_turn("Attempt 0."), [_submit_turn(f"Attempt {n}.") for n in range(1, 5)]
+    )
+    _verify_sequence(monkeypatch, [[_BAD]] * 5)
+    log_calls = []
+    capture_events(monkeypatch, log_calls)
+
+    _, _, warnings, withheld_answer, _ = run_agent("What was the value?", backend="gemini")
+
+    assert sends[1:] == [_RETRY, _RETRY, _FORCED_RETRY, _FORCED_RETRY]
+    assert len(sends) == max_iterations + 2
+    assert warnings == ["bad"]
+    assert withheld_answer == "Attempt 4."
+    [ended] = _events(log_calls, "submit_turns_ended")
+    assert ended == {
+        "backend": "gemini",
+        "calls_made": 5,
+        "retries": 4,
+        "reserve_left": 0,
+        "reason": "no_turn_left",
+        "ending": "gate_refused",
+    }
+    [refused] = _events(log_calls, "citation_gate_refused")
+    assert (refused["retries"], refused["retried"]) == (4, True)
+
+
+@pytest.mark.parametrize(
+    ("reply", "ending"),
+    [
+        (ModelTurn(tool_calls=[], text="thinking"), "no_submission"),
+        (_SEARCH_TURN, "budget_message"),
+    ],
+)
+def test_run_agent_non_submit_reply_to_a_forced_send_past_the_budget_ends_the_run(monkeypatch, reply, ending):
+    monkeypatch.setattr("sec_agent.agent.agent.MAX_TOOL_ITERATIONS", 1)
+    sends = _install_scripted_backend(monkeypatch, _SEARCH_TURN, [reply])
+    log_calls = []
+    capture_events(monkeypatch, log_calls)
+
+    run_agent("What was the value?", backend="gemini")
+
+    assert sends[1:] == [("tool_results", ["search_filings"], "submit_answer")]
+    [ended] = _events(log_calls, "submit_turns_ended")
+    assert (ended["reason"], ended["ending"], ended["reserve_left"]) == ("forcing_failed", ending, 1)
+
+
+def test_run_agent_tool_calls_after_an_in_budget_forced_followup_are_dispatched(monkeypatch):
+    # Dispatch budget is left, so a search reply to the forced follow-up is
+    # an ordinary turn, not a forcing failure that reports the budget spent.
+    text = ModelTurn(tool_calls=[], text="thinking")
+    payloads = []
+    sends = _install_scripted_backend(
+        monkeypatch, text, [_SEARCH_TURN, _submit_turn("The value was 100.")], payloads=payloads
+    )
+    _verify_sequence(monkeypatch, [[]])
+    log_calls = []
+    capture_events(monkeypatch, log_calls)
+
+    answer, *_ = run_agent("What was the value?", backend="gemini")
+
+    assert sends[1:] == [("followup", [], "submit_answer"), ("tool_results", ["search_filings"], None)]
+    assert payloads == [[{"name": "search_filings", "content": "search result"}]]
+    assert answer == "The value was 100."
+    assert _events(log_calls, "submit_turns_ended") == []
+
+
+@pytest.mark.parametrize(
+    ("first_turn", "answer", "ending"),
+    [
+        (ModelTurn(tool_calls=[], text="thinking"), NO_SUBMISSION_REFUSAL, "no_submission"),
+        (_SEARCH_TURN, BUDGET_EXHAUSTED_ANSWER, "budget_message"),
+    ],
+)
+def test_run_agent_with_no_reserve_ends_at_the_budget_without_a_send(monkeypatch, first_turn, answer, ending):
+    monkeypatch.setattr("sec_agent.agent.agent.MAX_TOOL_ITERATIONS", 1)
+    monkeypatch.setattr("sec_agent.agent.agent.SUBMIT_RESERVE", 0)
+    sends = _install_scripted_backend(monkeypatch, first_turn, [])
+    log_calls = []
+    capture_events(monkeypatch, log_calls)
+
+    result = run_agent("What was the value?", backend="gemini")
+
+    assert sends[1:] == []
+    assert result.answer == answer
+    [ended] = _events(log_calls, "submit_turns_ended")
+    assert (ended["reason"], ended["ending"]) == ("no_turn_left", ending)

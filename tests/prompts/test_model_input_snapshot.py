@@ -88,7 +88,7 @@ EXPECTED_KEYS = {
         "never_tagged_hint",
         "search_bad_ticker",
         "search_bad_args",
-        "loop_force_claimretry_refusal",
+        "loop_retries_until_turns_run_out",
         "loop_text_after_force_refusal",
         "loop_mixed_turn",
         "loop_final_turn",
@@ -345,12 +345,12 @@ def _render_loop_runs() -> dict:
     )
     assert final_turn["capture"][-1]["force_tool"] == "submit_answer"
     return {
-        "loop_force_claimretry_refusal": _run(
-            None,
+        "loop_retries_until_turns_run_out": _run(
+            {"MAX_TOOL_ITERATIONS": 3},
             "gemini",
             ModelTurn(tool_calls=[], text="plain prose"),
-            [bad_submit, bad_submit],
-            ["start", "send_followup", "send_tool_results"],
+            [bad_submit] * 4,
+            ["start", "send_followup"] + ["send_tool_results"] * 3,
         ),
         "loop_text_after_force_refusal": _run(None, "gemini", prose, [prose], ["start", "send_followup"]),
         "loop_mixed_turn": _run(
@@ -362,7 +362,9 @@ def _render_loop_runs() -> dict:
         ),
         "loop_final_turn": final_turn,
         "loop_budget_exhausted": _run({"MAX_TOOL_ITERATIONS": 1}, "gemini", calc_turn, [calc_turn]),
-        "loop_submit_schema_mismatch": _run(None, "gemini", broken_submit, [broken_submit]),
+        "loop_submit_schema_mismatch": _run(
+            {"MAX_TOOL_ITERATIONS": 2}, "gemini", broken_submit, [broken_submit] * 3
+        ),
         "loop_retry_after_final_turn": _run(
             {"MAX_TOOL_ITERATIONS": 1},
             "gemini",
@@ -374,8 +376,8 @@ def _render_loop_runs() -> dict:
             {"MAX_TOOL_ITERATIONS": 1},
             "gemini",
             ModelTurn(tool_calls=[BAD_CALC, bad_submit.tool_calls[0]], text=None),
-            [bad_submit],
-            ["start", "send_tool_results"],
+            [bad_submit, bad_submit],
+            ["start", "send_tool_results", "send_tool_results"],
         ),
     }
 
