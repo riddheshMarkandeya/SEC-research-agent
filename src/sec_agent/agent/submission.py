@@ -25,7 +25,7 @@ def _bulleted(warnings: list[str]) -> str:
 
 
 def _format_claim_retry_message(answer_text: str, warnings: list["CitationWarning"]) -> str:
-    """Builds the corrective message for the one-time retry after a
+    """Builds the corrective message for a citation retry after a
     submit_answer call whose claims don't verify. The hard-won wording
     lives in CITATION_RETRY_GUIDANCE (see its own comment for the live
     failure modes each property closes). Delivered as a submit_answer tool RESULT
@@ -121,7 +121,7 @@ def submission_warnings(
 
 
 def _finalize_answer(
-    answer: str, warnings: list["CitationWarning"], all_results: list[dict], *, backend: str, retried: bool
+    answer: str, warnings: list["CitationWarning"], all_results: list[dict], *, backend: str, retries: int
 ) -> AgentResult:
     """Single choke point for every run_agent() return site: withholds
     `answer` in favor of a refusal (see _format_refusal_message) whenever
@@ -138,8 +138,9 @@ def _finalize_answer(
     genuinely bad one. Also fires a `citation_gate_refused` log event
     (local JSONL only, never Langfuse -- see log_event's own docstring)
     whenever it refuses, since this is the one place a real answer gets
-    thrown away. `backend`/`retried` are keyword-only so the two flags
-    can't be swapped positionally.
+    thrown away. `backend`/`retries` are keyword-only so they can't be
+    swapped positionally. The event logs `retries` (citation retries
+    sent this run) and also `retried`, the bool older traces carry.
 
     `citation_warning_details` is populated directly from `warnings`
     here -- NOT re-derived by a second pass elsewhere -- so every
@@ -157,7 +158,8 @@ def _finalize_answer(
     log_event(
         "citation_gate_refused",
         backend=backend,
-        retried=retried,
+        retried=retries > 0,
+        retries=retries,
         n_results=len(all_results),
         checks=_count_citation_checks(warnings),
         warnings=messages,

@@ -52,7 +52,7 @@ def test_submission_warnings_valid_args_delegates_to_verify_claims(monkeypatch):
 
 
 def test_finalize_answer_passes_through_when_no_warnings():
-    result = _finalize_answer("the answer", [], [], backend="gemini", retried=False)
+    result = _finalize_answer("the answer", [], [], backend="gemini", retries=0)
     assert result == AgentResult("the answer", [], [], None, [])
 
 
@@ -67,7 +67,7 @@ def test_finalize_answer_refuses_when_warnings_present():
             quote=None,
         )
     ]
-    result = _finalize_answer("the answer", warnings, cast(list[dict], ["result"]), backend="gemini", retried=False)
+    result = _finalize_answer("the answer", warnings, cast(list[dict], ["result"]), backend="gemini", retries=0)
     assert result.answer == _format_refusal_message(["[1] claims 100.0 ... doesn't appear"])
     assert result.results == ["result"]
     assert result.citation_warnings == ["[1] claims 100.0 ... doesn't appear"]
@@ -92,13 +92,13 @@ def test_finalize_answer_returns_the_withheld_answer_when_refusing():
             quote=None,
         )
     ]
-    result = _finalize_answer("the model's answer", warnings, [], backend="gemini", retried=True)
+    result = _finalize_answer("the model's answer", warnings, [], backend="gemini", retries=1)
     assert result.withheld_answer == "the model's answer"
     assert result.answer != "the model's answer"  # the refusal text, not the raw answer
 
 
 def test_finalize_answer_withheld_answer_is_none_when_passing():
-    result = _finalize_answer("the model's answer", [], [], backend="gemini", retried=False)
+    result = _finalize_answer("the model's answer", [], [], backend="gemini", retries=0)
     assert result.withheld_answer is None
     assert result.answer == "the model's answer"
 
@@ -112,7 +112,7 @@ def test_finalize_answer_withheld_answer_is_none_when_passing():
 # that actually refused the answer.
 # ---------------------------------------------------------------------------
 def test_finalize_answer_citation_warning_details_empty_when_passing():
-    result = _finalize_answer("the answer", [], [], backend="gemini", retried=False)
+    result = _finalize_answer("the answer", [], [], backend="gemini", retries=0)
     assert result.citation_warning_details == []
 
 
@@ -132,7 +132,7 @@ def test_finalize_answer_citation_warning_details_matches_the_actual_warnings():
             quote="the model's claimed quote text",
         )
     ]
-    result = _finalize_answer("the answer", warnings, [], backend="gemini", retried=False)
+    result = _finalize_answer("the answer", warnings, [], backend="gemini", retries=0)
     assert result.citation_warning_details == [
         {
             "check": "quote_not_found",
@@ -166,13 +166,14 @@ def test_finalize_answer_logs_citation_gate_refused_with_check_counts(monkeypatc
             quote=None,
         ),
     ]
-    _finalize_answer("the model's answer", warnings, cast(list[dict], ["result"]), backend="gemini", retried=True)
+    _finalize_answer("the model's answer", warnings, cast(list[dict], ["result"]), backend="gemini", retries=1)
 
     assert len(log_calls) == 1
     category, fields = log_calls[0]
     assert category == "citation_gate_refused"
     assert fields["backend"] == "gemini"
     assert fields["retried"] is True
+    assert fields["retries"] == 1
     assert fields["n_results"] == 1
     assert fields["checks"] == {"quote_not_found": 1, "uncovered_number": 1}
     assert fields["warnings"] == ["[1] claims 100.0...", "claims 4.0 (percent)..."]
@@ -182,7 +183,7 @@ def test_finalize_answer_logs_citation_gate_refused_with_check_counts(monkeypatc
 def test_finalize_answer_does_not_log_when_passing(monkeypatch):
     log_calls = []
     capture_events(monkeypatch, log_calls)
-    _finalize_answer("the model's answer", [], [], backend="gemini", retried=False)
+    _finalize_answer("the model's answer", [], [], backend="gemini", retries=0)
     assert log_calls == []
 
 

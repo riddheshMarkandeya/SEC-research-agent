@@ -12,6 +12,9 @@
 
 ## Archive
 
+- 2026-09-25 [decision] WP-A: review depth by the actual diff, delta-only re-rounds, ADR-gated decision files (commit body is the default record), plan review inside the plan; revisits the five-pass floor and 2026-09-14 docs overhaul; skip list with reasons → `docs/decisions/2026-09-25-wp-a-review-docs-cost.md`
+- 2026-09-25 [review] WP-A plan review — 10 findings folded in: BACKLOG header and other decision-file assumptions, wider contradiction grep, docs-health check against a scratch index, doc artifacts follow the design tier → `docs/reviews/2026-09-25-wp-a-review-docs-cost-plan-review.md`
+- 2026-09-25 [plan] WP-A (review and documentation cost): current-state check, step order, WP-A reviewed under the current rules (self-check + rule-preservation audit) → `docs/plans/2026-09-25-wp-a-review-docs-cost.md`
 - 2026-09-25 [plan] Workflow-skills overhaul roadmap: review of mattpocock/skills + addyosmani/agent-skills; tiered diff-based review, ADR-gated docs, tiers split by axis, new grill-me/research/wayfinder/retro/prototype, git guardrails; WP-A/B/C → `docs/plans/2026-09-25-workflow-skills-overhaul-roadmap.md`
 - 2026-09-25 [review] WP5 code review (commit d45156f) — 1 round, clean, no fix commits; two findings not adopted → `docs/reviews/2026-09-25-wp5-segment-rule.md`
 - 2026-09-25 [decision] Read/diff/cache habits in global §6, reviewer agents get diff commands not pasted diffs, effort default medium, new status line (context tokens + cache expiry), BACKLOG: eval summary mode, agent.py/test_agent.py split, Recurring workflow retro due 2026-10-09 → `docs/decisions/2026-09-25-read-diff-cache-habits.md`

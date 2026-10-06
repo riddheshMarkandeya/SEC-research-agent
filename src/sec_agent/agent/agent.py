@@ -15,7 +15,7 @@ Usage:
 import argparse
 from collections import Counter
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 
 from sec_agent.agent.citations import _NO_SUBMISSION_WARNING, CitationWarning
 from sec_agent.agent.dispatch import _dispatch_tool_call
@@ -35,30 +35,25 @@ from sec_agent.prompts.agent_tools import AGENT_TOOL_SCHEMAS
 from sec_agent.tracing import flush, log_event, traced_span
 
 MAX_TOOL_ITERATIONS = 6
+# Forced, submit-only turns allowed past MAX_TOOL_ITERATIONS, shared by
+# every path that needs one: pending tool calls, a text reply, a failed
+# submit. Two keeps the worst case at MAX_TOOL_ITERATIONS + 2 requests.
+SUBMIT_RESERVE = 2
+
+TurnMode = Literal["free", "forced"]
+EndReason = Literal["no_turn_left", "forcing_failed"]
+Ending = Literal["gate_refused", "cached", "no_submission", "budget_message"]
 
 
-def _should_retry_for_citations(citation_warnings: list[str], already_retried: bool) -> bool:
-    """Whether run_agent() should give the model one corrective retry
-    turn for its own unverified citation(s). True only when there's
-    something to correct and the single retry (see
-    submission._format_claim_retry_message) hasn't already been spent this
-    conversation. It doesn't depend on MAX_TOOL_ITERATIONS: most failing
-    submissions arrive after the budget is spent, and the retry's own
-    round trip is bounded by this one-per-conversation cap."""
-    return bool(citation_warnings) and not already_retried
-
-
-def _should_force_final_submit(already_attempted: bool, calls_made: int) -> bool:
-    """Whether run_agent() should spend its one reserved, submit-only
-    final round trip: the dispatch budget is exhausted and the reserve
-    is unspent. Two paths draw on it -- pending tool calls (answered with
-    a synthetic "not run" result) and a text reply (a forced follow-up)
-    -- and either way the next turn is forced to submit_answer, never a
-    real dispatch call, so this is NOT a MAX_TOOL_ITERATIONS increase.
-    A citation retry past the budget also marks the reserve spent, but
-    doesn't need it unspent: its own one-per-conversation cap bounds it.
-    Capped at one shot per conversation via already_attempted."""
-    return not already_attempted and calls_made >= MAX_TOOL_ITERATIONS
+def _next_turn_mode(calls_made: int, reserve_left: int) -> TurnMode | None:
+    """The one rule for whether the conversation gets another turn: a
+    free one while dispatch budget is left, else a forced submit-only one
+    while the reserve lasts, else none (the run ends)."""
+    if calls_made < MAX_TOOL_ITERATIONS:
+        return "free"
+    if reserve_left > 0:
+        return "forced"
+    return None
 
 
 def run_agent(question: str, backend: str | None = None, verbose: bool = False) -> AgentResult:
@@ -102,34 +97,33 @@ def run_agent(question: str, backend: str | None = None, verbose: bool = False) 
 
 @dataclass
 class _AgentLoopState:
-    """Mutable state threaded through _run_agent_impl()'s extracted
-    helper functions below, in place of loose locals ping-ponging
-    through each one's own signature. Per-field write ownership (so a
-    future reader can see at a glance which helper may touch what):
-    `calls_made` is written only by the parent loop's own central
-    increment (once per iteration, whenever a helper hands back a new
-    turn to continue with) -- no helper increments it itself.
-    `forced_submit_attempted`/`pre_retry_submit_args`/
-    `retried_for_citations` are each written by exactly one owning
-    helper. `final_turn_attempted` is the one reserved final round trip,
-    spent by _force_final_submit_turn (pending tool calls) or
-    _handle_no_tool_calls_turn (a text reply), whichever comes first.
-    _send_citation_retry also marks it spent past the budget, so nothing
-    forced follows the retry, but it runs whether or not the reserve was
-    already spent (retried_for_citations caps it instead). So the reserve
-    and the retry can each add one round trip, and `calls_made` can reach
-    MAX_TOOL_ITERATIONS + 2.
+    """Mutable state threaded through _run_agent_impl()'s helpers.
 
-    `pre_retry_submit_args` deliberately caches the RAW submit_answer
-    args rather than pre-computed warnings: a pure function of
-    (submit_args, all_results) can't go stale the way a cached warnings
-    list could if all_results grows further before the budget runs out."""
+    `calls_made` is written only by the parent loop's increment, once per
+    turn it continues with. `reserve_left` is spent only by _take_turn.
+    `last_turn_forced` is copied by the parent from each _LoopStep, so it
+    reflects the force_tool actually sent, not the turn mode: a text
+    follow-up is forced even on a free turn. `retries` counts citation
+    retries sent, for logs. `last_submit_args` is the latest failing
+    submission's RAW args, re-gated when the run ends without a passing
+    one: a pure function of (submit_args, all_results) can't go stale the
+    way cached warnings could as all_results grows."""
 
     calls_made: int
-    retried_for_citations: bool = False
-    forced_submit_attempted: bool = False
-    final_turn_attempted: bool = False
-    pre_retry_submit_args: dict | None = None
+    reserve_left: int
+    retries: int = 0
+    last_turn_forced: bool = False
+    last_submit_args: dict | None = None
+
+
+def _take_turn(loop_state: _AgentLoopState) -> TurnMode | None:
+    """_next_turn_mode for the current state, spending a reserve turn when
+    it returns "forced". A free turn is paid for by the parent loop's
+    calls_made increment, like every other turn."""
+    mode = _next_turn_mode(loop_state.calls_made, loop_state.reserve_left)
+    if mode == "forced":
+        loop_state.reserve_left -= 1
+    return mode
 
 
 @dataclass(frozen=True)
@@ -163,61 +157,60 @@ class _AgentContext:
 
 @dataclass(frozen=True)
 class _LoopStep:
-    """Outcome of one _run_agent_impl() loop-body helper (currently
-    _handle_submit_turn/_handle_no_tool_calls_turn): exactly one of
+    """Outcome of one _run_agent_impl() loop-body helper: exactly one of
     `next_turn`/`result` is ever set -- the parent continues the loop
-    with `next_turn` if set, else returns `result` immediately. Named
-    fields instead of a positional `tuple[Any, AgentResult | None]`
-    (an earlier version of this refactor used that shape) specifically
-    so a future call site can't silently transpose the two -- code
-    review flagged that a positional swap wouldn't even crash (`turn`
-    is never `None` on the continue path, so `if result is not None`
-    firing on every call after a swap would just silently return a
-    conversation-turn object as if it were the final AgentResult)."""
+    with `next_turn` if set, else returns `result` immediately. `forced`
+    says whether the send that produced `next_turn` carried
+    force_tool=submit_answer. Named fields instead of a positional tuple
+    so a call site can't silently transpose them: a swap wouldn't crash,
+    it would return a conversation turn as if it were the AgentResult."""
 
     next_turn: Any = None
     result: AgentResult | None = None
+    forced: bool = False
 
 
 def _handle_submit_turn(args: dict, other: list[dict], ctx: _AgentContext, loop_state: _AgentLoopState) -> _LoopStep:
     """Body of _run_agent_impl()'s submit-answer branch -- called only
     once its own guard (a pure submission, or a mixed submit+search
-    turn with no dispatch budget left) is already true, at which point
-    the real code always either continues or returns, never falls
-    through to a later check. `other` is that mixed turn's non-submit
-    calls (empty for a pure submission). Exactly one of _LoopStep's two
-    fields is ever set: the retry's next turn, or the finalized answer."""
+    turn with no dispatch budget left) is already true. `other` is that
+    mixed turn's non-submit calls (empty for a pure submission). A
+    passing submission is the answer. A failing one is answered like any
+    tool error, with a citation retry, for as long as _take_turn grants a
+    turn; once it doesn't, the submission is refused."""
     with traced_span("tool", "submit_answer", input=args) as span:
         answer_text, warnings = submission_warnings(args, ctx.all_results, ctx.question)
-        messages = [w.message for w in warnings]
         span.update(output={"warning_count": len(warnings), "checks": [w.check for w in warnings]})
-        if _should_retry_for_citations(messages, loop_state.retried_for_citations):
-            loop_state.retried_for_citations = True
-            loop_state.pre_retry_submit_args = args
-            return _LoopStep(next_turn=_send_citation_retry(answer_text, warnings, other, ctx, loop_state))
+        if warnings:
+            loop_state.last_submit_args = args
+            retry = _try_citation_retry(answer_text, warnings, other, ctx, loop_state)
+            if retry is not None:
+                return retry
+            _log_turns_ended(ctx, loop_state, reason="no_turn_left", ending="gate_refused")
         result = _finalize_answer(
-            answer_text, warnings, ctx.all_results, backend=ctx.backend, retried=loop_state.retried_for_citations
+            answer_text, warnings, ctx.all_results, backend=ctx.backend, retries=loop_state.retries
         )
         return _LoopStep(result=result)
 
 
-def _send_citation_retry(
+def _try_citation_retry(
     answer_text: str,
     warnings: list[CitationWarning],
     other: list[dict],
     ctx: _AgentContext,
     loop_state: _AgentLoopState,
-) -> Any:
-    """Sends the one citation retry's feedback as the submit_answer tool
-    result, whether or not dispatch budget is left. Past the budget no
-    search could run, so the retry forces submit_answer and marks the
-    reserved final turn spent (it is that turn, if still unspent), so
-    nothing forced follows it. Each pending
-    call of a mixed turn gets a "not run" reply ahead of the feedback,
-    since Gemini needs one function response per function call."""
-    forced = loop_state.calls_made >= MAX_TOOL_ITERATIONS
-    if forced:
-        loop_state.final_turn_attempted = True
+) -> _LoopStep | None:
+    """Sends a citation retry's feedback as the submit_answer tool result,
+    if _take_turn grants a turn (else None, sending nothing). A reserve
+    turn, past the budget, makes the next reply submit_answer only, since
+    no search could run. Each pending call of a mixed turn gets a "not
+    run" reply ahead of the feedback, since Gemini needs one function
+    response per function call."""
+    mode = _take_turn(loop_state)
+    if mode is None:
+        return None
+    loop_state.retries += 1
+    forced = mode == "forced"
     messages = [w.message for w in warnings]
     pending_tool_names = [c["name"] for c in other]
     log_event(
@@ -227,12 +220,15 @@ def _send_citation_retry(
         calls_made=loop_state.calls_made,
         forced=forced,
         pending_tools=pending_tool_names,
+        attempt=loop_state.retries,
+        reserve_left=loop_state.reserve_left,
     )
     if ctx.verbose:
-        print(f"  [citation retry] {messages}")
+        print(f"  [citation retry {loop_state.retries}] {messages}")
     results = _not_run_results(pending_tool_names)
     results.append({"name": "submit_answer", "content": _format_claim_retry_message(answer_text, warnings)})
-    return ctx.send_tool_results(ctx.conv_state, results, force_tool="submit_answer" if forced else None)
+    next_turn = ctx.send_tool_results(ctx.conv_state, results, force_tool="submit_answer" if forced else None)
+    return _LoopStep(next_turn=next_turn, forced=forced)
 
 
 def _not_run_results(tool_names: list[str]) -> list[dict]:
@@ -241,80 +237,68 @@ def _not_run_results(tool_names: list[str]) -> list[dict]:
     return [{"name": name, "content": msg.FINAL_TURN_SUBMIT_MESSAGE} for name in tool_names]
 
 
-def _handle_no_tool_calls_turn(turn: Any, ctx: _AgentContext, loop_state: _AgentLoopState) -> _LoopStep:
-    """Body of _run_agent_impl()'s `not turn.tool_calls` branch -- the
-    model replied in text. The first time it gets one forced
-    submit_answer-only follow-up, paid for by the dispatch budget or, once
-    that's spent, by the one reserved final round trip -- the same reserve
-    a pending tool call or a forced citation retry would spend, so a text
-    reply after either gets no follow-up. After that there's nothing structured
-    to verify: a submission cached by an earlier retry is re-gated as the
-    model's last verifiable answer, otherwise the text is refused
-    (_NO_SUBMISSION_WARNING). Exactly one of _LoopStep's two fields is
-    ever set."""
-    has_budget = loop_state.calls_made < MAX_TOOL_ITERATIONS
-    if not loop_state.forced_submit_attempted and (
-        has_budget or _should_force_final_submit(loop_state.final_turn_attempted, loop_state.calls_made)
-    ):
-        loop_state.forced_submit_attempted = True
-        if not has_budget:
-            loop_state.final_turn_attempted = True
-            log_event("final_turn_forced", backend=ctx.backend, calls_made=loop_state.calls_made, pending_tools=[])
-        if ctx.verbose:
-            print("  [forcing submit_answer] model replied in text instead of calling a tool")
-        turn = ctx.send_followup(ctx.conv_state, msg.FORCE_SUBMIT_MESSAGE, force_tool="submit_answer")
-        return _LoopStep(next_turn=turn)
-    cached = _finalize_cached_submission(ctx, loop_state)
-    if cached is not None:
-        return _LoopStep(result=cached)
-    if ctx.verbose:
-        print("  [refusing] model replied in text instead of calling submit_answer")
-    result = _finalize_answer(
-        turn.text or "",
-        [_NO_SUBMISSION_WARNING],
-        ctx.all_results,
-        backend=ctx.backend,
-        retried=loop_state.retried_for_citations,
-    )
-    return _LoopStep(result=result)
-
-
-def _force_final_submit_turn(other: list[dict], ctx: _AgentContext, loop_state: _AgentLoopState) -> Any:
-    """Body of _run_agent_impl()'s reserved, submit-only final round
-    trip (BACKLOG.md's MAX_TOOL_ITERATIONS zero-slack bug) -- called
-    only after the parent has already confirmed via
-    _should_force_final_submit() that this turn IS being forced, so it
-    always returns a new turn, never None, never a break. `other` is
-    guaranteed non-empty here (an empty-tool-calls turn is already fully
-    handled by the parent's own `if not turn.tool_calls:` branch), so
-    every pending call gets answered with a synthetic "not run" result --
-    via send_tool_results, not send_followup, since those calls are
-    already recorded as pending/unanswered in the chat history and a
-    bare followup turn on top of them is exactly the "dangling function
-    call followed by a bare user turn" shape that's historically 400'd
-    on Gemini (see _run_agent_impl's own docstring). force_tool
-    hard-constrains the model's NEXT reply to submit_answer.
-
-    Fires a `final_turn_forced` log event (local JSONL only, mirroring
-    `_finalize_answer`'s `citation_gate_refused` -- diagnostic loop
-    mechanics, not conversation content) whenever this safety net
-    engages, since that was previously only visible under --verbose or
-    inferable by counting trace spans. No `question` field: log_event()
-    already tags every call with the current run's run_id, and
-    run_agent()'s own outermost span already records the question under
-    that same run_id, so repeating it here would just duplicate data
-    already joinable through run_id."""
-    loop_state.final_turn_attempted = True
-    if ctx.verbose:
-        print("  [final turn] dispatch budget exhausted with tool calls still pending -- forcing final submit")
-    pending_tool_names = [c["name"] for c in other]
+def _log_forced_turn(ctx: _AgentContext, loop_state: _AgentLoopState, trigger: str, pending_tools: list[str]) -> None:
+    """`final_turn_forced` for every forced non-retry send (local JSONL
+    only: loop mechanics, not conversation content). `trigger` names the
+    path: "text" for a text reply, "pending_tools" for tool calls past the
+    budget. No `question` field: run_agent's span already records it
+    under the same run_id."""
     log_event(
         "final_turn_forced",
         backend=ctx.backend,
         calls_made=loop_state.calls_made,
-        pending_tools=pending_tool_names,
+        pending_tools=pending_tools,
+        reserve_left=loop_state.reserve_left,
+        trigger=trigger,
     )
-    return ctx.send_tool_results(ctx.conv_state, _not_run_results(pending_tool_names), force_tool="submit_answer")
+
+
+def _end_before_forcing(turn: Any, ctx: _AgentContext, loop_state: _AgentLoopState) -> _LoopStep | None:
+    """The shared prelude of the two handlers that answer a non-submit
+    reply with a forced send: ends the run instead when the previous send
+    was already forced (forcing didn't work, so forcing again would only
+    spend a request) or when _take_turn grants no turn. Tool calls only
+    reach it past the budget; in budget they are dispatched. `turn` is
+    the text reply, or None for tool calls. Returns None when a turn was
+    taken and the caller should send."""
+    if loop_state.last_turn_forced:
+        return _LoopStep(result=_end_run(turn, ctx, loop_state, reason="forcing_failed"))
+    if _take_turn(loop_state) is None:
+        return _LoopStep(result=_end_run(turn, ctx, loop_state, reason="no_turn_left"))
+    return None
+
+
+def _handle_no_tool_calls_turn(turn: Any, ctx: _AgentContext, loop_state: _AgentLoopState) -> _LoopStep:
+    """Body of _run_agent_impl()'s `not turn.tool_calls` branch -- the
+    model replied in text. It gets a forced submit_answer-only follow-up,
+    on a free turn or a reserve one, unless _end_before_forcing ends the
+    run."""
+    if (ended := _end_before_forcing(turn, ctx, loop_state)) is not None:
+        return ended
+    _log_forced_turn(ctx, loop_state, trigger="text", pending_tools=[])
+    if ctx.verbose:
+        print("  [forcing submit_answer] model replied in text instead of calling a tool")
+    next_turn = ctx.send_followup(ctx.conv_state, msg.FORCE_SUBMIT_MESSAGE, force_tool="submit_answer")
+    return _LoopStep(next_turn=next_turn, forced=True)
+
+
+def _force_final_submit_turn(other: list[dict], ctx: _AgentContext, loop_state: _AgentLoopState) -> _LoopStep:
+    """Body of _run_agent_impl()'s tool-calls-past-the-budget branch: the
+    model still wants to search, but no dispatch budget is left, so a
+    reserve turn forces submit_answer instead. Every pending call (`other`
+    is non-empty here) gets a synthetic "not run" result via
+    send_tool_results, not send_followup: those calls are already pending
+    in the chat history, and a bare followup turn on top of them is the
+    "dangling function call followed by a bare user turn" shape that has
+    400'd on Gemini. _end_before_forcing may end the run instead."""
+    if (ended := _end_before_forcing(None, ctx, loop_state)) is not None:
+        return ended
+    pending_tool_names = [c["name"] for c in other]
+    _log_forced_turn(ctx, loop_state, trigger="pending_tools", pending_tools=pending_tool_names)
+    if ctx.verbose:
+        print("  [final turn] dispatch budget exhausted with tool calls still pending -- forcing final submit")
+    next_turn = ctx.send_tool_results(ctx.conv_state, _not_run_results(pending_tool_names), force_tool="submit_answer")
+    return _LoopStep(next_turn=next_turn, forced=True)
 
 
 def _dispatch_pending_calls(other: list[dict], submit: dict | None, ctx: _AgentContext) -> Any:
@@ -335,78 +319,83 @@ def _dispatch_pending_calls(other: list[dict], submit: dict | None, ctx: _AgentC
     return ctx.send_tool_results(ctx.conv_state, results)
 
 
-def _finalize_cached_submission(ctx: _AgentContext, loop_state: _AgentLoopState) -> AgentResult | None:
-    """Re-gates the submission cached at retry time, if any (else None),
-    against the run's current all_results, since searches after the retry
-    may have added the sources it cites. The cached args may be the
-    schema-invalid ones that triggered the retry, so they go back through
-    the full gate, not straight to verify_claims."""
-    if loop_state.pre_retry_submit_args is None:
-        return None
-    answer_text, warnings = submission_warnings(loop_state.pre_retry_submit_args, ctx.all_results, ctx.question)
-    return _finalize_answer(
-        answer_text, warnings, ctx.all_results, backend=ctx.backend, retried=loop_state.retried_for_citations
-    )
-
-
-def _finalize_after_budget_exhausted(ctx: _AgentContext, loop_state: _AgentLoopState) -> AgentResult:
-    """Body of _run_agent_impl()'s post-loop fallback -- called once,
-    after the while loop's own `break` exits it."""
-    cached = _finalize_cached_submission(ctx, loop_state)
-    if cached is not None:
-        return cached
-    return _finalize_answer(
-        msg.BUDGET_EXHAUSTED_ANSWER,
-        [],
-        ctx.all_results,
+def _log_turns_ended(ctx: _AgentContext, loop_state: _AgentLoopState, reason: EndReason, ending: Ending) -> None:
+    """`submit_turns_ended`: the run ended without a passing submission.
+    `reason` is "no_turn_left" (budget and reserve spent) or
+    "forcing_failed" (a text reply, or tool calls past the budget, after a
+    forced send); `ending` is
+    how it was finalized: "gate_refused" (the last submission failed),
+    "cached" (an earlier failing submission re-gated), "no_submission"
+    (a text reply refused) or "budget_message"."""
+    log_event(
+        "submit_turns_ended",
         backend=ctx.backend,
-        retried=loop_state.retried_for_citations,
+        calls_made=loop_state.calls_made,
+        retries=loop_state.retries,
+        reserve_left=loop_state.reserve_left,
+        reason=reason,
+        ending=ending,
     )
+
+
+def _end_run(turn: Any, ctx: _AgentContext, loop_state: _AgentLoopState, reason: EndReason) -> AgentResult:
+    """Finalizes a run that gets no further turn after a non-submit reply
+    (`turn` is that text reply, or None for tool calls). The latest
+    failing submission, re-gated against the current all_results, is the
+    model's last verifiable answer, since searches after it may have added
+    the sources it cites. Without one, a text reply is refused (nothing
+    structured to verify) and pending tool calls get the generic
+    budget-exhausted answer."""
+    ending: Ending
+    if loop_state.last_submit_args is not None:
+        ending = "cached"
+        # The cached args may be the schema-invalid ones that drew the
+        # retry, so they go back through the full gate.
+        answer, warnings = submission_warnings(loop_state.last_submit_args, ctx.all_results, ctx.question)
+    elif turn is not None:
+        ending = "no_submission"
+        if ctx.verbose:
+            print("  [refusing] model replied in text instead of calling submit_answer")
+        answer, warnings = turn.text or "", [_NO_SUBMISSION_WARNING]
+    else:
+        ending = "budget_message"
+        answer, warnings = msg.BUDGET_EXHAUSTED_ANSWER, []
+    _log_turns_ended(ctx, loop_state, reason=reason, ending=ending)
+    return _finalize_answer(answer, warnings, ctx.all_results, backend=ctx.backend, retries=loop_state.retries)
 
 
 def _run_agent_impl(question: str, backend: str, verbose: bool = False) -> AgentResult:
     """Run the tool-calling loop until the model produces a final answer
-    (no more tool calls) or MAX_TOOL_ITERATIONS is hit. `backend`
-    selects which LLM answers (see llm_backends.BACKENDS) -- the loop
-    itself, and every tool-dispatch branch inside _dispatch_tool_call,
-    is identical regardless of which one is chosen. Returns an
-    AgentResult: the answer text, every chunk retrieved across all tool
-    calls (in the same global [n] order the model was shown them in —
-    this is what lets the printed citation key line up with the model's
-    citations), any citation-verification warnings, and the model's
-    actual withheld answer text whenever the hard gate refused. Every
+    or runs out of turns. `backend` selects which LLM answers (see
+    llm_backends.BACKENDS). Returns an AgentResult: the answer text, every
+    chunk retrieved across all tool calls (in the same global [n] order the
+    model was shown them in, so the printed citation key lines up with the
+    model's citations), any citation-verification warnings, and the
+    model's withheld answer text whenever the hard gate refused. Every
     return site routes through _finalize_answer(), which withholds the
-    model's actual answer text in favor of a refusal whenever those
-    warnings are non-empty.
+    model's answer in favor of a refusal whenever warnings remain.
 
-    A final answer arrives one of two ways:
+    The answer arrives as a `submit_answer` call: claims are structured
+    data (value/unit/citation_index/quote) checked by verify_claims()
+    instead of regex-parsed out of prose.
 
-    - `submit_answer` (SUBMIT_TOOL_SCHEMA), the preferred path: claims
-      are structured data (value/unit/citation_index/quote), verified by
-      verify_claims() -- fuzzy quote grounding, value attribution, and a
-      coverage cross-check -- instead of regex-parsed out of prose.
-      Offered as a 4th tool alongside the other 3 from turn 1, under AUTO
-      mode.
-    - Plain text: a text reply first triggers ONE forced
-      ANY+submit_answer-only follow-up turn (using the reserved final
-      round trip if the budget is spent). Text again after that is
-      refused, since there's no structured claim to verify -- see
-      _handle_no_tool_calls_turn.
+    Every extra turn follows one rule (_next_turn_mode): a free turn while
+    MAX_TOOL_ITERATIONS budget is left, else a forced submit-only turn
+    from the SUBMIT_RESERVE, else none. Each path draws on it the same way:
+    - a failing submission gets a citation retry, delivered as the
+      submit_answer tool RESULT (a dangling function call followed by a
+      bare user turn has 400'd on Gemini);
+    - a text reply gets a forced submit_answer follow-up;
+    - tool calls past the budget get "not run" results and a forced submit.
+    A text reply to a forced send, or tool calls past the budget in reply
+    to one, ends the run: forcing didn't work, so forcing again would only
+    spend a request. So does running out of turns. Either way _end_run
+    re-gates the latest failing submission if there is one.
 
     Known simplification: no deduplication if two tool calls happen to
     surface the same chunk (e.g. two related queries against the same
     company). Fine for now — a duplicate citation is cosmetic, not a
-    correctness problem — but worth revisiting if it gets noisy.
-
-    One self-correction retry on unverified claims
-    (retried_for_citations caps the conversation at one), outside the
-    MAX_TOOL_ITERATIONS budget and forced to submit_answer once that
-    budget is spent (see _handle_submit_turn). It delivers its feedback as a
-    submit_answer tool RESULT instead of
-    a plain follow-up turn -- keeps the chat history well-formed (a
-    dangling function call followed by a bare user turn has historically
-    400'd on Gemini) and needs no new plumbing, since it's exactly what
-    send_tool_results already does."""
+    correctness problem — but worth revisiting if it gets noisy."""
     require_backend(backend)
     start, send_tool_results, send_followup = BACKENDS[backend]
     conv_state, turn = start(question, SYSTEM_PROMPT, list(AGENT_TOOL_SCHEMAS))
@@ -420,42 +409,28 @@ def _run_agent_impl(question: str, backend: str, verbose: bool = False) -> Agent
         send_tool_results=send_tool_results,
         send_followup=send_followup,
     )
-    loop_state = _AgentLoopState(calls_made=1)
+    loop_state = _AgentLoopState(calls_made=1, reserve_left=SUBMIT_RESERVE)
 
     while True:
         submit, other = _partition_submit_call(turn.tool_calls)
 
         # A pure submission, OR a mixed submit+search turn with no budget
         # left to dispatch the extra searches: verify what was actually
-        # submitted (then retry or finalize) rather than discarding it
-        # below for the generic timeout message.
+        # submitted (then retry or finalize) rather than discarding it.
         if submit is not None and (not other or loop_state.calls_made >= MAX_TOOL_ITERATIONS):
             step = _handle_submit_turn(submit["args"], other, ctx, loop_state)
-            if step.result is not None:
-                return step.result
-            turn = step.next_turn
-            loop_state.calls_made += 1
-            continue
-
-        if not turn.tool_calls:
+        elif not turn.tool_calls:
             step = _handle_no_tool_calls_turn(turn, ctx, loop_state)
-            if step.result is not None:
-                return step.result
-            turn = step.next_turn
-            loop_state.calls_made += 1
-            continue
+        elif loop_state.calls_made >= MAX_TOOL_ITERATIONS:
+            step = _force_final_submit_turn(other, ctx, loop_state)
+        else:
+            step = _LoopStep(next_turn=_dispatch_pending_calls(other, submit, ctx))
 
-        if loop_state.calls_made >= MAX_TOOL_ITERATIONS:
-            if not _should_force_final_submit(loop_state.final_turn_attempted, loop_state.calls_made):
-                break
-            turn = _force_final_submit_turn(other, ctx, loop_state)
-            loop_state.calls_made += 1
-            continue
-
-        turn = _dispatch_pending_calls(other, submit, ctx)
+        if step.result is not None:
+            return step.result
+        turn = step.next_turn
+        loop_state.last_turn_forced = step.forced
         loop_state.calls_made += 1
-
-    return _finalize_after_budget_exhausted(ctx, loop_state)
 
 
 def main():
