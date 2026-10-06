@@ -54,7 +54,7 @@ reference:
 
 ### Roadmap (user, 2026-10-06): data expansion → harder eval questions → monorepo → admin web UI → chat web UI
 
-- [ ] **[feature, Med, Substantial]** Data expansion, phase 2: new companies from different sectors (a bank, a retailer, an industrial). Needs its own plan; the ticker list feeds the system prompt and the tool enum, so the prompt fingerprint changes. After phase 1 (In progress).
+- [ ] **[feature, Med, Substantial]** Data expansion, phase 2: new companies from different sectors (a bank, a retailer, an industrial). Needs its own plan; the ticker list feeds the system prompt and the tool enum, so the prompt fingerprint changes. The system prompt hard-codes the count ("five companies", "ALL FIVE", "fewer than all five" in `prompts/agent_system.py`), so the plan must derive it from `COMPANIES` (a panel-screened prompt change). Hoist the duplicated enums in `prompts/agent_tools.py` first (prompt-audit section). After phase 1 (In progress).
 - [ ] **[feature, Med, Substantial]** Harder eval questions: restore eval headroom on the expanded corpus (multi-year comparisons, cross-company questions). Package 6 resumes once these leave headroom.
 - [ ] **[refactor, Med, Substantial]** Monorepo layout ahead of the web UIs. Details later, `/wayfinder` first.
 - [ ] **[feature, Med, Substantial]** Admin web UI (ingest, rebuild, corpus status; phase 1 records the rebuild timings it needs). Details later, `/wayfinder` first.
@@ -64,6 +64,7 @@ reference:
 
 - [ ] **[bug (latent), Low, Trivial]** `xbrl_facts.py` parses SEC's `start`/`end` dates with a bare `date.fromisoformat`, which on Python 3.13 also accepts `20240630`, and then compares and sorts the raw strings (`max(..., key=(e["end"], ...))`, `e["end"] == period_end_date`). A non-canonical date would sort wrongly. `edgar_ingest._is_canonical_date` already guards the submissions data. Move it to a shared `sources` helper and apply it in `xbrl_facts` as well. This was round 6 code review in `docs/plans/2026-10-06-data-expansion-years.md`'s Review log; `xbrl_facts` was outside that diff.
 - [ ] **[bug (latent), Low, Trivial]** `edgar_ingest.get_filing_url` builds a `*_meta.json` path from an accession it doesn't check. `mcp_server.py:105` passes `accn` from raw XBRL companyfacts JSON. The path only feeds a read-only lookup for a citation URL. Fix: return None unless `_ACCESSION_PATTERN.fullmatch(accession)`, the check ingest already applies. This was the round 2 security residual in `docs/plans/2026-10-06-data-expansion-years.md`'s Review log, and it was left out because only the function's docstring is in that diff.
+- [ ] **[bug, Low, Trivial]** Three SEC HTTP calls have no timeout, so a stalled response hangs the caller: `xbrl_facts.py:126` and `:380` (live agent path) and `devtools/discover_tags.py:61`. `edgar_ingest` already passes `timeout=REQUEST_TIMEOUT_SECONDS`; reuse it. Do it in one `xbrl_facts` pass with the date-helper item above and the unchecked `get_metric` indexing item (2026-09-09 section). Phase 1 multiplies the XBRL fetches.
 
 ### From the 2026-10-06 package 4 rescope
 
@@ -88,57 +89,37 @@ Plan: `docs/plans/2026-10-02-package-5-retrieval.md`. Review: `docs/reviews/2026
 
 ### From the 2026-09-24 prompt-audit roadmap
 
-Design: `docs/plans/2026-09-24-prompt-audit-roadmap.md`. Findings: `docs/reviews/2026-09-24-prompt-audit.md`. The roadmap closed 2026-09-27 (WP8 bar met, 40/47). Summary: `docs/decisions/2026-09-27-prompt-audit-rollout.md`. What's left here are its open items. Anything that changes model-visible text still goes through the roadmap's panel-screen process.
+Design: `docs/plans/2026-09-24-prompt-audit-roadmap.md`. Findings: `docs/reviews/2026-09-24-prompt-audit.md`. The roadmap closed 2026-09-27 (WP8 bar met, 40/47). Summary: `docs/decisions/2026-09-27-prompt-audit-rollout.md`. Its follow-on work became the agent-improvement map (In progress). What's left here are its open items; trigger-only ones moved to the Watch list (2026-10-06). Anything that changes model-visible text still goes through the roadmap's panel-screen process, so batch the text items below into one screen where possible.
 
-- [ ] **[misc, Med, Substantial]** **Next:** the baseline-improvement plan. All three candidates from the WP5–WP8 misses are done: the "− 1" gate false positive (2026-09-28: percent identities covered only when a percent `calculate` ran; `git log --grep="percent identit"`), the Q4-hint vs judge conflict on `nvda-rd-expense-q4fy26-refusal` (2026-09-28: criteria no longer invite the full-year figure; `git log --grep="nvda-rd-expense-q4fy26"`), and the unprefixed header echo (`docs/decisions/2026-09-27-unprefixed-citation-header-strip.md`). Post-fix panel (C `ca52d68`, reports `20260928T071313Z`/`071948Z`/`072319Z` vs WP8 B `20260926T085714Z`/`090017Z`/`090341Z`): no regressions; nvda-revenue-two-quarter-comparison and nvda-rd-expense-q4fy26-refusal 3/3. Next: see *Agent-improvement map* under In progress. The pltr item below is one of its cases. `docs/decisions/2026-09-27-prompt-audit-rollout.md`
-- [ ] **[bug, Med, Standard]** `pltr-inventory-turnover-fy2025-refusal` is refused by the per-claim gate in 9 of 24 runs since 2026-09-25 (1/3 in the post-fix panel, 2/3 in WP8 B). The model files fiscal years as numeric claims ("[6] claims 2025 (raw) but that value doesn't appear in the quoted text") or a claim with a value and no unit, so a correct no-data refusal becomes "I can't confirm this answer". `withheld_answer` is empty, so the eval's gate-FP flag misses it. Check `_verify_one_claim` (`citations.py`) and the retry path in `agent.py`: should a year-shaped raw claim be treated as non-claim, and should a correct refusal be possible with no numeric claims at all? Critical core.
-- [ ] **[misc, Low, Standard]** Step 7 follow-ups:
+- [ ] **[misc, Low, Standard]** Tool-message text follow-ups (Step 7, plus two older items on the same messages):
   - reason-bearing rejections via `on_reject`, including a call rejected at the boundary (partial multi-year range, yoy + multi-year), which today reads as "no data … try search_filings";
   - `calculate`'s generic missing-argument message;
   - MCP search returning a silent `[]`;
-  - a yoy no-data reply names the anchor period even when the prior year is the missing one (`formulas.py:353`; no live case, all 62 yoy calls found data).
+  - a yoy no-data reply names the anchor period even when the prior year is the missing one (`formulas.py:353`; no live case, all 62 yoy calls found data);
+  - the three "unknown ticker" paths disagree: `search_filings` names the bad ticker and lists valid ones, while `call_get_financial_fact`/`call_compare_financial_metric` fold it into their generic no-data messages. Upgrade the other two, or record why search differs (`docs/reviews/2026-09-10-fix-3-more-review-findings.md`).
 
   Each one changes model-visible text, so it needs a panel screen. `docs/decisions/2026-09-26-wp7-fiscal-year-strings.md`
+- [ ] **[bug, Low, Standard]** A calculate result's expression pastes each operand's unit in as-is, so a `"raw"` operand (a plain ratio or count) reaches the model as e.g. "1.04 raw". The result value itself already omits "raw" via `fact_tools._with_unit`. Found in the WP1 code review (`docs/reviews/2026-09-24-wp1-prompts-package.md`). It changes model-visible text: screen it with the tool-message batch above.
 - [ ] **[refactor, Low, Standard]** Audit notes 8–10 (prompt style):
   - all-caps emphasis;
   - tool bullets in SYSTEM_PROMPT that duplicate the tool descriptions;
   - the size of rule 9;
-  - sentences duplicated across the agent and MCP surfaces;
-  - the hard-coded "five companies".
+  - sentences duplicated across the agent and MCP surfaces.
 
-  It changes model-visible text, so it needs a panel screen. `docs/reviews/2026-09-24-prompt-audit.md`
-
-- [ ] **[bug, Low, Standard]** `_NON_CLAIM_PATTERN`'s duration exemption covers only year/month/day ("3-year", "90 days"); other durations and counts ("12 weeks", "2 quarters") still read as uncovered numbers. Each new word is whack-a-mole; fix only if a live run withholds on one. `docs/decisions/2026-09-17-uncovered-number-gap-fixes.md`
-- [ ] **[bug, Low, Standard]** `numeric_utils.NUMBER_PATTERN` has no "B"/"bn" suffix: `extract_numbers("$81.6B")` and "$81.6bn" give `(81.6, 'raw')`, while "$81.6 billion" gives `(81.6, 'billion')`. An answer written with the suffix would fail coverage against a claim in billions. Not seen live yet (the NVDA answers wrote full figures). Critical core, so escalated plan review and a live spot-check. `docs/research/2026-09-28-grounding-computed-numbers.md`
-- [ ] **[design, Low, Standard]** Rule 9's "computed as" example (`prompts/agent_system.py`, `prompts/agent_tools.py`) shows only a ratio, and `calculate` renders percent_change as prose, so the model improvises its own percent-change formula. The gate now covers the unitless identities 1, −1, 100 and −100 when a percent calculation ran, but not "× 100%" (parses as 100 percent; covering it would exempt a real "100%" claim). Add a percent_change example, or match `calculate`'s rendering, only if live runs still withhold derivations. Prompt change: its own commit plus a panel run.
-- [ ] **[bug, Low, Standard]** The percent-identity coverage in `verify_claims` keys on a `calculate` percent result only. A growth figure from `get_financial_fact(yoy_growth=True)` (an `xbrl` result) grants no identities, so an answer that writes "current ÷ prior − 1" after it would still withhold for the 1. Not seen live; fix only if a run shows it (e.g. also grant them for a yoy_growth result).
-- [ ] **[bug, Low, Standard]** A calculate result's expression pastes each operand's unit in as-is, so a `"raw"` operand (a plain ratio or count) reaches the model as e.g. "1.04 raw". The result value itself already omits "raw" via `fact_tools._with_unit`. Found in the WP1 code review (`docs/reviews/2026-09-24-wp1-prompts-package.md`); left unchanged because WP1 had to be byte-identical. It changes model-visible text, so it goes through the roadmap's panel-screened process: fit it in after WP2.
-- [ ] **[refactor, Low, Trivial]** Duplicated enum values in `prompts/agent_tools.py`, all copied as-is from `agent.py` by WP1: the period list `["FY", "Q1", "Q2", "Q3", "Q4"]` twice, `list(COMPANIES.keys())` three times, and `CLAIM_UNITS` restating `numeric_utils.UNIT_MULTIPLIERS`'s keys by hand. Hoist each into one constant; the schemas' bytes must stay identical (check with the WP2 fingerprint). Found in the WP1 code review.
+  The hard-coded "five companies" moved to Data expansion phase 2, which must fix it. It changes model-visible text, so it needs a panel screen. `docs/reviews/2026-09-24-prompt-audit.md`
+- [ ] **[refactor, Low, Trivial]** Duplicated enum values in `prompts/agent_tools.py`, all copied as-is from `agent.py` by WP1: the period list `["FY", "Q1", "Q2", "Q3", "Q4"]` twice, `list(COMPANIES.keys())` three times, and `CLAIM_UNITS` restating `numeric_utils.UNIT_MULTIPLIERS`'s keys by hand. Hoist each into one constant; the schemas' bytes must stay identical (check with the WP2 fingerprint). Do it before Data expansion phase 2 changes the ticker list. Found in the WP1 code review.
 - [ ] **[design, Low, Standard]** The MCP `search_filings` schema is derived the wrong way round: `prompts.mcp.MCP_SEARCH_TOOL_SCHEMA` is the agent's schema with its agent-only text overridden, so agent-only wording in any other field reaches MCP clients silently. The `ticker` description already does ("…which company the question is about"), and three description sentences are written out on both surfaces. Fix: a neutral shared schema that the agent adds its note to. It changes model-visible text, so it needs a panel screen. Found in WP3's plan and code reviews (`docs/reviews/2026-09-24-wp3-group-a-wording.md`).
 
 ### From the 2026-09-25 token-efficiency workflow change
 
-Full evidence/reasoning: `docs/decisions/2026-09-25-token-efficiency-workflow.md`.
+Full evidence/reasoning: `docs/decisions/2026-09-25-token-efficiency-workflow.md`. Its pilot and the
+three follow-ups were settled by the 2026-10-05 `/retro` (`~/.claude/retros/2026-10-05.md`).
 
-- [ ] **[misc, Med, Standard]** Pilot: over the next 2 WPs, measure main-thread and subagent
-  tokens and count review findings. Method: sum `message.usage` per unique `message.id` in
-  `~/.claude/projects/<project>/*.jsonl` (main thread) and `*/subagents/*.jsonl`, with cache
-  reads weighted at 0.1. Compare against the decision file's baseline:
-  86% main-thread share, 351k median context. Also note anything lost to compaction.
-  - Restore Opus reviewers or two clean rounds if findings drop.
-  - Raise the window if compaction loses something important.
-  - The first `/retro` run closes this out (its baseline is `~/.claude/retros/2026-09-25.md`).
-- [ ] **[design, Low, Trivial]** After a clean pilot, consider lowering `autoCompactWindow` from
-  300k to 200k (simulated −68% main-thread input vs −56%, ~4.5 vs ~2 compactions per session).
-- [ ] **[design, Low, Standard]** After a clean pilot, trial `arch-reviewer` on Sonnet at
-  Substantial tier too. Today it escalates to Opus there.
-- [ ] **[design, Low, Trivial]** Consider lowering `PROJECT_INDEX.md`'s `Recent` cap (50 → ~25).
-  It's read in full every session (~16KB).
 - [ ] **[refactor, Low, Standard]** Public names for the `sec_agent.agent` modules' cross-module
   API. The `agent.py` split (`docs/plans/2026-09-29-agent-py-split.md`) kept every `_`-prefixed
   name to stay a pure move, so modules and tests now import private names from siblings (e.g.
-  `_dispatch_tool_call`, `_finalize_answer`, `_number_candidates`). Rename after the S2 loop
-  refactor, once the seams have settled. Two placements from the split's architecture review
+  `_dispatch_tool_call`, `_finalize_answer`, `_number_candidates`). Due now: its trigger, the S2
+  loop refactor (package 3, 2026-10-06), has landed. Two placements from the split's architecture review
   go in the same pass:
   - Move `_NO_SUBMISSION_WARNING` from `citations.py` to `submission.py`. It is the submit gate's
     "no submission" sentinel, and `citations.py` never reads it. After the move, `agent.py` no
@@ -171,10 +152,10 @@ Full evidence/reasoning: `docs/decisions/2026-09-22-adopt-pytest-coverage.md`,
   baseline mostly closed on 2026-09-22 (94% overall, up from 90%) — see
   `docs/decisions/2026-09-22-coverage-baseline-close-and-hard-gate.md`.
   `query_chunks.py` deleted (superseded), `index_chunks.py`/
-  `eval_harness.py` fully closed. Still open: `chunk_documents.py`'s
+  `eval_harness.py` fully closed. Still open: `retrieval/chunk_documents.py`'s
   `process_filing`/`main` (81% under branch mode, real file-I/O logic,
   testable but not live-only — deliberately not pragma-excluded) and
-  `mcp_server.py`'s ASGI middleware/`build_app` (84% under branch mode
+  `sec_agent/mcp_server.py`'s ASGI middleware/`build_app` (84% under branch mode
   — genuinely live wiring, but currently just uncovered, not
   pragma-excluded: `mcp_server.py` carries zero `# pragma: no cover`
   markers and isn't in `.claude/rules/live-code-tdd.md`'s list either —
@@ -205,13 +186,11 @@ file pending which (if any) get adopted. Reproduce with
 - [ ] **[design, Med, TBD]** Whether to select `S113`
   (request-without-timeout) and/or `B905` (zip-without-explicit-strict).
   Both surveyed with real hit counts, unlike a name-based guess:
-  `S113` found 5 real production HTTP calls with no timeout at all
-  (`discover_tags.py:62`, `edgar_ingest.py:56,89`,
-  `xbrl_facts.py:127,341`) — a stalled SEC EDGAR response could hang the
-  agent indefinitely; `B905` found 2 real `zip()` calls in the retrieval
-  path (`retrieval.py:166,219`; a third, `query_chunks.py:97`, no
-  longer exists — that file was deleted as superseded duplicate code,
-  see `docs/decisions/2026-09-22-coverage-baseline-close-and-hard-gate.md`)
+  `S113` found 5 real production HTTP calls with no timeout at all;
+  `edgar_ingest`'s now pass one, and the other three are their own bug
+  item (2026-10-06 data expansion phase 1 review section), so selecting
+  `S113` is now only about keeping new calls honest. `B905` found 2 real
+  `zip()` calls in the retrieval path (now `retrieval.py:212,319`)
   that would silently truncate instead of erroring if Chroma ever
   returned mismatched-length document/metadata/distance lists. Rejected from the
   same survey, each for a specific reason rather than by category
@@ -229,17 +208,7 @@ file pending which (if any) get adopted. Reproduce with
 Full evidence/reasoning: `docs/plans/2026-09-10-citation-gate-measurement-instrumentation.md`.
 
 - [ ] **[feature, Low, Standard]** Model-based veto before refusal (one entailment check before the hard gate withholds an answer) — deferred 2026-09-10 pending the structured-claims redesign's own measurement. Re-evaluated 2026-09-11 with the full 41-question baseline + 4-question stress set now analyzed: **0/45 gate fires post-redesign**, down from 6/45 (100% false positive) pre-redesign. Still no evidence a veto is needed — there's nothing left for it to overturn in this corpus. Revisit only if a wider/harder question set finds the gate firing again. **2026-09-26**: WP5's gate refusals on `nvda-revenue-two-quarter-comparison` were an uncovered-number false positive (the `1` in "a ÷ b − 1", `claims 1.0 (raw)`), not an entailment case. That goes to the narrow gate fix the WP5 close-out files, so there's still no evidence for a veto.
-- [ ] **[design, Low, Standard]** `nvda-gross-margin-fy26` (41-question baseline, 2026-09-11): the model correctly stated 71.1% with a valid claim `[1]`, then added a second, redundant claim re-deriving the same figure ("...or 71.1 expressed as a percentage of revenue in its Consolidated Statements of Income) `[18]`") whose quote doesn't literally contain "71.1" (it's a derived restatement, not a direct source quote) -- `_verify_one_claim` correctly fails that second claim, but `verify_claims`'s all-or-nothing design means one bad redundant claim refuses an otherwise fully-grounded answer. Not clearly a code bug (the second claim genuinely doesn't verify) or clearly a system-prompt gap (rule 9 doesn't currently address a model restating an already-cited value a second way) -- needs a decision once this pattern is confirmed to recur: tighten rule 9 to discourage redundant restatement claims, or relax `verify_claims` to tolerate a claim that duplicates an already-verified value under a different citation. Didn't recur in an immediate re-run (that run failed the same question a different way -- tool-budget exhaustion, not a gate refusal -- consistent with general model non-determinism on this question, not a persistent gate gap).
 - [ ] **[refactor, Low, Trivial]** The `category, norm = normalize(...); tolerance = max(0.01*abs(norm), 0.05); any(c == category and abs(v - norm) <= tolerance for c, v in candidates)` pattern is now duplicated 6 times across `citations.py`/`calculate.py`/`table_grounding.py` (`_iter_citation_claims`, `value_is_citation_verified`, `_verify_one_claim`, `verify_claims`'s coverage check, `_ground_operand`/`call_calculate` for the `calculate` tool, 2026-09-11, and `table_grounding.locate_value`/`quote_is_grounded`, 2026-09-12) -- plus `eval_harness.grade_numeric`'s own copy, a natural 7th if a shared helper is ever extracted. Pre-existing style tolerated 3 times already; the `calculate` tool's addition was a good opportunity to extract a shared `_matches_any(value, unit, candidates) -> bool` helper instead of continuing to copy it, and the table-grounding fix is a second one, deferred for the same reason. Found in the `calculate` tool's architecture review, 2026-09-11 (`docs/reviews/2026-09-11-calculate-tool-and-stress-questions.md`) -- not fixed there or in the 2026-09-12 fix, since it's a cosmetic DRY cleanup unrelated to either change's actual scope.
-
-### From the 2026-09-14 tool-turn-waste fix
-
-Full evidence/reasoning: `docs/plans/2026-09-14-tool-turn-waste.md`,
-`docs/reviews/2026-09-14-tool-turn-waste.md`. Surfaced while diagnosing
-why 9/16 failures in the 2026-09-13 47-question baseline were turn-
-budget timeouts, not citation-gate refusals.
-
-- [ ] **[design, Med, Standard]** The model never routes a 3+-company ranking question through `compare_financial_metric` -- confirmed across the ENTIRE trace history, it has never once been called on `five-company-*-ranking-fy2025`, always five individual `get_financial_fact` calls instead, which cannot even retrieve the right answer (see the fiscal-year-label bug below) and exhausts the 6-turn budget doing it. Attempted THREE times live against real Gemini calls with two different prompt wordings -- a narrowed "use this for 3+ companies" rule, then (after the first failed) an added reassurance that anchor-based closest-period matching is correct even when the question states each company's own distinct fiscal year/period-end date -- and failed identically each time, same five-call pattern, same timeout. Per this project's "fails twice in the same way" rule, brought back for a decision rather than tried a fourth way; the fourth attempt (one more targeted wording) also failed, and all wording was reverted to the original text rather than ship unproven changes that could regress 5 currently-passing comparison questions (`nvda-revenue-two-quarter-comparison`, `aapl-msft-tax-rate/employee/total-assets-comparison`, `msft-three-segments-revenue-q3fy2026`) for zero measured benefit. **Working hypothesis, not yet tested**: the target question spells out each company's own distinct fiscal year and period-end date explicitly (e.g. "Apple's fiscal year 2025 (ended September 27, 2025) ... NVIDIA's fiscal year 2026 (ended January 25, 2026)"), which may read to the model as needing exact per-company lookups rather than trusting the tool's anchor-and-closest-match approximation, no matter how that's worded. Needs a different angle before a fifth prompt attempt -- e.g. a worked example showing the tool's approximation IS the graded-correct answer for this exact question shape, or accepting this as a standing model limitation and moving the fix to code (a validator step, or splitting the tool call per stated date). **Addendum 2026-09-24**: the prompt audit found `compare_financial_metric` called only once in the whole trace log since 2026-09-15. The roadmap's 13-question eval panel has no question that exercises it (`docs/plans/2026-09-24-prompt-audit-roadmap.md`, Step 2), so prompt-wording changes to that tool are effectively untested until this item lands.
 
 ### From the 2026-09-06 full-codebase review
 
@@ -258,22 +227,15 @@ review also surfaced remain below.
 
 Full evidence: `docs/reviews/2026-09-10-fix-3-more-review-findings.md`.
 
-- [ ] **[performance, Low, Standard]** `_never_tagged_hint()` (called from both `_format_no_fact_message` and, as of §12, `_format_no_comparison_message`) re-fetches `xbrl_facts.fetch_concept()` for the exact (ticker, tag) pair the caller's own lookup just fetched moments earlier — normally a free disk-cache hit, but `fetch_concept()` never caches a 404 response, so on the one case this hint actually exists for (a company that genuinely never tags a concept at all) it makes a real second live SEC network round-trip synchronously inside message formatting. Root cause is in `xbrl_facts.fetch_concept()`'s caching, not in either message formatter — a separate, larger-scope item than either function's own fix.
-- [ ] **[design, Low, Standard]** `search_filings`' unknown-ticker rejection returns a bespoke, actionable string built inline in `_dispatch_tool_call` (naming the invalid ticker and listing valid ones), while `call_get_financial_fact`/`call_compare_financial_metric` fold the same failure into their generic `_format_no_fact_message`/`_format_no_comparison_message` (which don't name the ticker as the problem). An incidental inconsistency between three sibling "unknown ticker" paths, not a bug — worth a deliberate decision later (upgrade the other two similarly, or document why search_filings needs to differ) rather than leaving it accidental. Still stands after the 2026-09-09 schema-validator redesign — `validate_tool_args` deliberately preserved this asymmetry rather than resolving it (out of scope for that change).
+- [ ] **[performance, Low, Standard]** `_never_tagged_hint()` (called from both `_format_no_fact_message` and, as of §12, `_format_no_comparison_message`) re-fetches `xbrl_facts.fetch_concept()` for the exact (ticker, tag) pair the caller's own lookup just fetched moments earlier — normally a free disk-cache hit, but `fetch_concept()` never caches a 404 response, so on the one case this hint actually exists for (a company that genuinely never tags a concept at all) it makes a real second live SEC network round-trip synchronously inside message formatting. Root cause is in `xbrl_facts.fetch_concept()`'s caching, not in either message formatter — a separate, larger-scope item than either function's own fix. (The section's other item, unknown-ticker message inconsistency, moved into the prompt-audit tool-message batch.)
 
 ### From the 2026-09-09 schema-driven arg-validation redesign
 
 Full evidence/reasoning: `docs/plans/2026-09-09-schema-driven-arg-validation.md`, `docs/reviews/2026-09-09-schema-driven-arg-validation.md`. Surfaced while auditing the codebase for other schema-validation opportunities, or by that change's own two-pass review — real but lower-severity than what that change fixed, not addressed there.
 
-- [ ] **[bug (latent), Low, Standard]** `xbrl_facts.py`'s `get_metric()` does unchecked `entry["val"]`/`entry["end"]`/`entry["form"]`/`entry["accn"]` indexing on SEC API response entries after `_pick_entry*` filters them — a SEC schema change or odd entry would raise a raw `KeyError` from inside XBRL-parsing internals instead of a clear error. Lower priority than the fixed items: SEC's schema is stable and the surrounding fetch/cache code is already fairly defensive.
+- [ ] **[bug (latent), Low, Standard]** `xbrl_facts.py`'s `get_metric()` does unchecked `entry["val"]`/`entry["end"]`/`entry["form"]`/`entry["accn"]` indexing on SEC API response entries after `_pick_entry*` filters them — a SEC schema change or odd entry would raise a raw `KeyError` from inside XBRL-parsing internals instead of a clear error. Lower priority than the fixed items: SEC's schema is stable and the surrounding fetch/cache code is already fairly defensive. Batch with the `xbrl_facts` timeout and date-helper items (2026-10-06 data expansion phase 1 review section).
 - [ ] **[bug, Low, Trivial]** `eval_harness.py`'s `_select_questions` reads `q["id"]` before the per-question `try/except` in `run_eval()` that already contains most other malformed-question crashes — one malformed question entry still crashes the whole eval batch instead of just failing that question. Narrow, low-traffic (offline eval tool, not a live path).
 - [ ] **[refactor, Low, Standard]** `_dispatch_tool_call`'s `search_filings` branch re-derives ticker validity by hand (`isinstance`/`COMPANIES` membership) a second time, after `validate_tool_args` already checked the same thing internally via the schema, purely to decide which rejection message to show — a residual instance of the same "hand-rolled check duplicating the schema" pattern this redesign otherwise eliminated. Found in the redesign's own architecture-review pass; not fixed there because a clean fix means changing `validate_tool_args`'s return type across all 4 call sites for a 2-line message-selection convenience, out of proportion to that change.
-
-### Carried over from the project's pre-2026-09-06 history
-
-- [ ] **[misc, Low, TBD]** "Week 8 — polish + write-up" — no detail scoped yet.
-
-(HNSW index tuning was rejected outright, not parked, so it isn't carried over as an open item.)
 
 ## Watch list
 
@@ -291,12 +253,17 @@ detail. The fuller write-ups from before the 2026-09-26 cleanup are in
 - **[bug (latent), Low, Standard]** `table_grounding`'s fuzzy coverage could accept a similar-but-wrong segment label from a different table block. Trigger: a tracked filing with near-identical sibling labels. `docs/reviews/2026-09-13-table-grounding-region-scoped-matching.md`
 - **[bug (latent), Low, Trivial]** A large `header_context` inflates `quote_is_grounded`'s coverage (25% → 88% in synthetic testing, never past the 90% threshold). Trigger: a fabricated quote crossing it. Package 2's D12a (2026-10-01) widens the header context of tables whose first row is a period header; the trigger is unchanged. `docs/reviews/2026-09-13-table-grounding-region-scoped-matching.md`
 - **[bug (latent), Low, Trivial]** `_classify_row` treats a data row with a blank first cell as a header and drops it from `locate_value` (fails safe to `_quote_matches`). Trigger: a real filing with that shape. `docs/reviews/2026-09-13-table-grounding-region-scoped-matching.md`
-- **[feature, Low, TBD]** `NUMBER_PATTERN` doesn't recognize `M`/`B`/`K` abbreviations. Rule 9 bans them; if ever added, recognize `MM`/`Bn`, not bare letters. Trigger: an abbreviation in a live answer. `docs/decisions/2026-09-17-uncovered-number-gap-fixes.md`
+- **[feature, Low, TBD]** `NUMBER_PATTERN` doesn't recognize `M`/`B`/`K`/`bn` abbreviations: `"$81.6B"` and `"$81.6bn"` parse as `(81.6, 'raw')`, so an answer using them fails coverage against a claim in billions. Rule 9 bans them; if ever added, recognize `MM`/`Bn`, not bare letters. Critical core: escalated plan review and a live spot-check. Trigger: an abbreviation in a live answer. `docs/decisions/2026-09-17-uncovered-number-gap-fixes.md`, `docs/research/2026-09-28-grounding-computed-numbers.md`
 - **[test-coverage, Low, Standard]** Citation stress modes: the two-nearby-percentages question (`nvda-revenue-yoy-growth-q1fy27`) cited the risky sentence in only 1 of 3 runs, and a paraphrased quote near the 0.90 threshold is untested. Trigger: `analyze_flakiness.py` history showing the risky sentence exercised reliably (then close it), or a way to force a paraphrase. `docs/decisions/2026-09-23-restore-nvda-yoy-stress-question.md`
 
-- **[feature, Low, Standard]** Gate rules D3 (a verified quote covers its own numbers) and D4/D11 (placeholder values become qualitative), deferred from improvement-map package 2: both loosen the gate and none of the 17 post-package-1 retries needed them. Trigger: a re-mine showing a placeholder or quote-number refusal. `docs/plans/2026-10-01-gate-rules-package-2.md`
+- **[feature, Low, Standard]** Gate rules D3 (a verified quote covers its own numbers) and D4/D11 (placeholder values become qualitative), deferred from improvement-map package 2: both loosen the gate and none of the 17 post-package-1 retries needed them. Includes the 2026-09-11 `nvda-gross-margin-fy26` case: a redundant second claim restating an already-verified value (71.1%) under another citation, whose quote doesn't contain it, refused the whole answer. The options there are a rule 9 line against redundant restatement claims, or tolerating a claim that duplicates a verified value. Trigger: a re-mine showing a placeholder, quote-number or redundant-restatement refusal. `docs/plans/2026-10-01-gate-rules-package-2.md`
 - **[bug (latent), Low, Standard]** `locate_value(74550, "million")` on NVDA `0001045810-26-000052` chunk 34 also matches a percentage-table cell (`74.9` read as billions, within 1%), so a quote of that cell could ground a wrong value. Trigger: a live accept citing it. `docs/plans/2026-10-01-gate-rules-package-2.md`
 - **[bug (latent), Low, Standard]** `quote_is_grounded` accepts a foreign group label that differs from the cell's own by a single letter: `| Segment A |` over Segment B's `Revenue | $34,681` grounds, while `Cloud`/`Gaming` and `Level 1:`/`Level 2:` are refused. The one-letter token is probably dropped as noise. Found in the package-2 review. Trigger: a live filing with letter-suffixed group labels. `docs/reviews/2026-10-01-gate-rules-package-2.md`
+
+- **[bug, Low, Standard]** `pltr-inventory-turnover-fy2025-refusal`: the model files a fiscal year as a numeric claim ("[6] claims 2025 (raw)…") or a value with no unit, so a correct no-data refusal is withheld; `withheld_answer` is empty, so the eval's gate-FP flag misses it. Since the retry slot (2026-09-30) and uniform submit loop it passed 12/12 in October runs, so it's rescued, not fixed. Open questions: treat a year-shaped raw claim as non-claim; allow a refusal with no numeric claims. Critical core. Trigger: it fails again, or year-shaped claims show up in the harder eval questions. `docs/decisions/2026-09-30-citation-retry-own-slot.md`
+- **[bug, Low, Standard]** `_NON_CLAIM_PATTERN`'s duration exemption covers only year/month/day; "12 weeks" or "2 quarters" still read as uncovered numbers. Each new word is whack-a-mole. Trigger: a live run withholds on one. `docs/decisions/2026-09-17-uncovered-number-gap-fixes.md`
+- **[design, Low, Standard]** Rule 9's "computed as" example shows only a ratio and `calculate` renders percent_change as prose, so the model improvises its own percent-change formula; "× 100%" isn't covered as an identity (it would exempt a real "100%" claim). Fix: a percent_change example, or match `calculate`'s rendering (prompt change, panel run). Trigger: live runs withhold a percent derivation.
+- **[bug, Low, Standard]** Percent-identity coverage in `verify_claims` keys on a `calculate` percent result only, so "current ÷ prior − 1" written after a `get_financial_fact(yoy_growth=True)` result would still withhold for the 1. Fix: also grant the identities for a yoy_growth result. Trigger: a run shows it.
 
 **Refusals that need the failing quote captured** (check the `submit_answer` span's `checks` in `trace_logs/traces.jsonl` first; the trace query script item helps)
 
