@@ -152,7 +152,8 @@ New in this merge:
   not-available answer).
 - Type: grilling (self), then a prompt/schema change under the protocol.
 - Blocked by: retry slot shipped and re-measured.
-- Status: open.
+- Status: **resolved 2026-10-06.** Re-measured after packages 1, 2, 5 and 3: no recent answer
+  cites a tool message. Closed with package 4; see `docs/decisions/2026-10-06-close-package-4-not-available-answer.md`.
 
 ### Segment-table ranking (gate map) and period-scoped retrieval (review S5)
 - Question: Which variant? Measure with an offline gold-rank harness before choosing:
@@ -209,15 +210,21 @@ Then the improvement packages:
 2. ~~**Gate rules** (gate D4/D11, D3, then D12 a and b): code-only, checked with the replay plus a
    spot-check.~~ Done 2026-10-01: the re-mine rescoped it to D12a, D12b, the paren-gloss and
    `10-Qs` fixes; D3 and D4/D11 deferred to Watch. See `docs/plans/2026-10-01-gate-rules-package-2.md`.
-3. **Uniform submit loop** (review S2 step 2): refactor, panel plus full run.
-4. **Not-available answer** (review S3, with the tool-message ticket): prompt protocol.
+3. ~~**Uniform submit loop** (review S2 step 2): refactor, panel plus full run.~~ Done
+   2026-10-06: full run 46/48; see `docs/decisions/2026-10-06-uniform-submit-loop.md`.
+4. ~~**Not-available answer** (review S3, with the tool-message ticket): prompt protocol.~~
+   Rescoped and done 2026-10-06 (user): both S3 target questions now pass 8/8, so S3 and the
+   ticket are closed and the package became the `pltr-dividend-2019-refusal` criteria fix
+   (`e8bd2a2`). See `docs/decisions/2026-10-06-close-package-4-not-available-answer.md`.
 5. ~~**Strict period scoping + windowed MaxP rerank + fused-floor rule** (review S5; spec in the
    harness plan's step 7): offline acceptance on the harness, then a `floor3` full run.~~ Done
    2026-10-03: offline 526/901 hits and 37/40 covered (from 329 and 31/40); full run 44/48
    (`20261003T030904Z`) against the replay-adjusted 42/48, with both drops from mis-cited
    quotes rather than retrieval. See `docs/decisions/2026-10-02-fused-floor-rerank-and-period-scoping.md`.
 6. **Thinking-level A/B, then temperature** (review S4): one variable at a time, on a quiet
-   quota day.
+   quota day. **Comparison guard:** its base runs must come from `e8bd2a2` or later, or exclude
+   `pltr-dividend-2019-refusal`; the prompt fingerprint doesn't cover judge criteria, so
+   fingerprint mode would pool the old and new grades.
 
 **Order (user, 2026-10-01): 2 → 5 → 3 → 4 → 6.** The numbers stay as names, since other records
 cite them. Package 5 moves up for four reasons:
@@ -242,7 +249,8 @@ Track A, next steps:
 1. ~~Package 1: the full 48-question run from master at `f6a75db` (from 07:00Z 2026-10-01), a
    refusal re-mine, then its docs commit.~~ Done 2026-10-01.
 2. ~~Package 2~~ (done 2026-10-01), ~~package 5~~ (done 2026-10-03), ~~package 3~~ (done
-   2026-10-06, 46/48), then package 4 (next), in the order above. Each package gets its own live measurement.
+   2026-10-06, 46/48), ~~package 4~~ (rescoped and done 2026-10-06), then package 6 (next).
+   Each package gets its own live measurement.
 
 Track B (plan: `docs/plans/2026-09-30-retrieval-gold-rank-harness.md`): **done 2026-10-01.**
 The harness was measured, researched, reviewed and merged (`49e794f`), and the grilling wrote
@@ -251,7 +259,8 @@ package 5's spec.
 ## Not yet specified
 
 - Whether `compare_financial_metric` leaves the agent's tool list. It has 0 calls in 478 runs,
-  and BACKLOG has an item. It's model-visible, so it would ride on package 4's prompt commit.
+  and BACKLOG has an item. It's model-visible, so it needs its own prompt commit: package 4,
+  which it was to ride on, closed without one.
 - Model upgrade (3.8 Flash). It needs the judge-model setting and a verified free-tier cap.
 - Reformatted table-row quotes, hand-computed numbers and cell-only quotes (gate map fog).
   Re-measure after packages 1–2.
@@ -259,5 +268,6 @@ package 5's spec.
 ## Out of scope
 
 - Other cloud backends (a separate effort, per the user).
-- Judge-criteria content failures with no gate or retrieval involvement.
+- Judge-criteria content failures with no gate or retrieval involvement. One exception:
+  `pltr-dividend-2019-refusal`'s criteria became package 4 (see `docs/decisions/2026-10-06-close-package-4-not-available-answer.md`).
 - XBRL segment facts from full instance documents: exact but narrow, and a new tool.

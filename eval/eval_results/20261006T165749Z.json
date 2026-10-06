@@ -1,0 +1,45 @@
+{
+  "backend": "gemini",
+  "answer_model": "gemini-3.5-flash-lite",
+  "judge_model": "gemini-3.5-flash-lite",
+  "provenance": {
+    "git_sha": "e8bd2a2",
+    "git_dirty": false,
+    "dirty_files": [],
+    "snapshot_verified": true,
+    "config": {
+      "gemini_model": "gemini-3.5-flash-lite",
+      "embed_model": "BAAI/bge-small-en-v1.5",
+      "rerank_model": "cross-encoder/ms-marco-MiniLM-L-6-v2",
+      "chroma_dir": "var/chroma_db",
+      "google_genai": "2.18.1",
+      "mcp": "2.1.1"
+    },
+    "prompts": {
+      "agent_system": "12a028f88e84",
+      "agent_tools": "d0e198d4dd09",
+      "agent_messages": "2ba395d24642",
+      "judge": "2ee29f234c91",
+      "mcp": "b34024a4d17d",
+      "agent": "07c62fe87934"
+    }
+  },
+  "results": [
+    {
+      "id": "pltr-dividend-2019-refusal",
+      "ticker": "PLTR",
+      "question": "What was Palantir's dividend per share in 2019?",
+      "type": "judged",
+      "passed": true,
+      "detail": "The assistant's answer states that Palantir has never declared or paid any cash dividends, which satisfies the grading criteria.",
+      "has_citation": true,
+      "citation_warnings": [],
+      "answer": "Palantir has never declared or paid any cash dividends on its capital stock [6].",
+      "n_chunks_retrieved": 10,
+      "withheld_answer": null,
+      "gate_withheld_would_have_passed": null,
+      "gate_withheld_detail": null,
+      "citation_warning_details": []
+    }
+  ]
+}

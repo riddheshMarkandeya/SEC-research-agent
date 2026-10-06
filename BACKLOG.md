@@ -47,9 +47,13 @@ reference:
 
 ## In progress
 
-- [ ] **[misc, Med, Substantial]** **Agent-improvement map** — the active workstream: `docs/plans/2026-09-28-agent-improvement-map.md` (merged; supersedes the gate-refusal map and the structural review). Prerequisites in order (Decisions 13 and 15): ~~NUMBER_PATTERN fix~~ (done, `bf9e600`) → ~~replay tool~~ (done: `analyze_gate_replay.py`, `docs/plans/2026-09-28-gate-replay-tool.md`) → ~~Ollama removal~~ (done, incl. the prose fallback: `docs/plans/2026-09-29-remove-ollama-and-prose-fallback.md`) → ~~`src/` layout move~~ (done: `docs/plans/2026-09-29-src-layout-move.md`) → ~~`agent.py` split~~ (done: `docs/plans/2026-09-29-agent-py-split.md`) → ~~eval summary mode~~. Then the improvement packages in the map's "Proposed build order" (order 2 → 5 → 3 → 4 → 6): packages 1, 2, 5 and 3 are done (package 3: `docs/decisions/2026-10-06-uniform-submit-loop.md`); **package 4 is next**. No fallback backend after Ollama removal (user, 2026-09-28). Keep the model pin for its screens.
+- [ ] **[misc, Med, Substantial]** **Agent-improvement map** — the active workstream: `docs/plans/2026-09-28-agent-improvement-map.md` (merged; supersedes the gate-refusal map and the structural review). Prerequisites in order (Decisions 13 and 15): ~~NUMBER_PATTERN fix~~ (done, `bf9e600`) → ~~replay tool~~ (done: `analyze_gate_replay.py`, `docs/plans/2026-09-28-gate-replay-tool.md`) → ~~Ollama removal~~ (done, incl. the prose fallback: `docs/plans/2026-09-29-remove-ollama-and-prose-fallback.md`) → ~~`src/` layout move~~ (done: `docs/plans/2026-09-29-src-layout-move.md`) → ~~`agent.py` split~~ (done: `docs/plans/2026-09-29-agent-py-split.md`) → ~~eval summary mode~~. Then the improvement packages in the map's "Proposed build order" (order 2 → 5 → 3 → 4 → 6): packages 1, 2, 5, 3 and 4 are done (package 3: `docs/decisions/2026-10-06-uniform-submit-loop.md`; package 4, rescoped to a judge-criteria fix: `docs/decisions/2026-10-06-close-package-4-not-available-answer.md`); **package 6 is next** (its base runs must come from `e8bd2a2` or later, or exclude `pltr-dividend-2019-refusal`). No fallback backend after Ollama removal (user, 2026-09-28). Keep the model pin for its screens.
 
 ## Backlog
+
+### From the 2026-10-06 package 4 rescope
+
+- [ ] **[misc, Low, Standard]** Hash `eval/eval_questions.jsonl` (at least each question's criteria) into eval report provenance, and have `compare_prompt_versions` treat a change as a version boundary. Today `prompt_fingerprint()` covers `prompts/` only, so fingerprint mode pools grades from before and after a criteria change (`e8bd2a2`); see `docs/decisions/2026-10-06-close-package-4-not-available-answer.md`.
 
 ### From the 2026-10-05 rerank score cache plan
 

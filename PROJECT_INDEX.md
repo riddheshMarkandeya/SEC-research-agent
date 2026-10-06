@@ -62,6 +62,7 @@ prepend them (verbatim, still reverse-chronological) to the top of
 
 ## Recent
 
+- 2026-10-06 [decision] Close package 4 (S3 not-available answer, tool-message ticket): both S3 targets now 8/8, so it became the pltr-dividend-2019-refusal criteria fix; re-grade 29/29 as expected (old criteria 6/15 on the sample), spot-check 3/3; package 6 base runs from `e8bd2a2` → `docs/decisions/2026-10-06-close-package-4-not-available-answer.md`
 - 2026-10-06 [decision] Uniform submit loop (package 3; revisits the one-retry cap): one turn rule, budget left + a shared reserve of 2, "forcing failed, the run ends", worst case MAX+2; panel 39/39 vs 39/39 clean, full run 46/48 (was 44/48), no new failures; second retry not yet seen live → `docs/decisions/2026-10-06-uniform-submit-loop.md`
 - 2026-10-06 [review] Package 3, 3 rounds: 1 behaviour bug fixed (in-budget tool calls after a forced follow-up are dispatched), 1 disputed (no-turn-left branches live at reserve 0), none deferred; live panel and full-run results → `docs/reviews/2026-10-06-package-3-uniform-submit-loop.md`
 - 2026-10-05 [plan] Package 3, uniform submit loop (map order 2 → 5 → 3 → 4 → 6; review S2 step 2): one rule for every extra turn (budget left + a shared reserve of 2 forced turns, worst case MAX+2 unchanged), no one-retry cap, and "forcing failed, the run ends"; 4 of 17 retried runs since package 1 were refused after the retry; base panel, candidate panel, full run → `docs/plans/2026-10-05-package-3-uniform-submit-loop.md`
