@@ -47,9 +47,18 @@ reference:
 
 ## In progress
 
-- [ ] **[misc, Med, Substantial]** **Agent-improvement map** — the active workstream: `docs/plans/2026-09-28-agent-improvement-map.md` (merged; supersedes the gate-refusal map and the structural review). Prerequisites in order (Decisions 13 and 15): ~~NUMBER_PATTERN fix~~ (done, `bf9e600`) → ~~replay tool~~ (done: `analyze_gate_replay.py`, `docs/plans/2026-09-28-gate-replay-tool.md`) → ~~Ollama removal~~ (done, incl. the prose fallback: `docs/plans/2026-09-29-remove-ollama-and-prose-fallback.md`) → ~~`src/` layout move~~ (done: `docs/plans/2026-09-29-src-layout-move.md`) → ~~`agent.py` split~~ (done: `docs/plans/2026-09-29-agent-py-split.md`) → ~~eval summary mode~~. Then the improvement packages in the map's "Proposed build order" (order 2 → 5 → 3 → 4 → 6): packages 1, 2, 5, 3 and 4 are done (package 3: `docs/decisions/2026-10-06-uniform-submit-loop.md`; package 4, rescoped to a judge-criteria fix: `docs/decisions/2026-10-06-close-package-4-not-available-answer.md`); **package 6 is next** (its base runs must come from `e8bd2a2` or later, or exclude `pltr-dividend-2019-refusal`). No fallback backend after Ollama removal (user, 2026-09-28). Keep the model pin for its screens.
+- [ ] **[feature, High, Substantial]** **Data expansion, phase 1** (roadmap step 1 of 6): three fiscal years (FY2024+) of 10-K/10-Q for the current 5 companies, with a fixed fiscal-year cutoff, a corpus identity in eval reports, a timed rebuild and a new measured baseline → `docs/plans/2026-10-06-data-expansion-years.md`.
+- [ ] **[misc, Med, Substantial]** **Agent-improvement map**: `docs/plans/2026-09-28-agent-improvement-map.md`. Packages 1, 2, 5, 3 and 4 are done. **Package 6 (thinking-level / temperature A/B) is deferred** (user, 2026-10-06): the panel is 39/39 and the full run 46/48, so it can't show a gain. Trigger: the evals have headroom again (after the harder-eval-questions roadmap item, or alongside a model upgrade). Its base runs must come from `e8bd2a2` or later, or exclude `pltr-dividend-2019-refusal`. Temperature 0.1 has no recorded reason (Ollama era, `811cad0`); it stays a known open item until package 6 runs. No fallback backend after Ollama removal (user, 2026-09-28). Keep the model pin for its screens.
 
 ## Backlog
+
+### Roadmap (user, 2026-10-06): data expansion → harder eval questions → monorepo → admin web UI → chat web UI
+
+- [ ] **[feature, Med, Substantial]** Data expansion, phase 2: new companies from different sectors (a bank, a retailer, an industrial). Needs its own plan; the ticker list feeds the system prompt and the tool enum, so the prompt fingerprint changes. After phase 1 (In progress).
+- [ ] **[feature, Med, Substantial]** Harder eval questions: restore eval headroom on the expanded corpus (multi-year comparisons, cross-company questions). Package 6 resumes once these leave headroom.
+- [ ] **[refactor, Med, Substantial]** Monorepo layout ahead of the web UIs. Details later, `/wayfinder` first.
+- [ ] **[feature, Med, Substantial]** Admin web UI (ingest, rebuild, corpus status; phase 1 records the rebuild timings it needs). Details later, `/wayfinder` first.
+- [ ] **[feature, Med, Substantial]** Chat web UI for the agent. Details later, `/wayfinder` first.
 
 ### From the 2026-10-06 package 4 rescope
 

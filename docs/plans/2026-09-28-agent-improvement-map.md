@@ -225,6 +225,11 @@ Then the improvement packages:
    quota day. **Comparison guard:** its base runs must come from `e8bd2a2` or later, or exclude
    `pltr-dividend-2019-refusal`; the prompt fingerprint doesn't cover judge criteria, so
    fingerprint mode would pool the old and new grades.
+   **Deferred 2026-10-06 (user):** the panel is 39/39 and the full run 46/48, so an A/B has no
+   measurable headroom on this eval. Trigger to resume: the evals have headroom again (after the
+   harder-eval-questions plan, or alongside a model upgrade). Known open item meanwhile:
+   temperature 0.1 has no recorded reason (it dates from the Ollama era, `811cad0`). Next work is
+   `docs/plans/2026-10-06-data-expansion-years.md`.
 
 **Order (user, 2026-10-01): 2 → 5 → 3 → 4 → 6.** The numbers stay as names, since other records
 cite them. Package 5 moves up for four reasons:
