@@ -25,7 +25,7 @@ Usage (from the repo root):
 
 import json
 
-from sec_agent.agent.dispatch import _dispatch_tool_call
+from sec_agent.agent.dispatch import dispatch_tool_call
 from sec_agent.config import GEMINI_API_KEY
 from sec_agent.llm.llm_backends import BACKENDS
 from sec_agent.prompts.agent_system import SYSTEM_PROMPT
@@ -59,7 +59,7 @@ def _run_auto_loop(backend: str):
             return "text", turn.text, state, send_followup
 
         results = [
-            {"name": c["name"], "content": _dispatch_tool_call(c, QUESTION, all_results, searched_tickers, False)}
+            {"name": c["name"], "content": dispatch_tool_call(c, QUESTION, all_results, searched_tickers, False)}
             for c in turn.tool_calls
         ]
         turn = send_tool_results(state, results)
@@ -131,7 +131,7 @@ def check_gemini_forcing_directly():
         return
     if turn.tool_calls:
         results = [
-            {"name": c["name"], "content": _dispatch_tool_call(c, QUESTION, all_results, searched_tickers, False)}
+            {"name": c["name"], "content": dispatch_tool_call(c, QUESTION, all_results, searched_tickers, False)}
             for c in turn.tool_calls
         ]
         turn = send_tool_results(state, results)

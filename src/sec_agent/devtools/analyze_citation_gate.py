@@ -1,6 +1,6 @@
 """
 Measures the citation hard gate's (citations.py's verify_claims() and
-submission.py's _finalize_answer()) false-positive/false-negative rate against ground
+submission.py's finalize_answer()) false-positive/false-negative rate against ground
 truth, by reading eval_harness.py report JSON files rather than running
 anything live -- the report is the durable, committed artifact, so
 re-classifying from it is free and re-runnable any time the

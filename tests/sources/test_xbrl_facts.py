@@ -462,7 +462,7 @@ def test_is_metric_tagged_true_when_concept_has_data(monkeypatch):
 def test_is_metric_tagged_false_when_concept_never_tagged(monkeypatch):
     # PLTR's real behavior: fetch_concept returns None on a 404, distinct
     # from get_metric() returning None for a specific period that just
-    # isn't available -- this is what lets _format_no_fact_message()
+    # isn't available -- this is what lets format_no_fact_message()
     # distinguish the two cases and explain the right one.
     monkeypatch.setattr("sec_agent.sources.xbrl_facts.fetch_concept", lambda ticker, tag: None)
     assert is_metric_tagged("PLTR", "inventory") is False

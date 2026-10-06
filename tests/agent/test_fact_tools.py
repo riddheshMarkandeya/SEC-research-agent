@@ -8,7 +8,7 @@ result entries they produce.
 from sec_agent.agent.fact_tools import (
     call_compare_financial_metric,
     call_get_financial_fact,
-    _comparison_as_results,
+    comparison_as_results,
     _format_fact_value,
 )
 from tests.agent.helpers import capture_events
@@ -29,14 +29,14 @@ def test_format_fact_value_includes_unit_word_for_percent():
 
 
 # ---------------------------------------------------------------------------
-# _comparison_as_results (compare_financial_metric)
+# comparison_as_results (compare_financial_metric)
 # ---------------------------------------------------------------------------
 def test_comparison_as_results_one_entry_per_company_sorted_by_ticker():
     data = {
         "NVDA": {"value": 74.9, "unit": "percent", "period_end": "2026-04-26", "accession": "b"},
         "AAPL": {"value": 49.3, "unit": "percent", "period_end": "2026-03-28", "accession": "a"},
     }
-    results = _comparison_as_results(data, "gross_margin")
+    results = comparison_as_results(data, "gross_margin")
     assert [r["metadata"]["ticker"] for r in results] == ["AAPL", "NVDA"]
     assert "AAPL gross_margin = 49.3 percent" in results[0]["text"]
     assert results[0]["metadata"]["form"] == "XBRL frame data"
@@ -44,7 +44,7 @@ def test_comparison_as_results_one_entry_per_company_sorted_by_ticker():
 
 
 def test_comparison_as_results_empty_dict_returns_empty_list():
-    assert _comparison_as_results({}, "revenue") == []
+    assert comparison_as_results({}, "revenue") == []
 
 
 def test_comparison_as_results_uses_real_form_when_present():
@@ -60,7 +60,7 @@ def test_comparison_as_results_uses_real_form_when_present():
             "form": "10-K",
         },
     }
-    results = _comparison_as_results(data, "total_assets")
+    results = comparison_as_results(data, "total_assets")
     assert results[0]["metadata"]["form"] == "10-K"
 
 

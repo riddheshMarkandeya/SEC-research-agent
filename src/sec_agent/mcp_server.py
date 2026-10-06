@@ -136,7 +136,7 @@ def _get_financial_fact(args: dict) -> dict:
     # call_get_financial_fact() records its own unmet-metric-request
     # event internally (no `question` here -- MCP tool calls carry no
     # free-text question) -- this span is just the general tool-call
-    # trace, same as dispatch.py's _dispatch_tool_call.
+    # trace, same as dispatch.py's dispatch_tool_call.
     with traced_span("tool", "get_financial_fact", input=args) as span:
         fact = call_get_financial_fact(args)
         if fact is None:

@@ -15,7 +15,7 @@ from sec_agent.tracing import log_event
 _INT_TYPE_VALIDATOR = jsonschema.Draft202012Validator({"type": "integer"})
 
 
-def _is_valid_int(value: Any) -> TypeGuard[int]:
+def is_valid_int(value: Any) -> TypeGuard[int]:
     """True if value is a JSON-Schema-valid "integer" -- an int but NOT a
     bool. jsonschema's default type checker already excludes bool from
     "integer" (JSON itself treats true/false as their own type, distinct
@@ -23,14 +23,14 @@ def _is_valid_int(value: Any) -> TypeGuard[int]:
     writing `isinstance(x, int) and not isinstance(x, bool)` by hand --
     the exact shape of bug (isinstance(True, int) is True in Python) that
     silently let fiscal_year=true through the old hand-rolled check. Shared by
-    _rejects_invalid_fiscal_year and the multi-year-average combo check
+    rejects_invalid_fiscal_year and the multi-year-average combo check
     in fact_tools.py, both of which read fiscal_year-shaped args outside of
     validate_tool_args's generic pass (see call_get_financial_fact's
     skip_properties)."""
     return _INT_TYPE_VALIDATOR.is_valid(value)
 
 
-def _rejects_invalid_fiscal_year(tool: str, args: dict) -> bool:
+def rejects_invalid_fiscal_year(tool: str, args: dict) -> bool:
     """True (having already logged the rejection) if args["fiscal_year"]
     is present but not a valid int -- shared by call_get_financial_fact
     and call_compare_financial_metric, which otherwise would each
@@ -41,7 +41,7 @@ def _rejects_invalid_fiscal_year(tool: str, args: dict) -> bool:
     polluting that "should we add a formula for this" telemetry with a
     schema-violation false negative instead of a real data gap."""
     fiscal_year = args.get("fiscal_year")
-    if fiscal_year is not None and not _is_valid_int(fiscal_year):
+    if fiscal_year is not None and not is_valid_int(fiscal_year):
         log_event("tool_call_rejected", tool=tool, reason="invalid_fiscal_year_type", args=args)
         return True
     return False
@@ -52,7 +52,7 @@ def _rejects_invalid_fiscal_year(tool: str, args: dict) -> bool:
 _YEAR_STRING = re.compile(r"[1-9][0-9]{3}")
 
 
-def _coerce_year_args(tool: str, args: dict, fields: frozenset[str]) -> dict:
+def coerce_year_args(tool: str, args: dict, fields: frozenset[str]) -> dict:
     """A copy of `args` with each year in `fields` given as a 4-digit
     string or a whole float turned into an int, or `args` itself when
     there is none. This is the only conversion of these fields: Gemini
@@ -129,7 +129,7 @@ def validate_tool_args(
       reads at all, so a malformed value there must be ignored, not
       rejected (test_call_get_financial_fact_ignores_malformed_fiscal_year_in_multi_year_average_request).
       Their own type is still checked by the caller's own business logic
-      instead (see _rejects_invalid_fiscal_year), just not generically
+      instead (see rejects_invalid_fiscal_year), just not generically
       here -- their sub-schema is swapped for `{}` (matches anything)
       rather than removed from `properties` entirely, so a present value
       still satisfies `additionalProperties: false`.
@@ -189,7 +189,7 @@ def validate_tool_args(
 # fiscal_year/start_fiscal_year/end_fiscal_year are excluded from
 # call_get_financial_fact's generic validate_tool_args pass -- see that
 # function's call site and validate_tool_args's own docstring for why.
-_FISCAL_YEAR_PROPS = frozenset({"fiscal_year", "start_fiscal_year", "end_fiscal_year"})
+FISCAL_YEAR_PROPS = frozenset({"fiscal_year", "start_fiscal_year", "end_fiscal_year"})
 
 
-_COMPARE_FISCAL_YEAR_PROPS = frozenset({"fiscal_year"})
+COMPARE_FISCAL_YEAR_PROPS = frozenset({"fiscal_year"})

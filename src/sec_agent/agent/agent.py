@@ -17,16 +17,17 @@ from collections import Counter
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from sec_agent.agent.citations import _NO_SUBMISSION_WARNING, CitationWarning
-from sec_agent.agent.dispatch import _dispatch_tool_call
+from sec_agent.agent.citations import CitationWarning
+from sec_agent.agent.dispatch import dispatch_tool_call
 from sec_agent.agent.submission import (
+    NO_SUBMISSION_CITATION_WARNING,
     AgentResult,
-    _finalize_answer,
-    _format_claim_retry_message,
-    _partition_submit_call,
+    finalize_answer,
+    format_claim_retry_message,
+    partition_submit_call,
     submission_warnings,
 )
-from sec_agent.agent.tool_results import _format_citation_key
+from sec_agent.agent.tool_results import format_citation_key
 from sec_agent.config import DEFAULT_BACKEND
 from sec_agent.llm.llm_backends import BACKENDS, require_backend
 from sec_agent.prompts import agent_messages as msg
@@ -63,7 +64,7 @@ def run_agent(question: str, backend: str | None = None, verbose: bool = False) 
     internal return paths fires (see its own docstring). Adds no
     behavior change to the returned answer/results/citation_warnings for
     any existing caller/test; the 4th field (AgentResult.withheld_answer)
-    is described in _finalize_answer's own docstring.
+    is described in finalize_answer's own docstring.
 
     `backend=None` resolves to config.DEFAULT_BACKEND -- resolved HERE,
     inside the function body, rather than as a literal `= DEFAULT_BACKEND`
@@ -76,7 +77,7 @@ def run_agent(question: str, backend: str | None = None, verbose: bool = False) 
     straight from `result.citation_warning_details` (AgentResult's 5th
     field) rather than re-deriving them from the answer text, so they
     always name the checks that actually refused it. The withheld answer text itself is never put in this span's
-    output -- it goes to _finalize_answer's log_event call only, which is
+    output -- it goes to finalize_answer's log_event call only, which is
     local-JSONL-only by design (see tracing.log_event's docstring): the
     whole point of withholding it is that it isn't trustworthy, so it
     must not leave the machine via the Langfuse-forwarding path
@@ -187,7 +188,7 @@ def _handle_submit_turn(args: dict, other: list[dict], ctx: _AgentContext, loop_
             if retry is not None:
                 return retry
             _log_turns_ended(ctx, loop_state, reason="no_turn_left", ending="gate_refused")
-        result = _finalize_answer(
+        result = finalize_answer(
             answer_text, warnings, ctx.all_results, backend=ctx.backend, retries=loop_state.retries
         )
         return _LoopStep(result=result)
@@ -226,7 +227,7 @@ def _try_citation_retry(
     if ctx.verbose:
         print(f"  [citation retry {loop_state.retries}] {messages}")
     results = _not_run_results(pending_tool_names)
-    results.append({"name": "submit_answer", "content": _format_claim_retry_message(answer_text, warnings)})
+    results.append({"name": "submit_answer", "content": format_claim_retry_message(answer_text, warnings)})
     next_turn = ctx.send_tool_results(ctx.conv_state, results, force_tool="submit_answer" if forced else None)
     return _LoopStep(next_turn=next_turn, forced=forced)
 
@@ -307,7 +308,7 @@ def _dispatch_pending_calls(other: list[dict], submit: dict | None, ctx: _AgentC
     results = [
         {
             "name": c["name"],
-            "content": _dispatch_tool_call(c, ctx.question, ctx.all_results, ctx.searched_tickers, ctx.verbose),
+            "content": dispatch_tool_call(c, ctx.question, ctx.all_results, ctx.searched_tickers, ctx.verbose),
         }
         for c in other
     ]
@@ -356,12 +357,12 @@ def _end_run(turn: Any, ctx: _AgentContext, loop_state: _AgentLoopState, reason:
         ending = "no_submission"
         if ctx.verbose:
             print("  [refusing] model replied in text instead of calling submit_answer")
-        answer, warnings = turn.text or "", [_NO_SUBMISSION_WARNING]
+        answer, warnings = turn.text or "", [NO_SUBMISSION_CITATION_WARNING]
     else:
         ending = "budget_message"
         answer, warnings = msg.BUDGET_EXHAUSTED_ANSWER, []
     _log_turns_ended(ctx, loop_state, reason=reason, ending=ending)
-    return _finalize_answer(answer, warnings, ctx.all_results, backend=ctx.backend, retries=loop_state.retries)
+    return finalize_answer(answer, warnings, ctx.all_results, backend=ctx.backend, retries=loop_state.retries)
 
 
 def _run_agent_impl(question: str, backend: str, verbose: bool = False) -> AgentResult:
@@ -372,7 +373,7 @@ def _run_agent_impl(question: str, backend: str, verbose: bool = False) -> Agent
     model was shown them in, so the printed citation key lines up with the
     model's citations), any citation-verification warnings, and the
     model's withheld answer text whenever the hard gate refused. Every
-    return site routes through _finalize_answer(), which withholds the
+    return site routes through finalize_answer(), which withholds the
     model's answer in favor of a refusal whenever warnings remain.
 
     The answer arrives as a `submit_answer` call: claims are structured
@@ -412,7 +413,7 @@ def _run_agent_impl(question: str, backend: str, verbose: bool = False) -> Agent
     loop_state = _AgentLoopState(calls_made=1, reserve_left=SUBMIT_RESERVE)
 
     while True:
-        submit, other = _partition_submit_call(turn.tool_calls)
+        submit, other = partition_submit_call(turn.tool_calls)
 
         # A pure submission, OR a mixed submit+search turn with no budget
         # left to dispatch the extra searches: verify what was actually
@@ -448,9 +449,9 @@ def main():
     print(result.answer)
     if result.results:
         print("\nSources:")
-        print(_format_citation_key(result.results))
+        print(format_citation_key(result.results))
     # No separate "Citation warnings:" print block: since the hard gate
-    # (_finalize_answer), non-empty citation_warnings always
+    # (finalize_answer), non-empty citation_warnings always
     # means `answer` IS the refusal message, which already lists every
     # warning verbatim -- printing them again here would just repeat
     # the same lines a second time.

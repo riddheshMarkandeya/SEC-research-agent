@@ -227,7 +227,7 @@ def test_run_agent_text_after_forcing_regates_a_submission_cached_by_the_retry(m
 
 def test_run_agent_returns_generic_timeout_message_unchanged_when_iterations_exhausted(monkeypatch):
     # The iteration-budget-exhausted fallback (no cached submission to
-    # fall back to) always passes warnings=[] into _finalize_answer(), so this
+    # fall back to) always passes warnings=[] into finalize_answer(), so this
     # locks in that routing it through the same choke point as every
     # other return site (code review, 2026-08-26) is a genuine no-op --
     # the generic message must still come back completely unchanged.
@@ -274,7 +274,7 @@ def test_run_agent_final_turn_safety_net_rescues_a_clean_refusal(monkeypatch):
 
     monkeypatch.setattr("sec_agent.agent.agent.BACKENDS", {"gemini": (fake_start, fake_send_tool_results, None)})
     monkeypatch.setattr(
-        "sec_agent.agent.agent._dispatch_tool_call",
+        "sec_agent.agent.agent.dispatch_tool_call",
         lambda call, question, all_results, searched_tickers, verbose: "search result",
     )
     monkeypatch.setattr("sec_agent.agent.submission.verify_claims", lambda claims, all_results, question, answer_text: [])
@@ -330,7 +330,7 @@ def test_run_agent_tool_calls_after_the_forced_final_turn_end_the_run(monkeypatc
 
     monkeypatch.setattr("sec_agent.agent.agent.BACKENDS", {"gemini": (fake_start, fake_send_tool_results, None)})
     monkeypatch.setattr(
-        "sec_agent.agent.agent._dispatch_tool_call",
+        "sec_agent.agent.agent.dispatch_tool_call",
         lambda call, question, all_results, searched_tickers, verbose: "search result",
     )
 
@@ -449,7 +449,7 @@ def test_run_agent_mixed_submit_and_search_turn_requests_resubmission(monkeypatc
     monkeypatch.setattr("sec_agent.agent.agent.BACKENDS", {"gemini": (fake_start, fake_send_tool_results, None)})
     monkeypatch.setattr("sec_agent.agent.submission.verify_claims", lambda claims, all_results, question, answer_text: [])
     monkeypatch.setattr(
-        "sec_agent.agent.agent._dispatch_tool_call", lambda call, question, all_results, searched_tickers, verbose: "search results here"
+        "sec_agent.agent.agent.dispatch_tool_call", lambda call, question, all_results, searched_tickers, verbose: "search results here"
     )
 
     answer, all_results, warnings, withheld_answer, _ = run_agent("What was the value?", backend="gemini")
@@ -567,7 +567,7 @@ def test_run_agent_submit_answer_retry_exhausting_budget_reverifies_against_curr
 
     monkeypatch.setattr("sec_agent.agent.agent.BACKENDS", {"gemini": (fake_start, fake_send_tool_results, None)})
     monkeypatch.setattr(
-        "sec_agent.agent.agent._dispatch_tool_call",
+        "sec_agent.agent.agent.dispatch_tool_call",
         lambda call, question, all_results, searched_tickers, verbose: all_results.append({"text": "extra"}) or "search result",
     )
 
@@ -615,7 +615,7 @@ def test_run_agent_invalid_submit_then_exhausted_budget_refuses_instead_of_crash
 
     monkeypatch.setattr("sec_agent.agent.agent.BACKENDS", {"gemini": (fake_start, fake_send_tool_results, None)})
     monkeypatch.setattr(
-        "sec_agent.agent.agent._dispatch_tool_call",
+        "sec_agent.agent.agent.dispatch_tool_call",
         lambda call, question, all_results, searched_tickers, verbose: all_results.append({"text": "extra"}) or "search result",
     )
 
@@ -664,7 +664,7 @@ def _install_scripted_backend(monkeypatch, start_turn, replies, payloads=None):
 
     monkeypatch.setattr("sec_agent.agent.agent.BACKENDS", {"gemini": (start, send_tool_results, send_followup)})
     monkeypatch.setattr(
-        "sec_agent.agent.agent._dispatch_tool_call",
+        "sec_agent.agent.agent.dispatch_tool_call",
         lambda call, question, all_results, searched_tickers, verbose: "search result",
     )
     return sends
@@ -878,7 +878,7 @@ def test_run_agent_does_not_send_withheld_answer_to_the_span(monkeypatch):
     # answer is exactly the text the hard gate decided NOT to trust, so
     # it must never leave the machine via that path -- log_event() (local
     # JSONL only, see tracing.py) is the only place it's allowed to go
-    # (see _finalize_answer's own tests in test_submission.py).
+    # (see finalize_answer's own tests in test_submission.py).
     final_answer_turn = ModelTurn(tool_calls=[], text="Apple's revenue was $100 billion [1].")
 
     def fake_start(question, system_prompt, tool_schemas):

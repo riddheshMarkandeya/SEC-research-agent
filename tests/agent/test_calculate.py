@@ -3,15 +3,15 @@ Unit tests for calculate.py: operand grounding, the arithmetic, and the
 result entry a calculation becomes.
 """
 
-from sec_agent.agent.calculate import call_calculate, _calculation_as_result
-from sec_agent.agent.tool_results import _format_results_block
+from sec_agent.agent.calculate import call_calculate, calculation_as_result
+from sec_agent.agent.tool_results import format_results_block
 from tests.agent.helpers import _fake_result, _valid_calculate_args
 
 
 # ---------------------------------------------------------------------------
 # call_calculate() (2026-09-11) -- the two guarantees the calculate tool
 # provides: operand GROUNDING (each operand must actually appear in its
-# cited source, via the same _number_candidates() primitive
+# cited source, via the same number_candidates() primitive
 # _verify_one_claim already uses) and arithmetic CORRECTNESS (the
 # operation runs in real Python, never trusted from the model). Returns
 # (result_dict, None) on success, (None, error_message) on failure --
@@ -246,10 +246,10 @@ def test_call_calculate_rejects_malformed_args_via_schema():
 
 
 # ---------------------------------------------------------------------------
-# _calculation_as_result() -- wraps a call_calculate() result in the same
+# calculation_as_result() -- wraps a call_calculate() result in the same
 # {text, metadata} shape every other all_results entry uses, with `text`
 # rendering the full expression so it's directly quotable by
-# _quote_matches/_number_candidates (proven end-to-end below, not just
+# _quote_matches/number_candidates (proven end-to-end below, not just
 # asserted -- the whole point of this tool is that its output flows
 # through verify_claims/_verify_one_claim completely unchanged).
 # ---------------------------------------------------------------------------
@@ -262,7 +262,7 @@ def test_calculation_as_result_text_is_directly_quotable_end_to_end():
     calc_result, error = call_calculate(args, all_results)
     assert error is None
     assert calc_result is not None
-    entry = _calculation_as_result(calc_result, args)
+    entry = calculation_as_result(calc_result, args)
     assert "17.7" in entry["text"]
     assert "percent" in entry["text"]
 
@@ -295,7 +295,7 @@ def test_calculation_as_result_renders_percent_change_as_from_b_to_a():
     assert error is None
     assert calc_result is not None
 
-    entry = _calculation_as_result(calc_result, args)
+    entry = calculation_as_result(calc_result, args)
 
     assert entry["text"] == (
         "percentage change from 44062 million to 81615 million = 85.2 percent "
@@ -325,7 +325,7 @@ def test_calculation_as_result_text_avoids_scientific_notation_for_large_values(
     assert calc_result is not None
     assert calc_result["value"] == 1e18  # sanity check on the premise
 
-    entry = _calculation_as_result(calc_result, args)
+    entry = calculation_as_result(calc_result, args)
     assert "e+" not in entry["text"].lower()
     assert "1000000000000000000" in entry["text"]
 
@@ -346,9 +346,9 @@ def test_calculation_as_result_has_metadata_required_by_format_results_block():
     args = _valid_calculate_args()
     calc_result, _ = call_calculate(args, all_results)
     assert calc_result is not None
-    entry = _calculation_as_result(calc_result, args)
-    # _format_results_block reads meta['ticker']/['form']/['reportDate'] --
+    entry = calculation_as_result(calc_result, args)
+    # format_results_block reads meta['ticker']/['form']/['reportDate'] --
     # a KeyError here would only surface live, the first time a
     # calculate result is ever rendered back to the model.
-    block = _format_results_block([entry], 3)
+    block = format_results_block([entry], 3)
     assert "[3]" in block

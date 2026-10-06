@@ -25,7 +25,7 @@ own history, not a speculative "this file feels important" argument:
 
 - **`agent/`** — the tool-calling loop (`agent.py`'s `_run_agent_impl`)
   and its dispatch/backend-call sites (`dispatch.py`'s
-  `_dispatch_tool_call`, `submission.py`'s `_partition_submit_call`).
+  `dispatch_tool_call`, `submission.py`'s `partition_submit_call`).
   Incident: the 2026-09-16 `MAX_TOOL_ITERATIONS` fix, where a
   wire-protocol-shape mistake here would have produced a live Gemini
   400 on the exact questions the fix targeted.

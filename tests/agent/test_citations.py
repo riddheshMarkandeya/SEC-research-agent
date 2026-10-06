@@ -6,11 +6,11 @@ qualitative and table-grounded claims.
 
 import pytest
 
-from sec_agent.agent.calculate import call_calculate, _calculation_as_result
+from sec_agent.agent.calculate import call_calculate, calculation_as_result
 from sec_agent.agent.citations import (
     _CITATION_WINDOW_CHARS,
     _normalize_for_match,
-    _number_candidates,
+    number_candidates,
     _quote_matches,
     _strip_citation_header,
     value_is_citation_verified,
@@ -213,14 +213,14 @@ def test_normalize_for_match_collapses_whitespace_and_case():
 
 
 # ---------------------------------------------------------------------------
-# _number_candidates(text, *, unit_source=None) -- also reads bare
+# number_candidates(text, *, unit_source=None) -- also reads bare
 # numbers in `text` under a unit word found in `unit_source` (a separate,
 # usually longer text). unit_source defaults to `text` itself, which is
 # the single-argument form the eval grader's walk (_iter_citation_claims)
 # relies on.
 # ---------------------------------------------------------------------------
 def test_number_candidates_finds_bare_number_under_its_own_unit():
-    candidates = _number_candidates("Revenue was $5 billion.")
+    candidates = number_candidates("Revenue was $5 billion.")
     assert ("scale", 5e9) in candidates
 
 
@@ -233,7 +233,7 @@ def test_number_candidates_unit_source_defaults_to_text_itself():
         "Remaining performance obligation consisted of the following (in billions):\n"
         "As of January 31, 2026 | $35.1 | $37.3 | $72.4"
     )
-    candidates = _number_candidates(text)
+    candidates = number_candidates(text)
     assert ("scale", 72.4e9) in candidates  # bare $72.4 reinterpreted under the "(in billions)" caption
     assert ("scale", 72.4) in candidates  # still also present as its own literal raw value
 
@@ -247,19 +247,19 @@ def test_number_candidates_reinterprets_under_a_separate_unit_source():
     # chunk's caption without requiring the quote to restate the unit.
     quote = "$72.4"
     chunk = "Remaining performance obligation consisted of the following (in billions): $35.1, $37.3, $72.4"
-    candidates = _number_candidates(quote, unit_source=chunk)
+    candidates = number_candidates(quote, unit_source=chunk)
     assert ("scale", 72.4e9) in candidates
 
 
 def test_number_candidates_does_not_reinterpret_without_a_matching_caption_word():
-    candidates = _number_candidates("$5", unit_source="no unit words here at all")
+    candidates = number_candidates("$5", unit_source="no unit words here at all")
     assert candidates == [("scale", 5.0)]
 
 
 # ---------------------------------------------------------------------------
 # verify_claims (2026-09-10) -- verifies a submit_answer tool call's
 # structured claims. Combines three checks (quote
-# grounding via _quote_matches, value attribution via _number_candidates,
+# grounding via _quote_matches, value attribution via number_candidates,
 # and a coverage cross-check against answer_text) into the same
 # CitationWarning vocabulary, with 5 new `check` values:
 # citation_out_of_range, quote_too_short, quote_not_found,
@@ -291,7 +291,7 @@ _NVDA_XBRL_SOURCE_TEXT = "revenue = 81615000000 USD (structured XBRL data, not f
 
 def test_strip_citation_header_removes_an_exact_header_match():
     # The real repro shape: a model's quote sometimes includes the
-    # numbered header _format_results_block() displays above each
+    # numbered header format_results_block() displays above each
     # result's text, even though that header is never part of the
     # underlying source text the quote gets grounded against.
     meta = {"ticker": "NVDA", "form": "10-Q", "reportDate": "2026-04-26"}
@@ -657,7 +657,7 @@ def test_verify_claims_calculate_operand_exempts_a_number_from_coverage():
     # against a real cited source at calculate-call time, and that
     # calculation's own all_results entry (chunk_index="calculated")
     # already records both operands in directly-extractable text -- see
-    # _calculation_as_result. The final derived value (32.6%) is
+    # calculation_as_result. The final derived value (32.6%) is
     # covered normally via its own claim citing that same entry.
     calculated_entry = _fake_result(
         text=(
@@ -683,7 +683,7 @@ def test_verify_claims_calculate_operand_exempts_a_number_from_coverage():
 
 
 def test_verify_claims_calculate_entry_citation_brackets_not_treated_as_operand_values():
-    # _calculation_as_result's text always ends with "...operands from
+    # calculation_as_result's text always ends with "...operands from
     # results [N] and [M])" -- those bracketed indices must NOT be
     # extracted as operand values themselves (and, since a unit word
     # like "million" also appears in the same text, must not get
@@ -750,7 +750,7 @@ def _nvda_two_quarter_revenue_scenario(operation="percent_change"):
         )
         calc_result, error = call_calculate(args, results)
         assert error is None and calc_result is not None
-        entry = _calculation_as_result(calc_result, args)
+        entry = calculation_as_result(calc_result, args)
         results.append(entry)
         claims.append({"value": calc_result["value"], "unit": calc_result["unit"], "citation_index": 3,
                        "quote": entry["text"].split(" (computed", 1)[0]})
@@ -870,7 +870,7 @@ def test_verify_claims_subtraction_after_calculate_raw_unit_is_not_a_negative_cl
     )
     calc_result, error = call_calculate(args, results)
     assert error is None and calc_result is not None
-    entry = _calculation_as_result(calc_result, args)
+    entry = calculation_as_result(calc_result, args)
     results.append(entry)
     claims = [
         {"value": 619003000000.0, "unit": "raw", "citation_index": 1,

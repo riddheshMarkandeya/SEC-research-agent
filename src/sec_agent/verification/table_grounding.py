@@ -198,7 +198,7 @@ def extract_table_blocks(text: str) -> list[TableBlock]:
     repeating it inside any cell -- confirmed against the real AAPL
     segment-revenue table this module was built against, whose caption
     lives in the preceding paragraph, not inside its own <TABLE> tags.
-    Mirrors citations._number_candidates's own unit_source parameter for the
+    Mirrors citations.number_candidates's own unit_source parameter for the
     identical reason (see that function's docstring)."""
     caption_units = frozenset(cu for cu in UNIT_MULTIPLIERS if cu in text.lower())
     blocks = []
@@ -305,7 +305,7 @@ def _leading_header_multi_cell_token_sets(rows: list[_Row]) -> list[frozenset[st
 
 def _cell_value_candidates(cell_text: str, caption_units: frozenset[str]) -> list[tuple[float, str]]:
     """Every (value, unit) a table cell's bare number could plausibly
-    mean -- mirrors citations._number_candidates's own caption-unit
+    mean -- mirrors citations.number_candidates's own caption-unit
     reinterpretation exactly and for the identical reason: SEC tables
     routinely state a unit once, in prose near the table ("dollars in
     millions"), leaving every cell bare ("$178,353"), so a per-cell

@@ -56,7 +56,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
-from sec_agent.agent import citations, dispatch, submission
+from sec_agent.agent import dispatch, submission
 from sec_agent import config
 from sec_agent.eval import eval_harness
 from sec_agent.devtools import rerank_cache, trace_query
@@ -121,7 +121,7 @@ def _final_submit(submits: list[dict], output: dict, withheld: str | None) -> di
     match against, so it falls back to the last submit. A logged
     no_submission check means the run ended on text, whatever the text
     happens to match."""
-    if (output.get("citation_checks") or {}).get(citations._NO_SUBMISSION_WARNING.check):
+    if (output.get("citation_checks") or {}).get(submission.NO_SUBMISSION_CITATION_WARNING.check):
         return None
     final = withheld if output.get("citation_warnings") else output.get("answer")
     if final is None:
@@ -208,7 +208,7 @@ def _replay_call(name: str, args: dict, question: str, all_results: list[dict], 
         return content, {"result_count": count}
     if name not in _OBSERVED_FIELDS:
         raise ValueError(f"no replay route for tool {name!r}")
-    content = dispatch._dispatch_tool_call({"name": name, "args": args}, question, all_results, set(), False)
+    content = dispatch.dispatch_tool_call({"name": name, "args": args}, question, all_results, set(), False)
     span_output = next((r.get("output") for r in reversed(_CAPTURED) if r.get("name") == name), None) or {}
     return content, {key: span_output.get(key) for key in _OBSERVED_FIELDS[name]}
 
@@ -283,7 +283,7 @@ def replay_run(run: RunTrace, search, questions: dict[str, dict]) -> dict:
     )
     record.update(
         now_refused=bool(warnings),
-        now_checks=submission._count_citation_checks(warnings),
+        now_checks=submission.count_citation_checks(warnings),
         now_messages=[w.message for w in warnings],
         correct=grade(questions.get(run.qid), answer_text, all_results),
     )

@@ -105,7 +105,7 @@ Design: `docs/plans/2026-09-24-prompt-audit-roadmap.md`. Findings: `docs/reviews
   - the three "unknown ticker" paths disagree: `search_filings` names the bad ticker and lists valid ones, while `call_get_financial_fact`/`call_compare_financial_metric` fold it into their generic no-data messages. Upgrade the other two, or record why search differs (`docs/reviews/2026-09-10-fix-3-more-review-findings.md`).
 
   Each one changes model-visible text, so it needs a panel screen. `docs/decisions/2026-09-26-wp7-fiscal-year-strings.md`
-- [ ] **[bug, Low, Standard]** A calculate result's expression pastes each operand's unit in as-is, so a `"raw"` operand (a plain ratio or count) reaches the model as e.g. "1.04 raw". The result value itself already omits "raw" via `fact_tools._with_unit`. Found in the WP1 code review (`docs/reviews/2026-09-24-wp1-prompts-package.md`). It changes model-visible text: screen it with the tool-message batch above.
+- [ ] **[bug, Low, Standard]** A calculate result's expression pastes each operand's unit in as-is, so a `"raw"` operand (a plain ratio or count) reaches the model as e.g. "1.04 raw". The result value itself already omits "raw" via `tool_results.with_unit`. Found in the WP1 code review (`docs/reviews/2026-09-24-wp1-prompts-package.md`). It changes model-visible text: screen it with the tool-message batch above.
 - [ ] **[refactor, Low, Standard]** Audit notes 8–10 (prompt style):
   - all-caps emphasis;
   - tool bullets in SYSTEM_PROMPT that duplicate the tool descriptions;
@@ -115,23 +115,6 @@ Design: `docs/plans/2026-09-24-prompt-audit-roadmap.md`. Findings: `docs/reviews
   The hard-coded "five companies" moved to Data expansion phase 2, which must fix it. It changes model-visible text, so it needs a panel screen. `docs/reviews/2026-09-24-prompt-audit.md`
 - [ ] **[refactor, Low, Trivial]** Duplicated enum values in `prompts/agent_tools.py`, all copied as-is from `agent.py` by WP1: the period list `["FY", "Q1", "Q2", "Q3", "Q4"]` twice, `list(COMPANIES.keys())` three times, and `CLAIM_UNITS` restating `numeric_utils.UNIT_MULTIPLIERS`'s keys by hand. Hoist each into one constant; the schemas' bytes must stay identical (check with the WP2 fingerprint). Do it before Data expansion phase 2 changes the ticker list. Found in the WP1 code review.
 - [ ] **[design, Low, Standard]** The MCP `search_filings` schema is derived the wrong way round: `prompts.mcp.MCP_SEARCH_TOOL_SCHEMA` is the agent's schema with its agent-only text overridden, so agent-only wording in any other field reaches MCP clients silently. The `ticker` description already does ("…which company the question is about"), and three description sentences are written out on both surfaces. Fix: a neutral shared schema that the agent adds its note to. It changes model-visible text, so it needs a panel screen. Found in WP3's plan and code reviews (`docs/reviews/2026-09-24-wp3-group-a-wording.md`).
-
-### From the 2026-09-25 token-efficiency workflow change
-
-Full evidence/reasoning: `docs/decisions/2026-09-25-token-efficiency-workflow.md`. Its pilot and the
-three follow-ups were settled by the 2026-10-05 `/retro` (`~/.claude/retros/2026-10-05.md`).
-
-- [ ] **[refactor, Low, Standard]** Public names for the `sec_agent.agent` modules' cross-module
-  API. The `agent.py` split (`docs/plans/2026-09-29-agent-py-split.md`) kept every `_`-prefixed
-  name to stay a pure move, so modules and tests now import private names from siblings (e.g.
-  `_dispatch_tool_call`, `_finalize_answer`, `_number_candidates`). Due now: its trigger, the S2
-  loop refactor (package 3, 2026-10-06), has landed. Two placements from the split's architecture review
-  go in the same pass:
-  - Move `_NO_SUBMISSION_WARNING` from `citations.py` to `submission.py`. It is the submit gate's
-    "no submission" sentinel, and `citations.py` never reads it. After the move, `agent.py` no
-    longer imports `citations`.
-  - Move `_with_unit` from `fact_tools.py` to `tool_results.py`. This drops the
-    calculate → fact_tools edge.
 
 ### From the 2026-09-22 eval-question-classification change
 
@@ -233,7 +216,7 @@ review also surfaced remain below.
 
 Full evidence: `docs/reviews/2026-09-10-fix-3-more-review-findings.md`.
 
-- [ ] **[performance, Low, Standard]** `_never_tagged_hint()` (called from both `_format_no_fact_message` and, as of §12, `_format_no_comparison_message`) re-fetches `xbrl_facts.fetch_concept()` for the exact (ticker, tag) pair the caller's own lookup just fetched moments earlier — normally a free disk-cache hit, but `fetch_concept()` never caches a 404 response, so on the one case this hint actually exists for (a company that genuinely never tags a concept at all) it makes a real second live SEC network round-trip synchronously inside message formatting. Root cause is in `xbrl_facts.fetch_concept()`'s caching, not in either message formatter — a separate, larger-scope item than either function's own fix. (The section's other item, unknown-ticker message inconsistency, moved into the prompt-audit tool-message batch.)
+- [ ] **[performance, Low, Standard]** `_never_tagged_hint()` (called from both `format_no_fact_message` and, as of §12, `format_no_comparison_message`) re-fetches `xbrl_facts.fetch_concept()` for the exact (ticker, tag) pair the caller's own lookup just fetched moments earlier — normally a free disk-cache hit, but `fetch_concept()` never caches a 404 response, so on the one case this hint actually exists for (a company that genuinely never tags a concept at all) it makes a real second live SEC network round-trip synchronously inside message formatting. Root cause is in `xbrl_facts.fetch_concept()`'s caching, not in either message formatter — a separate, larger-scope item than either function's own fix. (The section's other item, unknown-ticker message inconsistency, moved into the prompt-audit tool-message batch.)
 
 ### From the 2026-09-09 schema-driven arg-validation redesign
 
@@ -241,7 +224,7 @@ Full evidence/reasoning: `docs/plans/2026-09-09-schema-driven-arg-validation.md`
 
 - [ ] **[bug (latent), Low, Standard]** `xbrl_facts.py`'s `get_metric()` does unchecked `entry["val"]`/`entry["end"]`/`entry["form"]`/`entry["accn"]` indexing on SEC API response entries after `_pick_entry*` filters them — a SEC schema change or odd entry would raise a raw `KeyError` from inside XBRL-parsing internals instead of a clear error. Lower priority than the fixed items: SEC's schema is stable and the surrounding fetch/cache code is already fairly defensive. Batch with the `xbrl_facts` timeout and date-helper items (2026-10-06 data expansion phase 1 review section).
 - [ ] **[bug, Low, Trivial]** `eval_harness.py`'s `_select_questions` reads `q["id"]` before the per-question `try/except` in `run_eval()` that already contains most other malformed-question crashes — one malformed question entry still crashes the whole eval batch instead of just failing that question. Narrow, low-traffic (offline eval tool, not a live path).
-- [ ] **[refactor, Low, Standard]** `_dispatch_tool_call`'s `search_filings` branch re-derives ticker validity by hand (`isinstance`/`COMPANIES` membership) a second time, after `validate_tool_args` already checked the same thing internally via the schema, purely to decide which rejection message to show — a residual instance of the same "hand-rolled check duplicating the schema" pattern this redesign otherwise eliminated. Found in the redesign's own architecture-review pass; not fixed there because a clean fix means changing `validate_tool_args`'s return type across all 4 call sites for a 2-line message-selection convenience, out of proportion to that change.
+- [ ] **[refactor, Low, Standard]** `dispatch_tool_call`'s `search_filings` branch re-derives ticker validity by hand (`isinstance`/`COMPANIES` membership) a second time, after `validate_tool_args` already checked the same thing internally via the schema, purely to decide which rejection message to show — a residual instance of the same "hand-rolled check duplicating the schema" pattern this redesign otherwise eliminated. Found in the redesign's own architecture-review pass; not fixed there because a clean fix means changing `validate_tool_args`'s return type across all 4 call sites for a 2-line message-selection convenience, out of proportion to that change.
 
 ## Watch list
 
@@ -280,7 +263,7 @@ detail. The fuller write-ups from before the 2026-09-26 cleanup are in
 
 - **[bug (latent), Low, Standard]** A submission from a mixed submit+search turn (answered with `MIXED_TURN_RESUBMIT_MESSAGE`) isn't cached the way a retried one is (`pre_retry_submit_args`). If the model then answers in text twice, the run is refused as `no_submission` instead of re-gating that submission against the larger result set. Trigger: a `no_submission` refusal whose trace shows an earlier mixed-turn submit. Code review of `docs/plans/2026-09-29-remove-ollama-and-prose-fallback.md`.
 - **[bug (latent), Low, Standard]** The final-turn safety net could force a grounded but incomplete answer (fewer companies than asked). Trigger: a confidently wrong ranking from a forced submit. `docs/decisions/2026-09-16-final-turn-safety-net.md`
-- **[refactor, Low, Trivial]** `_dispatch_tool_call`'s tool branches are an if-chain. Trigger: a 5th or 6th tool (then use a dispatch table). `docs/reviews/2026-09-11-negative-number-support.md`
+- **[refactor, Low, Trivial]** `dispatch_tool_call`'s tool branches are an if-chain. Trigger: a 5th or 6th tool (then use a dispatch table). `docs/reviews/2026-09-11-negative-number-support.md`
 - **[refactor, Low, Standard]** `formulas.py` has 3 hand-written zero-denominator guards. Trigger: a 4th call site (then extract a shared `_safe_ratio()`). `docs/reviews/2026-09-08-fix-3-medium-review-findings.md`
 - **[feature, Low, Substantial]** Per-call LLM generation tracing in Langfuse (tokens, prompt/completion text, cost and latency per call). Trigger: a real debugging need. `docs/decisions/2026-09-04-langfuse-tracing.md`
 

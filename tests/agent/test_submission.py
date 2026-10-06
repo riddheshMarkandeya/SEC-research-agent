@@ -1,15 +1,15 @@
 """
-Unit tests for submission.py: submission_warnings, _finalize_answer (the
+Unit tests for submission.py: submission_warnings, finalize_answer (the
 verified answer or a refusal, and the citation_gate_refused log), the
-retry and refusal messages, and _partition_submit_call.
+retry and refusal messages, and partition_submit_call.
 """
 
 from typing import cast
 from sec_agent.agent.submission import (
     AgentResult,
-    _partition_submit_call,
-    _finalize_answer,
-    _format_claim_retry_message,
+    partition_submit_call,
+    finalize_answer,
+    format_claim_retry_message,
     _format_refusal_message,
     submission_warnings,
 )
@@ -52,7 +52,7 @@ def test_submission_warnings_valid_args_delegates_to_verify_claims(monkeypatch):
 
 
 def test_finalize_answer_passes_through_when_no_warnings():
-    result = _finalize_answer("the answer", [], [], backend="gemini", retries=0)
+    result = finalize_answer("the answer", [], [], backend="gemini", retries=0)
     assert result == AgentResult("the answer", [], [], None, [])
 
 
@@ -67,7 +67,7 @@ def test_finalize_answer_refuses_when_warnings_present():
             quote=None,
         )
     ]
-    result = _finalize_answer("the answer", warnings, cast(list[dict], ["result"]), backend="gemini", retries=0)
+    result = finalize_answer("the answer", warnings, cast(list[dict], ["result"]), backend="gemini", retries=0)
     assert result.answer == _format_refusal_message(["[1] claims 100.0 ... doesn't appear"])
     assert result.results == ["result"]
     assert result.citation_warnings == ["[1] claims 100.0 ... doesn't appear"]
@@ -75,7 +75,7 @@ def test_finalize_answer_refuses_when_warnings_present():
 
 
 # ---------------------------------------------------------------------------
-# _finalize_answer -- withheld answer + citation_gate_refused logging
+# finalize_answer -- withheld answer + citation_gate_refused logging
 # (2026-09-10, added for the FP/FN gate-measurement work). The withheld
 # answer preserves what the model actually said so it can later be
 # re-graded against ground truth; nothing before this could recover it
@@ -92,32 +92,32 @@ def test_finalize_answer_returns_the_withheld_answer_when_refusing():
             quote=None,
         )
     ]
-    result = _finalize_answer("the model's answer", warnings, [], backend="gemini", retries=1)
+    result = finalize_answer("the model's answer", warnings, [], backend="gemini", retries=1)
     assert result.withheld_answer == "the model's answer"
     assert result.answer != "the model's answer"  # the refusal text, not the raw answer
 
 
 def test_finalize_answer_withheld_answer_is_none_when_passing():
-    result = _finalize_answer("the model's answer", [], [], backend="gemini", retries=0)
+    result = finalize_answer("the model's answer", [], [], backend="gemini", retries=0)
     assert result.withheld_answer is None
     assert result.answer == "the model's answer"
 
 
 # ---------------------------------------------------------------------------
-# _finalize_answer -- citation_warning_details, AgentResult's 5th field
+# finalize_answer -- citation_warning_details, AgentResult's 5th field
 # (2026-09-10, see
 # docs/plans/2026-09-10-structured-claims-citation-verification.md).
-# Populated directly from the CitationWarnings _finalize_answer already
+# Populated directly from the CitationWarnings finalize_answer already
 # holds, NOT re-derived by a second pass, so it always names the checks
 # that actually refused the answer.
 # ---------------------------------------------------------------------------
 def test_finalize_answer_citation_warning_details_empty_when_passing():
-    result = _finalize_answer("the answer", [], [], backend="gemini", retries=0)
+    result = finalize_answer("the answer", [], [], backend="gemini", retries=0)
     assert result.citation_warning_details == []
 
 
 def test_finalize_answer_citation_warning_details_matches_the_actual_warnings():
-    # Proves this field comes from the warnings _finalize_answer was
+    # Proves this field comes from the warnings finalize_answer was
     # actually given, not re-derived. Also the
     # `quote` field's own presence in the resulting dict, proving it
     # survives the CitationWarning -> _asdict() -> report JSON path
@@ -132,7 +132,7 @@ def test_finalize_answer_citation_warning_details_matches_the_actual_warnings():
             quote="the model's claimed quote text",
         )
     ]
-    result = _finalize_answer("the answer", warnings, [], backend="gemini", retries=0)
+    result = finalize_answer("the answer", warnings, [], backend="gemini", retries=0)
     assert result.citation_warning_details == [
         {
             "check": "quote_not_found",
@@ -166,7 +166,7 @@ def test_finalize_answer_logs_citation_gate_refused_with_check_counts(monkeypatc
             quote=None,
         ),
     ]
-    _finalize_answer("the model's answer", warnings, cast(list[dict], ["result"]), backend="gemini", retries=1)
+    finalize_answer("the model's answer", warnings, cast(list[dict], ["result"]), backend="gemini", retries=1)
 
     assert len(log_calls) == 1
     category, fields = log_calls[0]
@@ -183,7 +183,7 @@ def test_finalize_answer_logs_citation_gate_refused_with_check_counts(monkeypatc
 def test_finalize_answer_does_not_log_when_passing(monkeypatch):
     log_calls = []
     capture_events(monkeypatch, log_calls)
-    _finalize_answer("the model's answer", [], [], backend="gemini", retries=0)
+    finalize_answer("the model's answer", [], [], backend="gemini", retries=0)
     assert log_calls == []
 
 
@@ -206,17 +206,17 @@ def test_format_claim_retry_message_tells_model_to_recheck_shown_sources_first()
     # Targets the aapl-employees-fy25 failure mode from Week 5j: the
     # retry gave up entirely instead of checking the 4 OTHER
     # already-retrieved chunks for a valid citation.
-    message = _format_claim_retry_message("answer", [])
+    message = format_claim_retry_message("answer", [])
     assert "already" in message.lower()
 
 
 def test_format_claim_retry_message_permits_an_honest_refusal():
-    message = _format_claim_retry_message("answer", [])
+    message = format_claim_retry_message("answer", [])
     assert "refus" in message.lower() or "acceptable" in message.lower()
 
 
 def test_format_claim_retry_message_forbids_inventing_or_estimating():
-    message = _format_claim_retry_message("answer", [])
+    message = format_claim_retry_message("answer", [])
     assert "invent" in message.lower() or "estimat" in message.lower()
 
 
@@ -225,14 +225,14 @@ def test_format_claim_retry_message_never_uses_final_attempt_deadline_pressure()
     # fabrication regression: wording like "this is your final attempt"
     # pushed the model to fabricate an estimate on a previously-reliable
     # refusal question. Must never reappear in this message.
-    message = _format_claim_retry_message("answer", [])
+    message = format_claim_retry_message("answer", [])
     lowered = message.lower()
     assert "final attempt" not in lowered
     assert "last chance" not in lowered
 
 
 # ---------------------------------------------------------------------------
-# _format_claim_retry_message (2026-09-10) -- structured-claims retry
+# format_claim_retry_message (2026-09-10) -- structured-claims retry
 # wording, built around CITATION_RETRY_GUIDANCE.
 # ---------------------------------------------------------------------------
 def test_format_claim_retry_message_includes_each_warning():
@@ -244,42 +244,42 @@ def test_format_claim_retry_message_includes_each_warning():
             check="value_not_in_quote", citation_index=2, value=42.0, unit="raw", message="[2] value missing", quote=None
         ),
     ]
-    message = _format_claim_retry_message("the answer", warnings)
+    message = format_claim_retry_message("the answer", warnings)
     assert "[1] quote missing" in message
     assert "[2] value missing" in message
 
 
 def test_format_claim_retry_message_includes_the_previous_answer():
-    message = _format_claim_retry_message("Apple's revenue was $100 billion.", [])
+    message = format_claim_retry_message("Apple's revenue was $100 billion.", [])
     assert "Apple's revenue was $100 billion." in message
 
 
 def test_format_claim_retry_message_includes_the_shared_guidance():
-    assert CITATION_RETRY_GUIDANCE in _format_claim_retry_message("answer", [])
+    assert CITATION_RETRY_GUIDANCE in format_claim_retry_message("answer", [])
 
 
 def test_format_claim_retry_message_tells_model_to_call_submit_answer_again():
-    message = _format_claim_retry_message("answer", [])
+    message = format_claim_retry_message("answer", [])
     assert "submit_answer" in message
 
 
 # ---------------------------------------------------------------------------
-# _partition_submit_call (2026-09-10) -- splits a turn's tool_calls into
+# partition_submit_call (2026-09-10) -- splits a turn's tool_calls into
 # the submit_answer call (if any) and every other call, so the loop can
 # tell a pure submission from a mixed submit+search turn without a
-# str|Terminal union return type on _dispatch_tool_call. See
+# str|Terminal union return type on dispatch_tool_call. See
 # docs/plans/2026-09-10-structured-claims-citation-verification.md.
 # ---------------------------------------------------------------------------
 def test_partition_submit_call_pure_submission():
     submit_call = {"name": "submit_answer", "args": {"answer_text": "x", "claims": []}}
-    submit, other = _partition_submit_call([submit_call])
+    submit, other = partition_submit_call([submit_call])
     assert submit is submit_call
     assert other == []
 
 
 def test_partition_submit_call_no_submission():
     search_call = {"name": "search_filings", "args": {"query": "revenue"}}
-    submit, other = _partition_submit_call([search_call])
+    submit, other = partition_submit_call([search_call])
     assert submit is None
     assert other == [search_call]
 
@@ -287,10 +287,10 @@ def test_partition_submit_call_no_submission():
 def test_partition_submit_call_mixed_turn():
     submit_call = {"name": "submit_answer", "args": {"answer_text": "x", "claims": []}}
     search_call = {"name": "search_filings", "args": {"query": "revenue"}}
-    submit, other = _partition_submit_call([submit_call, search_call])
+    submit, other = partition_submit_call([submit_call, search_call])
     assert submit is submit_call
     assert other == [search_call]
 
 
 def test_partition_submit_call_empty():
-    assert _partition_submit_call([]) == (None, [])
+    assert partition_submit_call([]) == (None, [])

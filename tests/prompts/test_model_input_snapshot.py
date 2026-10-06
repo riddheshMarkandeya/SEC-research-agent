@@ -121,9 +121,9 @@ def _results():
 # ---------------------------------------------------------------------------
 def _render_result_formats() -> dict:
     out: dict[str, object] = {
-        "citation_header": tool_results._citation_header(7, META),
-        "results_block_empty": tool_results._format_results_block([], 1),
-        "results_block": tool_results._format_results_block(_results(), 3),
+        "citation_header": tool_results.citation_header(7, META),
+        "results_block_empty": tool_results.format_results_block([], 1),
+        "results_block": tool_results.format_results_block(_results(), 3),
     }
     fact_usd = {
         "value": 123.0,
@@ -134,10 +134,10 @@ def _render_result_formats() -> dict:
         "accession": "acc-1",
     }
     fact_raw = dict(fact_usd, unit="raw", filed=None)
-    out["fact_usd"] = fact_tools._fact_as_result(fact_usd, {"metric": "revenue", "ticker": "AAPL"})
-    out["fact_raw"] = fact_tools._fact_as_result(fact_raw, {"metric": "asset_turnover", "ticker": "AAPL"})
+    out["fact_usd"] = fact_tools.fact_as_result(fact_usd, {"metric": "revenue", "ticker": "AAPL"})
+    out["fact_raw"] = fact_tools.fact_as_result(fact_raw, {"metric": "asset_turnover", "ticker": "AAPL"})
     frame_fact = {"value": 5.0, "unit": "USD", "period_end": "2025-06-30", "accession": "acc-2"}
-    out["comparison"] = fact_tools._comparison_as_results({"MSFT": frame_fact, "AAPL": fact_usd}, "revenue")
+    out["comparison"] = fact_tools.comparison_as_results({"MSFT": frame_fact, "AAPL": fact_usd}, "revenue")
     base = {
         "operand_a": 150.0,
         "unit_a": "million",
@@ -153,7 +153,7 @@ def _render_result_formats() -> dict:
         ("divide", {"value": 1.24, "unit": "raw"}),
         ("subtract", {"value": 1e18, "unit": "raw"}),
     ]:
-        out[f"calc_result_{op}"] = calculate._calculation_as_result(res, dict(base, operation=op))
+        out[f"calc_result_{op}"] = calculate.calculation_as_result(res, dict(base, operation=op))
     return out
 
 
@@ -221,7 +221,7 @@ def _render_citation_warnings() -> dict:
 def _render_retry_and_no_data() -> dict:
     warning = citations.CitationWarning("uncovered_number", None, 1.0, "raw", "msg {x} one", None)
     out: dict[str, object] = {
-        "claim_retry": submission._format_claim_retry_message("answer_text {braces}", [warning]),
+        "claim_retry": submission.format_claim_retry_message("answer_text {braces}", [warning]),
         "refusal": submission._format_refusal_message(["a {b}", "c"]),
     }
     for name, args in [
@@ -232,12 +232,12 @@ def _render_retry_and_no_data() -> dict:
         ("ratio_not_tagged_check", {"metric": "gross_margin", "ticker": "PLTR", "period_end_date": "2025-12-31"}),
         ("multi_year", {"metric": "gross_margin", "ticker": "PLTR", "start_fiscal_year": 2023}),
     ]:
-        out[f"no_fact_{name}"] = tool_results._format_no_fact_message(args)
+        out[f"no_fact_{name}"] = tool_results.format_no_fact_message(args)
     # Through the dispatcher, so the reply shows the year the lookup used
     # after a string year is converted.
     with pytest.MonkeyPatch.context() as mp:
         mp.setattr(fact_tools, "get_ratio", lambda *a, **k: None)
-        out["dispatch_no_fact_string_year"] = dispatch._dispatch_tool_call(
+        out["dispatch_no_fact_string_year"] = dispatch.dispatch_tool_call(
             {"name": "get_financial_fact", "args": {"metric": "gross_margin", "ticker": "PLTR", "fiscal_year": "2025"}},
             "q",
             [],
@@ -248,7 +248,7 @@ def _render_retry_and_no_data() -> dict:
         ("empty", {}),
         ("q4_never_tagged", {"metric": "inventory", "anchor_ticker": "PLTR", "fiscal_period": "Q4"}),
     ]:
-        out[f"no_comparison_{name}"] = tool_results._format_no_comparison_message(args)
+        out[f"no_comparison_{name}"] = tool_results.format_no_comparison_message(args)
     out["never_tagged_hint"] = tool_results._never_tagged_hint("PLTR", "inventory")
     out["search_bad_ticker"] = dispatch._dispatch_search_filings(
         {"name": "search_filings", "args": {"query": "x", "ticker": "ZZZZ"}}, "q", [], set(), False

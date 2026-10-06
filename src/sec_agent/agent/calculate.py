@@ -7,14 +7,14 @@ any other source.
 from sec_agent.verification.numeric_utils import normalize
 from sec_agent.prompts import agent_messages as msg
 from sec_agent.prompts.agent_tools import CALCULATE_TOOL_SCHEMA, CLAIM_UNITS
-from sec_agent.agent.citations import _number_candidates
-from sec_agent.agent.fact_tools import _with_unit
+from sec_agent.agent.citations import number_candidates
+from sec_agent.agent.tool_results import with_unit
 from sec_agent.agent.tool_args import validate_tool_args
 
 
 # ---------------------------------------------------------------------------
 # calculate tool -- two independent guarantees: operand GROUNDING
-# (_ground_operand, reusing _number_candidates -- the same primitive
+# (_ground_operand, reusing number_candidates -- the same primitive
 # _verify_one_claim already trusts for a submit_answer claim) and
 # arithmetic CORRECTNESS (call_calculate runs the operation in real
 # Python, never the model's own mental math, since LLM arithmetic is
@@ -27,7 +27,7 @@ def _ground_operand(
     Returns None if grounded, else a specific, actionable error message
     naming which operand and citation index failed -- the model can
     retry with a corrected value/citation rather than getting a generic
-    failure. Reuses _number_candidates() (not _quote_matches -- there's
+    failure. Reuses number_candidates() (not _quote_matches -- there's
     no quoted substring here, just a bare operand value) and the same
     tolerance constant (max(0.01*abs(norm), 0.05)) used by citations.py's
     claim checks.
@@ -65,7 +65,7 @@ def _ground_operand(
     source_text = all_results[citation_index - 1]["text"]
     category, norm = normalize(value, unit)
     tolerance = max(0.01 * abs(norm), 0.05)
-    candidates = _number_candidates(source_text)
+    candidates = number_candidates(source_text)
     if any(c == category and abs(v - norm) <= tolerance for c, v in candidates):
         return None
 
@@ -86,7 +86,7 @@ def _ground_operand(
     for other_index, other_result in enumerate(all_results, start=1):
         if other_index == citation_index:
             continue
-        other_candidates = _number_candidates(other_result["text"])
+        other_candidates = number_candidates(other_result["text"])
         if any(c == category and abs(v - norm) <= tolerance for c, v in other_candidates):
             return msg.OPERAND_WRONG_CITATION_INDEX_TEMPLATE.format(
                 operand_name=operand_name,
@@ -201,20 +201,20 @@ def _format_computed_number(value: float) -> str:
     return text
 
 
-def _calculation_as_result(result: dict, args: dict) -> dict:
+def calculation_as_result(result: dict, args: dict) -> dict:
     """Wraps a call_calculate() result in the same {text, metadata} shape
-    every other all_results entry uses (mirrors _fact_as_result) -- the
+    every other all_results entry uses (mirrors fact_as_result) -- the
     whole design point of this tool is that its output flows through the
     SAME citation/verification machinery unchanged, the same way
     get_financial_fact's yoy_growth output already does. `text` renders
     the full expression so it's directly quotable by
-    _quote_matches/_number_candidates, and so the model can copy it into
+    _quote_matches/number_candidates, and so the model can copy it into
     answer_text to satisfy the system prompt's disclosure requirement
     (state the computation, not just the bare result) -- proven
     end-to-end, not just asserted, by
     test_calculation_as_result_text_is_directly_quotable_end_to_end.
 
-    metadata uses placeholder values the same way _comparison_as_results
+    metadata uses placeholder values the same way comparison_as_results
     already does for XBRL-frame-only rows (fact.get("form", "XBRL frame
     data")) -- a pure computation has no filing of its own to attribute."""
     operation = args["operation"]
@@ -232,7 +232,7 @@ def _calculation_as_result(result: dict, args: dict) -> dict:
         value_a=value_a, unit_a=unit_a, value_b=value_b, unit_b=unit_b, operation=operation
     )
 
-    formatted_value = _with_unit(_format_computed_number(result["value"]), result["unit"])
+    formatted_value = with_unit(_format_computed_number(result["value"]), result["unit"])
     return {
         "text": msg.CALCULATION_RESULT_TEMPLATE.format(
             expression=expression, value=formatted_value, idx_a=idx_a, idx_b=idx_b

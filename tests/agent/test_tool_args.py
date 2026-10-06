@@ -20,7 +20,7 @@ from tests.agent.helpers import _valid_calculate_args, capture_events
 # schema-shape checks below exercise the generic function directly, walking
 # each *_TOOL_SCHEMA's declared properties rather than one hand-written test
 # per field -- the call_get_financial_fact/call_compare_financial_metric/
-# _dispatch_tool_call tests in test_fact_tools.py/test_dispatch.py still cover the same schema-
+# dispatch_tool_call tests in test_fact_tools.py/test_dispatch.py still cover the same schema-
 # violation cases end-to-end (unrecognized_extra_argument, ticker_not_in_enum,
 # etc.), so this section is additive, not a replacement for those.
 # ---------------------------------------------------------------------------
@@ -89,7 +89,7 @@ def test_validate_tool_args_soft_required_allows_missing_property():
 def test_validate_tool_args_skip_properties_ignores_malformed_value():
     # get_financial_fact's fiscal_year: the multi-year-average request
     # shape never reads it, so a malformed value must be ignored generically
-    # -- _rejects_invalid_fiscal_year only fires on the single-period path.
+    # -- rejects_invalid_fiscal_year only fires on the single-period path.
     rejected = validate_tool_args(
         "get_financial_fact",
         FACT_TOOL_SCHEMA,

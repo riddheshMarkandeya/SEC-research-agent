@@ -16,13 +16,14 @@ from sec_agent.prompts.agent_tools import COMPARE_TOOL_SCHEMA, FACT_TOOL_SCHEMA
 from sec_agent.tracing import log_event, record_unmet_metric_request
 from sec_agent.sources.xbrl_facts import DEFAULT_METRIC_TAGS, get_metric, get_metric_all_companies
 from sec_agent.agent.tool_args import (
-    _is_valid_int,
-    _rejects_invalid_fiscal_year,
-    _coerce_year_args,
+    is_valid_int,
+    rejects_invalid_fiscal_year,
+    coerce_year_args,
     validate_tool_args,
-    _FISCAL_YEAR_PROPS,
-    _COMPARE_FISCAL_YEAR_PROPS,
+    FISCAL_YEAR_PROPS,
+    COMPARE_FISCAL_YEAR_PROPS,
 )
+from sec_agent.agent.tool_results import with_unit
 
 
 def call_get_financial_fact(args: dict, question: str | None = None) -> dict | None:
@@ -63,8 +64,8 @@ def call_get_financial_fact(args: dict, question: str | None = None) -> dict | N
     multi-year-average combinations) -- those are a schema-violation
     problem, not a "this formula doesn't exist yet" problem, and would
     just be noise on the signal."""
-    args = _coerce_year_args("get_financial_fact", args, _FISCAL_YEAR_PROPS)
-    if validate_tool_args("get_financial_fact", FACT_TOOL_SCHEMA, args, skip_properties=_FISCAL_YEAR_PROPS):
+    args = coerce_year_args("get_financial_fact", args, FISCAL_YEAR_PROPS)
+    if validate_tool_args("get_financial_fact", FACT_TOOL_SCHEMA, args, skip_properties=FISCAL_YEAR_PROPS):
         return None
     ticker = args["ticker"]
     metric = args["metric"]
@@ -89,7 +90,7 @@ def call_get_financial_fact(args: dict, question: str | None = None) -> dict | N
     # wrongly reject a valid multi-year-average request over a stray,
     # irrelevant fiscal_year value -- this must only gate the two
     # branches below, which are the only ones that actually use it.
-    if _rejects_invalid_fiscal_year("get_financial_fact", args):
+    if rejects_invalid_fiscal_year("get_financial_fact", args):
         return None
     fiscal_year = args.get("fiscal_year")
     if args.get("yoy_growth"):
@@ -119,7 +120,7 @@ def _get_financial_fact_multi_year_average(
     for an equally-opaque ad hoc tuple with no real benefit here."""
     start_fiscal_year = args.get("start_fiscal_year")
     end_fiscal_year = args.get("end_fiscal_year")
-    if args.get("yoy_growth") or not _is_valid_int(start_fiscal_year) or not _is_valid_int(end_fiscal_year):
+    if args.get("yoy_growth") or not is_valid_int(start_fiscal_year) or not is_valid_int(end_fiscal_year):
         log_event("tool_call_rejected", tool="get_financial_fact", reason="invalid_multi_year_average_combo", args=args)
         return None
     result = get_multi_year_average(ticker, metric, start_fiscal_year, end_fiscal_year)
@@ -148,23 +149,12 @@ def _get_financial_fact_yoy_growth(ticker: str, metric: str, args: dict, questio
     return result
 
 
-def _with_unit(value: float | int | str, unit: str) -> str:
-    """Renders a value with its unit for citation text. "raw" (the unit for
-    any RATIO_DEFINITIONS entry with as_percent=False, e.g. asset_turnover/
-    inventory_turnover) is an internal normalize()-category label from
-    numeric_utils.py, not a natural-language unit -- omitted here so a
-    plain ratio reads as "1.04", not the internal-sounding "1.04 raw"."""
-    if unit == "raw":
-        return str(value)
-    return msg.VALUE_WITH_UNIT_TEMPLATE.format(value=value, unit=unit)
-
-
 def _format_fact_value(fact: dict) -> str:
-    """Renders a fact's value for citation text, via _with_unit."""
-    return _with_unit(fact["value"], fact["unit"])
+    """Renders a fact's value for citation text, via with_unit."""
+    return with_unit(fact["value"], fact["unit"])
 
 
-def _fact_as_result(fact: dict, args: dict) -> dict:
+def fact_as_result(fact: dict, args: dict) -> dict:
     """Wrap a get_financial_fact value in the same {text, metadata} shape
     hybrid_search results use, so it can share all_results/citation-key
     handling uniformly with search_filings results instead of needing a
@@ -207,9 +197,9 @@ def call_compare_financial_metric(args: dict, question: str | None = None) -> di
     `reason="no_data_for_ticker"` bucket rather than a third reason
     value: a human looking at the metric name in the Langfuse dashboard
     can already tell that case apart, not worth the extra complexity."""
-    args = _coerce_year_args("compare_financial_metric", args, _COMPARE_FISCAL_YEAR_PROPS)
+    args = coerce_year_args("compare_financial_metric", args, COMPARE_FISCAL_YEAR_PROPS)
     if validate_tool_args(
-        "compare_financial_metric", COMPARE_TOOL_SCHEMA, args, skip_properties=_COMPARE_FISCAL_YEAR_PROPS
+        "compare_financial_metric", COMPARE_TOOL_SCHEMA, args, skip_properties=COMPARE_FISCAL_YEAR_PROPS
     ):
         return {}
     anchor_ticker = args["anchor_ticker"]
@@ -220,7 +210,7 @@ def call_compare_financial_metric(args: dict, question: str | None = None) -> di
         # request signal, not a local-only tool_call_rejected event.
         record_unmet_metric_request(anchor_ticker, metric, reason="unknown_metric", question=question)
         return {}
-    if _rejects_invalid_fiscal_year("compare_financial_metric", args):
+    if rejects_invalid_fiscal_year("compare_financial_metric", args):
         return {}
     fiscal_year = args.get("fiscal_year")
     fiscal_period = args.get("fiscal_period", "FY")
@@ -242,10 +232,10 @@ def call_compare_financial_metric(args: dict, question: str | None = None) -> di
     return result
 
 
-def _comparison_as_results(data: dict[str, dict], metric: str) -> list[dict]:
+def comparison_as_results(data: dict[str, dict], metric: str) -> list[dict]:
     """Wrap a {ticker: fact} dict (from compare_financial_metric) as a
     list of {text, metadata} results, one per company, reusing the same
-    shape _fact_as_result uses for a single company. A frames entry
+    shape fact_as_result uses for a single company. A frames entry
     (duration metrics) doesn't carry a "form" field — "XBRL frame data"
     stands in for it rather than guessing 10-K vs. 10-Q. Instant metrics
     resolve independently per company via get_metric(), which DOES carry

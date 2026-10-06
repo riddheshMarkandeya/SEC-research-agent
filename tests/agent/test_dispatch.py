@@ -1,12 +1,12 @@
 """
 Unit tests for dispatch.py: search-argument resolution, run_search, and
-_dispatch_tool_call's routing, validation and result numbering for each
+dispatch_tool_call's routing, validation and result numbering for each
 tool.
 """
 
 from sec_agent.agent.dispatch import (
     CHUNKS_PER_SEARCH,
-    _dispatch_tool_call,
+    dispatch_tool_call,
     _resolve_search_args,
     run_search,
 )
@@ -71,7 +71,7 @@ def test_resolve_search_args_empty_args_falls_back_entirely():
 
 
 # ---------------------------------------------------------------------------
-# _dispatch_tool_call
+# dispatch_tool_call
 # ---------------------------------------------------------------------------
 def test_dispatch_tool_call_get_financial_fact_appends_result(monkeypatch):
     fact = {
@@ -86,7 +86,7 @@ def test_dispatch_tool_call_get_financial_fact_appends_result(monkeypatch):
     all_results = []
     call = {"name": "get_financial_fact", "args": {"ticker": "NVDA", "metric": "gross_margin"}}
 
-    content = _dispatch_tool_call(call, "q", all_results, set(), verbose=False)
+    content = dispatch_tool_call(call, "q", all_results, set(), verbose=False)
 
     assert len(all_results) == 1
     assert all_results[0]["metadata"]["ticker"] == "NVDA"
@@ -95,11 +95,11 @@ def test_dispatch_tool_call_get_financial_fact_appends_result(monkeypatch):
 
 def test_dispatch_tool_call_get_financial_fact_none_uses_no_fact_message(monkeypatch):
     monkeypatch.setattr("sec_agent.agent.dispatch.call_get_financial_fact", lambda args, question=None: None)
-    monkeypatch.setattr("sec_agent.agent.dispatch._format_no_fact_message", lambda args: "NO FACT MESSAGE")
+    monkeypatch.setattr("sec_agent.agent.dispatch.format_no_fact_message", lambda args: "NO FACT MESSAGE")
     all_results = []
     call = {"name": "get_financial_fact", "args": {"ticker": "NVDA", "metric": "gross_margin"}}
 
-    content = _dispatch_tool_call(call, "q", all_results, set(), verbose=False)
+    content = dispatch_tool_call(call, "q", all_results, set(), verbose=False)
 
     assert all_results == []
     assert content == "NO FACT MESSAGE"
@@ -112,7 +112,7 @@ def test_dispatch_tool_call_calculate_appends_result():
     ]
     call = {"name": "calculate", "args": _valid_calculate_args()}
 
-    content = _dispatch_tool_call(call, "q", all_results, set(), verbose=False)
+    content = dispatch_tool_call(call, "q", all_results, set(), verbose=False)
 
     assert len(all_results) == 3
     assert all_results[2]["metadata"]["chunk_index"] == "calculated"
@@ -125,7 +125,7 @@ def test_dispatch_tool_call_calculate_failure_uses_error_message_no_mutation():
     # citation_index_b=5 is out of range against a 1-result all_results.
     call = {"name": "calculate", "args": _valid_calculate_args(citation_index_b=5)}
 
-    content = _dispatch_tool_call(call, "q", all_results, set(), verbose=False)
+    content = dispatch_tool_call(call, "q", all_results, set(), verbose=False)
 
     assert len(all_results) == 1  # unchanged -- no phantom entry on failure
     assert "5" in content
@@ -146,7 +146,7 @@ def test_dispatch_tool_call_compare_financial_metric_appends_results(monkeypatch
     all_results = []
     call = {"name": "compare_financial_metric", "args": {"metric": "gross_margin"}}
 
-    content = _dispatch_tool_call(call, "q", all_results, set(), verbose=False)
+    content = dispatch_tool_call(call, "q", all_results, set(), verbose=False)
 
     assert len(all_results) == 1
     assert "[1]" in content
@@ -154,11 +154,11 @@ def test_dispatch_tool_call_compare_financial_metric_appends_results(monkeypatch
 
 def test_dispatch_tool_call_compare_financial_metric_empty_uses_no_comparison_message(monkeypatch):
     monkeypatch.setattr("sec_agent.agent.dispatch.call_compare_financial_metric", lambda args, question=None: {})
-    monkeypatch.setattr("sec_agent.agent.dispatch._format_no_comparison_message", lambda args: "NO COMPARISON MESSAGE")
+    monkeypatch.setattr("sec_agent.agent.dispatch.format_no_comparison_message", lambda args: "NO COMPARISON MESSAGE")
     all_results = []
     call = {"name": "compare_financial_metric", "args": {"metric": "gross_margin"}}
 
-    content = _dispatch_tool_call(call, "q", all_results, set(), verbose=False)
+    content = dispatch_tool_call(call, "q", all_results, set(), verbose=False)
 
     assert content == "NO COMPARISON MESSAGE"
 
@@ -191,7 +191,7 @@ def test_dispatch_tool_call_search_filings_uses_resolved_query_and_tracks_ticker
     # the model's own query and uses the fallback question instead
     call = {"name": "search_filings", "args": {"query": "employees", "ticker": "AAPL"}}
 
-    content = _dispatch_tool_call(call, "how many employees", all_results, searched_tickers, verbose=False)
+    content = dispatch_tool_call(call, "how many employees", all_results, searched_tickers, verbose=False)
 
     assert captured["query"] == "how many employees"
     assert captured["ticker"] == "AAPL"
@@ -214,7 +214,7 @@ def test_dispatch_tool_call_search_filings_rejects_unrecognized_ticker(monkeypat
     all_results = []
     call = {"name": "search_filings", "args": {"query": "revenue", "ticker": "NOTREAL"}}
 
-    content = _dispatch_tool_call(call, "q", all_results, set(), verbose=False)
+    content = dispatch_tool_call(call, "q", all_results, set(), verbose=False)
 
     assert "NOTREAL" in content
     assert all_results == []
@@ -238,7 +238,7 @@ def test_dispatch_tool_call_search_filings_rejects_non_hashable_ticker_without_c
     capture_events(monkeypatch, calls)
     call = {"name": "search_filings", "args": {"query": "revenue", "ticker": ["AAPL"]}}
 
-    content = _dispatch_tool_call(call, "q", [], set(), verbose=False)
+    content = dispatch_tool_call(call, "q", [], set(), verbose=False)
 
     assert len(calls) == 1
     category, fields = calls[0]
@@ -256,7 +256,7 @@ def test_dispatch_tool_call_search_filings_rejects_other_invalid_args_genericall
     capture_events(monkeypatch, [])
     call = {"name": "search_filings", "args": {"query": "revenue", "segment": "cloud"}}
 
-    content = _dispatch_tool_call(call, "q", [], set(), verbose=False)
+    content = dispatch_tool_call(call, "q", [], set(), verbose=False)
 
     assert content == SEARCH_INVALID_ARGS_MESSAGE
 
@@ -269,7 +269,7 @@ def test_dispatch_tool_call_search_filings_allows_no_ticker_filter(monkeypatch):
     capture_events(monkeypatch, calls)
     call = {"name": "search_filings", "args": {"query": "revenue"}}
 
-    _dispatch_tool_call(call, "q", [], set(), verbose=False)
+    dispatch_tool_call(call, "q", [], set(), verbose=False)
 
     assert calls == []
 
@@ -311,7 +311,7 @@ def test_dispatch_no_data_reply_names_the_converted_year_and_logs_once(monkeypat
     monkeypatch.setattr("sec_agent.agent.fact_tools.get_ratio", lambda *a, **k: None)
     call = {"name": "get_financial_fact", "args": {"ticker": "NVDA", "metric": "gross_margin", "fiscal_year": "2025"}}
 
-    content = _dispatch_tool_call(call, "q", [], set(), verbose=False)
+    content = dispatch_tool_call(call, "q", [], set(), verbose=False)
 
     assert "'FY' FY2025" in content
     assert "FY'2025'" not in content
@@ -321,5 +321,5 @@ def test_dispatch_no_data_reply_names_the_converted_year_and_logs_once(monkeypat
 def test_dispatch_tool_call_search_filings_tolerates_null_ticker(monkeypatch):
     monkeypatch.setattr("sec_agent.agent.dispatch.hybrid_search", lambda query, ticker, top_k: [])
     call = {"name": "search_filings", "args": {"query": "revenue", "ticker": None}}
-    content = _dispatch_tool_call(call, "q", [], set(), verbose=False)
+    content = dispatch_tool_call(call, "q", [], set(), verbose=False)
     assert "invalid" not in content

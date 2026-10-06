@@ -12,10 +12,22 @@ from sec_agent.prompts.agent_tools import SUBMIT_TOOL_SCHEMA
 from sec_agent.tracing import log_event
 from sec_agent.agent.citations import (
     CitationWarning,
-    _NO_SUBMISSION_WARNING,
     verify_claims,
 )
 from sec_agent.agent.tool_args import validate_tool_args
+
+
+# The model answered in text even after a forced submit_answer turn:
+# there's no structured submission to verify, so the answer is refused
+# rather than trusted unchecked.
+NO_SUBMISSION_CITATION_WARNING = CitationWarning(
+    check="no_submission",
+    citation_index=None,
+    value=None,
+    unit=None,
+    message=msg.NO_SUBMISSION_WARNING,
+    quote=None,
+)
 
 
 def _bulleted(warnings: list[str]) -> str:
@@ -24,7 +36,7 @@ def _bulleted(warnings: list[str]) -> str:
     return "\n".join(msg.WARNING_BULLET_TEMPLATE.format(warning=w) for w in warnings)
 
 
-def _format_claim_retry_message(answer_text: str, warnings: list["CitationWarning"]) -> str:
+def format_claim_retry_message(answer_text: str, warnings: list["CitationWarning"]) -> str:
     """Builds the corrective message for a citation retry after a
     submit_answer call whose claims don't verify. The hard-won wording
     lives in CITATION_RETRY_GUIDANCE (see its own comment for the live
@@ -40,7 +52,7 @@ def _format_claim_retry_message(answer_text: str, warnings: list["CitationWarnin
 
 
 def _format_refusal_message(warnings: list[str]) -> str:
-    """Hard-gate refusal, returned by _finalize_answer() below in place
+    """Hard-gate refusal, returned by finalize_answer() below in place
     of an answer whose citations still don't check out after any
     applicable retry. Implements the project's design principle
     "Every numeric claim must trace to a specific filing + section, or
@@ -49,11 +61,11 @@ def _format_refusal_message(warnings: list[str]) -> str:
     return msg.REFUSAL_TEMPLATE.format(warnings_block=_bulleted(warnings))
 
 
-def _partition_submit_call(tool_calls: list[dict]) -> tuple[dict | None, list[dict]]:
+def partition_submit_call(tool_calls: list[dict]) -> tuple[dict | None, list[dict]]:
     """Splits one turn's normalized tool_calls into (the submit_answer
     call, if present, else None) and (every OTHER call, in order). Lets
     the loop tell a pure submission from a mixed submit+search turn
-    without giving _dispatch_tool_call's return type a str|Terminal
+    without giving dispatch_tool_call's return type a str|Terminal
     union just to encode "this call ends the conversation" -- the loop
     already knows which call that is from this partition alone.
 
@@ -80,14 +92,14 @@ AgentResult = NamedTuple(
         ("results", list[dict]),
         ("citation_warnings", list[str]),  # unchanged shape/strings -- every existing caller's contract
         ("withheld_answer", str | None),  # the model's actual answer text iff the gate refused it, else None
-        ("citation_warning_details", list[dict]),  # [w._asdict() for w in warnings] -- see _finalize_answer
+        ("citation_warning_details", list[dict]),  # [w._asdict() for w in warnings] -- see finalize_answer
     ],
 )
 
 
-def _count_citation_checks(warnings: list["CitationWarning"]) -> dict[str, int]:
+def count_citation_checks(warnings: list["CitationWarning"]) -> dict[str, int]:
     """How many warnings each check (`CitationWarning.check`) produced --
-    shared by _finalize_answer's log event and the gate replay tool's
+    shared by finalize_answer's log event and the gate replay tool's
     comparison, so both count checks the same way."""
     return dict(Counter(w.check for w in warnings))
 
@@ -120,7 +132,7 @@ def submission_warnings(
     return answer_text, verify_claims(args["claims"], all_results, question, answer_text)
 
 
-def _finalize_answer(
+def finalize_answer(
     answer: str, warnings: list["CitationWarning"], all_results: list[dict], *, backend: str, retries: int
 ) -> AgentResult:
     """Single choke point for every run_agent() return site: withholds
@@ -161,11 +173,11 @@ def _finalize_answer(
         retried=retries > 0,
         retries=retries,
         n_results=len(all_results),
-        checks=_count_citation_checks(warnings),
+        checks=count_citation_checks(warnings),
         warnings=messages,
         withheld_answer=answer,
     )
-    if all(w.check == _NO_SUBMISSION_WARNING.check for w in warnings):
+    if all(w.check == NO_SUBMISSION_CITATION_WARNING.check for w in warnings):
         refusal = msg.NO_SUBMISSION_REFUSAL
     else:
         refusal = _format_refusal_message(messages)

@@ -24,7 +24,7 @@ from sec_agent.verification.table_grounding import (
     quote_is_grounded,
     verbatim_row_span_grounded,
 )
-from sec_agent.agent.tool_results import _citation_header
+from sec_agent.agent.tool_results import citation_header
 
 _CITATION_MARKER = re.compile(r"\[(\d+)\]")
 _CITATION_WINDOW_CHARS = 150
@@ -227,7 +227,7 @@ def _quote_matches(quote: str, source: str) -> bool:
     return coverage >= _QUOTE_COVERAGE_THRESHOLD and longest >= min(_QUOTE_ANCHOR_CHARS, len(quote_norm))
 
 
-def _number_candidates(text: str, *, unit_source: str | None = None) -> list[tuple[str, float]]:
+def number_candidates(text: str, *, unit_source: str | None = None) -> list[tuple[str, float]]:
     """Every (category, comparable_number) `text` could plausibly
     support -- not just each number under its own immediately-adjacent
     unit, but also each bare/raw number reinterpreted under any unit
@@ -289,7 +289,7 @@ def _iter_citation_claims(answer_text: str, all_results: list[dict]):
         if not claimed:
             continue
 
-        source_normalized = _number_candidates(all_results[n - 1]["text"])
+        source_normalized = number_candidates(all_results[n - 1]["text"])
         for value, unit in claimed:
             category, norm = normalize(value, unit)
             tolerance = max(0.01 * abs(norm), 0.05)
@@ -307,19 +307,6 @@ CitationWarning = NamedTuple(
         ("message", str),  # the text shown to the model on a retry and embedded in a refusal
         ("quote", str | None),  # the claimed quote text for a quote-grounding check; None otherwise
     ],
-)
-
-
-# The model answered in text even after a forced submit_answer turn:
-# there's no structured submission to verify, so the answer is refused
-# rather than trusted unchecked.
-_NO_SUBMISSION_WARNING = CitationWarning(
-    check="no_submission",
-    citation_index=None,
-    value=None,
-    unit=None,
-    message=msg.NO_SUBMISSION_WARNING,
-    quote=None,
 )
 
 
@@ -404,7 +391,7 @@ _ClaimQuote = NamedTuple("_ClaimQuote", [("raw", str), ("grounding", str)])
 
 def _strip_citation_header(quote: str, n: int, meta: dict) -> str:
     """A model's quote for a submit_answer claim sometimes includes the
-    numbered citation header _format_results_block() displays directly
+    numbered citation header format_results_block() displays directly
     above result [n]'s own text (e.g. "[1] NVDA 10-Q
     (reportDate=2026-04-26)"), even though that header is never part of
     the underlying source text (all_results[n-1]["text"]) the quote is
@@ -414,7 +401,7 @@ def _strip_citation_header(quote: str, n: int, meta: dict) -> str:
     it matches, so it's stripped here before any grounding check runs.
 
     Reconstructs the exact header from this claim's OWN citation index
-    and metadata (via _citation_header, not a generic regex), and only
+    and metadata (via citation_header, not a generic regex), and only
     strips an exact match of it, or of it without its leading "[n] "
     (models echo both forms). A header naming a different ticker, form
     or reportDate is never stripped. The unprefixed form is shared by
@@ -422,7 +409,7 @@ def _strip_citation_header(quote: str, n: int, meta: dict) -> str:
     the quote must still ground against result [n]'s own text. Any
     other reformatted/case-folded copy of a real header is deliberately
     left alone rather than guessed at."""
-    header = _citation_header(n, meta)
+    header = citation_header(n, meta)
     stripped = quote.lstrip()
     for candidate in (header, header.removeprefix(f"[{n}] ")):
         if stripped.startswith(candidate):
@@ -474,7 +461,7 @@ def _verify_numeric_claim(
     long enough to mean anything, quote genuinely present in that source
     (_quote_grounded_in_source -- see its own docstring for the
     table-aware/flat-text split), and the claimed value actually
-    attributable to that quote specifically (via _number_candidates,
+    attributable to that quote specifically (via number_candidates,
     using the FULL source chunk as unit_source so a caption-only unit
     still resolves -- see that function's own docstring). Returns None
     when all three pass. Checked in this order deliberately: each later
@@ -508,7 +495,7 @@ def _verify_numeric_claim(
         )
     category, norm = normalize(value, unit)
     tolerance = max(0.01 * abs(norm), 0.05)
-    quote_candidates = _number_candidates(quote.grounding, unit_source=source_text)
+    quote_candidates = number_candidates(quote.grounding, unit_source=source_text)
     if not any(c == category and abs(v - norm) <= tolerance for c, v in quote_candidates):
         return CitationWarning(
             check="value_not_in_quote",
@@ -597,7 +584,7 @@ def verify_claims(
     against a real cited source by `_ground_operand` at calculate-call
     time -- they're not a new, unverified assertion. A successful
     `calculate` call's own `all_results` entry (`chunk_index ==
-    "calculated"`, see `_calculation_as_result`) already renders both
+    "calculated"`, see `calculation_as_result`) already renders both
     operands in directly re-extractable text, so no new state needs to
     be threaded in from the tool-dispatch loop -- `all_results` is
     already this function's own parameter.
@@ -653,7 +640,7 @@ def verify_claims(
     calculated_candidates: list[tuple[str, float]] = [
         candidate
         for expression in calculated_expressions
-        for candidate in _number_candidates(_ANY_CITATION_BRACKET.sub("", expression))
+        for candidate in number_candidates(_ANY_CITATION_BRACKET.sub("", expression))
     ]
     identity_values = _percent_identity_values(calculated_expressions)
 

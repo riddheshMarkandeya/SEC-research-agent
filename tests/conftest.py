@@ -14,7 +14,7 @@ def _disable_local_trace_log_by_default(monkeypatch):
     regardless of whether Langfuse is configured -- without this
     fixture, any test that exercises it (most of test_agent.py's/
     test_mcp_server.py's tests do, indirectly, via run_agent()/
-    _dispatch_tool_call()/the mcp_server tool handlers) would write real
+    dispatch_tool_call()/the mcp_server tool handlers) would write real
     lines to the real TRACE_LOG_PATH on disk. See
     docs/decisions/2026-09-05-local-jsonl-trace-log.md.
     tests/test_tracing.py's own tests already point TRACE_LOG_PATH at a

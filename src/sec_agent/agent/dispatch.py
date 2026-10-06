@@ -11,23 +11,23 @@ from sec_agent.retrieval.retrieval import hybrid_search
 from sec_agent.tracing import traced_span
 from sec_agent.agent.calculate import (
     call_calculate,
-    _calculation_as_result,
+    calculation_as_result,
 )
 from sec_agent.agent.fact_tools import (
     call_get_financial_fact,
-    _fact_as_result,
+    fact_as_result,
     call_compare_financial_metric,
-    _comparison_as_results,
+    comparison_as_results,
 )
 from sec_agent.agent.tool_args import (
-    _coerce_year_args,
+    coerce_year_args,
     validate_tool_args,
-    _FISCAL_YEAR_PROPS,
+    FISCAL_YEAR_PROPS,
 )
 from sec_agent.agent.tool_results import (
-    _format_results_block,
-    _format_no_fact_message,
-    _format_no_comparison_message,
+    format_results_block,
+    format_no_fact_message,
+    format_no_comparison_message,
 )
 
 
@@ -56,7 +56,7 @@ def _resolve_search_args(
     return args.get("query") or fallback_query, ticker
 
 
-def _dispatch_tool_call(
+def dispatch_tool_call(
     call: dict, question: str, all_results: list[dict], searched_tickers: set[str | None], verbose: bool
 ) -> str:
     """Runs one normalized tool call ({"name", "args"} -- the
@@ -80,7 +80,7 @@ def _dispatch_tool_call(
 
 
 def _dispatch_get_financial_fact(name: str, args: dict, question: str, all_results: list[dict], verbose: bool) -> str:
-    """get_financial_fact branch body of _dispatch_tool_call() -- pure
+    """get_financial_fact branch body of dispatch_tool_call() -- pure
     relocation (no logic change), extracted to keep the parent's own
     branch/return count under ruff's C901/PLR0911 thresholds. Takes
     `name`/`args` directly (the parent already has both split out) --
@@ -92,22 +92,22 @@ def _dispatch_get_financial_fact(name: str, args: dict, question: str, all_resul
     with traced_span("tool", name, input=args) as span:
         # Converted here too, not only inside call_get_financial_fact, so
         # the no-data reply names the year the lookup actually used.
-        args = _coerce_year_args(name, args, _FISCAL_YEAR_PROPS)
+        args = coerce_year_args(name, args, FISCAL_YEAR_PROPS)
         fact = call_get_financial_fact(args, question=question)
         if fact is None:
             span.update(output={"found": False})
-            return _format_no_fact_message(args)
+            return format_no_fact_message(args)
         start_index = len(all_results) + 1
-        result = _fact_as_result(fact, args)
+        result = fact_as_result(fact, args)
         all_results.append(result)
         span.update(output={"found": True, "value": fact.get("value")})
-        return _format_results_block([result], start_index)
+        return format_results_block([result], start_index)
 
 
 def _dispatch_compare_financial_metric(
     name: str, args: dict, question: str, all_results: list[dict], verbose: bool
 ) -> str:
-    """compare_financial_metric branch body of _dispatch_tool_call() --
+    """compare_financial_metric branch body of dispatch_tool_call() --
     same reasoning as _dispatch_get_financial_fact() above."""
     if verbose:
         print(f"  [tool call] compare_financial_metric({args!r})")
@@ -115,16 +115,16 @@ def _dispatch_compare_financial_metric(
         data = call_compare_financial_metric(args, question=question)
         if not data:
             span.update(output={"found": False})
-            return _format_no_comparison_message(args)
+            return format_no_comparison_message(args)
         start_index = len(all_results) + 1
-        results = _comparison_as_results(data, args.get("metric", ""))
+        results = comparison_as_results(data, args.get("metric", ""))
         all_results.extend(results)
         span.update(output={"found": True, "companies": sorted(data)})
-        return _format_results_block(results, start_index)
+        return format_results_block(results, start_index)
 
 
 def _dispatch_calculate(name: str, args: dict, all_results: list[dict], verbose: bool) -> str:
-    """calculate branch body of _dispatch_tool_call() -- same reasoning
+    """calculate branch body of dispatch_tool_call() -- same reasoning
     as _dispatch_get_financial_fact() above."""
     if verbose:
         print(f"  [tool call] calculate({args!r})")
@@ -135,16 +135,16 @@ def _dispatch_calculate(name: str, args: dict, all_results: list[dict], verbose:
             span.update(output={"found": False, "error": error})
             return error
         start_index = len(all_results) + 1
-        result = _calculation_as_result(calc_result, args)
+        result = calculation_as_result(calc_result, args)
         all_results.append(result)
         span.update(output={"found": True, "value": calc_result.get("value")})
-        return _format_results_block([result], start_index)
+        return format_results_block([result], start_index)
 
 
 def _dispatch_search_filings(
     call: dict, question: str, all_results: list[dict], searched_tickers: set[str | None], verbose: bool
 ) -> str:
-    """search_filings branch body of _dispatch_tool_call() -- same
+    """search_filings branch body of dispatch_tool_call() -- same
     reasoning as _dispatch_get_financial_fact() above; also absorbs the
     validate_tool_args/ticker-rejection guard this branch runs first.
     Unlike its three siblings, takes the whole `call` dict rather than
@@ -194,4 +194,4 @@ def run_search(query: str, ticker: str | None, all_results: list[dict]) -> tuple
     results = hybrid_search(query, ticker=ticker, top_k=CHUNKS_PER_SEARCH)
     start_index = len(all_results) + 1
     all_results.extend(results)
-    return _format_results_block(results, start_index), len(results)
+    return format_results_block(results, start_index), len(results)

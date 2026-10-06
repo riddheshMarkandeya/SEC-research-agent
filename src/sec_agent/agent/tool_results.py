@@ -1,7 +1,8 @@
 """
 Text the model receives back from its tools: the numbered citation header
 and results block for retrieved sources and the no-data messages for fact
-and comparison lookups, plus the CLI's printed citation key.
+and comparison lookups, the CLI's printed citation key, and the shared
+value-with-unit rendering used in citation text.
 """
 
 from sec_agent.sources.companies import COMPANIES
@@ -9,8 +10,19 @@ from sec_agent.prompts import agent_messages as msg
 from sec_agent.sources.xbrl_facts import DEFAULT_METRIC_TAGS, is_metric_tagged
 
 
-def _citation_header(i: int, meta: dict) -> str:
-    """The exact citation header text _format_results_block() shows the
+def with_unit(value: float | int | str, unit: str) -> str:
+    """Renders a value with its unit for citation text. "raw" (the unit for
+    any RATIO_DEFINITIONS entry with as_percent=False, e.g. asset_turnover/
+    inventory_turnover) is an internal normalize()-category label from
+    numeric_utils.py, not a natural-language unit -- omitted here so a
+    plain ratio reads as "1.04", not the internal-sounding "1.04 raw"."""
+    if unit == "raw":
+        return str(value)
+    return msg.VALUE_WITH_UNIT_TEMPLATE.format(value=value, unit=unit)
+
+
+def citation_header(i: int, meta: dict) -> str:
+    """The exact citation header text format_results_block() shows the
     model above result [i]'s own text. Shared with
     citations._strip_citation_header() so the two can never independently
     drift out of sync if this format ever changes -- the strip has to
@@ -21,7 +33,7 @@ def _citation_header(i: int, meta: dict) -> str:
     )
 
 
-def _format_results_block(results: list[dict], start_index: int) -> str:
+def format_results_block(results: list[dict], start_index: int) -> str:
     """Format one search call's results as numbered excerpts, continuing
     the numbering from start_index rather than restarting at [1] — so
     citation numbers stay globally consistent across multiple tool calls
@@ -32,7 +44,7 @@ def _format_results_block(results: list[dict], start_index: int) -> str:
     blocks = []
     for offset, r in enumerate(results):
         i = start_index + offset
-        header = _citation_header(i, r["metadata"])
+        header = citation_header(i, r["metadata"])
         blocks.append(msg.RESULT_BLOCK_TEMPLATE.format(header=header, text=r["text"]))
     return msg.RESULT_BLOCK_SEPARATOR.join(blocks)
 
@@ -78,7 +90,7 @@ def _no_fact_period(args: dict) -> str:
     return msg.NO_FACT_PERIOD_LATEST
 
 
-def _format_no_fact_message(args: dict) -> str:
+def format_no_fact_message(args: dict) -> str:
     """Kept separate from the call site so the hints are unit-testable
     without a model round-trip. Both hints exist because a bare "not
     found" leaves the model unaware WHY data is missing, and it then
@@ -96,8 +108,8 @@ def _format_no_fact_message(args: dict) -> str:
     return message
 
 
-def _format_no_comparison_message(args: dict) -> str:
-    """compare_financial_metric counterpart to _format_no_fact_message --
+def format_no_comparison_message(args: dict) -> str:
+    """compare_financial_metric counterpart to format_no_fact_message --
     the same Q4 reporting gap and never-tagged-concept gap both apply
     just as much to a cross-company comparison question as to a
     single-company one. The never-tagged hint only reflects the anchor
@@ -113,7 +125,7 @@ def _format_no_comparison_message(args: dict) -> str:
     return message
 
 
-def _format_citation_key(all_results: list[dict]) -> str:
+def format_citation_key(all_results: list[dict]) -> str:
     lines = []
     for i, r in enumerate(all_results, start=1):
         meta = r["metadata"]
