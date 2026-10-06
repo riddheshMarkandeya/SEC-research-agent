@@ -56,6 +56,7 @@ reference:
 Plan: `docs/plans/2026-10-05-rerank-score-cache.md`. Review: `docs/reviews/2026-10-05-rerank-score-cache.md`.
 
 - [ ] **[performance, Low, Standard]** An on-disk `hybrid_search` result cache for the replay tools, keyed by a fingerprint of the retrieval code and index, so a warm replay skips windowing, tokenizing and pool building too (about 0.7 s per search; the cross-encoder score cache in `devtools/rerank_cache.py` already skips `predict`). Trigger: a warm full gate replay over ~10 min. Measured 2026-10-05 with the score cache warm: gate replay 257 s (uncached 3,420 s), retrieval replay 169 s (uncached 2,403 s), so it isn't due. Startup (torch/transformers imports) measured about 22-30 s, too small for its own item.
+- [ ] **[bug (latent), Low, Trivial]** The rerank score cache's file identity (`rerank_cache.install`) covers the sentence-transformers and torch versions but not `transformers`, so a `transformers` upgrade that shifts cross-encoder scores would still be served the old cached scores, and a replay `--compare` could hide a real difference. Until fixed, delete `var/rerank_cache/` after upgrading `transformers`. Fix: add `transformers.__version__` to the identity list. That starts a fresh cache file, so the next full replay is cold (about 42-55 min gate, then about 9 min retrieval). Trigger: do it with the next `transformers` upgrade, or earlier when a cold run is acceptable anyway.
 
 ### From the 2026-10-02 package 5 review
 
