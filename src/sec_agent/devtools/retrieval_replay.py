@@ -25,8 +25,12 @@ edit retrieval.py (uncommitted), then run with --compare BASE: it replays
 the base report's own query list and exits 1 when any (query, part) hit or
 question coverage is lost.
 
-A full run re-ranks every query on the CPU and takes 15-45 minutes;
-iterate with --qid first.
+A full run re-ranks every query on the CPU: about 40 minutes with an empty
+cross-encoder score cache (var/rerank_cache/, shared with
+analyze_gate_replay; --no-rerank-cache turns it off) and about 3 minutes
+warm, as for a --fused-floor variant, which re-scores the same pools. A
+retrieval change that alters a pool or its windowing scores those queries
+afresh, at full cost; iterate with --qid first.
 
 Usage:
   python -m sec_agent.devtools.retrieval_replay --qid msft-three-segments-revenue-q3fy2026
@@ -48,7 +52,7 @@ from pathlib import Path
 
 from sec_agent import config, tracing
 from sec_agent.agent import dispatch
-from sec_agent.devtools import trace_query
+from sec_agent.devtools import rerank_cache, trace_query
 from sec_agent.eval import eval_harness
 from sec_agent.retrieval import retrieval
 from sec_agent.sources import companies, period_labels
@@ -617,6 +621,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--fused-floor", type=int, help="fused ranks that keep the better of both ranks (default: retrieval's own)"
     )
+    parser.add_argument("--no-rerank-cache", action="store_true", help="rerank every query afresh")
     return parser
 
 
@@ -702,6 +707,7 @@ def main(argv: list[str] | None = None) -> int:
             print(f"retrieval_replay: gold row matches no chunk: {json.dumps(row)}", file=sys.stderr)
         return 2
     queries, dropped = _query_set(args, base, gold_index)
+    reranker = rerank_cache.install(not args.no_rerank_cache)
     # Retrieval logs an event per search; a run's ~900 would land in the
     # trace log this tool reads its queries from.
     write_local_log = tracing._write_local_log
@@ -723,9 +729,11 @@ def main(argv: list[str] | None = None) -> int:
         "fused_floor": retrieval._FUSED_FLOOR_RANKS if args.fused_floor is None else args.fused_floor,
         "dropped": dropped,
         "runtime_s": round(time.monotonic() - started, 1),
+        "rerank_cache": rerank_cache.stats(reranker),
     }
     report = {"header": header, "summary": summary, "diff": diff, "queries": queries, "results": results}
     print(format_summary(summary, diff))
+    print(rerank_cache.summary_line(header["rerank_cache"]))
     out.write_text(json.dumps(report, indent=1), encoding="utf-8")
     print(f"Wrote {out}")
     return 1 if diff is not None and compare_failed(diff) else 0

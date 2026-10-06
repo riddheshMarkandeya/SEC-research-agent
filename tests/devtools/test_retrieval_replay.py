@@ -498,8 +498,24 @@ def cli(tmp_path, monkeypatch):
     floors = []
     monkeypatch.setattr(rr, "_live_retriever", lambda c, fused_floor: floors.append(fused_floor) or retrieve)
     monkeypatch.setattr(rr.eval_harness, "_git_state", lambda: {"git_sha": "abc", "git_dirty": False, "dirty_files": []})
+    installs = []
+    monkeypatch.setattr(rr.rerank_cache, "install", lambda enabled: installs.append(enabled))
     args = ["--file", str(traces), "--questions", str(questions), "--gold", str(gold)]
-    return {"tmp": tmp_path, "args": args, "final": final, "gold": gold, "floors": floors, "traces": traces}
+    return {"tmp": tmp_path, "args": args, "final": final, "gold": gold, "floors": floors, "traces": traces,
+            "installs": installs}
+
+
+def test_main_installs_the_rerank_cache_unless_disabled_and_reports_its_stats(cli, monkeypatch, capsys):
+    stats = {"path": "c.sqlite", "hits": 4, "misses": 2, "disabled": None}
+    monkeypatch.setattr(rr.rerank_cache, "stats", lambda reranker: stats)
+    out = cli["tmp"] / "r.json"
+
+    assert rr.main([*cli["args"], "--out", str(out)]) == 0
+    assert rr.main([*cli["args"], "--no-rerank-cache", "--out", str(out)]) == 0
+
+    assert cli["installs"] == [True, False]
+    assert json.loads(out.read_text(encoding="utf-8"))["header"]["rerank_cache"] == stats
+    assert "rerank cache: 4 hits, 2 misses (c.sqlite)" in capsys.readouterr().out
 
 
 def test_main_writes_a_base_report_and_compare_exits_1_on_a_lost_hit(cli, capsys):

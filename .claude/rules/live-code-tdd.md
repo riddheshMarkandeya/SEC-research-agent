@@ -9,6 +9,7 @@ paths:
   - "src/sec_agent/llm/llm_backends.py"
   - "src/sec_agent/devtools/analyze_gate_replay.py"
   - "src/sec_agent/devtools/retrieval_replay.py"
+  - "src/sec_agent/devtools/rerank_cache.py"
 ---
 
 # This project's live-code TDD carve-out
@@ -22,7 +23,10 @@ concretely, in this repo:
   `hybrid_search`, `analyze_gate_replay.py`'s live search binding,
   which replays traced runs against the real index and XBRL cache, and
   `retrieval_replay.py`'s `_live_retriever`, which ranks every chunk
-  against the real BM25 index and Chroma embeddings)
+  against the real BM25 index and Chroma embeddings, and
+  `rerank_cache.py`'s `install`, which wraps the real cross-encoder;
+  its scores must be bit-identical to uncached ones, which only
+  `tests/manual/verify_rerank_cache.py` can show)
 - **LLM round-trips through the Gemini backend** (`agent.py`'s tool-calling
   loop, `llm_backends.py`)
 
