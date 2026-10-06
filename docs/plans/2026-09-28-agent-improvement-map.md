@@ -241,8 +241,8 @@ spent or you're waiting on a run, do track B.
 Track A, next steps:
 1. ~~Package 1: the full 48-question run from master at `f6a75db` (from 07:00Z 2026-10-01), a
    refusal re-mine, then its docs commit.~~ Done 2026-10-01.
-2. ~~Package 2~~ (done 2026-10-01), ~~package 5~~ (done 2026-10-03), then package 3 (next)
-   and package 4, in the order above. Each package gets its own live measurement.
+2. ~~Package 2~~ (done 2026-10-01), ~~package 5~~ (done 2026-10-03), ~~package 3~~ (done
+   2026-10-06, 46/48), then package 4 (next), in the order above. Each package gets its own live measurement.
 
 Track B (plan: `docs/plans/2026-09-30-retrieval-gold-rank-harness.md`): **done 2026-10-01.**
 The harness was measured, researched, reviewed and merged (`49e794f`), and the grilling wrote
