@@ -30,12 +30,11 @@ import subprocess
 import sys
 
 from sec_agent import config
-from sec_agent.eval.eval_harness import grade_judged, load_questions
+from sec_agent.eval.eval_harness import grade_judged
 
 QID = "pltr-dividend-2019-refusal"
-# The last commit with the old criteria.
+# The parent of e8bd2a2, the commit that replaced the old criteria.
 OLD_REV = "3edc8be"
-RESULTS_DIR = config.PROJECT_ROOT / "eval" / "eval_results"
 
 # One report per wording form, picked by hand from the deduped stored answers.
 SAMPLE_REPORTS = [
@@ -67,13 +66,13 @@ EPS_CONTROL = "Palantir paid no dividends in 2019 [1]; its 2019 net loss per sha
 
 
 def _stored_answer(report: str) -> str:
-    data = json.loads((RESULTS_DIR / f"{report}.json").read_text(encoding="utf-8"))
+    data = json.loads((config.RESULTS_DIR / f"{report}.json").read_text(encoding="utf-8"))
     # Early reports are a bare list of results; later ones wrap it with metadata.
     results = data if isinstance(data, list) else data["results"]
-    answer = next(r["answer"] for r in results if r["id"] == QID)
-    if answer is None:
-        raise ValueError(f"{report}: stored answer is None")
-    return answer
+    row = next((r for r in results if r["id"] == QID), None)
+    if row is None or row["answer"] is None:
+        raise ValueError(f"{report}: no stored answer for {QID}")
+    return row["answer"]
 
 
 def _question_and_criteria(questions_text: str) -> tuple[str, str]:
@@ -107,10 +106,12 @@ def _grade(label: str, question: str, answer: str, criteria: str, expect_pass: b
 
 def _new_criteria_cases() -> list[tuple[str, str, bool]]:
     cases = [(f"sample {r}", _stored_answer(r), True) for r in SAMPLE_REPORTS]
-    cases += [(f"stability {STABILITY_REPORT} #{i + 1}", _stored_answer(STABILITY_REPORT), True) for i in range(5)]
+    stable = _stored_answer(STABILITY_REPORT)
+    cases += [(f"stability {STABILITY_REPORT} #{i + 1}", stable, True) for i in range(5)]
     cases += [(f"nonzero dividend {i + 1}", text, False) for i, text in enumerate(NONZERO_DIVIDENDS)]
     for report, name in ((GATE_REFUSAL_REPORT, "gate refusal"), (BUDGET_EXHAUSTED_REPORT, "budget exhausted")):
-        cases += [(f"{name} #{i + 1}", _stored_answer(report), False) for i in range(3)]
+        answer = _stored_answer(report)
+        cases += [(f"{name} #{i + 1}", answer, False) for i in range(3)]
     cases.append(("EPS control", EPS_CONTROL, True))
     return cases
 
@@ -120,8 +121,7 @@ def main() -> int:
     parser.add_argument("--skip-old", action="store_true", help="skip the old-criteria diagnostic pass")
     args = parser.parse_args()
 
-    questions = [q for q in load_questions(config.QUESTIONS_PATH) if q["id"] == QID]
-    question, new_criteria = questions[0]["question"], questions[0]["criteria"]
+    question, new_criteria = _question_and_criteria(config.QUESTIONS_PATH.read_text(encoding="utf-8"))
     print(f"judge model: {config.GEMINI_MODEL_NAME}\n\n== current criteria ==", flush=True)
     results = [_grade(label, question, answer, new_criteria, expect) for label, answer, expect in _new_criteria_cases()]
     failures = results.count(False)
