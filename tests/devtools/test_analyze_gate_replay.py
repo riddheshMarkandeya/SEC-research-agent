@@ -566,6 +566,7 @@ def _write_jsonl(path, rows):
 @pytest.fixture
 def trace_env(tmp_path, monkeypatch, capture):
     monkeypatch.setattr(replay, "install_trace_capture", lambda: None)
+    monkeypatch.setattr(replay.rerank_cache, "install", lambda enabled: None)
     trace_file = tmp_path / "traces.jsonl"
     _write_jsonl(
         trace_file,
@@ -601,6 +602,23 @@ def test_main_writes_report_and_compare_detects_tool_drift(trace_env, monkeypatc
     monkeypatch.setattr(replay, "install_live_search", lambda: other_search)
     assert replay.main([*common, "--compare", str(base), "--out", str(tmp_path / "drift.json")]) == 1
     assert "Tool-result drift: 1" in capsys.readouterr().out
+
+
+def test_main_installs_the_rerank_cache_unless_disabled_and_reports_its_stats(trace_env, monkeypatch, capsys):
+    tmp_path, common = trace_env
+    monkeypatch.setattr(replay, "install_live_search", lambda: _fake_search)
+    installs = []
+    monkeypatch.setattr(replay.rerank_cache, "install", lambda enabled: installs.append(enabled))
+    stats = {"path": "c.sqlite", "hits": 4, "misses": 2, "disabled": None}
+    monkeypatch.setattr(replay.rerank_cache, "stats", lambda reranker: stats)
+    out = tmp_path / "r.json"
+
+    assert replay.main([*common, "--out", str(out)]) == 0
+    assert replay.main([*common, "--no-rerank-cache", "--out", str(out)]) == 0
+
+    assert installs == [True, False]
+    assert json.loads(out.read_text(encoding="utf-8"))["header"]["rerank_cache"] == stats
+    assert "rerank cache: 4 hits, 2 misses (c.sqlite)" in capsys.readouterr().out
 
 
 def test_main_compare_rejects_filters(trace_env, tmp_path):

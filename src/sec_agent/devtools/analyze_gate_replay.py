@@ -32,9 +32,13 @@ working directory works). A cache miss fetches live SEC data and writes the cach
 new cache files are listed in the summary because newer data can shift a
 verdict.
 
-A full replay takes about 18 minutes, almost all of it in the search
-rerank. While iterating, replay a slice (--qid, repeatable, or a recent
---since); run the full replay and --compare only as the final check.
+Cross-encoder scores are cached across runs in var/rerank_cache/
+(--no-rerank-cache turns it off). A full replay takes about 55 minutes
+with an empty cache and about 4-5 minutes warm, as for a gate-only change,
+which re-scores the same pools. A retrieval change that alters a pool or
+its windowing scores those searches afresh, at full cost. While iterating,
+replay a slice (--qid, repeatable, or a recent --since); run the full
+replay and --compare as the final check.
 
 Usage:
   python -m sec_agent.devtools.analyze_gate_replay --qid nvda-revenue-fy26 --qid aapl-ai-risk
@@ -55,7 +59,7 @@ from pathlib import Path
 from sec_agent.agent import citations, dispatch, submission
 from sec_agent import config
 from sec_agent.eval import eval_harness
-from sec_agent.devtools import trace_query
+from sec_agent.devtools import rerank_cache, trace_query
 from sec_agent import tracing
 from sec_agent.sources import xbrl_facts
 
@@ -472,6 +476,7 @@ def _parser() -> argparse.ArgumentParser:
         type=Path,
         help="a baseline report; replays exactly its runs and exits 1 on any difference",
     )
+    parser.add_argument("--no-rerank-cache", action="store_true", help="rerank every search afresh")
     return parser
 
 
@@ -510,6 +515,7 @@ def main(argv: list[str] | None = None) -> int:
 
     install_trace_capture()
     cache_before = cache_listing()
+    reranker = rerank_cache.install(not args.no_rerank_cache)
     replayed = _replay_all(runs, questions)
     report_counts = {**counts, "new_cache_files": sorted(cache_listing() - cache_before), "malformed_lines": malformed}
 
@@ -522,9 +528,11 @@ def main(argv: list[str] | None = None) -> int:
         "until": args.until,
         "qids": args.qid,
         "baseline": str(args.compare) if args.compare else None,
+        "rerank_cache": rerank_cache.stats(reranker),
     }
     report = {"header": header, "counts": report_counts, "runs": replayed}
     print(format_summary(summary, report_counts))
+    print(rerank_cache.summary_line(header["rerank_cache"]))
     out.write_text(json.dumps(report, indent=1), encoding="utf-8")
     print(f"Wrote {out}")
     return 1 if base is not None and compare_failed(summary) else 0
