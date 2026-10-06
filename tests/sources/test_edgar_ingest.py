@@ -13,11 +13,14 @@ test coverage before this despite being pure, unlike every other
 finding in this project's TDD-scope rule.
 """
 
+import itertools
 import json
 
+import pytest
 import requests
 
 from sec_agent.sources import edgar_ingest
+from sec_agent.sources.companies import CompanyInfo
 
 
 def _write_meta(tmp_path, ticker, accession, cik, primary_document):
@@ -93,21 +96,25 @@ def test_main_continues_to_next_company_when_get_filing_list_fails(monkeypatch, 
         edgar_ingest,
         "load_companies",
         lambda: {
-            "BAD": {"cik": "0000000001"},
-            "GOOD": {"cik": "0000000002"},
+            "BAD": {"name": "Bad", "cik": "0000000001", "fiscal_year_end_month": 12},
+            "GOOD": {"name": "Good", "cik": "0000000002", "fiscal_year_end_month": 12},
         },
     )
 
-    def fake_get_filing_list(cik):
+    def fake_get_filing_list(cik, fiscal_year_end_month):
         if cik == "0000000001":
             raise requests.exceptions.ConnectionError("SEC unreachable")
-        return [{
-            "form": "10-K",
-            "accessionNumber": "0000000002-26-000001",
-            "filingDate": "2026-01-01",
-            "primaryDocument": "good-20260101.htm",
-            "reportDate": "2025-12-31",
-        }]
+        return edgar_ingest.FilingSelection(
+            filings=[{
+                "form": "10-K",
+                "accessionNumber": "0000000002-26-000001",
+                "filingDate": "2026-01-01",
+                "primaryDocument": "good-20260101.htm",
+                "reportDate": "2025-12-31",
+            }],
+            pages=1,
+            skipped_bad_row=0,
+        )
 
     monkeypatch.setattr(edgar_ingest, "get_filing_list", fake_get_filing_list)
     monkeypatch.setattr(edgar_ingest, "fetch_filing_html", lambda cik, accession, primary_doc: "<html></html>")
@@ -135,21 +142,25 @@ def _assert_main_survives_get_filing_list_failure(monkeypatch, tmp_path, excepti
         edgar_ingest,
         "load_companies",
         lambda: {
-            "BAD": {"cik": "0000000001"},
-            "GOOD": {"cik": "0000000002"},
+            "BAD": {"name": "Bad", "cik": "0000000001", "fiscal_year_end_month": 12},
+            "GOOD": {"name": "Good", "cik": "0000000002", "fiscal_year_end_month": 12},
         },
     )
 
-    def fake_get_filing_list(cik):
+    def fake_get_filing_list(cik, fiscal_year_end_month):
         if cik == "0000000001":
             raise exception
-        return [{
-            "form": "10-K",
-            "accessionNumber": "0000000002-26-000001",
-            "filingDate": "2026-01-01",
-            "primaryDocument": "good-20260101.htm",
-            "reportDate": "2025-12-31",
-        }]
+        return edgar_ingest.FilingSelection(
+            filings=[{
+                "form": "10-K",
+                "accessionNumber": "0000000002-26-000001",
+                "filingDate": "2026-01-01",
+                "primaryDocument": "good-20260101.htm",
+                "reportDate": "2025-12-31",
+            }],
+            pages=1,
+            skipped_bad_row=0,
+        )
 
     monkeypatch.setattr(edgar_ingest, "get_filing_list", fake_get_filing_list)
     monkeypatch.setattr(edgar_ingest, "fetch_filing_html", lambda cik, accession, primary_doc: "<html></html>")
@@ -265,3 +276,351 @@ def test_parse_filing_strips_leading_and_trailing_whitespace():
     text, _ = edgar_ingest.parse_filing(html)
     assert text == text.strip()
     assert text.startswith("content")
+
+
+# ---------------------------------------------------------------------------
+# Filing selection: fiscal-year cutoff, submissions paging
+# ---------------------------------------------------------------------------
+_COLUMNS = ("form", "accessionNumber", "filingDate", "primaryDocument", "reportDate")
+
+
+_ACCESSIONS = itertools.count(1000)
+
+
+def _acc(n):
+    return f"0000000001-24-{n:06d}"
+
+
+def _page(n):
+    return f"CIK0000000001-submissions-{n:03d}.json"
+
+
+def _row(form, report_date, filing_date="2026-01-01", accession=None):
+    return {
+        "form": form,
+        "accessionNumber": accession or _acc(next(_ACCESSIONS)),
+        "filingDate": filing_date,
+        "primaryDocument": "doc.htm",
+        "reportDate": report_date,
+    }
+
+
+def _block(rows):
+    """Rows back into the submissions API's column-array shape."""
+    block = {key: [r[key] for r in rows] for key in _COLUMNS}
+    block["acceptanceDateTime"] = ["x"] * len(rows)  # extra columns are ignored
+    return block
+
+
+def test_rows_turns_column_arrays_into_row_dicts():
+    rows = [_row("10-K", "2025-09-27"), _row("8-K", "")]
+    assert edgar_ingest._rows(_block(rows)) == rows
+
+
+def test_rows_of_empty_block_is_empty():
+    assert edgar_ingest._rows(_block([])) == []
+
+
+@pytest.mark.parametrize(
+    "year_end_month, report_dates, kept",
+    [
+        # AAPL: FY2024 runs Oct 2023 - Sep 2024.
+        (9, ["2024-09-28", "2023-12-30", "2023-09-30"], ["2024-09-28", "2023-12-30"]),
+        # NVDA/CRM: the quarter ended 2023-04-30 is already FY2024.
+        (1, ["2023-04-30", "2023-01-31"], ["2023-04-30"]),
+        # MSFT: FY2024 runs Jul 2023 - Jun 2024.
+        (6, ["2023-09-30", "2023-06-30"], ["2023-09-30"]),
+        (12, ["2024-03-31", "2023-12-31"], ["2024-03-31"]),
+    ],
+)
+def test_select_filings_cutoff_by_fiscal_year_end_month(year_end_month, report_dates, kept):
+    rows = [_row("10-Q", report_date) for report_date in report_dates]
+    selection = edgar_ingest.select_filings(rows, year_end_month, 2024)
+    assert [r["reportDate"] for r in selection.filings] == kept
+
+
+def test_select_filings_keeps_only_10k_and_10q():
+    rows = [_row("10-K/A", "2024-12-31"), _row("8-K", "2024-12-31"), _row("10-Q", "2024-09-30")]
+    selection = edgar_ingest.select_filings(rows, 12, 2024)
+    assert [r["form"] for r in selection.filings] == ["10-Q"]
+
+
+def test_select_filings_skips_empty_and_malformed_dates_and_logs_them(monkeypatch):
+    events = []
+    monkeypatch.setattr(edgar_ingest, "log_event", lambda category, **fields: events.append((category, fields)))
+    rows = [_row("10-Q", "", accession=_acc(1)), _row("10-K", "2024-13-45", accession=_acc(2)),
+            _row("10-Q", "2024-09-30", accession=_acc(3))]
+
+    selection = edgar_ingest.select_filings(rows, 12, 2024)
+
+    assert [r["accessionNumber"] for r in selection.filings] == [_acc(3)]
+    assert selection.skipped_bad_row == 2
+    assert [(c, f["accession"]) for c, f in events] == [("ingest_row_skipped", _acc(1)), ("ingest_row_skipped", _acc(2))]
+    assert all(f["reason"] == "bad_report_date" for _, f in events)
+    assert events[1][1]["report_date"] == "2024-13-45"  # the rejected value is in the log
+
+
+def test_select_filings_skips_an_accession_outside_secs_format_and_logs_it(monkeypatch):
+    # It becomes a file name, so a path separator or ".." must never get through.
+    events = []
+    monkeypatch.setattr(edgar_ingest, "log_event", lambda category, **fields: events.append((category, fields)))
+    rows = [_row("10-Q", "2024-09-30", accession=r"..\evil"), _row("10-Q", "2024-06-30", accession="0000000001/24")]
+
+    selection = edgar_ingest.select_filings(rows, 12, 2024)
+
+    assert selection.filings == []
+    assert selection.skipped_bad_row == 2
+    assert [f["reason"] for _, f in events] == ["bad_accession", "bad_accession"]
+
+
+def test_select_filings_skips_null_values_rather_than_failing_the_company(monkeypatch):
+    events = []
+    monkeypatch.setattr(edgar_ingest, "log_event", lambda category, **fields: events.append((category, fields)))
+    rows = [_row("10-Q", "2024-09-30"), _row("10-Q", None), _row("10-Q", "2024-06-30"), _row("10-K", "2024-12-31")]
+    rows[2]["accessionNumber"] = None
+    rows[3]["filingDate"] = None
+
+    selection = edgar_ingest.select_filings(rows, 12, 2024)
+
+    assert len(selection.filings) == 1 and selection.skipped_bad_row == 3
+    assert [f["reason"] for _, f in events] == ["non_string_field"] * 3
+
+
+def test_select_filings_skips_a_malformed_filing_date_which_would_misjudge_the_oldest_row(monkeypatch):
+    # Kept, the "" filingDate would sort as the oldest row, and its FY2023
+    # reportDate would stop paging though the newest row is still FY2024.
+    events = []
+    monkeypatch.setattr(edgar_ingest, "log_event", lambda category, **fields: events.append((category, fields)))
+    rows = [_row("10-K", "2023-12-31", filing_date=""), _row("10-Q", "2024-03-31", filing_date="2024-05-01")]
+
+    selection = edgar_ingest.select_filings(rows, 12, 2024)
+
+    assert selection.filings == [rows[1]]
+    assert selection.need_older is True
+    assert [(f["reason"], f["filing_date"]) for _, f in events] == [("bad_filing_date", "")]
+
+
+@pytest.mark.parametrize("field", ["filingDate", "reportDate"])
+def test_select_filings_skips_a_non_canonical_date_that_would_sort_wrongly(monkeypatch, field):
+    # fromisoformat takes 20240630, but as a string it sorts after 2024-12-31.
+    events = []
+    monkeypatch.setattr(edgar_ingest, "log_event", lambda category, **fields: events.append((category, fields)))
+    row = {**_row("10-Q", "2024-06-30", filing_date="2024-08-01"), field: "20240630"}
+
+    assert edgar_ingest.select_filings([row], 12, 2024).filings == []
+    expected = "bad_filing_date" if field == "filingDate" else "bad_report_date"
+    assert [f["reason"] for _, f in events] == [expected]
+
+
+@pytest.mark.parametrize("document", ["", "../other.htm", "sub/doc.htm", ".hidden"])
+def test_select_filings_skips_a_primary_document_that_isnt_a_plain_file_name(monkeypatch, document):
+    # An empty name would fetch the filing's directory listing and save it as the filing.
+    events = []
+    monkeypatch.setattr(edgar_ingest, "log_event", lambda category, **fields: events.append((category, fields)))
+    row = {**_row("10-Q", "2024-09-30"), "primaryDocument": document}
+
+    assert edgar_ingest.select_filings([row], 12, 2024).filings == []
+    assert [(f["reason"], f["primary_document"]) for _, f in events] == [("bad_primary_document", document)]
+
+
+def test_accession_check_takes_ascii_digits_only():
+    assert edgar_ingest._ACCESSION_PATTERN.fullmatch("0000000001-24-000001")
+    assert not edgar_ingest._ACCESSION_PATTERN.fullmatch(chr(0xFF10) * 10 + "-24-000001")  # fullwidth zeros
+
+
+def test_rows_refuses_columns_of_unequal_length():
+    block = _block([_row("10-K", "2025-09-27"), _row("10-Q", "2025-06-28")])
+    block["reportDate"].pop()
+    with pytest.raises(ValueError):
+        edgar_ingest._rows(block)
+
+
+def test_select_filings_needs_older_page_when_oldest_filed_row_is_inside_cutoff():
+    # Filing-date order decides "oldest", not report date.
+    rows = [_row("10-Q", "2024-06-30", filing_date="2024-08-01"),
+            _row("10-Q", "2024-03-31", filing_date="2024-05-01")]
+    assert edgar_ingest.select_filings(rows, 12, 2024).need_older is True
+
+
+def test_select_filings_stops_when_oldest_filed_row_is_before_cutoff():
+    rows = [_row("10-Q", "2024-03-31", filing_date="2024-05-01"),
+            _row("10-K", "2023-12-31", filing_date="2024-02-01")]
+    assert edgar_ingest.select_filings(rows, 12, 2024).need_older is False
+
+
+def test_select_filings_page_with_no_10k_or_10q_rows_needs_older():
+    rows = [_row("8-K", ""), _row("4", "")]
+    selection = edgar_ingest.select_filings(rows, 12, 2024)
+    assert selection.filings == []
+    assert selection.need_older is True
+
+
+def test_collect_filings_reads_older_pages_until_cutoff_reached():
+    recent = _block([_row("10-Q", "2024-06-30", filing_date="2024-08-01", accession=_acc(11))])
+    pages = {
+        _page(1): _block([_row("10-Q", "2024-03-31", filing_date="2024-05-01", accession=_acc(21)),
+                           _row("10-K", "2023-12-31", filing_date="2024-02-01", accession=_acc(22))]),
+        _page(2): _block([_row("10-Q", "2023-09-30", filing_date="2023-11-01", accession=_acc(23))]),
+    }
+    fetched = []
+
+    def fetch_page(name):
+        fetched.append(name)
+        return pages[name]
+
+    older = [{"name": _page(2), "filingTo": "2023-12-31"}, {"name": _page(1), "filingTo": "2024-06-30"}]
+    result = edgar_ingest.collect_filings(recent, older, fetch_page, 12, 2024)
+
+    assert fetched == [_page(1)]  # newest older page first; p2 never needed
+    assert [f["accessionNumber"] for f in result.filings] == [_acc(11), _acc(21)]
+    assert result.pages == 2
+
+
+def test_collect_filings_does_not_page_when_recent_reaches_cutoff():
+    recent = _block([_row("10-Q", "2024-03-31", filing_date="2024-05-01"),
+                     _row("10-K", "2023-12-31", filing_date="2024-02-01")])
+
+    def fetch_page(name):
+        raise AssertionError("no older page should be fetched")
+
+    result = edgar_ingest.collect_filings(recent, [{"name": _page(1), "filingTo": "2023-01-01"}], fetch_page, 12, 2024)
+    assert result.pages == 1
+    assert len(result.filings) == 1
+
+
+def test_collect_filings_stops_at_last_page_and_sums_bad_dates():
+    recent = _block([_row("10-Q", "", accession=_acc(31)), _row("10-Q", "2024-06-30", filing_date="2024-08-01")])
+    pages = {_page(1): _block([_row("8-K", "")])}
+
+    result = edgar_ingest.collect_filings(recent, [{"name": _page(1), "filingTo": "2024-01-01"}],
+                                          pages.__getitem__, 12, 2024)
+
+    assert result.pages == 2  # both read, then no pages left
+    assert len(result.filings) == 1
+    assert result.skipped_bad_row == 1
+
+
+def test_page_url_accepts_secs_page_names_and_refuses_anything_else():
+    assert edgar_ingest._page_url(_page(1)) == f"https://data.sec.gov/submissions/{_page(1)}"
+    for name in ("../other.json", "CIK0000000001-submissions-001.json/../x", ""):
+        with pytest.raises(ValueError, match="page name"):
+            edgar_ingest._page_url(name)
+
+
+# ---------------------------------------------------------------------------
+# Skip already-ingested filings, per-ticker ingestion
+# ---------------------------------------------------------------------------
+def _write_filing_files(out_dir, accession, which=("meta", "text", "tables")):
+    out_dir.mkdir(parents=True, exist_ok=True)
+    suffixes = {"meta": "_meta.json", "text": "_text.txt", "tables": "_tables.json"}
+    for key in which:
+        (out_dir / f"{accession}{suffixes[key]}").write_text("x", encoding="utf-8")
+
+
+def test_already_ingested_true_only_when_all_three_files_exist(tmp_path):
+    _write_filing_files(tmp_path, "acc")
+    assert edgar_ingest._already_ingested(tmp_path, "acc") is True
+
+
+def test_already_ingested_false_when_any_file_missing(tmp_path):
+    for missing in ("meta", "text", "tables"):
+        out_dir = tmp_path / missing
+        _write_filing_files(out_dir, "acc", which=[k for k in ("meta", "text", "tables") if k != missing])
+        assert edgar_ingest._already_ingested(out_dir, "acc") is False
+
+
+_ACME: CompanyInfo = {"name": "Acme", "cik": "0000000009", "fiscal_year_end_month": 12}
+
+
+def _setup_ingest_ticker(monkeypatch, filings, fail_accessions=()):
+    monkeypatch.setattr(edgar_ingest, "REQUEST_DELAY_SECONDS", 0)
+    events = []
+    monkeypatch.setattr(edgar_ingest, "log_event", lambda category, **fields: events.append((category, fields)))
+    monkeypatch.setattr(
+        edgar_ingest, "get_filing_list",
+        lambda cik, fyem: edgar_ingest.FilingSelection(filings=filings, pages=2, skipped_bad_row=1),
+    )
+    fetched = []
+
+    def fake_fetch(cik, accession, primary_doc):
+        fetched.append(accession)
+        if accession in fail_accessions:
+            raise requests.exceptions.HTTPError("503")
+        return "<html></html>"
+
+    monkeypatch.setattr(edgar_ingest, "fetch_filing_html", fake_fetch)
+    monkeypatch.setattr(edgar_ingest, "parse_filing", lambda html: ("some text", [{"table_index": 0, "rows": [["a"]]}]))
+    return events, fetched
+
+
+def test_ingest_ticker_skips_present_saves_new_and_logs_counts(monkeypatch, tmp_path):
+    out_dir = tmp_path / "ACME"
+    _write_filing_files(out_dir, "old-1")
+    filings = [_row("10-Q", "2024-06-30", accession="new-1"), _row("10-K", "2023-12-31", accession="old-1")]
+    events, fetched = _setup_ingest_ticker(monkeypatch, filings)
+
+    counts = edgar_ingest._ingest_ticker("ACME", _ACME, out_dir)
+
+    assert fetched == ["new-1"]
+    assert (out_dir / "old-1_meta.json").read_text(encoding="utf-8") == "x"  # untouched
+    meta = json.loads((out_dir / "new-1_meta.json").read_text(encoding="utf-8"))
+    assert meta["ticker"] == "ACME" and meta["num_tables"] == 1
+    assert counts == {"selected": 2, "skipped_present": 1, "saved": 1, "failed": 0}
+    list_event = next(f for c, f in events if c == "ingest_filing_list")
+    assert list_event == {"ticker": "ACME", "pages": 2, "selected": 2, "skipped_present": 1, "skipped_bad_row": 1}
+
+
+def test_ingest_ticker_logs_failed_filing_and_writes_nothing_for_it(monkeypatch, tmp_path):
+    out_dir = tmp_path / "ACME"
+    filings = [_row("10-Q", "2024-06-30", accession="bad-1"), _row("10-Q", "2024-03-31", accession="ok-1")]
+    events, _ = _setup_ingest_ticker(monkeypatch, filings, fail_accessions={"bad-1"})
+
+    counts = edgar_ingest._ingest_ticker("ACME", _ACME, out_dir)
+
+    assert counts == {"selected": 2, "skipped_present": 0, "saved": 1, "failed": 1}
+    assert not list(out_dir.glob("bad-1_*"))
+    failed = [f for c, f in events if c == "ingest_filing_failed"]
+    assert failed == [{"ticker": "ACME", "accession": "bad-1", "error": "HTTPError: 503"}]
+
+
+def test_ingest_ticker_waits_before_every_request_including_after_a_failure(monkeypatch, tmp_path):
+    # A run of failed fetches (SEC rate-limiting, say) must not become a burst.
+    filings = [_row("10-Q", "2024-06-30", accession="bad-1"), _row("10-Q", "2024-03-31", accession="bad-2")]
+    _setup_ingest_ticker(monkeypatch, filings, fail_accessions={"bad-1", "bad-2"})
+    sleeps = []
+    monkeypatch.setattr(edgar_ingest.time, "sleep", sleeps.append)
+
+    edgar_ingest._ingest_ticker("ACME", _ACME, tmp_path / "ACME")
+
+    assert len(sleeps) == 3  # the filing list, then each filing
+
+
+def test_ingest_ticker_returns_none_and_logs_when_filing_list_fails(monkeypatch, tmp_path):
+    events = []
+    monkeypatch.setattr(edgar_ingest, "log_event", lambda category, **fields: events.append((category, fields)))
+
+    def boom(cik, fyem):
+        raise KeyError("filings")
+
+    monkeypatch.setattr(edgar_ingest, "get_filing_list", boom)
+
+    result = edgar_ingest._ingest_ticker("ACME", _ACME, tmp_path / "ACME")
+
+    assert result is None
+    assert events == [("ingest_filing_list_failed", {"ticker": "ACME", "error": "KeyError: 'filings'"})]
+
+
+def test_save_filing_writes_meta_last(monkeypatch, tmp_path):
+    """A crash between files must never leave a meta-only filing: meta goes
+    last, so _already_ingested's three-file check and the chunker agree."""
+    order = []
+    real_write_text = type(tmp_path).write_text
+
+    def spy(self, *args, **kwargs):
+        order.append(self.name)
+        return real_write_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(type(tmp_path), "write_text", spy)
+    edgar_ingest._save_filing(tmp_path, "acc", {"form": "10-Q"}, "text", [])
+    assert order[-1] == "acc_meta.json"
+    assert len(order) == 3

@@ -60,6 +60,11 @@ reference:
 - [ ] **[feature, Med, Substantial]** Admin web UI (ingest, rebuild, corpus status; phase 1 records the rebuild timings it needs). Details later, `/wayfinder` first.
 - [ ] **[feature, Med, Substantial]** Chat web UI for the agent. Details later, `/wayfinder` first.
 
+### From the 2026-10-06 data expansion phase 1 review
+
+- [ ] **[bug (latent), Low, Trivial]** `xbrl_facts.py` parses SEC's `start`/`end` dates with a bare `date.fromisoformat`, which on Python 3.13 also accepts `20240630`, and then compares and sorts the raw strings (`max(..., key=(e["end"], ...))`, `e["end"] == period_end_date`). A non-canonical date would sort wrongly. `edgar_ingest._is_canonical_date` already guards the submissions data. Move it to a shared `sources` helper and apply it in `xbrl_facts` as well. This was round 6 code review in `docs/plans/2026-10-06-data-expansion-years.md`'s Review log; `xbrl_facts` was outside that diff.
+- [ ] **[bug (latent), Low, Trivial]** `edgar_ingest.get_filing_url` builds a `*_meta.json` path from an accession it doesn't check. `mcp_server.py:105` passes `accn` from raw XBRL companyfacts JSON. The path only feeds a read-only lookup for a citation URL. Fix: return None unless `_ACCESSION_PATTERN.fullmatch(accession)`, the check ingest already applies. This was the round 2 security residual in `docs/plans/2026-10-06-data-expansion-years.md`'s Review log, and it was left out because only the function's docstring is in that diff.
+
 ### From the 2026-10-06 package 4 rescope
 
 - [ ] **[misc, Low, Standard]** Hash `eval/eval_questions.jsonl` (at least each question's criteria) into eval report provenance, and have `compare_prompt_versions` treat a change as a version boundary. Today `prompt_fingerprint()` covers `prompts/` only, so fingerprint mode pools grades from before and after a criteria change (`e8bd2a2`); see `docs/decisions/2026-10-06-close-package-4-not-available-answer.md`.

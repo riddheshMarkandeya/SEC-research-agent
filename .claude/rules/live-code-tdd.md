@@ -17,7 +17,10 @@ paths:
 The `tdd-live-code-carveout` skill's "live-only code" category means,
 concretely, in this repo:
 
-- **SEC EDGAR HTTP calls** (`edgar_ingest.py`, `xbrl_facts.py`)
+- **SEC EDGAR HTTP calls** (`edgar_ingest.py`, including
+  `get_filing_list`'s paging into older submissions pages, which only
+  `tests/manual/verify_filing_selection.py` exercises against real data;
+  `xbrl_facts.py`)
 - **Chroma + embedding indexing/retrieval** (`index_chunks.py`,
   `retrieval.py`, `dispatch.py`'s `search_filings` path through
   `hybrid_search`, `analyze_gate_replay.py`'s live search binding,
