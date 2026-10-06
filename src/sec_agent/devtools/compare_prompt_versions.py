@@ -17,8 +17,8 @@ script implements the decision rule used for every prompt change:
 
 Rows from a report's first infra error onward are dropped (a quota error
 or crash, not a graded answer). Reports with no known commit, uncommitted
-changes or an unverified model-input snapshot are excluded unless
---include-dirty.
+changes, an unverified model-input snapshot or a stale Chroma index are
+excluded unless --include-dirty.
 
 Usage:
     python -m sec_agent.devtools.compare_prompt_versions
@@ -142,8 +142,9 @@ def agent_fingerprint(report: Report) -> str | None:
 
 
 def is_excluded(report: Report, include_dirty: bool) -> bool:
-    """A stamped report with no known commit, uncommitted changes, or an
-    unverified model-input snapshot doesn't reliably describe a commit.
+    """A stamped report with no known commit, uncommitted changes, an
+    unverified model-input snapshot, or a Chroma index built from other
+    chunk files doesn't reliably describe a commit and its corpus.
     Unstamped (older) reports have nothing to check."""
     if include_dirty or report.provenance is None:
         return False
@@ -154,6 +155,7 @@ def is_excluded(report: Report, include_dirty: bool) -> bool:
         or sha == "unknown"
         or provenance.get("git_dirty") is not False
         or provenance.get("snapshot_verified") is not True
+        or provenance.get("index_matches_chunks") is False
     )
 
 
@@ -375,7 +377,8 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser.add_argument("--base-files", nargs="+", type=Path, help="explicit mode: the base runs")
     parser.add_argument("--candidate-files", nargs="+", type=Path, help="explicit mode: the candidate runs")
     parser.add_argument("--since", help="ignore reports named before this UTC timestamp, e.g. 20260925T000000Z")
-    parser.add_argument("--include-dirty", action="store_true", help="keep reports from a dirty or unverified tree")
+    parser.add_argument("--include-dirty", action="store_true",
+                        help="keep reports from a dirty or unverified tree or a stale index")
     return parser.parse_args(argv)
 
 

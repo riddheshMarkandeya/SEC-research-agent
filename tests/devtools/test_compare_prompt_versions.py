@@ -82,6 +82,8 @@ def test_legacy_list_reports_load_as_unstamped(tmp_path):
         (_provenance(sha="unknown"), True),
         ({k: v for k, v in _provenance().items() if k != "git_sha"}, True),
         (_provenance(sha=""), True),
+        ({**_provenance(), "index_matches_chunks": False}, True),
+        ({**_provenance(), "index_matches_chunks": None}, False),
         (None, False),
     ],
 )

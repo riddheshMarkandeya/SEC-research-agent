@@ -49,6 +49,7 @@ from sec_agent.agent.citations import value_is_citation_verified
 from sec_agent.sources.companies import COMPANIES_PATH
 from sec_agent.config import (
     CHROMA_DIR,
+    CHUNKS_DIR,
     DEFAULT_BACKEND,
     EMBED_MODEL_NAME,
     GEMINI_MODEL_NAME,
@@ -63,6 +64,7 @@ from sec_agent.config import (
 # complete() is llm_backends.py's one-shot, tool-free completion helper
 # that lets grade_judged() honor --judge-backend.
 from sec_agent.llm.llm_backends import BACKENDS, complete, require_backend
+from sec_agent.retrieval.index_chunks import STALE_INDEX_NOTE, corpus_provenance
 from sec_agent.tracing import flush, log_event
 from sec_agent.verification.numeric_utils import extract_numbers, normalize
 from sec_agent.prompts import SNAPSHOT_PATH, prompt_fingerprint
@@ -648,8 +650,18 @@ def _run_config() -> dict:
 
 def _collect_provenance() -> dict:
     """{git_sha, git_dirty, dirty_files, snapshot_verified, config,
-    prompts}. Never raises: each part degrades to a marker value."""
-    provenance = {**_git_state(), "snapshot_verified": _snapshot_verified(), "config": _run_config()}
+    index_matches_chunks, prompts}. Never raises: each part degrades to a
+    marker value. The corpus identity goes in config, since a different
+    corpus makes two runs incomparable; whether the index matches it sits
+    outside config, so a rebuild of the same corpus doesn't read as a
+    config change."""
+    corpus = corpus_provenance(CHUNKS_DIR, CHROMA_DIR)
+    provenance = {
+        **_git_state(),
+        "snapshot_verified": _snapshot_verified(),
+        "config": {**_run_config(), "corpus": corpus["corpus"]},
+        "index_matches_chunks": corpus["index_matches_chunks"],
+    }
     try:
         provenance["prompts"] = prompt_fingerprint()
     except Exception as e:
@@ -664,9 +676,9 @@ def _collect_provenance() -> dict:
 def _provenance_warnings(provenance: dict) -> list[str]:
     """One line per reason this run's report can't be trusted to describe
     the committed code and prompts. Covers every condition under which
-    compare_prompt_versions leaves the report out of comparisons (plus a
-    failed fingerprint), so a run that will be excluded says so when it
-    starts."""
+    compare_prompt_versions leaves the report out of comparisons, so a run
+    that will be excluded says so when it starts (plus a failed
+    fingerprint)."""
     warnings = []
     sha = provenance.get("git_sha")
     if not sha or sha == "unknown":
@@ -684,6 +696,8 @@ def _provenance_warnings(provenance: dict) -> list[str]:
         )
     if provenance.get("prompts") == "error":
         warnings.append("the prompt fingerprint couldn't be computed")
+    if provenance.get("index_matches_chunks") is False:
+        warnings.append(STALE_INDEX_NOTE)
     return warnings
 
 

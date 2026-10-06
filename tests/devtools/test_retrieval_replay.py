@@ -385,6 +385,27 @@ def test_compare_passes_on_a_pure_gain_and_counts_a_missing_part_as_not_hit():
     assert rr.compare_failed(rr.compare(base, new[:1]))
 
 
+def test_corpus_notes_warn_on_a_corpus_change_and_a_stale_index():
+    same = {"corpus": {"sha": "a"}, "index_matches_chunks": True}
+    assert rr.corpus_notes(None, same) == []
+    assert rr.corpus_notes({"header": {"corpus": {"sha": "a"}}}, same) == []
+    assert "different corpus" in rr.corpus_notes({"header": {"corpus": {"sha": "b"}}}, same)[0]
+    assert "records no corpus identity" in rr.corpus_notes({"header": {}}, same)[0]
+    stale_base = {"header": {"corpus": {"sha": "a"}, "index_matches_chunks": False}}
+    assert "base was replayed on a stale index" in rr.corpus_notes(stale_base, same)[0]
+    stale = rr.corpus_notes(None, {"corpus": {"sha": "a"}, "index_matches_chunks": False})
+    assert len(stale) == 1 and "index_chunks" in stale[0]
+    unknown = rr.corpus_notes(None, {"corpus": None, "index_matches_chunks": None})
+    assert len(unknown) == 1 and "couldn't be computed" in unknown[0]
+    # An unknown corpus isn't reported as a different one too.
+    unknown_vs_base = rr.corpus_notes({"header": {"corpus": {"sha": "a"}}}, {"corpus": None, "index_matches_chunks": None})
+    assert len(unknown_vs_base) == 1 and "couldn't be computed" in unknown_vs_base[0]
+    # Only the sha decides; a base corpus that isn't an identity counts as none recorded.
+    assert rr.corpus_notes({"header": {"corpus": {"sha": "a", "chunks": 9}}}, same) == []
+    for not_an_identity in ("a", {"sha": ""}, {"sha": 5}):
+        assert "records no corpus identity" in rr.corpus_notes({"header": {"corpus": not_an_identity}}, same)[0]
+
+
 def test_check_base_refuses_a_different_gold_file():
     rr.check_base({"header": {"gold_sha256": "abc"}}, "abc")
     with pytest.raises(ValueError, match="gold"):
@@ -500,9 +521,36 @@ def cli(tmp_path, monkeypatch):
     monkeypatch.setattr(rr.eval_harness, "_git_state", lambda: {"git_sha": "abc", "git_dirty": False, "dirty_files": []})
     installs = []
     monkeypatch.setattr(rr.rerank_cache, "install", lambda enabled: installs.append(enabled))
+    chunks_dir = tmp_path / "chunks"
+    (chunks_dir / "MSFT").mkdir(parents=True)
+    (chunks_dir / "MSFT" / "A1_chunks.jsonl").write_text("{}\n{}\n", encoding="utf-8")
+    monkeypatch.setattr(rr.config, "CHUNKS_DIR", chunks_dir)
+    # A matching index sidecar, so the run logs no missing-sidecar event.
+    (tmp_path / "chroma").mkdir()
+    rr.index_chunks.write_identity_sidecar(tmp_path / "chroma", rr.index_chunks.corpus_identity(chunks_dir), "t")
+    monkeypatch.setattr(rr.config, "CHROMA_DIR", str(tmp_path / "chroma"))
     args = ["--file", str(traces), "--questions", str(questions), "--gold", str(gold)]
     return {"tmp": tmp_path, "args": args, "final": final, "gold": gold, "floors": floors, "traces": traces,
             "installs": installs}
+
+
+def test_main_header_records_the_corpus_identity(cli):
+    out = cli["tmp"] / "r.json"
+    assert rr.main([*cli["args"], "--out", str(out)]) == 0
+    header = json.loads(out.read_text(encoding="utf-8"))["header"]
+    assert header["corpus"] == rr.index_chunks.corpus_identity(cli["tmp"] / "chunks")
+    assert header["corpus"]["chunk_files"] == 1 and header["corpus"]["chunks"] == 2
+    assert header["index_matches_chunks"] is True
+
+
+def test_main_notes_a_base_replayed_on_a_different_corpus(cli, capsys):
+    base = cli["tmp"] / "base.json"
+    assert rr.main([*cli["args"], "--out", str(base)]) == 0
+    capsys.readouterr()
+    (cli["tmp"] / "chunks" / "MSFT" / "A1_chunks.jsonl").write_text("{}\n{}\n{}\n", encoding="utf-8")
+
+    assert rr.main([*cli["args"], "--compare", str(base), "--out", str(cli["tmp"] / "r.json")]) == 0
+    assert "different corpus" in capsys.readouterr().err
 
 
 def test_main_installs_the_rerank_cache_unless_disabled_and_reports_its_stats(cli, monkeypatch, capsys):

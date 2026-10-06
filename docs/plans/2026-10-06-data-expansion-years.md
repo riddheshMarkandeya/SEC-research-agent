@@ -241,4 +241,156 @@ Confirmed fine by the reviewer:
 
 ## Review log
 
-(Filled in during `independent-review-pass`.)
+### Round 1 (snapshot `b5081f6`; Substantial by design tier and size, ~700 lines, critical core)
+
+Passes: `/code-review high`, `arch-reviewer` (sonnet), `security-reviewer`, `/simplify` (4 angles).
+
+**Code review**
+- CR1. A replay `--compare` across corpora, or against a stale index, was silent. [Fixed] The replay header records `corpus` and `index_matches_chunks`, and `corpus_notes` warns on stderr. It warns rather than refuses, because comparing across corpora is step 7's purpose.
+- CR2. `_provenance_warnings` ignored a mismatched index. [Fixed] It now warns when `index_matches_chunks` is False.
+- CR3. A failed older-page fetch drops the whole company for the run. [Verified, no fix needed] Re-running is cheap because filings already present are skipped, and a partial selection would look complete. The failure is logged as `ingest_filing_list_failed`.
+- CR4. A failed fetch skipped the 0.3 s pause, so a series of failures could become a request burst. [Fixed] The pause now comes before every fetch, with a test.
+- CR5. `index_matches_chunks` inside `config` made a rebuild of the same corpus read as "config differs". [Fixed] It moved to top-level provenance, and `corpus` stays in `config`. This deviates from the plan's Approach B. It is intended: a different corpus is a real config difference, and a sidecar state change isn't.
+- CR6. `zip(*columns)` silently truncated a page whose columns had different lengths. [Fixed] It now uses `zip(strict=True)`, so a malformed page fails the company with a log line.
+- CR7. In the replay, `corpus_identity` ran without a guard. [Fixed] A shared, never-raising `index_chunks.corpus_provenance` is used by both the eval harness and the replay. It also covers arch nit 3.
+- CR8. The existing `_run_config` tests read the real `var/chunks`. [Fixed] The corpus is now computed in `_collect_provenance`, which the tests stub, and the corpus tests moved to `test_index_chunks.py` on tmp dirs.
+- CR9. The manual script expected exact counts, which would turn red on the next filing. [Fixed] It now checks for at least the expected counts. The `MIN_FISCAL_YEAR` comment no longer claims the corpus doesn't grow.
+- CR10. The manual script's docstring pointed at a doc path. [Fixed]
+
+**Arch review**
+- A1. On error, `corpus` was the string `"error"` instead of a dict. [Fixed] It is now None.
+- A2. A sidecar that isn't a dict was logged as "missing". [Fixed] `read_identity_sidecar` raises ValueError, which is logged as `corpus_sidecar_unreadable`.
+- A3. Covered by CR7.
+- A4. `_safe` was defined after its caller. [Fixed] It was removed: validated accessions contain no `/`.
+- A5. Question: split `_ingest_ticker` further. [Verified, no fix needed] It is within the complexity limit, and the plan accepted a single helper.
+- A6. Pause placement. Covered by CR4.
+- A7. Covered by CR10.
+- A8. The manual script's `type: ignore` shim. [Fixed in simplify] The shim was removed, and the red run on master is recorded in step 2.
+
+**Security review**
+- S1. Accessions from SEC's JSON were used in file names without validation. [Fixed] Accessions must match `\d{10}-\d{2}-\d{6}`; a row that doesn't is skipped and logged with reason `bad_accession`.
+- S2. Older-page names were used in the URL without validation. [Fixed] `_page_url` checks the name against `CIK\d{10}-submissions-\d{3}\.json`.
+- S3. `primaryDocument` goes into the Archives URL without validation. Deferred to BACKLOG in round 1; [Fixed] in round 3 as CR3-1.
+
+**Simplify, applied**
+- One shared `STALE_INDEX_NOTE` string.
+- A `_sidecar_path` helper.
+- `_page_url` at the URL trust boundary, rather than a check inside `collect_filings`.
+- `_ingestable_fiscal_year` with early returns plus `_skip_row`.
+- A `for` loop with `break` in `collect_filings`.
+- The four cutoff tests merged into one parametrized test.
+- The manual script's shim removed.
+
+**Simplify, skipped**
+- Storing the identity in Chroma collection metadata instead of a sidecar. This is the plan-reviewed design. Reading the metadata would open a Chroma client inside provenance, a step that must never fail.
+- Moving the corpus identity code to its own module. This is out of scope.
+- Paging by `filingTo`. The reviewer itself recommends keeping the current approach.
+- A shared log-capture test helper. Inline capture is this repo's test idiom.
+- A `Counter` for the totals. The explicit keys log zero values.
+- Inlining `_print_notes`. It keeps `main` under the complexity limit.
+- Efficiency: no changes. Hashing the chunk files at run start costs well under a second.
+
+After the fixes: ruff 0, pyright 0, 1330 passed, diff-cover 100% (159 lines), lint-imports 2 kept. The live `verify_filing_selection.py` is GREEN (11/12/14/14/10; CRM 2 pages).
+
+### Round 2 (the changes since `b5081f6`: round 1 fixes plus simplify edits)
+
+Passes: `/code-review high`, `arch-reviewer` (sonnet), `security-reviewer`.
+
+**Security**
+- S1 and S2 confirmed closed. No new issues.
+- Residual: `get_filing_url` builds a meta path from an accession it doesn't check, and one caller passes an accession straight from SEC's XBRL JSON. [Deferred → BACKLOG] This is pre-existing and read-only.
+
+**Arch**
+- The `_provenance_warnings` docstring overclaimed. [Fixed] (Superseded in round 3.)
+- `STALE_INDEX_NOTE` hard-coded `var/chunks`. [Fixed]
+- A null value raises `TypeError`. Covered by CR2-7 below.
+
+**Code review**
+- CR2-1. Moving `index_matches_chunks` out of `config` (round 1 CR5) meant `compare_prompt_versions` never saw a stale-index report. [Fixed] `is_excluded` now leaves out a report whose flag is False, so the eval's startup warnings and the compare script's exclusions line up again. The fix touches a file outside round 1's diff, so round 3 is a full round.
+- CR2-2. The docstring claimed an exclusion that didn't exist. [Fixed] It is true now, after CR2-1.
+- CR2-3. The manual script raised `KeyError` for a ticker with no expected count. [Fixed] It now uses `.get(ticker, 0)`.
+- CR2-4. A base replay made on a stale index produced no note. [Fixed] `corpus_notes` now covers it.
+- CR2-5. A base made before this change, with no corpus recorded, was reported as "a different corpus", and an unknown corpus on both sides passed silently. [Fixed] Each case now gets its own note.
+- CR2-6. No pause separated one company's last fetch from the next company's filing-list request. [Fixed] `_ingest_ticker` now pauses before the list request too.
+- CR2-7. A null `accessionNumber` or `reportDate` failed the whole company instead of being skipped. [Fixed] Checked with `isinstance`, and `except (TypeError, ValueError)`.
+- CR2-8. `\d` also matches non-ASCII digits. [Fixed] The patterns use `[0-9]`.
+- CR2-9. Duplicate of the arch `STALE_INDEX_NOTE` finding. [Fixed]
+- CR2-10. `return _skip_row(...)` used a logging helper as the return value. [Fixed] The caller now returns None explicitly.
+
+After the fixes: ruff 0, pyright 0, 1336 passed, diff-cover 100% (172 lines, including `compare_prompt_versions`), lint-imports 2 kept.
+
+### Round 3 (full table: a fix touched `compare_prompt_versions`, outside round 1's diff; the changes `b5081f6..62b4cb8`)
+
+
+Passes: `/code-review high`, `arch-reviewer` (sonnet), `security-reviewer`.
+
+**Security**
+- No new issues. `log_event` writes values with `json.dumps` (`tracing.py:80`), so logging raw SEC strings is safe.
+
+**Arch**
+- A3-1. When this run's corpus is unknown, a second "different corpus" note appeared, printing the full identity dicts. [Fixed] That note is skipped when the corpus is unknown, and it prints only the shas.
+- A3-2. Reports written between round 1 and round 2 keep the flag inside `config`. [Verified, no fix needed] That layout was never committed and no eval ran on it.
+
+**Code review**
+- CR3-1. `primaryDocument` was unvalidated, and an empty value would fetch the filing's directory listing and save it as the filing. [Fixed] `_DOCUMENT_PATTERN` requires a plain file name. This also closes S3.
+- CR3-2. A null `filingDate` failed the company. [Fixed] Any kept field that isn't a string skips the row, with reason `non_string_field`. This replaces the per-field null checks.
+- CR3-3. A bad older page drops the company. [Verified, no fix needed] Same as round 1 CR3, already dispositioned.
+- CR3-4. A None `index_matches_chunks` gives no startup warning. [Verified, no fix needed] By design: only False means stale, and None is logged. After step 6 the index has a sidecar.
+- CR3-5. The config shape differs from old reports. [Verified, no fix needed] The plan's Risks already accept this, and no interim reports exist.
+- CR3-6. Duplicate of A3-1. [Fixed]
+- CR3-7. The `compare_prompt_versions` module docstring didn't list the stale-index exclusion. [Fixed]
+- CR3-8. Two runs that both fail to hash look equal in `config`. [Verified, no fix needed] An edge case, logged as `corpus_identity_failed` on both sides.
+- CR3-9. The `>=` count check misses over-selection. [Fixed] The manual script now flags a filing selected twice.
+- CR3-10. A replay reads the chunk files twice. [Verified, no fix needed] The efficiency pass already judged this negligible.
+
+After the fixes: ruff 0, pyright 0, 1340 passed, diff-cover 100% (176 lines), lint-imports 2 kept. The live script is GREEN with 0 rows skipped, so real `primaryDocument` values pass.
+
+### Round 4 (the changes since `62b4cb8`, snapshot `310c93f`)
+
+Passes: `/code-review high`, `arch-reviewer` (sonnet), `security-reviewer`.
+
+**Arch**: no findings.
+
+**Security**: no findings. The `primaryDocument` pattern closes path manipulation in the Archives URL, and every caller of `_filing_document_url` passes a value that has been checked.
+
+**Code review**
+- CR4-1. An unhashable `form` value fails the company. CR4-7: overlapping pages are not deduplicated. CR4-8: there is no test for a null `form`. [Verified, no fix needed] These fall under the stop rule. Malformed SEC JSON came up in rounds 2, 3 and 4, a new field each time. The family is settled under round 1's CR3 disposition: SEC data that breaks the submissions schema fails that one company, logged as `ingest_filing_list_failed`, and the run continues. Re-running the ingest is cheap.
+- CR4-2. A malformed `filingDate` could misjudge which row is oldest, and so whether to read another page. [Fixed] It is parsed like `reportDate`. The skip reason is now `bad_date`.
+- CR4-3. The skip log didn't record the rejected value. [Fixed] It now logs `filing_date` and `primary_document` too.
+- CR4-4. `corpus_notes` compared whole dicts but printed only shas. [Fixed] It compares shas.
+- CR4-5. A base corpus that isn't a dict crashed the replay. [Fixed] It is treated as "no identity recorded".
+- CR4-6. The regression test only counted the notes. [Fixed] It now checks which note came back.
+
+After the fixes: ruff 0, pyright 0, 1341 passed, diff-cover 100% (178 lines), lint-imports 2 kept, and the live script GREEN with 0 rows skipped.
+
+### Round 5 (the changes since `310c93f`, snapshot `c196e83`)
+
+Passes: `/code-review high`, `security-reviewer`. Arch had no round 4 findings, so it didn't re-run.
+
+**Security**: no findings. `log_event` writes `json.dumps`, so the newly logged raw values can't inject anything.
+
+**Code review**
+- CR5-1 and CR5-2. `date.fromisoformat` also accepts non-canonical forms such as `20240630`. Those sort wrongly as strings, both in the oldest-row choice and in retrieval's reportDate matching and sorting. [Fixed] `_is_canonical_date` requires `YYYY-MM-DD` and a real calendar date, for both `filingDate` and `reportDate`.
+- CR5-3. The `filingDate` test never asserted `need_older`. [Fixed] Its fixture now flips `need_older` when the fix is absent.
+- CR5-4. The merged `bad_date` reason couldn't be queried by field. [Fixed] There are now separate `bad_filing_date` and `bad_report_date` reasons.
+- CR5-5. Any non-None base sha was accepted. [Fixed] It must be a non-empty string, the same rule as the sidecar.
+- CR5-6. A malformed `--compare` base file crashes `check_base`. [Verified, no fix needed] It is a local file the operator picks, the code path is pre-existing, and it is outside this change.
+- CR5-7. `filingDate` was parsed but the parsed value was thrown away. [Fixed] Covered by CR5-1: the canonical string now sorts correctly.
+- CR5-8. `_skip_row` had a single caller. [Fixed] It was inlined.
+
+After the fixes: ruff 0, pyright 0, 1343 passed, diff-cover 100% (185 lines), lint-imports 2 kept, and the live script GREEN with 0 rows skipped.
+
+### Round 6 (the changes since `c196e83`, snapshot `624d6e4`)
+
+Passes: `/code-review high`, `security-reviewer`.
+
+**Security**: no findings.
+
+**Code review**: no correctness bugs.
+- CR6-1. `reportDate` is parsed twice. [Verified, no fix needed] It costs microseconds per row.
+- CR6-2. The `filingDate` test lost its assertion on which filings are kept. [Fixed] The fix is test-only and confirmed by the suite.
+- CR6-3. `xbrl_facts` has the same non-canonical-date risk. [Deferred → BACKLOG] That file is outside this diff.
+
+**Review closed.** Round 6 found no new correctness issue, and its one fix was test-only.
+
+**Summary**: 6 rounds. Passes: code-review high (every round), arch (sonnet; rounds 1 to 4), security (every round), simplify (round 1). Malformed SEC JSON is settled as a family under round 1's CR3 disposition. Deferred to BACKLOG: `get_filing_url`'s unchecked accession, and `xbrl_facts`' non-canonical dates.

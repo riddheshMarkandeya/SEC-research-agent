@@ -54,7 +54,7 @@ from sec_agent import config, tracing
 from sec_agent.agent import dispatch
 from sec_agent.devtools import rerank_cache, trace_query
 from sec_agent.eval import eval_harness
-from sec_agent.retrieval import retrieval
+from sec_agent.retrieval import index_chunks, retrieval
 from sec_agent.sources import companies, period_labels
 
 GOLD_PATH = config.PROJECT_ROOT / "eval" / "retrieval_gold.jsonl"
@@ -423,6 +423,32 @@ def check_base(base: dict, gold_sha256: str) -> None:
         raise ValueError("the base report was measured against a different gold file; re-run the base")
 
 
+def corpus_notes(base: dict | None, provenance: dict) -> list[str]:
+    """Warnings, not refusals: comparing across corpora is sometimes the
+    point, but the hit changes then aren't down to code alone."""
+    notes = []
+    if provenance["corpus"] is None:
+        notes.append("this run's corpus identity couldn't be computed, so a corpus change can't be ruled out")
+    if base is not None:
+        base_corpus = base["header"].get("corpus")
+        base_sha = base_corpus.get("sha") if isinstance(base_corpus, dict) else None
+        if not isinstance(base_sha, str) or not base_sha:
+            notes.append("the base records no corpus identity, so a corpus change can't be ruled out")
+        elif provenance["corpus"] is not None and base_sha != provenance["corpus"]["sha"]:
+            notes.append(f"the base was replayed on a different corpus ({base_sha} vs "
+                         f"{provenance['corpus']['sha']}), so hit changes include corpus changes, not only code")
+        if base["header"].get("index_matches_chunks") is False:
+            notes.append("the base was replayed on a stale index, so hit changes include the index rebuild")
+    if provenance["index_matches_chunks"] is False:
+        notes.append(index_chunks.STALE_INDEX_NOTE)
+    return notes
+
+
+def _print_notes(notes: list[str]) -> None:
+    for note in notes:
+        print(f"retrieval_replay: {note}", file=sys.stderr)
+
+
 def _part_label(key: list) -> str:
     query, ticker, qid, part = key
     return f"{qid}/{part} [{ticker}] {trace_query._safe(query)[:100]}"
@@ -687,6 +713,8 @@ def main(argv: list[str] | None = None) -> int:
     provenance = {
         **eval_harness._git_state(),
         "retrieval_sha256": {p.name: file_sha256(p) for p in retrieval_files},
+        # Tells a base replay from one on a rebuilt corpus: same code, different chunks.
+        **index_chunks.corpus_provenance(config.CHUNKS_DIR, config.CHROMA_DIR),
     }
     try:
         gold_hash = file_sha256(args.gold)
@@ -697,6 +725,7 @@ def main(argv: list[str] | None = None) -> int:
     except (OSError, ValueError) as e:  # json.JSONDecodeError is a ValueError
         print(f"retrieval_replay: {e}", file=sys.stderr)
         return 2
+    _print_notes(corpus_notes(base, provenance))
     unknown = sorted(set(args.qid or ()) - {row["qid"] for row in gold_rows})
     if unknown:
         parser.error(f"--qid has no gold rows: {', '.join(unknown)}")

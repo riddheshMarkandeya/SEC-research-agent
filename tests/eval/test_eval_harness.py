@@ -1135,6 +1135,10 @@ def _stub_provenance_parts(monkeypatch):
     )
     monkeypatch.setattr(eval_harness, "_snapshot_verified", lambda: True)
     monkeypatch.setattr(eval_harness, "_run_config", lambda: {"gemini_model": "m"})
+    monkeypatch.setattr(
+        eval_harness, "corpus_provenance",
+        lambda chunks_dir, chroma_dir: {"corpus": {"sha": "abc"}, "index_matches_chunks": True},
+    )
 
 
 def test_collect_provenance_combines_every_part(monkeypatch):
@@ -1145,7 +1149,10 @@ def test_collect_provenance_combines_every_part(monkeypatch):
         "git_dirty": False,
         "dirty_files": [],
         "snapshot_verified": True,
-        "config": {"gemini_model": "m"},
+        # The corpus is part of config; the index match flag isn't, so a
+        # rebuild of the same corpus doesn't read as a config change.
+        "config": {"gemini_model": "m", "corpus": {"sha": "abc"}},
+        "index_matches_chunks": True,
         "prompts": {"agent": "fp"},
     }
 
@@ -1177,6 +1184,13 @@ def test_provenance_warnings_name_a_dirty_tree_and_an_unverified_snapshot():
     assert any("status unknown" in w for w in eval_harness._provenance_warnings({**clean, "git_dirty": None}))
 
 
+def test_provenance_warnings_name_an_index_built_from_other_chunks():
+    clean = {"git_sha": "abc1234", "git_dirty": False, "snapshot_verified": True, "prompts": {"agent": "fp"}}
+    assert eval_harness._provenance_warnings({**clean, "index_matches_chunks": None}) == []
+    warnings = eval_harness._provenance_warnings({**clean, "index_matches_chunks": False})
+    assert len(warnings) == 1 and "index_chunks" in warnings[0]
+
+
 @pytest.mark.parametrize(
     "change",
     [
@@ -1188,6 +1202,8 @@ def test_provenance_warnings_name_a_dirty_tree_and_an_unverified_snapshot():
         {"git_dirty": None},
         {"snapshot_verified": False},
         {"snapshot_verified": None},
+        {"index_matches_chunks": False},
+        {"index_matches_chunks": None},
     ],
 )
 def test_every_report_the_compare_script_excludes_is_warned_about_at_eval_start(change):
