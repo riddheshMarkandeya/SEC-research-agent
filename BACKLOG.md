@@ -53,9 +53,8 @@ reference:
 
 ### Roadmap (user, 2026-10-06): data expansion → harder eval questions → monorepo → admin web UI → chat web UI
 
-- [ ] **[bug, Med, Standard]** Pre-phase-2 hardening (do first; user, 2026-10-07): one package of three existing items: the `edgar_ingest` Unicode console crash and the `xbrl_facts` pass (both in the data expansion phase 1 review section below), and the `prompts/agent_tools.py` enum hoist (prompt-audit section). See `docs/plans/2026-10-07-data-expansion-phase2-map.md`.
 - [ ] **[performance, Med, Standard]** Incremental indexing: `index_chunks.main` deletes the Chroma collection and re-embeds every chunk (1,258 s for 7,572 chunks); embed only chunk files not yet indexed, keeping the corpus identity sidecar correct. First build package of the phase 2 map below; waits on no ticket.
-- [ ] **[misc, Med, Substantial]** **Data expansion phase 2 + v2 eval suite map**: `docs/plans/2026-10-07-data-expansion-phase2-map.md` (replaces the phase-2 and harder-eval-questions items). Carry-over for its build: derive the company count in `prompts/agent_system.py` from `COMPANIES` (panel screen) and hoist the duplicated enums in `prompts/agent_tools.py` first. Research R1 and R2 are done. Next: grilling ticket Company list.
+- [ ] **[misc, Med, Substantial]** **Data expansion phase 2 + v2 eval suite map**: `docs/plans/2026-10-07-data-expansion-phase2-map.md` (replaces the phase-2 and harder-eval-questions items). Carry-over for its build: derive the company count in `prompts/agent_system.py` from `COMPANIES` (panel screen) first. Research R1 and R2 are done. Next: grilling ticket Company list.
 - [ ] **[refactor, Med, Substantial]** Monorepo layout ahead of the web UIs. Details later, `/wayfinder` first.
 - [ ] **[feature, Med, Substantial]** Admin web UI (ingest, rebuild, corpus status; phase 1 records the rebuild timings it needs). Details later, `/wayfinder` first.
 - [ ] **[feature, Med, Substantial]** Chat web UI for the agent. Details later, `/wayfinder` first.
@@ -114,7 +113,6 @@ Design: `docs/plans/2026-09-24-prompt-audit-roadmap.md`. Findings: `docs/reviews
   - sentences duplicated across the agent and MCP surfaces.
 
   The hard-coded "five companies" moved to Data expansion phase 2, which must fix it. It changes model-visible text, so it needs a panel screen. `docs/reviews/2026-09-24-prompt-audit.md`
-- [ ] **[refactor, Low, Trivial]** Duplicated enum values in `prompts/agent_tools.py`, all copied as-is from `agent.py` by WP1: the period list `["FY", "Q1", "Q2", "Q3", "Q4"]` twice, `list(COMPANIES.keys())` three times, and `CLAIM_UNITS` restating `numeric_utils.UNIT_MULTIPLIERS`'s keys by hand. Hoist each into one constant; the schemas' bytes must stay identical (check with the WP2 fingerprint). Do it before Data expansion phase 2 changes the ticker list. Found in the WP1 code review.
 - [ ] **[design, Low, Standard]** The MCP `search_filings` schema is derived the wrong way round: `prompts.mcp.MCP_SEARCH_TOOL_SCHEMA` is the agent's schema with its agent-only text overridden, so agent-only wording in any other field reaches MCP clients silently. The `ticker` description already does ("…which company the question is about"), and three description sentences are written out on both surfaces. Fix: a neutral shared schema that the agent adds its note to. It changes model-visible text, so it needs a panel screen. Found in WP3's plan and code reviews (`docs/reviews/2026-09-24-wp3-group-a-wording.md`).
 
 ### From the 2026-09-22 eval-question-classification change

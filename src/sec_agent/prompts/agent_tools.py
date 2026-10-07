@@ -18,6 +18,12 @@ from sec_agent.prompts.agent_system import (
     SINGLE_COMPANY_ONLY_RATIOS,
 )
 from sec_agent.sources.xbrl_facts import DEFAULT_METRIC_TAGS
+from sec_agent.verification.numeric_utils import UNIT_MULTIPLIERS
+
+# Enum values shared by several schemas below. The schemas hold these
+# list objects themselves, so nothing may mutate a schema's enum in place.
+TICKERS = list(COMPANIES.keys())
+FISCAL_PERIODS = ["FY", "Q1", "Q2", "Q3", "Q4"]
 
 SEARCH_TOOL_SCHEMA = {
     "type": "function",
@@ -39,7 +45,7 @@ SEARCH_TOOL_SCHEMA = {
                 },
                 "ticker": {
                     "type": "string",
-                    "enum": list(COMPANIES.keys()),
+                    "enum": TICKERS,
                     "description": "Restrict the search to one company's filings. Omit only if genuinely unsure which company the question is about.",
                 },
             },
@@ -69,7 +75,7 @@ FACT_TOOL_SCHEMA = {
         "parameters": {
             "type": "object",
             "properties": {
-                "ticker": {"type": "string", "enum": list(COMPANIES.keys())},
+                "ticker": {"type": "string", "enum": TICKERS},
                 "metric": {
                     "type": "string",
                     "enum": list(FACT_METRICS),
@@ -90,7 +96,7 @@ FACT_TOOL_SCHEMA = {
                 },
                 "fiscal_period": {
                     "type": "string",
-                    "enum": ["FY", "Q1", "Q2", "Q3", "Q4"],
+                    "enum": FISCAL_PERIODS,
                     "description": "Only used together with fiscal_year. FY for a full fiscal year (from the 10-K), or Q1/Q2/Q3 for a quarter (from a 10-Q). Q4 is not separately available for most of these companies -- fall back to search_filings for Q4-specific figures.",
                 },
                 "yoy_growth": {
@@ -140,7 +146,7 @@ COMPARE_TOOL_SCHEMA = {
             "properties": {
                 "anchor_ticker": {
                     "type": "string",
-                    "enum": list(COMPANIES.keys()),
+                    "enum": TICKERS,
                     "description": "Whichever company's date/period you're anchoring on.",
                 },
                 "metric": {
@@ -163,7 +169,7 @@ COMPARE_TOOL_SCHEMA = {
                 },
                 "fiscal_period": {
                     "type": "string",
-                    "enum": ["FY", "Q1", "Q2", "Q3", "Q4"],
+                    "enum": FISCAL_PERIODS,
                     "description": "Only used together with fiscal_year. FY for a full fiscal year, or Q1/Q2/Q3 for a quarter. Q4 is not separately available for most of these companies.",
                 },
             },
@@ -178,14 +184,11 @@ COMPARE_TOOL_SCHEMA = {
 # structured "here is my answer" instead of free text), not something an
 # external MCP client would ever want to call itself.
 #
-# `unit`'s enum is exactly numeric_utils.normalize()'s vocabulary --
-# "raw" and "percent" pass through normalize() unchanged (multiplier 1.0,
-# UNIT_MULTIPLIERS.get(unit, 1.0)), "thousand"/"million"/"billion" are its
-# declared keys. Keeping this list explicit rather than deriving it from
-# UNIT_MULTIPLIERS.keys() because "raw"/"percent" aren't IN that dict (they're
-# normalize()'s two special-cased categories) -- deriving would silently
-# drop them, not add them.
-CLAIM_UNITS = ["raw", "thousand", "million", "billion", "percent"]
+# `unit`'s enum is exactly numeric_utils.normalize()'s vocabulary:
+# UNIT_MULTIPLIERS' keys in their own order, plus "raw" and "percent",
+# which normalize() passes through unchanged (multiplier 1.0) and so are
+# not keys of that dict -- they're listed here by hand at either end.
+CLAIM_UNITS = ["raw", *UNIT_MULTIPLIERS, "percent"]
 
 SUBMIT_TOOL_SCHEMA = {
     "type": "function",
@@ -353,11 +356,14 @@ AGENT_TOOL_SCHEMAS = (
 
 # Hashed into prompts.prompt_fingerprint(). AGENT_TOOL_SCHEMAS holds all
 # five schemas in the order the agent model receives them, so the
-# individual schemas and CLAIM_UNITS (rendered into SUBMIT_TOOL_SCHEMA)
-# are covered through it. What MCP clients see of these schemas,
-# including their order, is covered by the snapshot's mcp section.
+# individual schemas and the shared enums rendered into them (TICKERS,
+# FISCAL_PERIODS, CLAIM_UNITS) are covered through it. What MCP clients
+# see of these schemas, including their order, is covered by the
+# snapshot's mcp section.
 FINGERPRINTED = ("AGENT_TOOL_SCHEMAS",)
 NOT_FINGERPRINTED = (
+    "TICKERS",
+    "FISCAL_PERIODS",
     "SEARCH_TOOL_SCHEMA",
     "FACT_TOOL_SCHEMA",
     "COMPARE_TOOL_SCHEMA",
