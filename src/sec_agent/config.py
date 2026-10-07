@@ -51,6 +51,9 @@ RESULTS_DIR = PROJECT_ROOT / "eval" / "eval_results"
 SEC_USER_AGENT_NAME = os.getenv("SEC_USER_AGENT_NAME", "Rid")
 SEC_USER_AGENT_EMAIL = os.getenv("SEC_USER_AGENT_EMAIL", "riddhesh2307@gmail.com")
 SEC_USER_AGENT = f"{SEC_USER_AGENT_NAME} {SEC_USER_AGENT_EMAIL}"
+# Every SEC request passes this; without one a stalled response hangs the
+# caller (an agent tool call, or an ingest run) indefinitely.
+SEC_REQUEST_TIMEOUT_SECONDS = 30
 
 # Which LLM backend agent.py/eval_harness.py use when --backend isn't
 # passed explicitly (llm_backends.py's BACKENDS dict has the full list;

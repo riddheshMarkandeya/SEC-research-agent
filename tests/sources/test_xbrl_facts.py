@@ -5,6 +5,7 @@ elsewhere in this project) -- everything else is thin plumbing around
 verified-real fixture data captured from SEC's own companyconcept API.
 """
 
+from sec_agent.config import SEC_REQUEST_TIMEOUT_SECONDS
 from sec_agent.sources.xbrl_facts import (
     _duration_days,
     _latest_entry,
@@ -497,8 +498,8 @@ def test_fetch_concept_caches_to_disk_and_skips_refetch(monkeypatch, tmp_path):
         def json(self):
             return {"units": {"USD": []}}
 
-    def fake_get(url, headers):
-        calls.append(url)
+    def fake_get(url, headers, timeout):
+        calls.append((url, timeout))
         return _FakeResponse()
 
     monkeypatch.setattr(xbrl_facts.requests, "get", fake_get)
@@ -508,6 +509,8 @@ def test_fetch_concept_caches_to_disk_and_skips_refetch(monkeypatch, tmp_path):
     fetch_concept("NVDA", "GrossProfit")
 
     assert len(calls) == 1  # second call served from disk cache
+    # Without a timeout a stalled SEC response hangs the agent's tool call.
+    assert calls[0][1] == SEC_REQUEST_TIMEOUT_SECONDS
 
 
 def test_fetch_concept_returns_none_on_404(monkeypatch, tmp_path):
@@ -521,7 +524,7 @@ def test_fetch_concept_returns_none_on_404(monkeypatch, tmp_path):
         def raise_for_status(self):
             raise AssertionError("should not be called on a 404")
 
-    monkeypatch.setattr(xbrl_facts.requests, "get", lambda url, headers: _FakeResponse())
+    monkeypatch.setattr(xbrl_facts.requests, "get", lambda url, headers, timeout: _FakeResponse())
     monkeypatch.setattr(xbrl_facts.time, "sleep", lambda s: None)
 
     assert fetch_concept("PLTR", "Revenues") is None
@@ -801,3 +804,98 @@ def test_get_metric_all_companies_instant_metric_never_calls_get_frame(monkeypat
 
     assert calls == []
 
+
+# ---------------------------------------------------------------------------
+# get_metric's entry validation: malformed SEC entries are dropped, not
+# matched on or indexed into
+# ---------------------------------------------------------------------------
+def _get_metric_with_entries(monkeypatch, entries, **kwargs):
+    calls = []
+    monkeypatch.setattr("sec_agent.sources.xbrl_facts.fetch_concept", lambda ticker, tag: {"units": {"USD": entries}})
+    monkeypatch.setattr("sec_agent.sources.xbrl_facts.log_event", lambda category, **fields: calls.append((category, fields)))
+    return get_metric("NVDA", "gross_profit", **kwargs), calls
+
+
+def test_get_metric_drops_a_compact_date_that_would_win_the_string_max(monkeypatch):
+    # "20260125" sorts after "2026-01-25" as a string, so it would win
+    # _latest_entry's max(end) despite naming the same day.
+    compact = {**NVDA_GROSS_PROFIT_ENTRIES[2], "end": "20260125", "val": 1}
+    result, calls = _get_metric_with_entries(monkeypatch, [*NVDA_GROSS_PROFIT_ENTRIES, compact])
+    assert result is not None
+    assert result["value"] == 153463000000
+    assert calls == [("xbrl_entries_skipped", {"ticker": "NVDA", "tag": "GrossProfit", "kept": 3,
+                                               "dropped": 1, "reasons": {"bad_end": 1}})]
+
+
+def test_get_metric_skips_entries_missing_required_fields_instead_of_raising(monkeypatch):
+    no_accn = {k: v for k, v in NVDA_GROSS_PROFIT_ENTRIES[2].items() if k != "accn"}
+    null_val = {**NVDA_GROSS_PROFIT_ENTRIES[2], "val": None}
+    null_end = {**NVDA_GROSS_PROFIT_ENTRIES[2], "end": None}
+    null_form = {**NVDA_GROSS_PROFIT_ENTRIES[2], "form": None}
+    result, calls = _get_metric_with_entries(
+        monkeypatch, [*NVDA_GROSS_PROFIT_ENTRIES[:2], no_accn, null_val, null_end, null_form],
+        fiscal_year=2025, fiscal_period="FY",
+    )
+    assert result is not None and result["value"] == 97858000000
+    assert calls[0][1]["dropped"] == 4
+    assert calls[0][1]["reasons"] == {"bad_accn": 1, "bad_val": 1, "bad_end": 1, "bad_form": 1}
+
+
+def test_get_metric_rejects_a_boolean_val(monkeypatch):
+    # bool is an int subclass; True would otherwise pass as the value 1.
+    entry = {**NVDA_GROSS_PROFIT_ENTRIES[2], "val": True}
+    result, calls = _get_metric_with_entries(monkeypatch, [entry], fiscal_year=2026, fiscal_period="FY")
+    assert result is None
+    assert calls[0][1]["reasons"] == {"bad_val": 1}
+
+
+def test_get_metric_drops_a_non_canonical_start(monkeypatch):
+    entry = {**NVDA_GROSS_PROFIT_ENTRIES[2], "start": "20250127"}
+    result, calls = _get_metric_with_entries(monkeypatch, [entry], fiscal_year=2026, fiscal_period="FY")
+    assert result is None
+    assert calls[0][1]["reasons"] == {"bad_start": 1}
+
+
+def test_get_metric_drops_a_non_finite_val(monkeypatch):
+    # json.loads accepts NaN/Infinity tokens, and nan would then fail every
+    # downstream number match silently.
+    nan_val = {**NVDA_GROSS_PROFIT_ENTRIES[2], "val": float("nan")}
+    inf_val = {**NVDA_GROSS_PROFIT_ENTRIES[2], "val": float("inf")}
+    result, calls = _get_metric_with_entries(monkeypatch, [nan_val, inf_val], fiscal_year=2026, fiscal_period="FY")
+    assert result is None
+    assert calls[0][1]["reasons"] == {"bad_val": 2}
+
+
+def test_get_metric_drops_an_entry_that_is_not_an_object(monkeypatch):
+    result, calls = _get_metric_with_entries(
+        monkeypatch, [None, "x", *NVDA_GROSS_PROFIT_ENTRIES], fiscal_year=2026, fiscal_period="FY",
+    )
+    assert result is not None and result["value"] == 153463000000
+    assert calls[0][1]["reasons"] == {"bad_entry": 2}
+
+
+def test_get_metric_drops_a_non_integer_fy_but_keeps_a_null_one(monkeypatch):
+    # A quarterly entry's fy is returned as fiscal_year, and get_yoy_growth
+    # subtracts 1 from it. Null is real SEC data (8-K/proxy restatements).
+    as_string = {**NVDA_GROSS_PROFIT_ENTRIES[2], "fy": "2026", "val": 1}
+    as_bool = {**NVDA_GROSS_PROFIT_ENTRIES[2], "fy": True, "val": 2}
+    null_fy = {**NVDA_GROSS_PROFIT_ENTRIES[1], "fy": None, "fp": None, "form": "8-K"}
+    result, calls = _get_metric_with_entries(monkeypatch, [as_string, as_bool, null_fy])
+    assert result is not None and result["value"] == 97858000000
+    assert result["fiscal_year"] is None
+    assert calls[0][1]["reasons"] == {"bad_fy": 2}
+
+
+def test_get_metric_drops_a_non_canonical_filed(monkeypatch):
+    # filed is the pickers' last sort key, compared as a string.
+    as_number = {**NVDA_GROSS_PROFIT_ENTRIES[2], "filed": 20260225}
+    no_filed = {k: v for k, v in NVDA_GROSS_PROFIT_ENTRIES[1].items() if k != "filed"}
+    result, calls = _get_metric_with_entries(monkeypatch, [as_number, no_filed], fiscal_year=2025, fiscal_period="FY")
+    assert result is not None and result["value"] == 97858000000
+    assert calls[0][1]["reasons"] == {"bad_filed": 1}
+
+
+def test_get_metric_logs_nothing_when_every_entry_is_usable(monkeypatch):
+    result, calls = _get_metric_with_entries(monkeypatch, NVDA_GROSS_PROFIT_ENTRIES, fiscal_year=2026, fiscal_period="FY")
+    assert result is not None and result["value"] == 153463000000
+    assert calls == []

@@ -8,9 +8,26 @@ fiscal-year-end safeguard. See
 docs/decisions/2026-08-16-fiscal-period-labels-tried-and-reverted.md.
 """
 
+import re
 from datetime import date
 
 from sec_agent.sources.companies import load_companies
+
+_DATE_PATTERN = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}")
+
+
+def is_canonical_date(value: object) -> bool:
+    """A YYYY-MM-DD string naming a real calendar date. fromisoformat alone
+    also takes forms like 20240630, which sort wrongly as strings, and the
+    callers compare and sort SEC's date strings directly. Takes any value
+    because SEC JSON can hold a null or a number where a date belongs."""
+    if not isinstance(value, str) or not _DATE_PATTERN.fullmatch(value):
+        return False
+    try:
+        date.fromisoformat(value)
+    except ValueError:
+        return False
+    return True
 
 
 def fiscal_year_label(fiscal_year_end_month: int, report_date: date) -> int:

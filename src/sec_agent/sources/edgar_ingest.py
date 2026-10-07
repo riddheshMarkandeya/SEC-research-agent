@@ -34,8 +34,8 @@ import requests
 from bs4 import BeautifulSoup, XMLParsedAsHTMLWarning
 
 from sec_agent.sources.companies import CompanyInfo, load_companies
-from sec_agent.sources.period_labels import fiscal_year_label
-from sec_agent.config import DATA_DIR, SEC_USER_AGENT, SEC_USER_AGENT_EMAIL
+from sec_agent.sources.period_labels import fiscal_year_label, is_canonical_date
+from sec_agent.config import DATA_DIR, SEC_REQUEST_TIMEOUT_SECONDS, SEC_USER_AGENT, SEC_USER_AGENT_EMAIL
 from sec_agent.tracing import log_event
 
 # SEC filings are often iXBRL (XHTML with embedded XML tags for financial
@@ -56,7 +56,6 @@ MIN_FISCAL_YEAR = 2024
 
 OUTPUT_DIR = DATA_DIR
 REQUEST_DELAY_SECONDS = 0.3  # be polite to SEC's servers — stay under 10 req/sec
-REQUEST_TIMEOUT_SECONDS = 30
 
 # The submissions API sends many more columns; these are the ones kept.
 _SUBMISSION_COLUMNS = ("form", "accessionNumber", "filingDate", "primaryDocument", "reportDate")
@@ -67,7 +66,6 @@ _SUBMISSION_COLUMNS = ("form", "accessionNumber", "filingDate", "primaryDocument
 _ACCESSION_PATTERN = re.compile(r"[0-9]{10}-[0-9]{2}-[0-9]{6}")
 _PAGE_NAME_PATTERN = re.compile(r"CIK[0-9]{10}-submissions-[0-9]{3}\.json")
 _DOCUMENT_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
-_DATE_PATTERN = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}")
 
 
 # ---------------------------------------------------------------------------
@@ -94,20 +92,6 @@ def _rows(block: dict) -> list[dict]:
     return [dict(zip(_SUBMISSION_COLUMNS, values)) for values in zip(*columns, strict=True)]
 
 
-def _is_canonical_date(value: str) -> bool:
-    """YYYY-MM-DD and a real calendar date. fromisoformat alone also takes
-    forms like 20240630, which sort wrongly as strings: the oldest-row
-    choice compares filingDate strings, and retrieval matches and sorts
-    reportDate strings from the chunk metadata."""
-    if not _DATE_PATTERN.fullmatch(value):
-        return False
-    try:
-        date.fromisoformat(value)
-    except ValueError:
-        return False
-    return True
-
-
 def _ingestable_fiscal_year(row: dict, fiscal_year_end_month: int) -> int | None:
     """The row's fiscal year, or None (logged) for a row that can't be
     ingested: a kept field that isn't a string (a null, say), an accession
@@ -119,9 +103,9 @@ def _ingestable_fiscal_year(row: dict, fiscal_year_end_month: int) -> int | None
         reason = "bad_accession"
     elif not _DOCUMENT_PATTERN.fullmatch(row["primaryDocument"]):
         reason = "bad_primary_document"
-    elif not _is_canonical_date(row["filingDate"]):
+    elif not is_canonical_date(row["filingDate"]):
         reason = "bad_filing_date"
-    elif not _is_canonical_date(row["reportDate"]):
+    elif not is_canonical_date(row["reportDate"]):
         reason = "bad_report_date"
     else:
         return fiscal_year_label(fiscal_year_end_month, date.fromisoformat(row["reportDate"]))
@@ -177,7 +161,7 @@ def collect_filings(
 
 
 def _get_json(url: str) -> dict:  # pragma: no cover -- live SEC call, always monkeypatched in tests
-    resp = requests.get(url, headers=HEADERS, timeout=REQUEST_TIMEOUT_SECONDS)
+    resp = requests.get(url, headers=HEADERS, timeout=SEC_REQUEST_TIMEOUT_SECONDS)
     resp.raise_for_status()
     return resp.json()
 
@@ -226,7 +210,7 @@ def fetch_filing_html(  # pragma: no cover -- live SEC document fetch, always mo
 ) -> str:
     """Download the raw filing HTML."""
     resp = requests.get(
-        _filing_document_url(cik, accession, primary_doc), headers=HEADERS, timeout=REQUEST_TIMEOUT_SECONDS
+        _filing_document_url(cik, accession, primary_doc), headers=HEADERS, timeout=SEC_REQUEST_TIMEOUT_SECONDS
     )
     resp.raise_for_status()
     return resp.text

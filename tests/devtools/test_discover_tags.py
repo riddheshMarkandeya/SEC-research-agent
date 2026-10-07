@@ -9,6 +9,7 @@ available up front."
 
 from datetime import date, timedelta
 
+from sec_agent.config import SEC_REQUEST_TIMEOUT_SECONDS
 from sec_agent.devtools.discover_tags import fetch_company_facts, list_tags
 
 RECENT_END = (date.today() - timedelta(days=30)).isoformat()
@@ -70,6 +71,7 @@ def test_fetch_company_facts_caches_to_disk_and_skips_refetch(monkeypatch, tmp_p
 
     monkeypatch.setattr(discover_tags, "CACHE_DIR", tmp_path)
     calls = []
+    timeouts = []
 
     class _FakeResponse:
         status_code = 200
@@ -80,8 +82,9 @@ def test_fetch_company_facts_caches_to_disk_and_skips_refetch(monkeypatch, tmp_p
         def json(self):
             return {"facts": {"us-gaap": {}}}
 
-    def fake_get(url, headers):
+    def fake_get(url, headers, timeout):
         calls.append(url)
+        timeouts.append(timeout)
         return _FakeResponse()
 
     monkeypatch.setattr(discover_tags.requests, "get", fake_get)
@@ -98,6 +101,7 @@ def test_fetch_company_facts_uses_the_tickers_cik_in_the_url(monkeypatch, tmp_pa
 
     monkeypatch.setattr(discover_tags, "CACHE_DIR", tmp_path)
     calls = []
+    timeouts = []
 
     class _FakeResponse:
         status_code = 200
@@ -108,8 +112,9 @@ def test_fetch_company_facts_uses_the_tickers_cik_in_the_url(monkeypatch, tmp_pa
         def json(self):
             return {"facts": {"us-gaap": {}}}
 
-    def fake_get(url, headers):
+    def fake_get(url, headers, timeout):
         calls.append(url)
+        timeouts.append(timeout)
         return _FakeResponse()
 
     monkeypatch.setattr(discover_tags.requests, "get", fake_get)
@@ -118,3 +123,4 @@ def test_fetch_company_facts_uses_the_tickers_cik_in_the_url(monkeypatch, tmp_pa
     fetch_company_facts("NVDA")
 
     assert calls == ["https://data.sec.gov/api/xbrl/companyfacts/CIK0001045810.json"]
+    assert timeouts == [SEC_REQUEST_TIMEOUT_SECONDS]

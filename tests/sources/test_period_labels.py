@@ -11,7 +11,15 @@ docs/decisions/2026-08-16-fiscal-period-labels-tried-and-reverted.md.
 
 from datetime import date
 
-from sec_agent.sources.period_labels import chunk_period_label, fiscal_quarter, fiscal_year_label, period_label
+import pytest
+
+from sec_agent.sources.period_labels import (
+    chunk_period_label,
+    fiscal_quarter,
+    fiscal_year_label,
+    is_canonical_date,
+    period_label,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -88,3 +96,22 @@ def test_chunk_period_label_looks_up_fiscal_year_end_month_from_companies_json()
     label = chunk_period_label("PLTR", "10-K", "2025-12-31")
     assert "annual report" in label
     assert "fiscal year 2025" in label
+
+
+# ---------------------------------------------------------------------------
+# is_canonical_date
+# ---------------------------------------------------------------------------
+def test_is_canonical_date_accepts_dashed_real_date():
+    assert is_canonical_date("2024-06-30") is True
+
+
+@pytest.mark.parametrize("value", [
+    "20240630",  # fromisoformat takes it, but it sorts after "2024-12-31" as a string
+    "2024-02-30",  # right shape, not a real date
+    "2024-6-30",
+    "",
+    None,  # a null from SEC JSON must be refused, not raise TypeError
+    20240630,
+])
+def test_is_canonical_date_rejects_non_canonical_or_non_string(value):
+    assert is_canonical_date(value) is False

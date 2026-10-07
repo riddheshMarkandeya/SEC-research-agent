@@ -21,13 +21,16 @@ formulas.py, not here -- see that module's docstring for why.
 
 import http
 import json
+import math
 import time
+from collections import Counter
 from datetime import date
 
 import requests
 
 from sec_agent.sources.companies import load_companies
-from sec_agent.config import SEC_USER_AGENT, XBRL_CACHE_DIR
+from sec_agent.config import SEC_REQUEST_TIMEOUT_SECONDS, SEC_USER_AGENT, XBRL_CACHE_DIR
+from sec_agent.sources.period_labels import is_canonical_date
 from sec_agent.tracing import log_event
 
 HEADERS = {"User-Agent": SEC_USER_AGENT}
@@ -100,6 +103,59 @@ def _duration_days(entry: dict) -> int | None:
     return (end - start).days
 
 
+def _is_number(value: object) -> bool:
+    # bool subclasses int; nan never equals any number a citation check
+    # compares it with.
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
+
+
+def _is_fiscal_year(value: object) -> bool:
+    # Null is real SEC data (8-K and proxy restatements carry fy/fp null)
+    # and callers already handle a None fiscal year; anything else must be
+    # an int they can do arithmetic on.
+    return value is None or (isinstance(value, int) and not isinstance(value, bool))
+
+
+# (reason, check) pairs, first failing check names the defect. The
+# pickers below compare and sort end/start/filed as strings and the
+# result indexes val/end/form/accn; start and filed may be absent.
+_ENTRY_CHECKS = (
+    ("bad_val", lambda e: _is_number(e.get("val"))),
+    ("bad_end", lambda e: is_canonical_date(e.get("end"))),
+    ("bad_start", lambda e: "start" not in e or is_canonical_date(e["start"])),
+    ("bad_filed", lambda e: "filed" not in e or is_canonical_date(e["filed"])),
+    ("bad_fy", lambda e: _is_fiscal_year(e.get("fy"))),
+    ("bad_form", lambda e: isinstance(e.get("form"), str)),
+    ("bad_accn", lambda e: isinstance(e.get("accn"), str)),
+)
+
+
+def _entry_defect(entry: object) -> str | None:
+    """Why `entry` can't be used, or None if it can."""
+    if not isinstance(entry, dict):
+        return "bad_entry"
+    return next((reason for reason, ok in _ENTRY_CHECKS if not ok(entry)), None)
+
+
+def _usable_entries(entries: list, ticker: str, tag: str) -> list[dict]:
+    """The entries every picker below may rely on (see _entry_defect).
+    Logs one event per call when anything was dropped. It repeats for the
+    same cached data on every lookup on purpose: each question's trace
+    then shows the drop that may have changed its answer."""
+    kept: list[dict] = []
+    reasons: Counter[str] = Counter()
+    for entry in entries:
+        defect = _entry_defect(entry)
+        if defect is None:
+            kept.append(entry)
+        else:
+            reasons[defect] += 1
+    if reasons:
+        log_event("xbrl_entries_skipped", ticker=ticker, tag=tag, kept=len(kept),
+                  dropped=sum(reasons.values()), reasons=dict(reasons))
+    return kept
+
+
 def _tag_for(ticker: str, metric: str) -> str:
     overrides = METRIC_TAG_OVERRIDES.get(ticker, {})
     tag = overrides.get(metric, DEFAULT_METRIC_TAGS.get(metric))
@@ -123,7 +179,7 @@ def fetch_concept(ticker: str, tag: str) -> dict | None:
     companies = load_companies()
     cik = companies[ticker]["cik"]
     url = f"https://data.sec.gov/api/xbrl/companyconcept/CIK{cik}/us-gaap/{tag}.json"
-    resp = requests.get(url, headers=HEADERS)
+    resp = requests.get(url, headers=HEADERS, timeout=SEC_REQUEST_TIMEOUT_SECONDS)
     time.sleep(REQUEST_DELAY_SECONDS)
     if resp.status_code == http.HTTPStatus.NOT_FOUND:
         return None
@@ -329,7 +385,7 @@ def get_metric(
     data = fetch_concept(ticker, tag)
     if data is None:
         return None
-    entries = data.get("units", {}).get("USD", [])
+    entries = _usable_entries(data.get("units", {}).get("USD", []), ticker, tag)
     # An empty string must be treated as "not provided" and fall through
     # to the fiscal_year/fiscal_period path, not as a date to match
     # against: the model sometimes sends period_end_date="" alongside a
@@ -377,7 +433,7 @@ def fetch_frame(tag: str, frame: str) -> dict | None:  # pragma: no cover -- liv
         return json.loads(cache_path.read_text(encoding="utf-8"))
 
     url = f"https://data.sec.gov/api/xbrl/frames/us-gaap/{tag}/USD/{frame}.json"
-    resp = requests.get(url, headers=HEADERS)
+    resp = requests.get(url, headers=HEADERS, timeout=SEC_REQUEST_TIMEOUT_SECONDS)
     time.sleep(REQUEST_DELAY_SECONDS)
     if resp.status_code == http.HTTPStatus.NOT_FOUND:
         return None

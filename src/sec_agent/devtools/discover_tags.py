@@ -31,7 +31,7 @@ from datetime import date, timedelta
 import requests
 
 from sec_agent.sources.companies import load_companies
-from sec_agent.config import SEC_USER_AGENT, XBRL_CACHE_DIR
+from sec_agent.config import SEC_REQUEST_TIMEOUT_SECONDS, SEC_USER_AGENT, XBRL_CACHE_DIR
 
 HEADERS = {"User-Agent": SEC_USER_AGENT}
 CACHE_DIR = XBRL_CACHE_DIR
@@ -58,7 +58,7 @@ def fetch_company_facts(ticker: str) -> dict:
     companies = load_companies()
     cik = companies[ticker]["cik"]
     url = f"https://data.sec.gov/api/xbrl/companyfacts/CIK{cik}.json"
-    resp = requests.get(url, headers=HEADERS)
+    resp = requests.get(url, headers=HEADERS, timeout=SEC_REQUEST_TIMEOUT_SECONDS)
     time.sleep(REQUEST_DELAY_SECONDS)
     resp.raise_for_status()
     data = resp.json()
