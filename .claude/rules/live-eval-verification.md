@@ -103,6 +103,15 @@ invalid for any before/after comparison — say so explicitly, keep the
 file for the audit trail, and do not treat any row past the first error
 as a real result.
 
+Before starting a full run, list `eval/eval_results/` for reports
+timestamped since the last reset (07:00Z while US daylight time is on,
+08:00Z otherwise). Each one already spent part of today's 500, a full run
+costs about 250, and so does any earlier full baseline the same day. If
+one is there, wait for the next reset. Counting only the current
+session's requests misses runs from earlier sessions: a full run on
+2026-10-06 ran out at question 31 for exactly that reason, because the
+46/48 baseline had run that morning.
+
 ## Regression notes
 
 When a live spot-check (the rule above) or any other live verification
