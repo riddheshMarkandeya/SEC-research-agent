@@ -610,6 +610,24 @@ def test_ingest_ticker_returns_none_and_logs_when_filing_list_fails(monkeypatch,
     assert events == [("ingest_filing_list_failed", {"ticker": "ACME", "error": "KeyError: 'filings'"})]
 
 
+def test_ingest_ticker_progress_output_encodes_on_a_cp1252_console(monkeypatch, tmp_path, capsys):
+    # A Windows console defaults to cp1252; a character outside it makes
+    # print() raise mid-run, after some filings are already saved.
+    filings = [_row("10-Q", "2024-06-30", accession="bad-1"), _row("10-Q", "2024-03-31", accession="ok-1")]
+    _setup_ingest_ticker(monkeypatch, filings, fail_accessions={"bad-1"})
+    edgar_ingest._ingest_ticker("ACME", _ACME, tmp_path / "ACME")
+
+    def boom(cik, fyem):
+        raise KeyError("filings")
+
+    monkeypatch.setattr(edgar_ingest, "get_filing_list", boom)
+    edgar_ingest._ingest_ticker("OTHER", _ACME, tmp_path / "OTHER")
+
+    out = capsys.readouterr().out
+    assert "OK Saved" in out and "FAILED:" in out and "FAILED to fetch filing list" in out
+    out.encode("cp1252")
+
+
 def test_save_filing_writes_meta_last(monkeypatch, tmp_path):
     """A crash between files must never leave a meta-only filing: meta goes
     last, so _already_ingested's three-file check and the chunker agree."""

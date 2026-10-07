@@ -354,7 +354,7 @@ def _ingest_ticker(ticker: str, info: CompanyInfo, out_dir: Path) -> dict | None
     # (KeyError/TypeError), and each means the same here: skip this
     # company and keep going with the rest.
     except Exception as e:
-        print(f"  ✗ Failed to fetch filing list for {ticker}: {e}")
+        print(f"  FAILED to fetch filing list for {ticker}: {e}")
         log_event("ingest_filing_list_failed", ticker=ticker, error=f"{type(e).__name__}: {e}")
         return None
 
@@ -380,7 +380,7 @@ def _ingest_ticker(ticker: str, info: CompanyInfo, out_dir: Path) -> dict | None
             html = fetch_filing_html(cik, accession, filing["primaryDocument"])
             text, tables = parse_filing(html)
         except Exception as e:
-            print(f"    ✗ Failed: {e}")
+            print(f"    FAILED: {e}")
             log_event("ingest_filing_failed", ticker=ticker, accession=accession, error=f"{type(e).__name__}: {e}")
             counts["failed"] += 1
             continue
@@ -388,13 +388,13 @@ def _ingest_ticker(ticker: str, info: CompanyInfo, out_dir: Path) -> dict | None
         meta = {**filing, "ticker": ticker, "cik": cik, "num_tables": len(tables), "text_length": len(text)}
         _save_filing(out_dir, accession, meta, text, tables)
         counts["saved"] += 1
-        print(f"    ✓ Saved: {len(text):,} chars text, {len(tables)} tables")
+        print(f"    OK Saved: {len(text):,} chars text, {len(tables)} tables")
     return counts
 
 
 def main():  # pragma: no cover -- live SEC ingestion orchestration loop
     if "your.email@example.com" in SEC_USER_AGENT_EMAIL:
-        print("⚠️  Set SEC_USER_AGENT_EMAIL in .env before running (see .env.example) — "
+        print("WARNING: Set SEC_USER_AGENT_EMAIL in .env before running (see .env.example) -- "
               "SEC will reject requests without a real-looking User-Agent.")
         return
 
