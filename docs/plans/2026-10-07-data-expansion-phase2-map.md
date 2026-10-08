@@ -141,6 +141,23 @@ is decided, the build work packages are ordered in BACKLOG, and this map is froz
 - **Filing depth** (user, 2026-10-08): (a) FY2024+, a consequence of the cross-period scope
   above; no v2 question needs older narrative text.
 
+- **How questions get written** (user, 2026-10-08): Claude drafts, the user approves (as in v1).
+  - Drafted from the ingested chunk files and filings read directly, never through the agent's
+    search or fact tools (that would select for what retrieval already finds). XBRL is a
+    cross-check only.
+  - Every gold value has a verbatim anchor (accession + anchor, `retrieval_gold.jsonl` shape)
+    that a `devtools` script confirms is in the chunk file. It's cross-checked against
+    companyfacts where a tag exists. Derived values are recomputed by script, and each
+    "never disclosed" refusal records a corpus-wide search showing it's absent. The script is
+    part of the v2 build package.
+  - The user reads every question for wording and trap design, and spot-checks gold values on
+    about 10 (one or more per category, plus every false-premise and look-alike trap). If a
+    spot-check finds a wrong gold value, that whole category is re-checked.
+  - Starts after the 7 companies are ingested, and can run in parallel with the fact-tool fix
+    package. Batched by company or category across sessions, each batch passing the script
+    before review. The agent is never run on a question while it's drafted.
+  - v2 `retrieval_gold.jsonl` anchors are written at authoring time.
+
 ## Open tickets
 
 ### Company list
@@ -173,7 +190,7 @@ is decided, the build work packages are ordered in BACKLOG, and this map is froz
   and the filing text, plus a user spot-check?
 - Type: grilling
 - Blocked by: v2 question types and mix (done)
-- Status: open
+- Status: done (see Decisions so far)
 
 ### Grading new question types
 
