@@ -158,6 +158,45 @@ is decided, the build work packages are ordered in BACKLOG, and this map is froz
     before review. The agent is never run on a question while it's drafted.
   - v2 `retrieval_gold.jsonl` anchors are written at authoring time.
 
+- **Grading new question types** (user, 2026-10-08). Revisits the question mix above with two
+  categories of question the user added this session (ambiguous, no-data refusals).
+  - Attribution: `comparison` also checks each value belongs to its entity (nearest preceding
+    company name or `companies.json` alias in the same sentence, bullet or table row). Today a
+    JPM/BAC swap passes. Rank-of-3+ questions ask for every company's value and grade as
+    `comparison`, not judged.
+  - New types: `text` (an `accepted` list of variants, case/punctuation-insensitive, dates
+    normalized, at least one citation marker); `refusal` and `clarify`, judged from fixed
+    per-kind criteria templates. A refusal must give the right reason for its kind (not
+    covered, not yet filed, never disclosed, false premise). These sit outside the ~3 `judged`
+    cap, which is for answerable text questions.
+  - `forbidden_values` (optional, per question): fails when a trap value (the look-alike's
+    figure, a stale "latest", the wrong fiscal label's value) is attributed to the asked
+    entity. Cross-period checks entity only, no period parser: questions are worded so a
+    period swap changes the answer (the sign of a change); fiscal-label traps use
+    `forbidden_values`.
+  - Tolerance stays 1% relative; a per-question `tolerance` override only where the authoring
+    script shows input rounding moves the result further, with that spread recorded.
+  - New 7th category `ambiguous`, about 6 questions (suite about 56, about 280 requests per
+    full run). One dominant default (no period on a balance-sheet item, relative time,
+    calendar vs fiscal year): answer it and name the period, graded `numeric` plus the `text`
+    matcher on the period. Materially different readings (unspecified margin/earnings/revenue
+    variant, segment vs geography, no period on a flow item): a clarifying question or both
+    readings labelled passes, graded `clarify`.
+  - No-data refusals, beyond out-of-corpus, future and never-disclosed: a pre-FY2024 pair (a
+    figure XBRL holds is answerable, since the fact tools are the agent's sources; a text-only
+    figure is refused), and one "filed but not ingested" question if one exists at authoring
+    time.
+  - Telling the model its per-company period coverage is an agent change: not before the v2
+    baseline. It's the first headroom package; the pre-FY2024 pair and the not-ingested
+    question measure it.
+  - Calculator: about 8 questions have no fact-tool shortcut (yoy, average, ratio), so
+    `calculate` is the only route: text-only inputs, cross-company differences, sector ratios
+    (bank efficiency ratio), compound chains. Tagged `needs_calculate`; graded on the final
+    value only. Optional: report rows record tool names called.
+  - All of it joins the v2 build package (with the `[1, 6]` citation fix). v1's graders and
+    questions stay unchanged; the new graders get offline unit tests on realistic answer
+    text, the 90% critical-core bar and a live spot-check.
+
 ## Open tickets
 
 ### Company list
@@ -198,7 +237,7 @@ is decided, the build work packages are ordered in BACKLOG, and this map is froz
   current numeric grader stretch to them?
 - Type: grilling
 - Blocked by: v2 question types and mix (done)
-- Status: open
+- Status: done (see Decisions so far)
 
 ### XBRL tag check on the shortlist
 
