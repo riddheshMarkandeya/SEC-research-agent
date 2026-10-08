@@ -113,6 +113,34 @@ is decided, the build work packages are ordered in BACKLOG, and this map is froz
     plan picks the fiscal-year fix design; it keeps v1 green (incl. CRM/NVDA labels) and re-runs
     the tag check on the 7 tickers as acceptance.
 
+- **v2 question types and mix** (user, 2026-10-08): about 50 questions, each with a `category`
+  (what results are reported by) separate from its grading `type`.
+  - 6 categories: extraction 7, numerical reasoning 10 (about 4 compound, 3+ steps; derived and
+    compound merged so each category keeps about 8), cross-period 8, cross-company 9,
+    text/footnote 8, refusal/trap 8.
+  - Text answers are exactly checkable (a date, name or amount) where possible; at most about 3
+    `judged` questions. About 6–8 questions, spread across categories, target "no fact" gaps
+    (XBRL missing, filing text has it), which the adaptation policy calls headroom.
+  - Refusal/trap: 1–2 each of out-of-corpus company, future period, never-disclosed metric,
+    false premise, look-alike entity swap. Plus 3–4 fiscal-label questions (TGT, WMT, JNJ) in
+    extraction and cross-period, doubling as acceptance tests for the fiscal-year fix.
+  - Companies: tech 5 questions, all fresh (3 cross-company, 2 hard single-company); no v1
+    question migrates (all 48 pass, so none adds headroom). The 7 new companies get about 5–6
+    each, at most 7. Cross-company: 4 within the look-alike pairs (2 JPM/BAC, 2 TGT/WMT), 3
+    cross-sector (at least 2 tech vs a new company), 2 rank-of-3+. The rank questions measure the
+    multi-ticket search gap rather than waiting on a tool fix.
+  - Cross-period stays within what FY2024+ filings show (up to 3 fiscal years, or a 10-Q vs the
+    prior 10-K), so every gold value is citable from ingested text. Questions spread across
+    FY2024 and FY2025 filings.
+  - Tags per question: `category`, `steps` (1/2/3+), `answer_source` (table/text/both), `trap`
+    (none, look-alike, fiscal-label, false-premise, not-disclosed, out-of-corpus,
+    future-period). No subjective difficulty label.
+  - Difficulty: one baseline; if answerable questions pass above 80% (refusals excluded), swap
+    the easiest once.
+
+- **Filing depth** (user, 2026-10-08): (a) FY2024+, a consequence of the cross-period scope
+  above; no v2 question needs older narrative text.
+
 ## Open tickets
 
 ### Company list
@@ -128,7 +156,7 @@ is decided, the build work packages are ordered in BACKLOG, and this map is froz
   everything? Leaning (a) unless the v2 question types need old narrative text.
 - Type: grilling
 - Blocked by: R1 Benchmark landscape
-- Status: open
+- Status: done (see Decisions so far)
 
 ### v2 question types and mix
 
@@ -137,14 +165,14 @@ is decided, the build work packages are ordered in BACKLOG, and this map is froz
 - Input: skew away from tech, about 5 tech questions (Company list decision).
 - Type: grilling
 - Blocked by: R1 Benchmark landscape, Company list (both done)
-- Status: open
+- Status: done (see Decisions so far)
 
 ### How questions get written
 
 - Question: By hand, or Claude-drafted with each gold value and citation checked against XBRL
   and the filing text, plus a user spot-check?
 - Type: grilling
-- Blocked by: v2 question types and mix
+- Blocked by: v2 question types and mix (done)
 - Status: open
 
 ### Grading new question types
@@ -152,7 +180,7 @@ is decided, the build work packages are ordered in BACKLOG, and this map is froz
 - Question: How are cross-company, multi-year, multi-hop and refusal answers graded, and does the
   current numeric grader stretch to them?
 - Type: grilling
-- Blocked by: v2 question types and mix
+- Blocked by: v2 question types and mix (done)
 - Status: open
 
 ### XBRL tag check on the shortlist
