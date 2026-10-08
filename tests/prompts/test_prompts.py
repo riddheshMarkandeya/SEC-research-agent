@@ -154,3 +154,43 @@ def test_malformed_snapshot_raises(tmp_path):
     bad.write_text("{not json", encoding="utf-8")
     with pytest.raises(ValueError):
         prompts.prompt_fingerprint(bad)
+
+
+def test_count_word_spells_small_counts_and_falls_back_to_digits():
+    from sec_agent.prompts.agent_system import count_word
+
+    assert count_word(0) == "zero"
+    assert count_word(5) == "five"
+    assert count_word(12) == "twelve"
+    assert count_word(13) == "13"
+    assert count_word(-1) == "-1"
+
+
+def test_company_count_text_follows_companies():
+    # A fresh process, so the import-time render under a patched COMPANIES
+    # leaves no reloaded module objects behind in this one.
+    script = (
+        "import json, sys; sys.path.insert(0, sys.argv[1]); "
+        "from sec_agent.sources import companies; "
+        "companies.COMPANIES = {f'T{i}': f'Company {i}' for i in range(12)}; "
+        "from sec_agent.prompts import agent_system, agent_tools, mcp; "
+        "print(json.dumps({"
+        "'system': agent_system.SYSTEM_PROMPT.replace('You have five tools', ''), "
+        "'search': agent_tools.SEARCH_TOOL_SCHEMA['function']['description'], "
+        "'compare': agent_tools.COMPARE_TOOL_SCHEMA['function']['description'], "
+        "'mcp_search': mcp.MCP_SEARCH_TOOL_SCHEMA['function']['description']}))"
+    )
+    proc = subprocess.run(
+        [sys.executable, "-c", script, str(PROJECT_ROOT / "src")],
+        capture_output=True,
+        cwd=PROJECT_ROOT,
+        check=False,
+    )
+    assert proc.returncode == 0, proc.stderr.decode("utf-8", errors="replace")
+    texts = json.loads(proc.stdout)
+
+    for name, text in texts.items():
+        assert "five" not in text.lower(), name
+        assert "twelve" in text.lower(), name
+    assert "ALL TWELVE" in texts["system"]
+    assert "ALL TWELVE" in texts["compare"]

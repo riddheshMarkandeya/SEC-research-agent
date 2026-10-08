@@ -3,6 +3,7 @@ server's tool handlers return, and MCP_SEARCH_TOOL_SCHEMA, its own
 search_filings schema. The fact and compare schemas it lists come from
 prompts.agent_tools unchanged."""
 
+from sec_agent.prompts.agent_system import COMPANY_COUNT
 from sec_agent.prompts.agent_tools import SEARCH_TOOL_SCHEMA
 
 FACT_NOT_AVAILABLE_ERROR = "not available for this company/metric/period"
@@ -20,7 +21,7 @@ MCP_SEARCH_TOOL_SCHEMA = {
     "function": {
         **_search,
         "description": (
-            "Search SEC 10-K/10-Q filing excerpts from the five covered companies. Returns the most "
+            f"Search SEC 10-K/10-Q filing excerpts from the {COMPANY_COUNT} covered companies. Returns the most "
             "relevant excerpts as a list of {text, source} objects, where source identifies the filing. "
             "Use it for narrative content (risk factors, MD&A, segment or product-line figures) and for "
             "any metric get_financial_fact doesn't cover or finds no data for. Pass ticker to restrict "

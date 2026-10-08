@@ -11,6 +11,7 @@ clients by mcp_server, and SEARCH through its MCP variant in prompts.mcp."""
 from sec_agent.sources.companies import COMPANIES
 from sec_agent.sources.formulas import RATIO_DEFINITIONS
 from sec_agent.prompts.agent_system import (
+    COMPANY_COUNT,
     CROSS_COMPANY_RATIOS,
     DECIMAL_RATIOS,
     FACT_METRICS,
@@ -30,7 +31,7 @@ SEARCH_TOOL_SCHEMA = {
     "function": {
         "name": "search_filings",
         "description": (
-            "Search SEC 10-K/10-Q filing excerpts from the five covered companies. Returns the most "
+            f"Search SEC 10-K/10-Q filing excerpts from the {COMPANY_COUNT} covered companies. Returns the most "
             "relevant excerpts, each headed with a citation number, ticker, form type and report date. "
             "Use it for narrative content (risk factors, MD&A, segment or product-line figures) and for "
             "any metric get_financial_fact doesn't cover or finds no data for. It returns filing text "
@@ -131,10 +132,10 @@ COMPARE_TOOL_SCHEMA = {
     "function": {
         "name": "compare_financial_metric",
         "description": (
-            "Get one financial metric for ALL FIVE covered companies at once, for the same "
+            f"Get one financial metric for ALL {COMPANY_COUNT.upper()} covered companies at once, for the same "
             "period -- use this instead of calling get_financial_fact once per company for a "
             "comparison/ranking question. Anchor the period on whichever company the question "
-            "mentions (or any one of the five if it doesn't specify a particular company's "
+            f"mentions (or any one of the {COMPANY_COUNT} if it doesn't specify a particular company's "
             "date) using the SAME period_end_date OR fiscal_year+fiscal_period rules as "
             "get_financial_fact; every other company's value for the closest matching period is "
             "returned automatically -- do not try to compute each company's own fiscal period "

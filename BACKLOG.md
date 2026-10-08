@@ -54,7 +54,6 @@ reference:
 ### Roadmap (user, 2026-10-06): data expansion → harder eval questions → monorepo → admin web UI → chat web UI
 
 - **Phase 2 build** (ordered 2026-10-08; decisions are in the phase 2 map (`docs/plans/2026-10-07-data-expansion-phase2-map.md`, frozen), under Decisions so far). Do the packages in order; 4 and 5 can run in parallel.
-- [ ] **[refactor, Med, Standard]** **Phase 2 build 1: company count from `COMPANIES`.** `prompts/agent_system.py` hard-codes "five companies", "ALL FIVE" and "all five" (rule 7). Derive them from `COMPANIES`. If the rendered text is unchanged at 5 companies, the model-input snapshot doesn't move and no panel is needed; if it moves, run a panel screen.
 - [ ] **[feature, Med, Substantial]** **Phase 2 build 2: ingest the 7 companies** (JPM, BAC, TGT, WMT, XOM, JNJ, CAT; CIKs pinned by hand in `companies.json`, XOM 34088), FY2024+, then chunk and index incrementally. v1 regression gate: re-run `retrieval_replay` on v1 against the pre-ingest result first; if drops come from other companies' same-date filings, fix the period scoping item below in this package. Then a full v1 live run (the `companies.json` change moves the fingerprint), with every drop classified.
 - [ ] **[feature, Med, Substantial]** **Phase 2 build 3: v2 harness.** Question schema (`category`, `steps`, `answer_source`, `trap`, `needs_calculate`), the new graders (`comparison` entity attribution, `text`, `refusal`, `clarify`, `forbidden_values`, per-question `tolerance`), the `[1, 6]` multi-source citation fix in the harness `CITATION_PATTERN` and grader `_CITATION_MARKER`, a question-file hash in report provenance, and the `devtools` authoring check script (verbatim anchors, companyfacts cross-check, recomputed derived values, corpus-wide absence search). v1's graders and questions stay unchanged. Also add the map's quota and gating rule to `.claude/rules/live-eval-verification.md`.
 - [ ] **[misc, Med, Substantial]** **Phase 2 build 4: write the v2 questions** (about 56, 7 categories; mix and authoring process in the map). Batched by company or category across sessions; each batch passes the build 3 script before the user reviews it. Runs alongside build 5.
@@ -116,8 +115,6 @@ Design: `docs/plans/2026-09-24-prompt-audit-roadmap.md`. Findings: `docs/reviews
   - tool bullets in SYSTEM_PROMPT that duplicate the tool descriptions;
   - the size of rule 9;
   - sentences duplicated across the agent and MCP surfaces.
-
-  The hard-coded "five companies" moved to Phase 2 build 1, which must fix it. It changes model-visible text, so it needs a panel screen. `docs/reviews/2026-09-24-prompt-audit.md`
 - [ ] **[design, Low, Standard]** The MCP `search_filings` schema is derived the wrong way round: `prompts.mcp.MCP_SEARCH_TOOL_SCHEMA` is the agent's schema with its agent-only text overridden, so agent-only wording in any other field reaches MCP clients silently. The `ticker` description already does ("…which company the question is about"), and three description sentences are written out on both surfaces. Fix: a neutral shared schema that the agent adds its note to. It changes model-visible text, so it needs a panel screen. Found in WP3's plan and code reviews (`docs/reviews/2026-09-24-wp3-group-a-wording.md`).
 
 ### From the 2026-09-22 eval-question-classification change
