@@ -74,6 +74,18 @@ is decided, the build work packages are ordered in BACKLOG, and this map is froz
   `[1, 6]`, which cross-company answers will use; and eval report provenance must hash the
   question file so v1 and v2 reports can't be pooled.
 
+- **Company list** (user, 2026-10-08): 12 companies, the current 5 tech names plus 7 stress
+  picks, one per sector, each triggering a distinct break verified by R2: JPM + BAC (bank
+  look-alike pair, a retrieval distractor), TGT + WMT (retail pair, both Consumer Staples,
+  late-Jan year-ends, opposite fiscal-year naming; chosen over HD as the truer look-alike), XOM
+  (energy), JNJ (health care), CAT (industrials). Insurer, REIT and utilities are dropped,
+  leaving 6 GICS sectors; acceptable because v2 reports per category. The tech names stay
+  because v1 depends on them, and swapping frees no quota. Instead, v2 is **skewed away from
+  tech** (about 5 questions on tech, mostly cross-company); this goes to the question-mix
+  ticket. All CIKs are pinned by hand in `companies.json`. XOM is 34088: EDGAR checked
+  2026-10-07, every 10-K/10-Q through the 2026-08-03 10-Q is under 34088, and the new CIK
+  2115436 has only that one 10-Q.
+
 ## Open tickets
 
 ### Company list
@@ -81,7 +93,7 @@ is decided, the build work packages are ordered in BACKLOG, and this map is froz
 - Question: Which sectors and tickers (10–12 in total), and which same-sector pair?
 - Type: grilling
 - Blocked by: R1 Benchmark landscape, R2 Sector-specific reporting
-- Status: open
+- Status: done (see Decisions so far)
 
 ### Filing depth
 
@@ -95,8 +107,9 @@ is decided, the build work packages are ordered in BACKLOG, and this map is froz
 
 - Question: Which categories (e.g. extraction, numerical reasoning, multi-year, cross-company,
   multi-hop, refusal), how many questions per category, and what difficulty target?
+- Input: skew away from tech, about 5 tech questions (Company list decision).
 - Type: grilling
-- Blocked by: R1 Benchmark landscape, Company list
+- Blocked by: R1 Benchmark landscape, Company list (both done)
 - Status: open
 
 ### How questions get written
@@ -118,9 +131,11 @@ is decided, the build work packages are ordered in BACKLOG, and this map is froz
 ### XBRL tag check on the shortlist
 
 - Question: For each shortlisted company, which concepts do our fact tools fail to find
-  (`devtools/discover_tags`; SEC only, no Gemini quota)?
+  (`devtools/discover_tags`; SEC only, no Gemini quota)? The shortlist is the 7 new tickers
+  (JPM, BAC, TGT, WMT, XOM, JNJ, CAT).
+- Also check: companyfacts names BAC's CIK "BofA Finance LLC".
 - Type: task
-- Blocked by: Company list
+- Blocked by: Company list (done)
 - Status: open
 
 ### Fact-tool adaptation policy
@@ -129,7 +144,7 @@ is decided, the build work packages are ordered in BACKLOG, and this map is froz
   change), do we fix the tools before the v2 baseline (tag fallbacks, fiscal-year naming per
   company), or ship as-is and let v2 measure the breakage as headroom?
 - Type: grilling
-- Blocked by: Company list
+- Blocked by: Company list (done)
 - Status: open
 
 ## Not yet specified
