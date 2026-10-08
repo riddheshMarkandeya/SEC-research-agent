@@ -53,7 +53,8 @@ reference:
 
 ### Roadmap (user, 2026-10-06): data expansion → harder eval questions → monorepo → admin web UI → chat web UI
 
-- [ ] **[misc, Med, Substantial]** **Data expansion phase 2 + v2 eval suite map**: `docs/plans/2026-10-07-data-expansion-phase2-map.md` (replaces the phase-2 and harder-eval-questions items). Carry-over for its build: derive the company count in `prompts/agent_system.py` from `COMPANIES` (panel screen) first. Research R1 and R2 are done. Next: grilling ticket Company list.
+- [ ] **[misc, Med, Substantial]** **Data expansion phase 2 + v2 eval suite map**: `docs/plans/2026-10-07-data-expansion-phase2-map.md` (replaces the phase-2 and harder-eval-questions items). Carry-over for its build: derive the company count in `prompts/agent_system.py` from `COMPANIES` (panel screen) first. Research R1, R2, Company list, XBRL tag check and Fact-tool adaptation policy are done. Open: Filing depth, v2 question types and mix (then question writing and grading).
+- [ ] **[bug, Med, Substantial]** **Phase 2 fact-tool fixes** (build package, before the v2 baseline; policy in the phase 2 map's Decisions so far): fix `xbrl_facts`' four silent wrong answers on the new tickers (no-period path returns stale values and DEF 14A forms; TGT annual fiscal-year labels off by one; JNJ fiscal 2022 unreachable by label), add verified `Revenues` overrides (JPM, BAC, CAT, XOM) and TGT `CostOfGoodsAndServicesSold`, trace JNJ R&D 109M. Keep v1 green; acceptance is a re-run of the tag check. `docs/research/2026-10-08-shortlist-xbrl-tag-check.md`
 - [ ] **[refactor, Med, Substantial]** Monorepo layout ahead of the web UIs. Details later, `/wayfinder` first.
 - [ ] **[feature, Med, Substantial]** Admin web UI (ingest, rebuild, corpus status; phase 1 records the rebuild timings it needs). Details later, `/wayfinder` first.
 - [ ] **[feature, Med, Substantial]** Chat web UI for the agent. Details later, `/wayfinder` first.

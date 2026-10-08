@@ -96,6 +96,23 @@ is decided, the build work packages are ordered in BACKLOG, and this map is froz
   fact tools stop at Q1 2026; JNJ R&D returns a 109M stub; BAC's "BofA Finance LLC" name is
   cosmetic (no code reads it). → `docs/research/2026-10-08-shortlist-xbrl-tag-check.md`
 
+- **Fact-tool adaptation policy** (user, 2026-10-08): split. A cited wrong number is a tool bug,
+  fixed before the first v2 baseline; a "no fact" gap is v2 headroom (text fallback or refusal).
+  - Fix: the four silent wrong answers from the tag check (stale "latest", non-10-K/10-Q forms on
+    the no-period path, TGT annual labels, JNJ fiscal 2022 unreachable).
+  - Overrides for renamed tags: `Revenues` for JPM, BAC, CAT, XOM, and
+    `CostOfGoodsAndServicesSold` for TGT cost of revenue, each checked against that 10-K's income
+    statement first and dropped if it doesn't match one line (XOM's 332,238M most at risk). CAT
+    net income stays a gap: `ProfitLoss` includes the non-controlling share.
+  - JNJ R&D (109M): trace it; override to the right tag, or keep JNJ R&D out of v2 and say so.
+  - XOM stays pinned to 34088; facts stop at Q1 2026, so Q2 2026 is a text question. Re-check
+    after XOM's next 10-K.
+  - No new metrics (bank NII, provision, deposits, EPS): they stay text-only or refused, so the
+    JPM/BAC pair keeps testing retrieval.
+  - One build package, after hardening and incremental indexing, before the v2 baseline. Its own
+    plan picks the fiscal-year fix design; it keeps v1 green (incl. CRM/NVDA labels) and re-runs
+    the tag check on the 7 tickers as acceptance.
+
 ## Open tickets
 
 ### Company list
@@ -157,7 +174,7 @@ is decided, the build work packages are ordered in BACKLOG, and this map is froz
   fiscal-year labels) and the XOM XBRL split.
 - Type: grilling
 - Blocked by: Company list (done)
-- Status: open
+- Status: done (see Decisions so far)
 
 ## Not yet specified
 
