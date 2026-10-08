@@ -4,6 +4,10 @@ Date: 2026-10-07. The wayfinder map for the roadmap's next two items (data expan
 harder eval questions), which it merges. Charted in two grilling rounds with the user. Ticket
 state lives only in this file.
 
+**Status: frozen 2026-10-08.** Every ticket is decided, and the build packages are ordered in
+`BACKLOG.md` ("Phase 2 build" items 1–6). Don't edit this file again. A change to a decision
+goes in that package's own plan, which names the decision it revisits.
+
 ## Destination
 
 A frozen design for (a) the new company list and (b) the v2 eval suite: question types, size,
@@ -197,6 +201,42 @@ is decided, the build work packages are ordered in BACKLOG, and this map is froz
     questions stay unchanged; the new graders get offline unit tests on realistic answer
     text, the 90% critical-core bar and a live spot-check.
 
+- **Not-yet-specified items closed** (user, 2026-10-08):
+  - Period scoping by report date alone: deferred, with a gate. The 7-company ingest package
+    re-runs `retrieval_replay` on v1 against its pre-ingest result. If drops come from other
+    companies' same-date filings getting in, that package fixes the scoping by
+    `(ticker, reportDate)` before its v1 live run. Otherwise v2 measures it.
+  - Cross-company questions: no agent or tool change before the v2 baseline. The 9
+    cross-company questions measure the gap (the same reasoning as the rank-of-3+ decision).
+    A multi-ticket search, or a ticker subset on `compare_financial_metric` (it will return
+    all 12 companies), is a headroom candidate, ranked after the baseline against the
+    period-coverage package. Only the hard-coded "five" text is fixed before then.
+  - Quota and gating: never run v1 and v2 on the same quota day. v1 gates corpus, fact-tool,
+    retrieval and grader changes (targeted `--ids`, a full run as the final check). Agent and
+    prompt headroom work runs v2 first and keeps a change only if v2 improves, then runs the
+    full v1 gate on the next day. A grader-only change re-grades stored answers and spends no
+    generation quota. Panels follow the prompt-audit protocol unchanged.
+  - Rejected: the rerank score cache in live eval runs (raised by the user, dropped entirely,
+    no BACKLOG item). Measured from `var/trace_logs`: all `search_filings` time in the last
+    full v1 runs was 163 s of 529 s (10-07) and 171 s of 605 s (10-01), so a perfect cache
+    saves under about 2.5 minutes a run. Live queries vary from run to run, evals are limited
+    by quota rather than wall time, and the eval would stop scoring the production path.
+
+- **Build order** (user, 2026-10-08). Done first: the pre-phase-2 hardening package (`c6df4fb`
+  Unicode console fix, `6bb01fa` XBRL validation and timeouts, `ddad913` enum hoist) and
+  incremental indexing.
+  1. Derive the company count in `prompts/` from `COMPANIES`. At 5 companies the text should
+     render unchanged, so it's a pure refactor.
+  2. Ingest the 7 companies, then the v1 regression gate (scoping check above, then a full v1
+     run, since `companies.json` changes the prompt fingerprint).
+  3. v2 harness: question schema and tags, the new graders, the `[1, 6]` citation fix, the
+     question-file hash in provenance, the authoring check script, and the quota rule above
+     added to `.claude/rules/live-eval-verification.md`.
+  4. Question authoring in batches, alongside
+  5. the fact-tool fixes (already in BACKLOG).
+  6. v2 baseline: `index_chunks --full` first, then one baseline and at most one
+     easiest-question swap.
+
 ## Open tickets
 
 ### Company list
@@ -262,12 +302,8 @@ is decided, the build work packages are ordered in BACKLOG, and this map is froz
 
 ## Not yet specified
 
-- Period scoping matches on report date alone, so a date-scoped search with no ticker admits
-  every company filing on the same quarter-end. More December-year-end companies multiply this;
-  measure with `retrieval_replay` after ingest.
-- Whether cross-company questions need agent or tool changes (e.g. a search across several
-  tickers).
-- How v1 and v2 share the quota day, and which suite gates which kind of change.
+None left. The three items (period scoping, cross-company tool changes, quota and gating) are
+closed under "Not-yet-specified items closed" above.
 
 ## Out of scope
 
