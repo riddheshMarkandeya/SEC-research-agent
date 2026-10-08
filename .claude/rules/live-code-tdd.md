@@ -21,7 +21,9 @@ concretely, in this repo:
   `get_filing_list`'s paging into older submissions pages, which only
   `tests/manual/verify_filing_selection.py` exercises against real data;
   `xbrl_facts.py`)
-- **Chroma + embedding indexing/retrieval** (`index_chunks.py`,
+- **Chroma + embedding indexing/retrieval** (`index_chunks.py`, whose
+  incremental `build_index` path only
+  `tests/manual/verify_incremental_index.py` exercises end to end,
   `retrieval.py`, `dispatch.py`'s `search_filings` path through
   `hybrid_search`, `analyze_gate_replay.py`'s live search binding,
   which replays traced runs against the real index and XBRL cache, and

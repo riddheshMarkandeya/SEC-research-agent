@@ -78,10 +78,18 @@ own history, not a speculative "this file feels important" argument:
   chunker, not by anything visible in the citation-verification code
   itself.
 
+- **`index_chunks.py`** — `build_index`'s ordering of reads, sidecar
+  clear and Chroma mutation, and `load_chunks` vs. `_scan_chunk_files`'
+  line counting. Incident: the 2026-10-07 incremental-indexing review,
+  where clearing the sidecar before the changed files were read or
+  encoded let any load or model failure force a ~20 minute full
+  rebuild, and the loader and the chunk count split lines differently
+  across five review rounds until they shared one splitter.
+
 **Scope is whole subpackages.** `paths:` above covers every module in a
 subpackage holding a listed entry, so files with no incident of their own
 (`table_grounding.py`, `edgar_ingest.py`, `companies.py`,
-`period_labels.py`, `index_chunks.py`) get the same scrutiny and coverage
+`period_labels.py`) get the same scrutiny and coverage
 bar: they share a data path with the listed code, and a directory glob
 can't drift out of date as modules are added. The entries above say
 where the scrutiny should focus.
