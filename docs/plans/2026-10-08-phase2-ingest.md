@@ -190,3 +190,40 @@ production code unless the scoping gate (step 7) trips.
 
 ## Review log
 
+Tier by design: Substantial (the diff is about 50 lines plus the regenerated snapshot).
+
+**Round 1** (snapshot `938ad17`): `/code-review high`, `arch-reviewer` (sonnet), `security-reviewer`,
+`/simplify` (4 angles).
+- code-review 1: TGT should be month 2, not 1 (period ends fall either side of a month boundary;
+  month 2 gives unique end-year labels, the same 14 filings). **Revisits the user's 2026-10-08
+  deferral** with new information (a data-only fix); the user chose month 2. [Fixed]
+- code-review 2: the instant-metric branch of `get_metric_all_companies` makes 12 sequential
+  cold fetches, any failure aborts the comparison. Pre-existing, tracked. [Deferred → BACKLOG,
+  exposure note added to the SEC network failure item]
+- code-review 3: `get_frame`/`_frame_entry` use frames entries unvalidated. Pre-existing, already
+  tracked. [Deferred → BACKLOG, existing item]
+- code-review 4: JNJ's fiscal 2026 ends 2027-01-03, so month 12 mislabels it once filed. [Deferred
+  → BACKLOG build 5]
+- code-review 5: bank revenue tag understates revenue in comparisons. Known build 5 item
+  (Revenues overrides). [Verified, already tracked]
+- code-review 6: staged and working-tree versions differed. [Fixed: restaged before commit]
+- code-review 7: system-prompt rule 7 ("name which companies weren't covered") now fires on most
+  comparisons, since banks lack gross profit etc. A prompt/tool effect to classify in step 8; the
+  48/48 run made no `compare_financial_metric` call. [Deferred → step 8 classification]
+- code-review 8: stated invariants in `period_labels`/`xbrl_facts` docstrings are now false for
+  TGT naming and the new tickers' tags. Functions not touched here. [Deferred → BACKLOG build 5]
+- code-review 9: `load_chunks` and `_scan_chunk_files` disagree on blank lines. Pre-existing,
+  latent. [Deferred → BACKLOG]
+- code-review 10 / simplify (simplification): ticker set and months pinned in two tests. [Fixed:
+  one exact-dict test]
+- arch: "About 60 SEC requests" unbacked. [Fixed: about 40, one per submissions page, from the
+  live run]. "Recorded" counts before running: [Verified, no fix needed: the script ran GREEN].
+  Plan headings differ from TEMPLATE.md: [Verified, no fix needed: prior plans use this shape].
+  Line-number citations in the plan: [Verified, no fix needed: the plan is a dated record].
+- security, simplify (reuse, efficiency, altitude): no findings. Altitude noted a possible future
+  derive-and-compare check against SEC's `fiscalYearEnd`, an input for build 5's design.
+
+**Round 2** (delta from `938ad17`): `/code-review low`, `security-reviewer`. No findings. The
+code-review note that Target's year end moves between January and February is covered: the
+consumers compare months with `<=` and modulo, not equality, and all 14 TGT filings were checked
+under month 2. Review closed.
