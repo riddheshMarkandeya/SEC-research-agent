@@ -86,6 +86,16 @@ is decided, the build work packages are ordered in BACKLOG, and this map is froz
   2026-10-07, every 10-K/10-Q through the 2026-08-03 10-Q is under 34088, and the new CIK
   2115436 has only that one 10-Q.
 
+- **XBRL tag check on the shortlist** (task, 2026-10-08): ran the real `get_metric` path on the 7
+  new tickers. Beyond R2's absent/stale tags, four silent wrong answers: (1) a no-period ("latest")
+  query on a stale tag returns a years-old value (8 cases, e.g. TGT cash from 2017), and
+  `is_metric_tagged` is True for it; (2) that path also returns a DEF 14A value (CAT net income);
+  (3) TGT annual `FY2025` is Target's fiscal 2024, and its annual and quarterly labels disagree;
+  (4) JNJ fiscal 2022 is unreachable by fiscal-year label (two years end in 2023). Also: XOM's
+  2026-08-03 10-Q is in 34088's filing index but its XBRL facts are only under 2115436, so the
+  fact tools stop at Q1 2026; JNJ R&D returns a 109M stub; BAC's "BofA Finance LLC" name is
+  cosmetic (no code reads it). → `docs/research/2026-10-08-shortlist-xbrl-tag-check.md`
+
 ## Open tickets
 
 ### Company list
@@ -136,13 +146,15 @@ is decided, the build work packages are ordered in BACKLOG, and this map is froz
 - Also check: companyfacts names BAC's CIK "BofA Finance LLC".
 - Type: task
 - Blocked by: Company list (done)
-- Status: open
+- Status: done (see Decisions so far)
 
 ### Fact-tool adaptation policy
 
 - Question: When a new company breaks the fact tools (missing tag, start-year fiscal naming, CIK
   change), do we fix the tools before the v2 baseline (tag fallbacks, fiscal-year naming per
   company), or ship as-is and let v2 measure the breakage as headroom?
+- Input: the tag check's four silent wrong answers (stale "latest", non-10-K form, TGT and JNJ
+  fiscal-year labels) and the XOM XBRL split.
 - Type: grilling
 - Blocked by: Company list (done)
 - Status: open
