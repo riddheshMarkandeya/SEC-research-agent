@@ -9,9 +9,21 @@ import pytest
 from sec_agent.sources.companies import _validate, load_companies
 
 
-def test_load_companies_returns_expected_tickers():
+def test_load_companies_tickers_and_fiscal_year_end_months():
+    # Pinned by hand on purpose, and not copied from SEC's submissions
+    # `fiscalYearEnd`, which is the last 52/53-week period end date: JNJ
+    # reports "0103" (month 1 would mislabel every JNJ quarter) and TGT
+    # "0201". TGT is 2, not its nominal January: its years and quarters end
+    # on Saturdays that fall either side of a month boundary (2024-02-03,
+    # 2026-01-31; 2023-04-29, 2024-05-04), and only month 2 puts each in
+    # the right fiscal year and quarter, named by the calendar year the
+    # period ends in.
     companies = load_companies()
-    assert set(companies.keys()) == {"AAPL", "MSFT", "NVDA", "CRM", "PLTR"}
+    months = {t: info["fiscal_year_end_month"] for t, info in companies.items()}
+    assert months == {
+        "AAPL": 9, "MSFT": 6, "NVDA": 1, "CRM": 1, "PLTR": 12,
+        "JPM": 12, "BAC": 12, "TGT": 2, "WMT": 1, "XOM": 12, "JNJ": 12, "CAT": 12,
+    }
 
 
 def test_load_companies_entries_have_name_and_cik():
