@@ -3,6 +3,7 @@ import cycles between sibling modules or subpackages, and nothing outside
 sec_agent.devtools imports it. Static imports only -- a dynamic import_module()
 is invisible to them."""
 
+import os
 import subprocess
 import sys
 import tomllib
@@ -34,7 +35,10 @@ def test_import_contract_is_kept(contract):
     result = subprocess.run(
         [sys.executable, "-c", LINT, str(PYPROJECT), contract],
         capture_output=True,
-        text=True,
+        # import-linter prints emoji, which a cp1252 stdout can't encode;
+        # the crash would fail the test with every contract kept
+        env={**os.environ, "PYTHONIOENCODING": "utf-8"},
+        encoding="utf-8",
         cwd=PROJECT_ROOT,
         timeout=120,
         check=False,
