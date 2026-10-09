@@ -10,7 +10,8 @@ Pipeline per query:
      tables otherwise crowd the pool. With no period named, or nothing
      found inside the named filings, search everything.
   2. Pull a wide candidate pool (default 25) from BM25 and from Chroma's
-     vector search, independently.
+     vector search, independently. A search for one company takes its BM25
+     statistics from that company's chunks alone.
   3. Fuse the two rankings with Reciprocal Rank Fusion (RRF) — combines
      rankings, not raw scores, which sidesteps the fact that BM25 scores
      and cosine similarities live on completely different, incomparable
@@ -37,6 +38,8 @@ Usage from the command line (manual spot-checking):
 import argparse
 import json
 import re
+import time
+from collections import defaultdict
 from collections.abc import Callable, Mapping
 
 import chromadb
@@ -87,6 +90,10 @@ _rerank_model = None
 _chroma_collection = None
 _bm25_index = None
 _bm25_records = None  # parallel list of {"text", "metadata"} for _bm25_index
+# One index per ticker, for searches limited to that ticker. IDF and average
+# chunk length then come from the company's own chunks, so adding another
+# company to the corpus can't reorder its results.
+_bm25_by_ticker: dict[str, tuple[BM25Okapi, list[dict]]] = {}
 
 
 def _get_embed_model() -> SentenceTransformer:  # pragma: no cover -- loads a real embedding model, live-only
@@ -130,7 +137,7 @@ def _load_bm25_index():  # pragma: no cover -- reads real chunk files from disk,
     """Build the BM25 index once from the same chunk files index_chunks.py
     reads, so both retrieval paths are always in sync with the current
     var/chunks/ output."""
-    global _bm25_index, _bm25_records
+    global _bm25_index, _bm25_records, _bm25_by_ticker
     if _bm25_index is not None:
         return
 
@@ -148,8 +155,26 @@ def _load_bm25_index():  # pragma: no cover -- reads real chunk files from disk,
     # reverted, net regression on the eval suite. See
     # docs/decisions/2026-08-16-fiscal-period-labels-tried-and-reverted.md.
     tokenized_corpus = [_tokenize(r["text"]) for r in records]
-    _bm25_index = BM25Okapi(tokenized_corpus)
-    _bm25_records = records
+    index = BM25Okapi(tokenized_corpus)
+    by_ticker = _ticker_indexes(records, tokenized_corpus)
+    # assigned together, after every build succeeded: _bm25_index alone
+    # marks the load done, so a failure part way must leave it None
+    _bm25_index, _bm25_records, _bm25_by_ticker = index, records, by_ticker
+
+
+def _ticker_indexes(records: list[dict], tokens: list[list[str]]) -> dict[str, tuple[BM25Okapi, list[dict]]]:
+    """One BM25 index per ticker over that ticker's records, with the
+    records in the same order. tokens is parallel to records."""
+    groups: dict[str, list[int]] = defaultdict(list)
+    for i, record in enumerate(records):
+        groups[record["metadata"]["ticker"]].append(i)
+    indexes = {}
+    for ticker, positions in groups.items():
+        started = time.perf_counter()
+        indexes[ticker] = (BM25Okapi([tokens[i] for i in positions]), [records[i] for i in positions])
+        log_event("retrieval_bm25_ticker_index", ticker=ticker, chunks=len(positions),
+                  build_ms=round((time.perf_counter() - started) * 1000))
+    return indexes
 
 
 def _make_id(metadata: Mapping[str, object]) -> str:
@@ -168,14 +193,36 @@ def bm25_search(  # pragma: no cover -- queries the real BM25 index, live-only
 ) -> SearchHits:
     _load_bm25_index()
     assert _bm25_index is not None and _bm25_records is not None  # _load_bm25_index() always sets both
-    scores = _bm25_index.get_scores(_tokenize(query))
+    source = _bm25_source(ticker, (_bm25_index, _bm25_records), _bm25_by_ticker)
+    if source is None:
+        log_event("retrieval_bm25_unknown_ticker", ticker=ticker)
+        return []
+    return _rank_bm25(*source, query, n, report_dates)
 
+
+def _bm25_source(
+    ticker: str | None,
+    whole: tuple[BM25Okapi, list[dict]],
+    by_ticker: Mapping[str, tuple[BM25Okapi, list[dict]]],
+) -> tuple[BM25Okapi, list[dict]] | None:
+    """The (index, records) a search ranks with: the whole corpus's
+    without a ticker, the ticker's own with one, None when the ticker has
+    no chunks."""
+    if not ticker:
+        return whole
+    return by_ticker.get(ticker)
+
+
+def _rank_bm25(
+    index: BM25Okapi, records: list[dict], query: str, n: int, report_dates: tuple[str, ...] | None
+) -> SearchHits:
+    """The top n of records by BM25 score against query, within
+    report_dates when given. records is parallel to index's corpus."""
+    scores = index.get_scores(_tokenize(query))
     ranked_indices = sorted(range(len(scores)), key=lambda i: scores[i], reverse=True)
     results = []
     for i in ranked_indices:
-        record = _bm25_records[i]
-        if ticker and record["metadata"]["ticker"] != ticker:
-            continue
+        record = records[i]
         if report_dates is not None and record["metadata"]["reportDate"] not in report_dates:
             continue
         if scores[i] <= 0:

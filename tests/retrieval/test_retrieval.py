@@ -9,15 +9,20 @@ instead.
 """
 
 import pytest
+from rank_bm25 import BM25Okapi
 
 from sec_agent.retrieval import retrieval
 from sec_agent.retrieval.period_scope import Scope
 from sec_agent.retrieval.retrieval import (
     RRF_K,
+    SearchHits,
+    _bm25_source,
     _choose_lists,
     _combine_fused_and_rerank,
     _make_id,
+    _rank_bm25,
     _search_record,
+    _ticker_indexes,
     _tokenize,
     reciprocal_rank_fusion,
 )
@@ -454,3 +459,88 @@ def test_search_record_reports_the_floor_it_ran():
 def test_search_record_of_an_empty_pool_is_empty():
     record = _search_record([], [], {"label": "no_date", "report_dates": [], "invalid_dates": []}, top_k=5)
     assert (record["results"], record["pool"], record["rescued"]) == ([], [], None)
+
+
+# ---------------------------------------------------------------------------
+# Per-ticker BM25 statistics: _ticker_indexes, _rank_bm25
+# ---------------------------------------------------------------------------
+def _record(ticker: str, chunk_index: int, text: str, report_date: str = "2026-03-31") -> dict:
+    metadata = {"ticker": ticker, "accessionNumber": f"acc-{ticker}", "chunk_index": chunk_index,
+                "reportDate": report_date}
+    return {"text": text, "metadata": metadata}
+
+
+# Within A, "revenue" and "cloud" are equally rare, so a1 (three "revenue")
+# outranks a2 (one "cloud"). B's chunks all say "revenue", which, counted
+# into the statistics, makes "revenue" common and "cloud" rare instead.
+_A_RECORDS = [
+    _record("A", 1, "revenue revenue revenue alpha"),
+    _record("A", 2, "cloud beta gamma delta"),
+    _record("A", 3, "other words here only"),
+]
+_B_RECORDS = [_record("B", i, f"revenue filler{i} more text") for i in range(6)]
+_QUERY = "revenue cloud"
+
+
+def _indexes(records: list[dict]) -> dict[str, tuple[BM25Okapi, list[dict]]]:
+    return _ticker_indexes(records, [_tokenize(r["text"]) for r in records])
+
+
+def _ranked(hits: SearchHits) -> list[str]:
+    return [doc_id for doc_id, _, _ in hits]
+
+
+def test_a_tickers_bm25_ranking_does_not_depend_on_other_tickers():
+    alone = _rank_bm25(*_indexes(_A_RECORDS)["A"], _QUERY, 10, None)
+    together = _rank_bm25(*_indexes(_A_RECORDS + _B_RECORDS)["A"], _QUERY, 10, None)
+
+    # precondition: one index over every ticker, filtered to A afterwards,
+    # orders A's chunks differently, so this fixture exercises the bug
+    everything = _A_RECORDS + _B_RECORDS
+    whole = BM25Okapi([_tokenize(r["text"]) for r in everything])
+    whole_hits = _rank_bm25(whole, everything, _QUERY, 20, None)
+    whole_a = [doc_id for doc_id in _ranked(whole_hits) if doc_id.startswith("acc-A")]
+    assert whole_a != _ranked(alone)
+
+    assert _ranked(alone) == ["acc-A_1", "acc-A_2"]
+    assert together == alone
+
+
+def test_ticker_indexes_hold_one_entry_per_ticker_with_its_own_records():
+    indexes = _indexes(_B_RECORDS[:2] + _A_RECORDS + _B_RECORDS[2:])
+    assert sorted(indexes) == ["A", "B"]
+    assert indexes["A"][1] == _A_RECORDS
+    assert indexes["B"][1] == _B_RECORDS
+
+
+def test_rank_bm25_keeps_only_the_given_report_dates():
+    records = [_record("A", 1, "revenue alpha", "2026-03-31"), _record("A", 2, "revenue beta", "2025-12-31"),
+               _record("A", 3, "unrelated words")]
+    index, recs = _indexes(records)["A"]
+    assert _ranked(_rank_bm25(index, recs, "revenue", 10, ("2025-12-31",))) == ["acc-A_2"]
+
+
+def test_rank_bm25_stops_at_the_first_chunk_with_no_query_term():
+    index, recs = _indexes(_A_RECORDS)["A"]
+    assert _ranked(_rank_bm25(index, recs, "cloud", 10, None)) == ["acc-A_2"]
+
+
+def test_rank_bm25_caps_the_results_at_n():
+    index, recs = _indexes(_A_RECORDS)["A"]
+    assert _ranked(_rank_bm25(index, recs, _QUERY, 1, None)) == ["acc-A_1"]
+
+
+def test_bm25_source_is_the_whole_corpus_index_without_a_ticker():
+    whole = _indexes(_A_RECORDS)["A"]
+    assert _bm25_source(None, whole, {}) is whole
+    assert _bm25_source("", whole, {}) is whole
+
+
+def test_bm25_source_is_the_tickers_own_index_with_a_ticker():
+    by_ticker = _indexes(_A_RECORDS + _B_RECORDS)
+    assert _bm25_source("B", by_ticker["A"], by_ticker) is by_ticker["B"]
+
+
+def test_bm25_source_is_none_for_a_ticker_with_no_chunks():
+    by_ticker = _indexes(_A_RECORDS)
+    assert _bm25_source("ZZZ", by_ticker["A"], by_ticker) is None
