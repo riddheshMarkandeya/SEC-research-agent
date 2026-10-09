@@ -37,6 +37,7 @@ Usage from the command line (manual spot-checking):
 
 import argparse
 import json
+import math
 import re
 import time
 from collections import defaultdict
@@ -92,7 +93,9 @@ _bm25_index = None
 _bm25_records = None  # parallel list of {"text", "metadata"} for _bm25_index
 # One index per ticker, for searches limited to that ticker. IDF and average
 # chunk length then come from the company's own chunks, so adding another
-# company to the corpus can't reorder its results.
+# company to the corpus can't reorder its results. They use Lucene's IDF,
+# because rank_bm25's IDF floor lifts words found in over half a company's
+# chunks above rarer words.
 _bm25_by_ticker: dict[str, tuple[BM25Okapi, list[dict]]] = {}
 
 
@@ -162,6 +165,17 @@ def _load_bm25_index():  # pragma: no cover -- reads real chunk files from disk,
     _bm25_index, _bm25_records, _bm25_by_ticker = index, records, by_ticker
 
 
+class _LuceneIdfBM25(BM25Okapi):
+    """BM25Okapi with Lucene's IDF, log(1 + (N - n + 0.5) / (n + 0.5)):
+    always positive and falling as a word gets commoner. BM25Okapi's own
+    IDF goes negative for words in over half the chunks and raises them to
+    a floor that sits above many rarer words."""
+
+    def _calc_idf(self, nd: dict[str, int]) -> None:
+        for word, freq in nd.items():
+            self.idf[word] = math.log(1 + (self.corpus_size - freq + 0.5) / (freq + 0.5))
+
+
 def _ticker_indexes(records: list[dict], tokens: list[list[str]]) -> dict[str, tuple[BM25Okapi, list[dict]]]:
     """One BM25 index per ticker over that ticker's records, with the
     records in the same order. tokens is parallel to records."""
@@ -171,7 +185,7 @@ def _ticker_indexes(records: list[dict], tokens: list[list[str]]) -> dict[str, t
     indexes = {}
     for ticker, positions in groups.items():
         started = time.perf_counter()
-        indexes[ticker] = (BM25Okapi([tokens[i] for i in positions]), [records[i] for i in positions])
+        indexes[ticker] = (_LuceneIdfBM25([tokens[i] for i in positions]), [records[i] for i in positions])
         log_event("retrieval_bm25_ticker_index", ticker=ticker, chunks=len(positions),
                   build_ms=round((time.perf_counter() - started) * 1000))
     return indexes
@@ -226,7 +240,7 @@ def _rank_bm25(
         if report_dates is not None and record["metadata"]["reportDate"] not in report_dates:
             continue
         if scores[i] <= 0:
-            break  # BM25Okapi returns 0 for no term overlap at all — not a real match
+            break  # no matched query word carries any IDF weight — not a real match
         results.append((_make_id(record["metadata"]), record["text"], record["metadata"]))
         if len(results) >= n:
             break

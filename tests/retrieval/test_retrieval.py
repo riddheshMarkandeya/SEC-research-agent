@@ -513,6 +513,27 @@ def test_ticker_indexes_hold_one_entry_per_ticker_with_its_own_records():
     assert indexes["B"][1] == _B_RECORDS
 
 
+# "common" is in 3 of 4 chunks, "half" in 2. rank_bm25's Okapi IDF is
+# negative for the first and exactly 0 for the second, and it lifts the
+# negative one to a floor that puts the commoner word above the rarer.
+_IDF_RECORDS = [
+    _record("A", 1, "common half alpha"),
+    _record("A", 2, "common half beta"),
+    _record("A", 3, "common gamma"),
+    _record("A", 4, "delta epsilon"),
+]
+
+
+def test_a_tickers_idf_falls_as_a_word_gets_commoner():
+    index, _ = _indexes(_IDF_RECORDS)["A"]
+    assert 0 < index.idf["common"] < index.idf["half"] < index.idf["alpha"]
+
+
+def test_a_chunk_matching_only_a_word_in_half_the_chunks_still_ranks():
+    index, recs = _indexes(_IDF_RECORDS)["A"]
+    assert _ranked(_rank_bm25(index, recs, "half", 10, None)) == ["acc-A_1", "acc-A_2"]
+
+
 def test_rank_bm25_keeps_only_the_given_report_dates():
     records = [_record("A", 1, "revenue alpha", "2026-03-31"), _record("A", 2, "revenue beta", "2025-12-31"),
                _record("A", 3, "unrelated words")]

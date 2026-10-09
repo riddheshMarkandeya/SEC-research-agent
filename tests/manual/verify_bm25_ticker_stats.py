@@ -4,11 +4,15 @@ that ticker's own chunks only, so adding other companies to var/chunks/
 can't reorder it. Needs the real chunk files, so it has no unit test.
 
 Checks:
-  1. bm25_search(q, ticker="MSFT") equals an oracle built here straight
-     from rank_bm25 over MSFT's chunks alone (red while the index spans
+  1. bm25_search(q, ticker="MSFT") equals an oracle built here with the
+     same BM25 class over MSFT's chunks alone (red while the index spans
      every company);
   2. bm25_search(q, ticker="MSFT") equals _rank_bm25 over the MSFT entry
-     of retrieval._bm25_by_ticker, the index it is meant to use.
+     of retrieval._bm25_by_ticker, the index it is meant to use;
+  3. that index's IDF never rises with document frequency: no word
+     outscores a word found in fewer MSFT chunks (red while rank_bm25
+     raises words in over half the chunks to a floor of 0.25 x the mean
+     IDF, above e.g. "revenue").
 
 Also prints, for information: the MSFT Q3 FY26 segment table's BM25 rank
 for msft-three-segments-revenue-q3fy2026's queries, unscoped and scoped
@@ -24,6 +28,7 @@ Usage (from the repo root):
 
 import sys
 import time
+from itertools import groupby
 
 from rank_bm25 import BM25Okapi
 
@@ -59,7 +64,7 @@ def main() -> int:
     assert retrieval._bm25_records is not None
 
     own = [r for r in retrieval._bm25_records if r["metadata"]["ticker"] == TICKER]
-    oracle = BM25Okapi([retrieval._tokenize(r["text"]) for r in own])
+    oracle = retrieval._LuceneIdfBM25([retrieval._tokenize(r["text"]) for r in own])
     per_ticker = getattr(retrieval, "_bm25_by_ticker", {}).get(TICKER)
 
     failed = False
@@ -79,8 +84,32 @@ def main() -> int:
         print(f"  [{'PASS' if ok else 'FAIL'}] matches _rank_bm25 over _bm25_by_ticker[{TICKER!r}]")
         failed |= not ok
 
+    ok = per_ticker is not None and _idf_is_monotonic(per_ticker[0])
+    print(f"\n[{'PASS' if ok else 'FAIL'}] {TICKER}'s IDF does not rise with document frequency")
+    failed |= not ok
+
     print("\nRED" if failed else "\nGREEN")
     return 1 if failed else 0
+
+
+def _idf_is_monotonic(index: BM25Okapi) -> bool:
+    """True when every word's IDF is at most the lowest IDF among words in
+    fewer chunks. Document frequencies are counted here from the index's
+    own per-chunk term counts, not taken from its IDF."""
+    df: dict[str, int] = {}
+    for counts in index.doc_freqs:
+        for word in counts:
+            df[word] = df.get(word, 0) + 1
+    violations = []
+    lowest_rarer = float("inf")  # lowest IDF among words with a smaller df
+    for _, group in groupby(sorted(df, key=df.__getitem__), key=df.__getitem__):
+        idfs = {word: index.idf[word] for word in group}
+        violations += [word for word, idf in idfs.items() if idf > lowest_rarer + 1e-12]
+        lowest_rarer = min(lowest_rarer, *idfs.values())
+    print(f"  {len(violations)} words outscore a rarer word; "
+          f"revenue: df {df.get('revenue')}/{index.corpus_size}, idf {index.idf.get('revenue', 0):.2f}; "
+          f"lowest idf {min(index.idf.values()):.2f}")
+    return not violations
 
 
 def _oracle_ranking(oracle: BM25Okapi, own: list[dict], query: str) -> retrieval.SearchHits:
