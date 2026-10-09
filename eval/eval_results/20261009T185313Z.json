@@ -1,0 +1,101 @@
+{
+  "backend": "gemini",
+  "answer_model": "gemini-3.5-flash-lite",
+  "judge_model": "gemini-3.5-flash-lite",
+  "provenance": {
+    "git_sha": "113d428",
+    "git_dirty": false,
+    "dirty_files": [],
+    "snapshot_verified": true,
+    "config": {
+      "gemini_model": "gemini-3.5-flash-lite",
+      "embed_model": "BAAI/bge-small-en-v1.5",
+      "rerank_model": "cross-encoder/ms-marco-MiniLM-L-6-v2",
+      "chroma_dir": "var/chroma_db",
+      "google_genai": "2.18.1",
+      "mcp": "2.1.1",
+      "corpus": {
+        "chunk_files": 139,
+        "chunks": 19292,
+        "sha": "33375fa528c5"
+      }
+    },
+    "index_matches_chunks": true,
+    "prompts": {
+      "agent_system": "4d3d78e9abbf",
+      "agent_tools": "08dc00f5ee9a",
+      "agent_messages": "2ba395d24642",
+      "judge": "2ee29f234c91",
+      "mcp": "460414960f3d",
+      "agent": "0b2c6bd205ea"
+    }
+  },
+  "results": [
+    {
+      "id": "msft-segment-revenue-comparison-q3fy2026",
+      "ticker": "MSFT",
+      "question": "Which of Microsoft's three reportable segments \u2014 Productivity and Business Processes, Intelligent Cloud, or More Personal Computing \u2014 had the highest revenue for the three months ended March 31, 2026?",
+      "type": "judged",
+      "passed": false,
+      "detail": "The answer does not include any citation markers (such as \"[10]\") next to the revenue figures, failing the explicit requirement for a citation marker.",
+      "has_citation": true,
+      "citation_warnings": [],
+      "answer": "For the three months ended March 31, 2026, Microsoft's reportable segments had the following revenues:\n- **Productivity and Business Processes**: $35,013 million [10]\n- **Intelligent Cloud**: $34,681 million [10]\n- **More Personal Computing**: $13,192 million [10]\n\nTherefore, **Productivity and Business Processes** had the highest revenue for the period, closely followed by Intelligent Cloud.",
+      "n_chunks_retrieved": 10,
+      "withheld_answer": null,
+      "gate_withheld_would_have_passed": null,
+      "gate_withheld_detail": null,
+      "citation_warning_details": []
+    },
+    {
+      "id": "nvda-inventory-turnover-fy2026",
+      "ticker": "NVDA",
+      "question": "What was NVIDIA's inventory turnover ratio (cost of revenue divided by inventory) for fiscal year 2026?",
+      "type": "numeric",
+      "passed": true,
+      "detail": "found matching value: 2.92 (raw)",
+      "has_citation": true,
+      "citation_warnings": [],
+      "answer": "For fiscal year 2026, NVIDIA's inventory turnover ratio was 2.92 [1]. This can also be computed using cost of revenue of $62.48 billion [$62,475,000,000] [2] divided by inventory of $21.40 billion [$21,403,000,000] [3], which equals 2.92 [4].",
+      "n_chunks_retrieved": 4,
+      "withheld_answer": null,
+      "gate_withheld_would_have_passed": null,
+      "gate_withheld_detail": null,
+      "citation_warning_details": []
+    },
+    {
+      "id": "msft-rd-intensity-fy2025",
+      "ticker": "MSFT",
+      "question": "What was Microsoft's R&D intensity (research and development expense divided by revenue) for fiscal year 2025?",
+      "type": "numeric",
+      "passed": true,
+      "detail": "found matching value: 11.5 (percent)",
+      "has_citation": true,
+      "citation_warnings": [],
+      "answer": "Microsoft's R&D intensity (research and development expense divided by revenue) for fiscal year 2025 was 11.5% [1].",
+      "n_chunks_retrieved": 1,
+      "withheld_answer": null,
+      "gate_withheld_would_have_passed": null,
+      "gate_withheld_detail": null,
+      "citation_warning_details": []
+    },
+    {
+      "id": "msft-three-segments-revenue-q3fy2026",
+      "ticker": [
+        "MSFT"
+      ],
+      "question": "What was Microsoft's revenue for each of its three reportable segments \u2014 Productivity and Business Processes, Intelligent Cloud, and More Personal Computing \u2014 for the three months ended March 31, 2026?",
+      "type": "comparison",
+      "passed": false,
+      "detail": "missing or wrong value(s) for: MSFT-PBP (35013 million), MSFT-IC (34681 million), MSFT-MPC (13192 million)",
+      "has_citation": true,
+      "citation_warnings": [],
+      "answer": "For the three months ended March 31, 2026, Microsoft's Form 10-Q discusses the performance of its three reportable segments (Productivity and Business Processes, Intelligent Cloud, and More Personal Computing) [1, 2, 3], but the specific dollar revenue for each individual reportable segment for the three months ended March 31, 2026 is not disclosed in the retrieved sections of the filing [1, 2]. Productivity and Business Processes revenue increased $5.1 billion or 17% [1], Intelligent Cloud revenue increased driven by Azure [2], and More Personal Computing revenue decreased with lower hardware sales across Devices and Gaming, offset in part by growth in Search advertising [2].",
+      "n_chunks_retrieved": 25,
+      "withheld_answer": null,
+      "gate_withheld_would_have_passed": null,
+      "gate_withheld_detail": null,
+      "citation_warning_details": []
+    }
+  ]
+}
