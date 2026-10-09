@@ -1,0 +1,89 @@
+{
+  "backend": "gemini",
+  "answer_model": "gemini-3.5-flash-lite",
+  "judge_model": "gemini-3.5-flash-lite",
+  "provenance": {
+    "git_sha": "e456f6b",
+    "git_dirty": true,
+    "dirty_files": [
+      "src/sec_agent/retrieval/retrieval.py",
+      "tests/manual/verify_bm25_ticker_stats.py",
+      "tests/retrieval/test_retrieval.py"
+    ],
+    "snapshot_verified": true,
+    "config": {
+      "gemini_model": "gemini-3.5-flash-lite",
+      "embed_model": "BAAI/bge-small-en-v1.5",
+      "rerank_model": "cross-encoder/ms-marco-MiniLM-L-6-v2",
+      "chroma_dir": "var/chroma_db",
+      "google_genai": "2.18.1",
+      "mcp": "2.1.1",
+      "corpus": {
+        "chunk_files": 139,
+        "chunks": 19292,
+        "sha": "33375fa528c5"
+      }
+    },
+    "index_matches_chunks": true,
+    "prompts": {
+      "agent_system": "4d3d78e9abbf",
+      "agent_tools": "08dc00f5ee9a",
+      "agent_messages": "2ba395d24642",
+      "judge": "2ee29f234c91",
+      "mcp": "460414960f3d",
+      "agent": "0b2c6bd205ea"
+    }
+  },
+  "results": [
+    {
+      "id": "msft-segment-revenue-comparison-q3fy2026",
+      "ticker": "MSFT",
+      "question": "Which of Microsoft's three reportable segments \u2014 Productivity and Business Processes, Intelligent Cloud, or More Personal Computing \u2014 had the highest revenue for the three months ended March 31, 2026?",
+      "type": "judged",
+      "passed": true,
+      "detail": "The AI assistant correctly identified Productivity and Business Processes as the segment with the highest revenue, provided the correct exact figures, and included citation markers.",
+      "has_citation": true,
+      "citation_warnings": [],
+      "answer": "For the three months ended March 31, 2026, Microsoft's **Productivity and Business Processes** segment had the highest revenue among its three reportable segments, with revenue of $35,013 million [10]. \n\nThe revenue for each of the three reportable segments for the period was:\n* **Productivity and Business Processes:** $35,013 million [10]\n* **Intelligent Cloud:** $34,681 million [10]\n* **More Personal Computing:** $13,192 million [10]",
+      "n_chunks_retrieved": 10,
+      "withheld_answer": null,
+      "gate_withheld_would_have_passed": null,
+      "gate_withheld_detail": null,
+      "citation_warning_details": []
+    },
+    {
+      "id": "msft-rd-intensity-fy2025",
+      "ticker": "MSFT",
+      "question": "What was Microsoft's R&D intensity (research and development expense divided by revenue) for fiscal year 2025?",
+      "type": "numeric",
+      "passed": true,
+      "detail": "found matching value: 11.5 (percent)",
+      "has_citation": true,
+      "citation_warnings": [],
+      "answer": "Microsoft's R&D intensity (research and development expense divided by revenue) for fiscal year 2025 was 11.5% [1].",
+      "n_chunks_retrieved": 1,
+      "withheld_answer": null,
+      "gate_withheld_would_have_passed": null,
+      "gate_withheld_detail": null,
+      "citation_warning_details": []
+    },
+    {
+      "id": "msft-three-segments-revenue-q3fy2026",
+      "ticker": [
+        "MSFT"
+      ],
+      "question": "What was Microsoft's revenue for each of its three reportable segments \u2014 Productivity and Business Processes, Intelligent Cloud, and More Personal Computing \u2014 for the three months ended March 31, 2026?",
+      "type": "comparison",
+      "passed": true,
+      "detail": "found matching values for all 3 entities",
+      "has_citation": true,
+      "citation_warnings": [],
+      "answer": "For the three months ended March 31, 2026, Microsoft's revenue for each of its three reportable segments was as follows:\n- Productivity and Business Processes: $35,013 million [10]\n- Intelligent Cloud: $34,681 million [10]\n- More Personal Computing: $13,192 million [10]",
+      "n_chunks_retrieved": 10,
+      "withheld_answer": null,
+      "gate_withheld_would_have_passed": null,
+      "gate_withheld_detail": null,
+      "citation_warning_details": []
+    }
+  ]
+}
