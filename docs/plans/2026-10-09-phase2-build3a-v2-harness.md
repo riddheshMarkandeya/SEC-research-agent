@@ -282,6 +282,146 @@ TDD for every pure function; commits on the branch.
     (§7).
 12. Low: BACKLOG edits by line number. Now by text (§7).
 
+## Addendum (implementation, 2026-10-09)
+
+Departures from the design above, each found while building it. These supersede §3's
+three-step rule and §5's "group by (fingerprint, path)":
+
+- **Lexical attribution was dropped before commit** (user decision, 2026-10-09; revisits the
+  map's "nearest preceding company name" rule on new evidence). Three review rounds each found
+  new misattributions in the prose-matching rules below, several caused by the previous round's
+  fixes. `check_attribution`, `forbidden_hits` and their helpers are gone from `eval/grading.py`;
+  v2 comparisons grade like v1, and `forbidden_values` is validated but not graded. The
+  replacement attributes through the agent's structured claims: a claim that passed the gate,
+  states the value and cites a source whose `metadata.ticker` is the expected company (BACKLOG
+  "Phase 2 build 3a.1"). A `ticker` field on claims, checked by the gate, is a later option
+  (BACKLOG). The next bullet records what was built and why it was abandoned.
+- **Attribution had six steps, not three (since removed).** Step 1 is an adjacent postfix tag ("$681.0 billion
+  (WMT)", "$182.4 billion at JPMorgan"): without it, "Target's $106.6 billion vs $681.0 billion
+  (WMT)" credited WMT's value to TGT. Step 6 is a fallback for an unnamed bullet: the single
+  company named by the nearest heading or "...:" lead-in line above it. The step-8 sanity check
+  found this answer shape in stored runs ("- Microsoft's effective tax rate was:" over unnamed
+  sub-bullets). A comma before a 4-digit year no longer ends a clause, so "June 27, 2026 (17.9%)"
+  keeps its company; the same check found that one. Code review (round 1) added the rest: a
+  parenthesis tags only when it closes right after the name ("(JPMorgan: $58.5 billion)" is a
+  comparison, not a tag); a markdown table with a column per company takes the name from its
+  column's header cell (the new step 5); a bold line ("**JPMorgan**") counts as a heading; and a
+  sentence doesn't end at an initial or legal suffix ("J.P. Morgan", "Inc.").
+- **Pooling filters instead of grouping.** `compare_prompt_versions` fingerprint mode keeps only
+  runs of one question file (`--questions`, default v1, normalized to the root-relative POSIX
+  form reports record) and says how many it left out. The effect is the same as grouping by
+  (fingerprint, path), and the output stays one comparison. Explicit mode (`--base-files` /
+  `--candidate-files`) doesn't filter: the caller picks the files, and a mixed pick shows up only
+  as the `config` consistency warning.
+- **No pinned hash for the `judge` key.** The parametrized
+  `test_changing_one_snapshot_section_changes_only_its_consumer_key` (now including
+  `judge_criteria`) proves sections hash independently. A one-off manual check (not a test)
+  confirmed the `agent`, `judge` and `mcp` keys equal master's (`0b2c6bd205ea`, `2ee29f234c91`,
+  and mcp unchanged). A pinned hash would break on every legitimate judge change.
+- **One tolerance rule.** `numeric_utils.match_tolerance` (1%, floor 0.05) replaces the formula
+  copied in `citations.py` and the grader. `value_is_citation_verified` takes the grader's
+  per-question tolerance, so a widened tolerance can't skip the citation check (code review
+  found that bypass). `calculate.py` and `table_grounding.py` keep their own copies: outside
+  this diff.
+- **Text dates** also accept ordinals ("February 1st, 2025") and day-first forms ("1 February
+  2025").
+- **Replay grade flips on drifted runs are listed apart**: grading reads the rebuilt tool
+  results, so drift alone can flip a grade.
+- `validate_questions` also requires each `forbidden_values` entry to name a ticker when the
+  question has no single `ticker`, since there is no default company to charge it to.
+
+Measurements:
+
+- Base replay (master code, before any edit): 276 runs since 2026-10-06 (cold cache; wall time not recorded). The warm candidate replay took a few minutes.
+  Candidate replay (`--compare`, with the `[1, 6]` fix): 0 grade changes, 0 verdict changes.
+  9 of the replayed graded runs cite with multi-index brackets (`crm-rpo-fy26` x3,
+  `nvda-revenue-fy26-us-gaap` x4, `nvda-revenue-yoy-growth-q1fy27`,
+  `msft-three-segments-revenue-q3fy2026`); all grade the same before and after.
+- Step 8 sanity check (before attribution was dropped): `check_attribution` over 245 stored passing v1 comparison answers (4
+  company-labelled questions). 6 flagged, all from August, all genuinely wrong: none states
+  Apple's 17.9% tax rate, and v1 matched it against Microsoft's 18% within the 1% tolerance. One
+  also flags MSFT because `numeric_utils` reads a bullet "- 20%" as -20%: a pre-existing bug,
+  filed in BACKLOG (not fixed here: critical core, needs a live spot-check).
+
 ## Review log
 
-(pending)
+### Round 1 (snapshot `6a53307`; Substantial)
+
+Passes: `/code-review high`, `arch-reviewer` (sonnet), `security-reviewer`, `/simplify` (4 agents).
+
+- security: no findings.
+- arch: imports placement, `_grade` docstring, `_collect_provenance` wording, grading.py docstring
+  missing `judge_criteria_for`, Addendum gaps `[Fixed]`; duplicated tolerance rule `[Fixed]`
+  (`numeric_utils.match_tolerance`; calculate.py/table_grounding.py copies left: outside diff).
+- code-review 1 widened tolerance skipped the citation check `[Fixed]`; 2 "J.P. Morgan." split
+  `[Fixed]`; 4 parenthetical steal `[Fixed]`; 5 bold headings / column tables `[Fixed]`;
+  8 ordinal / day-first dates `[Fixed]`; 9 `--questions` spelling `[Fixed]`; 10 drift-caused grade
+  flips `[Fixed]` (own bucket); 3 pronoun carry-over and 6 "respectively" `[Deferred → BACKLOG]`
+  (absent from 245 stored answers; measure on build 4's batch); 7 prior-year context trips
+  `forbidden_hits` `[Disputed]`: the map's rule, pinned by a test, 3b authoring constraint.
+- simplify: module-level validator, `_sole_entity`, one grade-change dict, cwd-independent
+  `--questions` default `[Fixed]`. Skipped: reuse of `eval_harness._root_relative` (importing it
+  costs ~9 s of agent-stack load), calculate/table_grounding tolerance copies, month table,
+  `CITATION_PATTERN` alias (tests use it), efficiency 2-4 (negligible); `analyze_citation_gate`
+  classing refusal/clarify rows and an alias-coverage check (no v2 reports exist yet; to BACKLOG).
+- After fixes: 1545 passed, ruff/pyright 0, diff-cover 100%.
+
+### Round 2 (delta `6a53307`..`a1023ba`)
+
+Passes: `/code-review high`, `arch-reviewer` (sonnet), `security-reviewer`.
+
+- code-review high, 10 findings (dispositions after the list):
+  1. `root_relative_questions` spells out-of-repo paths with `/`, harness records `\` on
+     Windows. Fix: move one `root_relative` into `sec_agent/config.py`, used by both (also #8).
+  2. `_tags` rejects "(Walmart FY2025)" / "(WMT, fiscal 2025)" (regressed from round 1).
+     Fix: tag when the parenthesis's first name is followed by `)`, `,`, `'s` or a period word
+     before any number.
+  3. `_VALIDATOR.validate` raises the first error, not `best_match`: vaguer messages. Fix: raise
+     `jsonschema.exceptions.best_match(_VALIDATOR.iter_errors(q))`.
+  4. Table under a company heading with year columns attributes nothing: let `_lead_in_entity`
+     skip table lines.
+  5. `(?<!\b[A-Z]\.)` swallows real sentence ends after "U.S." / "Class A.".
+  6. `_DAY_FIRST_DATE` matches "5.25 June 2024": add `(?<![\d.,])`.
+  7. calculate.py/table_grounding.py tolerance copies (simplify reuse 1 too): decide fix vs BACKLOG.
+  9. `grade_changes["drifted"]` vs `s["drifted"]` naming: rename key `tool_drift`.
+  10. stale "GEMINI_MODEL_NAME" comment above the `llm_backends` import (same as arch nit).
+  This is round 2 surfacing new issues in round-1 fixes, not a repeat. 1, 3, 6, 9, 10 `[Fixed]`;
+  2, 4, 5 `[Fixed]` then made moot by round 4; 7 `[Deferred → BACKLOG]` ("Two copies of the
+  match-tolerance formula remain"); 8 `[Verified, no fix needed]` (spellings now match; a
+  shared helper would widen the diff into `config.py`).
+
+- security: no findings.
+- arch: Addendum step numbering (fallback is step 6) `[Fixed]`; drift takes precedence over
+  refused in `_tally_grade_change` `[Fixed]` (docstring); stale "GEMINI_MODEL_NAME" sentence
+  above the `llm_backends` import `[Fixed]` (imports moved back).
+- Offline replay re-run vs `replay-build3a-base.json`: 276 runs, 0 grade changes (0 refused,
+  0 drifted-caused), 4 drifted runs, 0 errors.
+
+### Round 3 (delta `a1023ba`..`df2be47`)
+
+Passes: `/code-review high`, `security-reviewer`. Arch not re-run: its round-2 fixes were doc and
+docstring only.
+
+- security: no findings.
+- code-review high, 9 findings: 8 are new misattributions in the prose-attribution rules ("U.S.
+  GAAP" now splitting a sentence, "(Walmart's was lower)" taken as a tag, a parenthesis search
+  crossing lines, "percent" and plain counts missing from the own-figure check, a table skip
+  overriding a no-company header, duplicated suffix lists, missing negative tests). Three come
+  from round 2's own fixes. This is the escalation case (the same class of issue each round with
+  no clean fix), so it went to the user, who chose to drop prose attribution: all 8 moot after
+  round 4. The ninth, `_DAY_FIRST_DATE`'s `,` lookbehind blocking "Monday,25 June 2024",
+  `[Fixed]` (`(?<!\d[.,])`, with a test).
+
+### Round 4 (delta `df2be47`..`f04039c`)
+
+The strip: lexical attribution removed from `eval/grading.py` and `_grade_by_type`, a test pins
+that v2 attribution and trap values aren't graded yet. 552 lines deleted, 30 added. Passes:
+`/code-review low`, `security-reviewer`.
+
+- security: no findings.
+- code-review low: no findings. It asked whether helpers were left without callers:
+  `match_tolerance` and `ANY_CITATION_BRACKET` still have callers; `extract_numbers_with_spans`
+  was already unused in `src` on master `[Verified, no fix needed]`.
+
+Review closed: a round with no new finding. 4 rounds; checks at close: 1494 passed, ruff and
+pyright 0, diff coverage 100%.

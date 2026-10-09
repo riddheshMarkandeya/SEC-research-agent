@@ -1,5 +1,5 @@
 """prompts.prompt_fingerprint(): a per-surface hash of every model-facing
-constant, with each consumer key (agent, judge, mcp) also covering its
+constant, with each consumer key (agent, judge, judge_criteria, mcp) also covering its
 section of the committed model-input snapshot. Eval reports carry it so a
 result can be tied to the exact prompt version that produced it."""
 
@@ -16,7 +16,7 @@ import pytest
 from sec_agent import prompts
 from sec_agent.config import PROJECT_ROOT
 
-SURFACES = ("agent_system", "agent_tools", "agent_messages", "judge", "mcp")
+SURFACES = ("agent_system", "agent_tools", "agent_messages", "judge", "judge_criteria", "mcp")
 AGENT_SURFACES = ("agent_system", "agent_tools", "agent_messages")
 # The consumer key each surface's text reaches.
 CONSUMER_KEY = {
@@ -24,6 +24,7 @@ CONSUMER_KEY = {
     "agent_tools": "agent",
     "agent_messages": "agent",
     "judge": "judge",
+    "judge_criteria": "judge_criteria",
     "mcp": "mcp",
 }
 
@@ -126,7 +127,7 @@ def _snapshot_copy(tmp_path: Path, edit=None, newline="\n") -> Path:
     return path
 
 
-@pytest.mark.parametrize("section", ["agent", "judge", "mcp"])
+@pytest.mark.parametrize("section", ["agent", "judge", "judge_criteria", "mcp"])
 def test_changing_one_snapshot_section_changes_only_its_consumer_key(tmp_path, section):
     before = prompts.prompt_fingerprint(_snapshot_copy(tmp_path))
 

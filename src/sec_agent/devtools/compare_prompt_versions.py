@@ -18,7 +18,9 @@ script implements the decision rule used for every prompt change:
 Rows from a report's first infra error onward are dropped (a quota error
 or crash, not a graded answer). Reports with no known commit, uncommitted
 changes, an unverified model-input snapshot or a stale Chroma index are
-excluded unless --include-dirty.
+excluded unless --include-dirty. Fingerprint mode compares runs of one
+question file (--questions, default the v1 set): v1 and v2 runs share agent
+fingerprints but never a pass rate.
 
 Usage:
     python -m sec_agent.devtools.compare_prompt_versions
@@ -31,13 +33,16 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from sec_agent.config import RESULTS_DIR
+from sec_agent.config import PROJECT_ROOT, QUESTIONS_PATH, RESULTS_DIR
 from sec_agent.devtools.analyze_flakiness import is_infra_error, load_reports
 
 
 # A question whose pass rate drops by at least this much is REGRESSED;
 # any smaller drop is only "watch".
 REGRESSED_DROP = 0.5
+
+# Reports written before the question file was recorded all ran the v1 set.
+V1_QUESTIONS = QUESTIONS_PATH.relative_to(PROJECT_ROOT).as_posix()
 # A base pass rate at or below this can barely drop further, so a
 # question sitting there is marked "floor": it can't show a regression.
 FLOOR_RATE = 1 / 3
@@ -139,6 +144,23 @@ def load(paths: list[Path]) -> list[Report]:
 def agent_fingerprint(report: Report) -> str | None:
     prompts = (report.provenance or {}).get("prompts")
     return prompts.get("agent") if isinstance(prompts, dict) else None
+
+
+def root_relative_questions(path: str) -> str:
+    """`path` spelled the way reports record it: resolved, relative to the
+    repo root and with forward slashes; a path outside the repo stays
+    absolute, as given by the platform. (eval_harness._root_relative has
+    the same rule; importing it here would load the whole agent stack for
+    one helper.)"""
+    resolved = Path(path).resolve()
+    return resolved.relative_to(PROJECT_ROOT).as_posix() if resolved.is_relative_to(PROJECT_ROOT) else str(resolved)
+
+
+def questions_path(report: Report) -> str:
+    questions = ((report.provenance or {}).get("config") or {}).get("questions")
+    if not isinstance(questions, dict):
+        return V1_QUESTIONS
+    return questions.get("path") or V1_QUESTIONS
 
 
 def is_excluded(report: Report, include_dirty: bool) -> bool:
@@ -268,6 +290,7 @@ def _distinct(reports: list[Report], key) -> set[str]:
 _CONSISTENCY_CHECKS = {
     "git SHA": lambda r: (r.provenance or {}).get("git_sha"),
     "judge fingerprint": lambda r: ((r.provenance or {}).get("prompts") or {}).get("judge"),
+    "judge_criteria fingerprint": lambda r: ((r.provenance or {}).get("prompts") or {}).get("judge_criteria"),
     "backend": lambda r: r.backend,
     "answer_model": lambda r: r.answer_model,
     "judge_model": lambda r: r.judge_model,
@@ -376,6 +399,8 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser.add_argument("--candidate", help="candidate agent fingerprint (default: the most recent after the base)")
     parser.add_argument("--base-files", nargs="+", type=Path, help="explicit mode: the base runs")
     parser.add_argument("--candidate-files", nargs="+", type=Path, help="explicit mode: the candidate runs")
+    parser.add_argument("--questions",
+                        help=f"fingerprint mode: the question file whose runs to compare (default {V1_QUESTIONS})")
     parser.add_argument("--since", help="ignore reports named before this UTC timestamp, e.g. 20260925T000000Z")
     parser.add_argument("--include-dirty", action="store_true",
                         help="keep reports from a dirty or unverified tree or a stale index")
@@ -407,7 +432,12 @@ def _explicit(args: argparse.Namespace) -> int:
 
 def _by_fingerprint(args: argparse.Namespace) -> int:
     paths = args.reports or sorted(RESULTS_DIR.glob("*.json"))
-    groups = group_by_fingerprint(_select_and_report("fingerprint mode", load(paths), args.include_dirty, args.since))
+    kept = _select_and_report("fingerprint mode", load(paths), args.include_dirty, args.since)
+    wanted = root_relative_questions(args.questions) if args.questions else V1_QUESTIONS
+    same_file = [r for r in kept if questions_path(r) == wanted]
+    if len(same_file) < len(kept):
+        print(f"{len(kept) - len(same_file)} report(s) from other question files left out (see --questions)")
+    groups = group_by_fingerprint(same_file)
     if not groups:
         print("No stamped, clean reports to compare (see --include-dirty and --since).")
         return 0

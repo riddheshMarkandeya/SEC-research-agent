@@ -396,12 +396,14 @@ def test_fidelity_flags_total_result_count_mismatch():
 # ---------------------------------------------------------------------------
 # grade and replay_run
 # ---------------------------------------------------------------------------
-def test_grade_only_numeric_and_comparison_questions(monkeypatch):
+def test_grade_only_deterministic_questions(monkeypatch):
     monkeypatch.setattr("sec_agent.eval.eval_harness._grade_by_type", lambda q, text, retrieved: (text == "right", "detail"))
 
     assert grade({"type": "numeric"}, "right", []) is True
     assert grade({"type": "comparison"}, "wrong", []) is False
     assert grade({"type": "judged"}, "right", []) is None
+    assert grade({"type": "refusal"}, "right", []) is None
+    assert grade({"type": "text"}, "right", []) is True
     assert grade(None, "right", []) is None
 
 
@@ -519,6 +521,60 @@ def test_summarize_against_baseline_flags_a_changed_warning_message():
     assert compare_failed(s) is True
 
 
+def test_summarize_against_baseline_lists_grade_flips_without_failing():
+    # A grader-only change: same gate verdicts, different grades.
+    base = [
+        _record("up", False, False, correct=False),
+        _record("down", False, False, correct=True),
+        _record("same", False, False, correct=True),
+        _record("ungraded", False, False, correct=None),
+        _record("refused", True, True, correct=False),
+    ]
+    cand = [
+        _record("up", False, False, correct=True),
+        _record("down", False, False, correct=False),
+        _record("same", False, False, correct=True),
+        _record("ungraded", False, False, correct=None),
+        _record("refused", True, True, correct=True),
+    ]
+
+    s = summarize(cand, base)
+
+    assert s["grade_changes"] == {
+        "now_correct": ["q-up (up)"],
+        "now_wrong": ["q-down (down)"],
+        "refused": ["q-refused (refused)"],
+        "tool_drift": [],
+    }
+    # Refused now, so the grade is of text the user never saw.
+    assert compare_failed(s) is False
+    text = format_summary(s, _COUNTS)
+    assert "Grade changes (same submitted text): 2 (1 now correct, 1 now wrong)" in text
+    assert "Grade changes on runs the gate refuses now (not a verdict change): 1" in text
+
+
+def test_grade_flip_is_listed_even_when_the_gate_verdict_also_changed():
+    base = [_record("a", True, True, correct=False)]
+    cand = [_record("a", True, False, correct=True)]
+
+    s = summarize(cand, base)
+
+    assert s["grade_changes"]["now_correct"] == ["q-a (a)"]
+    assert s["recovered"]["correct"] == ["q-a (a)"]
+
+
+def test_grade_flip_on_a_run_whose_sources_changed_is_set_apart():
+    # Grading reads the rebuilt sources, so drift alone can flip a grade.
+    base = [_record("a", False, False, correct=True, shas=("h1",))]
+    cand = [_record("a", False, False, correct=False, shas=("h2",))]
+
+    s = summarize(cand, base)
+
+    assert s["grade_changes"] == {"now_correct": [], "now_wrong": [], "refused": [], "tool_drift": ["q-a (a)"]}
+    assert s["tool_drift"] == ["q-a (a)"]
+    assert "Grade changes on runs whose tool results changed (not the grader): 1" in format_summary(s, _COUNTS)
+
+
 def test_identical_baseline_does_not_fail():
     records = [_record("a", True, True), _record("b", False, False)]
 
@@ -577,7 +633,7 @@ def trace_env(tmp_path, monkeypatch, capture):
         ],
     )
     questions = tmp_path / "questions.jsonl"
-    _write_jsonl(questions, [{"id": "q-one", "question": "What was it?", "type": "judged"}])
+    _write_jsonl(questions, [{"id": "q-one", "ticker": "AAPL", "question": "What was it?", "type": "judged", "criteria": "c"}])
     return tmp_path, ["--file", str(trace_file), "--questions", str(questions)]
 
 

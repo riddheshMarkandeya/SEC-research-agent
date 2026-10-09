@@ -98,6 +98,13 @@ EXPECTED_KEYS = {
         "loop_mixed_turn_retry_at_budget",
     },
     "judge": {"judge"},
+    "judge_criteria": {
+        "refusal_not_covered",
+        "refusal_not_yet_filed",
+        "refusal_never_disclosed",
+        "refusal_false_premise",
+        "clarify",
+    },
     "mcp": {"mcp_fact_missing", "mcp_compare_missing", "mcp_unknown_tool", "mcp_list_tools"},
 }
 
@@ -428,6 +435,39 @@ def _render_judge(mp) -> dict:
     return {"judge": captured}
 
 
+def _render_judge_criteria(mp) -> dict:
+    """The judge prompt for each refusal kind and for a clarify question,
+    filled through the harness's own grading path. Each carries its own
+    question detail with braces, checking the filled text isn't
+    formatted twice."""
+    from sec_agent.eval import eval_harness
+
+    class FrozenDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return FROZEN_NOW
+
+    captured = []
+
+    def fake_complete(backend, system, user, temperature=None):
+        captured.append({"system": system, "user": user, "temperature": temperature})
+        return "PASS\nok"
+
+    mp.setattr(eval_harness, "datetime", FrozenDatetime)
+    mp.setattr(eval_harness, "complete", fake_complete)
+    questions: dict[str, dict] = {
+        f"refusal_{kind}": {"type": "refusal", "refusal_kind": kind, "criteria": "Detail {d}."}
+        for kind in ("not_covered", "not_yet_filed", "never_disclosed", "false_premise")
+    }
+    questions["clarify"] = {"type": "clarify", "readings": ["reading {a}", "reading b"], "criteria": "Detail {d}."}
+    out = {}
+    for key, q in questions.items():
+        captured.clear()
+        eval_harness._grade({**q, "question": "Q {q}?"}, "Answer {a}.", [], [])
+        out[key] = list(captured)
+    return out
+
+
 def _render_mcp(mp) -> dict:
     from mcp import types
 
@@ -462,7 +502,12 @@ def render_model_inputs() -> dict:
         mp.setattr(tracing, "TRACE_LOG_PATH", "")
         mp.setattr(tracing, "TRACING_ENABLED", False)
         mp.setattr(tool_results, "is_metric_tagged", lambda ticker, metric: False)
-        return {"agent": _render_agent(), "judge": _render_judge(mp), "mcp": _render_mcp(mp)}
+        return {
+            "agent": _render_agent(),
+            "judge": _render_judge(mp),
+            "judge_criteria": _render_judge_criteria(mp),
+            "mcp": _render_mcp(mp),
+        }
 
 
 # ---------------------------------------------------------------------------

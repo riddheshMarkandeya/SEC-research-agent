@@ -4,6 +4,7 @@ paths:
   - "src/sec_agent/agent/**"
   - "src/sec_agent/retrieval/retrieval.py"
   - "src/sec_agent/eval/eval_harness.py"
+  - "src/sec_agent/eval/grading.py"
   - "src/sec_agent/retrieval/chunk_documents.py"
   - "src/sec_agent/prompts/**"
 ---
@@ -111,6 +112,27 @@ one is there, wait for the next reset. Counting only the current
 session's requests misses runs from earlier sessions: a full run on
 2026-10-06 ran out at question 31 for exactly that reason, because the
 46/48 baseline had run that morning.
+
+## v1 and v2 eval sets: quota and gating
+
+Two question files exist: v1 (`eval/eval_questions.jsonl`, 48
+questions, the frozen regression gate) and v2 (about 56 questions in 7
+categories, built for headroom). A full run of either costs about half
+a day's quota, so:
+
+- **Never run v1 and v2 on the same quota day.**
+- **v1 gates** corpus, fact-tool, retrieval and grader changes: a
+  targeted `--ids` run, then a full run as the final check.
+- **Agent and prompt headroom work runs v2 first**, and keeps a change
+  only if v2 improves. The full v1 gate then runs on the next day.
+- **A grader-only change spends no generation quota**: re-grade the
+  stored answers offline with
+  `python -m sec_agent.devtools.analyze_gate_replay --compare <baseline replay>`,
+  whose "Grade changes" lines list every run graded differently. This
+  covers the deterministic types only (numeric, comparison, text);
+  judged, refusal and clarify grades need the judge.
+- `compare_prompt_versions` compares runs of one question file at a
+  time (`--questions`, default v1), so the two sets never pool.
 
 ## Regression notes
 

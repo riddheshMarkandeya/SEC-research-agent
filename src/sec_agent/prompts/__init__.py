@@ -13,7 +13,7 @@ from pathlib import Path
 SNAPSHOT_PATH = Path(__file__).with_name("model_input_snapshot.json")
 
 _AGENT_SURFACES = ("agent_system", "agent_tools", "agent_messages")
-_SURFACES = (*_AGENT_SURFACES, "judge", "mcp")
+_SURFACES = (*_AGENT_SURFACES, "judge", "judge_criteria", "mcp")
 
 
 def _hash(value, sort_keys: bool) -> str:
@@ -34,7 +34,7 @@ def prompt_fingerprint(snapshot_path: Path = SNAPSHOT_PATH) -> dict[str, str]:
     """{surface: hash} for each prompts/ module, plus "agent", the key
     agent-prompt comparisons group by.
 
-    The consumer keys -- agent, judge, mcp -- also hash their section of
+    The consumer keys -- agent, judge, judge_criteria, mcp -- also hash their section of
     the committed model-input snapshot, which catches code changes that
     alter what a model reads without touching any constant here. Sections
     are parsed and re-serialised with sorted keys, so git's line-ending
@@ -42,12 +42,13 @@ def prompt_fingerprint(snapshot_path: Path = SNAPSHOT_PATH) -> dict[str, str]:
     ValueError if the snapshot is missing or malformed."""
     snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
     surfaces = {name: _surface_hash(name) for name in _SURFACES}
-    sections = {name: _hash(snapshot[name], sort_keys=True) for name in ("agent", "judge", "mcp")}
+    sections = {name: _hash(snapshot[name], sort_keys=True) for name in ("agent", "judge", "judge_criteria", "mcp")}
     return {
         "agent_system": surfaces["agent_system"],
         "agent_tools": surfaces["agent_tools"],
         "agent_messages": surfaces["agent_messages"],
         "judge": _hash([surfaces["judge"], sections["judge"]], sort_keys=False),
+        "judge_criteria": _hash([surfaces["judge_criteria"], sections["judge_criteria"]], sort_keys=False),
         "mcp": _hash([surfaces["mcp"], sections["mcp"]], sort_keys=False),
         "agent": _hash([*(surfaces[s] for s in _AGENT_SURFACES), sections["agent"]], sort_keys=False),
     }
