@@ -64,6 +64,20 @@ reference:
 - [ ] **[feature, Med, Substantial]** Admin web UI (ingest, rebuild, corpus status; phase 1 records the rebuild timings it needs). Details later, `/wayfinder` first.
 - [ ] **[feature, Med, Substantial]** Chat web UI for the agent. Details later, `/wayfinder` first.
 
+### From the 2026-10-09 free-tier LLM failover research
+
+Research note: `docs/research/2026-10-09-free-tier-llm-failover.md`. Decided (user, 2026-10-09): no multi-provider router; the paid-tier question will be revisited, starting from that note's "Paid tier" and "Measured usage" sections, with `gemini-3.8-flash` as the first pilot candidate.
+
+- [ ] **[bug, Med, Trivial]** **Pin the Gemini model id.** `GEMINI_MODEL_NAME` defaults to `gemini-flash-lite-latest`, an alias Google hot-swaps on every new release, with 2 weeks' notice only for breaking changes. A swap between two eval runs would look like a regression in our code. Live calls on 2026-10-09 resolved it to `gemini-3.5-flash-lite`; pin that exact id.
+- [ ] **[feature, Med, Standard]** **Log the served model and token usage for each LLM call, and put both in eval reports.** `llm_backends.py` logs neither the response's `model_version` nor its `usage_metadata` (prompt, output, thinking and cached tokens), against the global rule that LLM calls log tokens. Reports record only the configured alias. Measured on 2026-10-09: 3.4 calls per question, 7,884 input and 184 output tokens per call, 53% implicit cache hits. Coordinate with the phase 2 v2-harness report provenance work. Also recheck the "a full run costs about 250" figure in `.claude/rules/live-eval-verification.md`: the measurement suggests about 165 agent calls plus judge calls.
+- [ ] **[design, Med, Standard]** **Pilot `gemini-3.8-flash`, then decide which model is main and which is backup.** It is available on our free key with its own per-model quota (checked 2026-10-09), and it thinks by default. Steps:
+  1. After the two items above, read 3.8 Flash's free daily quota in AI Studio.
+  2. On a committed tree, run about 10 questions with `GEMINI_MODEL_NAME=gemini-3.8-flash`, then a full run if the result holds up.
+  3. Make 3.8 main (with 3.5 Flash-Lite for exploratory `--ids` checks) only if it is clearly more accurate on our eval and its quota covers a full run (about 165 agent calls plus judge calls). Otherwise keep it as a backup for whole runs.
+
+  Rules either way: switch models between runs only, never mid-run within an eval, and give each model its own baseline. Automatic 429 failover is acceptable only for non-eval agent use, after the served-model logging lands.
+- [ ] **[feature, Med, Substantial]** **Agent vs. raw LLM benchmark (public write-up).** Decisions confirmed 2026-10-10 in `docs/research/2026-10-09-agent-vs-raw-llm-benchmark-decisions.md` (Round 2: settled); research in `docs/research/2026-10-09-agent-vs-raw-llm-benchmark.md`. Next step: `/wayfinder` map. Starts after the phase 2 v2 questions and the served-model/token-logging item above land. Roadmap slot: before the monorepo phase.
+
 ### From the 2026-10-06 data expansion phase 1 review
 
 - [ ] **[bug (latent), Low, Trivial]** `edgar_ingest.get_filing_url` builds a `*_meta.json` path from an accession it doesn't check. `mcp_server.py:105` passes `accn` from raw XBRL companyfacts JSON. The path only feeds a read-only lookup for a citation URL. Fix: return None unless `_ACCESSION_PATTERN.fullmatch(accession)`, the check ingest already applies. This was the round 2 security residual in `docs/plans/2026-10-06-data-expansion-years.md`'s Review log, and it was left out because only the function's docstring is in that diff.

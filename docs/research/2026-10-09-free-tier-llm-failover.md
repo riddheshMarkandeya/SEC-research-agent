@@ -242,3 +242,263 @@ All pages were fetched on 2026-10-09. Each source is marked with the date it sho
   secondaries for whole-run use: OpenRouter Nemotron/Gemma `:free` with credits, or Groq
   gpt-oss-120b if its free TPD fits after measurement. Either needs its own baseline, since
   scores aren't comparable to Gemini's.
+
+## Paid tier: price-to-intelligence (added 2026-10-09)
+
+Scope: which paid model gives the best tool-calling and numeric/financial accuracy per dollar for
+our agent loop. All pages were read on 2026-10-09. "Page date" means the date the page itself
+shows, if any.
+
+### Key findings (sources say)
+
+- **Gemini paid prices per 1M tokens, input / output** ([Gemini pricing](https://ai.google.dev/gemini-api/docs/pricing)):
+  - `gemini-3.5-flash-lite`: $0.30 / $2.50, cached $0.03.
+  - `gemini-3.1-flash-lite`: $0.25 / $1.50, cached $0.025.
+  - `gemini-3.8-flash` (also 3.7 and 3.6): $0.75 / $3.75, cached $0.075.
+  - 3.8 Flash rises to $1.50 / $7.50 on 2027-01-01.
+  - `gemini-3.5-flash`: $1.50 / $9.00. The older 3.5 Flash costs *more* than 3.8 Flash.
+  - Batch halves every price. Output prices include thinking tokens.
+- **OpenAI** ([OpenAI pricing](https://developers.openai.com/api/docs/pricing)) lists small models
+  under "luna" names as well as mini/nano. Prices per 1M tokens, input / output:
+  - `gpt-6-luna`: $0.10 / $0.50. Released 2026-09-22, per
+    [AA](https://artificialanalysis.ai/models/gpt-6-luna). Its default effort is `medium`
+    ([reasoning guide](https://developers.openai.com/api/docs/guides/reasoning)).
+  - `gpt-5.6-luna`: $0.20 / $1.20.
+  - `gpt-5.4-mini`: $0.75 / $4.50.
+  - `gpt-5.4-nano`: $0.20 / $1.25.
+  - Cached input is 0.1×, and Batch or Flex is 0.5×.
+  - Reasoning tokens "are billed as output tokens" ([reasoning guide](https://developers.openai.com/api/docs/guides/reasoning)).
+- **Anthropic's `claude-haiku-5-5`**, released 2026-10-07: $0.10 / $0.50 per 1M for prompts up to
+  100K tokens, and $0.50 / $2.50 above that. Cache reads cost $0.01, and Batch is 50% off. That is
+  about 90% cheaper than Haiku 4.5 at $1 / $5
+  ([Claude pricing](https://platform.claude.com/docs/en/about-claude/pricing),
+  [Haiku 5.5 page](https://anthropic.com/claude-haiku-5-5)). Its effort levels run low to max, with
+  `medium` the default. It supports adaptive thinking only. The usage field
+  `output_tokens_details.thinking_tokens` reports "how many of the billed output tokens were
+  internal reasoning"
+  ([extended thinking](https://platform.claude.com/docs/en/build-with-claude/extended-thinking)).
+- **DeepSeek, first-party, per 1M tokens** ([DeepSeek pricing](https://api-docs.deepseek.com/quick_start/pricing)):
+  - `deepseek-flash` (V4.1-Flash): $0.30 input on a cache miss, $1.20 output, at peak times.
+    Off-peak is half that: $0.15 / $0.60.
+  - `deepseek-v4-pro`: $1.32 / $3.96 at peak, $0.66 / $1.98 off-peak.
+  - Peak hours are 01:00–04:00 and 06:00–10:00 UTC on weekdays. Cache hits cost $0.003–$0.044.
+- **Qwen, first-party** ([Model Studio pricing](https://www.alibabacloud.com/help/en/model-studio/model-pricing),
+  Singapore region): `qwen3.8-flash` costs $0.15 / $0.47, `qwen3.8-27b` $0.50 / $3.00, and
+  `qwen3.7-plus` $0.40 / $1.60. Mistral's own pricing page lists only Large, at $0.50 / $1.50,
+  with Batch 50% off ([Mistral pricing](https://mistral.ai/pricing)). OpenRouter's live
+  [models JSON](https://openrouter.ai/api/v1/models) lists these other prices:
+  - `mistralai/mistral-small-2603` (Small 4): $0.15 / $0.60.
+  - `mistral-medium-3-5`: $1.50 / $7.50.
+  - `gpt-oss-120b`: $0.037 / $0.17.
+  - `llama-4-maverick`: $0.19 / $0.65.
+  The OpenRouter Gemini, OpenAI and Haiku prices match first-party.
+- **Vals Finance Agent v2** is the closest public proxy to our task. It has 927 expert-reviewed
+  questions on public-company filings, and the page is dated 2026-10-07
+  ([Vals FAB v2](https://www.vals.ai/benchmarks/fabv2)). Accuracy and cost per test:
+  - Gemini 3.8 Flash: 61.44%, $2.00 (rank 2 of 76).
+  - Gemini 3.7 Flash: 59.04%, $1.48.
+  - GPT-5.6 Luna: 55.04%, $0.28.
+  - Mistral Large 4: 54.68%, $1.20.
+  - Haiku 5.5: 54.14%, $1.64.
+  - DeepSeek V4.1 Flash: 53.48%, $0.21.
+  - Qwen 3.8 Max: 50.59%, $1.24.
+  - GPT-6 Luna: 49.87%, $0.12.
+  - Qwen 3.8 27B: 48.55%, $0.75.
+  - **Gemini 3.5 Flash-Lite (our current model): 47.44%, $0.39.**
+  - GPT-5.4 mini: 45.36%, $1.20.
+  - GPT-5.4 nano: 38.22%, $0.16.
+  - Mistral Medium 3.5: 32.10%, $1.91.
+  - Gemini 3.1 Flash-Lite Preview: 29.99%, $0.14.
+  - gpt-oss and Llama are not listed. The page doesn't say which effort level each model ran at.
+- **Google's own 3.8 Flash page** cites the same Finance Agent v2 figure, 61.4%
+  ([Gemini Flash](https://deepmind.google/models/gemini/flash/)). The 3.5 Flash-Lite model page has
+  no tool-use or finance row. On long context it leads its peers on GDM-MRCR v2 (8-needle) at 128K:
+  - 3.5 Flash-Lite: 72.2%.
+  - 3.1 Flash-Lite: 60.1%.
+  - GPT-5.4 mini: 42.7%.
+  - Haiku 4.5: 35.3%.
+  At 1M pointwise, 3.5 Flash-Lite scores 21.3% and 3.1 Flash-Lite 12.3%. The page is undated
+  ([Gemini Flash-Lite](https://deepmind.google/models/gemini/flash-lite/)).
+- **Artificial Analysis Intelligence Index.** AA is a secondary aggregator, not a benchmark owner,
+  and its pages are undated. Index score and cost per index task
+  ([AA leaderboard](https://artificialanalysis.ai/leaderboards/models)):
+  - Haiku 5.5 (max): 43, $0.21.
+  - Gemini 3.8 Flash (high): 41, $1.24.
+  - Qwen3.8-Flash-Next: 40, $0.37.
+  - DeepSeek V4.1 Flash (max): 39, $0.27.
+  - GPT-6 Luna (max): 38, $0.07.
+  - Gemini 3.5 Flash-Lite: 22, $0.19.
+  - Mistral Medium 3.5: 14, $0.50.
+  - gpt-oss-120b (high): 12, $0.11.
+  - Mistral Small 4: 11, $0.02.
+  The model pages show that verbosity and latency differ widely between models:
+  - Haiku 5.5 (max) used 440M output tokens on the index, with a 306 s time to first token
+    ([AA Haiku 5.5](https://artificialanalysis.ai/models/claude-haiku-5-5)).
+  - GPT-6 Luna (max) used 140M, with 104 s
+    ([AA GPT-6 Luna](https://artificialanalysis.ai/models/gpt-6-luna)).
+  - 3.5 Flash-Lite used 59M, with 8.7 s
+    ([AA 3.5 FL](https://artificialanalysis.ai/models/gemini-3-5-flash-lite)).
+  AA's tau2 and AA-LCR pages didn't expose per-model figures for our candidates in text.
+- **The tool-calling leaderboards don't cover current candidates.** BFCL V4 is dated 2026-04-12. Its
+  newest small models are Haiku 4.5, GPT-5-mini/nano and Gemini 2.5 Flash/Flash-Lite, and none of
+  the 2026 candidates appear
+  ([BFCL](https://gorilla.cs.berkeley.edu/leaderboard.html), data from `data_overall.csv`). Two
+  older data points show that Flash-Lite-class models were weak at multi-turn tool use:
+  - Gemini 2.5 Flash-Lite (FC): 36.87% overall, 13.5% multi-turn.
+  - Haiku 4.5 (FC): 68.70% overall, 53.62% multi-turn.
+  [τ-bench's site](https://taubench.com/) shows only the top 3 per benchmark. None of our
+  candidates are among them except Qwen 3.8 Max, which leads τ³-Banking at 55.2%. The vendor
+  pages for Haiku 5.5 and 3.5 Flash-Lite publish no τ²-bench row.
+- **Forced named tool call support on each first-party API:**
+  - **Gemini:** yes. Use mode `any` with `allowed_tools`. Thinking isn't listed as a restriction
+    ([function calling](https://ai.google.dev/gemini-api/docs/function-calling)).
+  - **OpenAI:** yes. `tool_choice: {"type":"function","name":…}`
+    ([function calling](https://developers.openai.com/api/docs/guides/function-calling)).
+    Chat Completions doesn't support function calling on GPT-6 Astra or 6.1 Sol; the docs say
+    nothing restricting Luna.
+  - **Anthropic, Haiku 5.5:** yes. `tool_choice` `tool` or `any` is accepted, but "a forced call
+    skips thinking" ([define tools](https://platform.claude.com/docs/en/agents-and-tools/tool-use/define-tools)).
+    Opus 5.5, Sonnet 5.5 and Fable 5.1 reject forced tool use with a 400.
+  - **DeepSeek:** a named function and `required` exist but "are not supported in thinking mode"
+    and return a 400 ([chat API](https://api-docs.deepseek.com/api/create-chat-completion)).
+  - **Qwen:** named function yes. `required` is not supported in thinking mode
+    ([Qwen function calling](https://www.alibabacloud.com/help/en/model-studio/qwen-function-calling)).
+  - **Mistral:** `any`, `auto` and `none` only. There is no named function
+    ([Mistral function calling](https://docs.mistral.ai/capabilities/function_calling/)).
+
+### Cost per eval run
+
+`cost = calls × (in_tokens × in_price + out_tokens × out_price) / 1e6`
+
+The prices are per 1M tokens.
+- `out_tokens` must include thinking or reasoning tokens. Every provider below bills them as
+  output.
+- With caching, split the input term: `(cached_in × cache_price + uncached_in × in_price)`.
+- Batch halves both prices on Gemini, OpenAI, Anthropic and Mistral. For the multi-turn agent loop
+  it only fits the judge step (see Inference above).
+- Per-token price alone misranks reasoning models, because `out_tokens` varies several-fold by
+  model and effort (see AA verbosity above). Measure `out_tokens` for each candidate.
+
+| Model (API id) | in $/M | out $/M | thinking billed as output? | forced named tool call? | key scores (date) |
+|---|---|---|---|---|---|
+| `gemini-3.5-flash-lite` (current) | 0.30 | 2.50 | yes | yes (`any` + allowed) | Finance Agent v2 47.44%, $0.39/test (10-07); AA 22; MRCR 128K 72.2% |
+| `gemini-3.1-flash-lite` | 0.25 | 1.50 | yes | yes | Finance Agent v2 29.99% (preview) (10-07); MRCR 128K 60.1% |
+| `gemini-3.8-flash` | 0.75 (1.50 from 2027) | 3.75 (7.50 from 2027) | yes | yes | Finance Agent v2 61.44%, $2.00/test (10-07); AA 41 (high) |
+| `gpt-6-luna` | 0.10 | 0.50 | yes | yes | Finance Agent v2 49.87%, $0.12 (10-07); AA 38 (max) |
+| `gpt-5.6-luna` | 0.20 | 1.20 | yes | yes | Finance Agent v2 55.04%, $0.28 (10-07) |
+| `gpt-5.4-mini` / `-nano` | 0.75 / 0.20 | 4.50 / 1.25 | yes | yes | Finance Agent v2 45.36% / 38.22% (10-07) |
+| `claude-haiku-5-5` (≤100K prompt) | 0.10 | 0.50 | yes | yes, skips thinking | Finance Agent v2 54.14%, $1.64 (10-07); AA 43 (max) |
+| `deepseek-flash` (V4.1) | 0.30 peak / 0.15 off-peak | 1.20 / 0.60 | ? (reasoning_tokens reported, billing unstated) | not in thinking mode | Finance Agent v2 53.48%, $0.21 (10-07); AA 39 (max) |
+| `qwen3.8-flash` | 0.15 | 0.47 | n/a (single price) | yes (named) | AA 40 (Flash-Next, possibly a different id) |
+| `mistral-small-2603` (Small 4, via OR) | 0.15 | 0.60 | ? | `any` only | AA 11 |
+| Mistral Large 4 (first-party) | 0.50 | 1.50 | ? | `any` only | Finance Agent v2 54.68%, $1.20 (10-07) |
+| `gpt-oss-120b` (OR only) | 0.037 | 0.17 | ? | via OR, per provider | AA 12 (high) |
+| `llama-4-maverick` (OR only) | 0.19 | 0.65 | n/a | via OR | BFCL 37.29% (old, 2026-04-12 page) |
+
+### Inference (not stated by sources)
+
+- **Benchmarks are a weak proxy for our task.** Our task is narrow: a 48-question exact-figure and
+  citation eval through our own retrieval tools. Finance Agent v2 is the closest public analogue,
+  but its harness, tools and grading differ, and its effort settings aren't stated. A targeted run
+  of our own eval decides this, on the same ~10 question ids for each candidate, after the
+  noise-floor rerun in Open question 7 above.
+- **Within Gemini, 3.8 Flash is the accuracy step-up.** It scores +14 points over 3.5 Flash-Lite on
+  Finance Agent v2, at 2.5× input and 1.5× output price, falling to ~5× / 3× in 2027. It needs
+  only a model-id change: same SDK, tool declarations and `any` forced-call path. 3.1 Flash-Lite is
+  cheaper but clearly weaker, so it isn't worth piloting.
+- **Outside Gemini, GPT-5.6 Luna and DeepSeek V4.1 Flash look best per dollar on the finance
+  proxy.** Each scores ~53–55% at ~$0.2–0.3 per test, versus 3.5 Flash-Lite's 47% at $0.39. GPT-6
+  Luna is the cheapest per token, but it scored lower than 5.6 Luna on Finance Agent v2.
+  - DeepSeek's forced-call path breaks in thinking mode. Our forced-tool step would have to run
+    non-thinking, so the measured score may not carry over.
+  - DeepSeek's peak and off-peak pricing makes run cost depend on the time of day.
+- **Haiku 5.5 is cheap per token but verbose and slow at high effort.** On Finance Agent v2 it costs
+  $1.64 per test against GPT-5.6 Luna's $0.28 at a similar score. Its 306 s time to first token at
+  max effort would hurt a multi-call loop, so it would need a low or medium effort setting and its
+  own measurement.
+- **Switching cost.**
+  - Gemini → Gemini: change the pinned id and re-baseline.
+  - Any other family needs:
+    - a new client (OpenAI SDK, Anthropic SDK or an OpenAI-compatible API), plus tool-schema
+      translation;
+    - per-provider forced-call semantics (see the table);
+    - a new provenance field and a full re-baseline of the 48 questions;
+    - probably prompt tuning.
+  - The earlier "Forced tool calls aren't portable" point applies directly.
+- **Rough cost scale**, for orientation only. It uses the earlier section's guessed 6K input and
+  400 output tokens per call, and thinking is not included:
+  - 3.5 Flash-Lite: ~$0.0028/call.
+  - 3.8 Flash: ~$0.006/call.
+  - GPT-5.6 Luna: ~$0.0017/call.
+  - Haiku 5.5 and GPT-6 Luna: ~$0.0008/call.
+  Even 250 calls on 3.8 Flash is about $1.5 per run, so price matters less than accuracy and
+  switching cost at our volume. Replace with measured tokens.
+
+**Shortlist to pilot (inference, ranked):**
+1. **`gemini-3.8-flash`**: highest finance-proxy score and zero switching cost. Note the 2027 price
+   rise.
+2. **`gpt-5.6-luna`**: strongest score per dollar on Finance Agent v2, with clean named-function
+   forcing. Costs a new client.
+3. **`deepseek-flash` (V4.1)**: similar score at lower cost. Pilot only if our forced-call step works
+   in non-thinking mode.
+
+### Open questions
+
+1. Real `in_tokens` and `out_tokens` per call (including thinking) on each candidate. The main
+   session is measuring these on 3.5 Flash-Lite.
+2. Which effort or thinking level did Vals use for each Finance Agent v2 entry, and which level
+   would we run?
+3. Does GPT-6 Luna or 5.6 Luna support function calling on Chat Completions, or only on
+   Responses? The docs restrict only Astra and 6.1 Sol.
+4. Does DeepSeek bill reasoning tokens at the output rate? The pricing page doesn't say.
+5. Can Qwen's named `tool_choice` be used in thinking mode? Only `required` is documented as
+   unsupported.
+6. Are there current tau2-bench or BFCL scores for 2026 small models? Neither leaderboard showed
+   them. Check sierra-research's full table or the vendor system cards.
+7. What are Mistral's first-party Small 4 and Medium 3.5 prices? Its pricing page lists only Large.
+8. Does 3.8 Flash's 2027 price ($1.50 / $7.50) change the ranking once real tokens are known?
+
+## Measured usage and cost per run (added 2026-10-09, main session)
+
+**Measured.** 5 eval questions were run live through the real agent on 2026-10-09: `crm-rpo-fy26`,
+`aapl-msft-employee-comparison`, `pltr-government-contract-risk`, `nvda-asset-turnover-fy2026`
+and `five-company-gross-margin-ranking-fy2025`. A throwaway wrapper recorded each call's
+`usage_metadata`; the repo code was unchanged. That gave 17 calls.
+
+- `model_version` was `gemini-3.5-flash-lite` on every call, so this is what
+  `gemini-flash-lite-latest` resolves to on 2026-10-09.
+- 3.4 LLM calls per question. The trace log (`var/trace_logs/traces.jsonl`, 506 Gemini runs
+  since 2026-10-01) gives 3.37 tool calls per run, which agrees.
+- Input: 7,884 tokens per call on average. The first call is 5,735; later calls reach 13,880 as
+  the chat history grows.
+- Output: 184 tokens per call on average, 1,177 at most (a long judged answer). No thinking tokens
+  were reported.
+- 53% of input tokens came back as implicit cache hits (`cached_content_token_count`).
+- A full run is about 48 × 3.4 ≈ 163 agent calls plus the judged-question calls. That is below
+  the "about 250" in `live-eval-verification.md`; recheck that figure.
+
+**Cost per full 48-question run (inference).** Judge calls are excluded. The calculation assumes
+cache hits are billed at the context-caching rate: 3.5 Flash-Lite $0.03, 3.8 Flash $0.075, and
+the OpenAI cached rate at 0.1× input. The caching page doesn't say explicitly that implicit hits
+are billed at those rates. It also assumes each model produces the same tokens we measured; a
+model that thinks will produce more output.
+
+| Model | $/call | $/run (163 calls) |
+|---|---|---|
+| gemini-3.5-flash-lite | 0.0017 | ~0.28 |
+| gemini-3.8-flash (to 2026-12-31) | 0.0038 | ~0.62 |
+| gemini-3.8-flash (from 2027-01-01) | 0.0076 | ~1.23 |
+| gpt-5.6-luna (plus any reasoning tokens) | 0.0010 | ~0.17 |
+
+Every candidate costs under about $1.25 per full run. At this volume, cost does not decide the
+choice: accuracy on our own eval and switching cost do.
+
+**Checks against primary sources (2026-10-09):**
+- The Vals Finance Agent v2 figures quoted above match `vals.ai/benchmarks/fabv2` ("Updated
+  10/7/2026").
+- Vals lists 3.8 Flash at $1.5 / $7.5, which is the 2027 list price, so its $2.00 per test
+  overstates today's cost.
+- The page's own prose disagrees with its table about who ranks first: Gemini 4 Argon is 65.40% in
+  the table.
+- The 3.8 Flash $0.75 / $3.75 rate, rising to $1.50 / $7.50 on 2027-01-01, matches
+  `ai.google.dev/gemini-api/docs/pricing`.
