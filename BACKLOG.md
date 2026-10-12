@@ -78,7 +78,7 @@ Research note: `docs/research/2026-10-09-free-tier-llm-failover.md`. Decided (us
   3. Make 3.8 main (with 3.5 Flash-Lite for exploratory `--ids` checks) only if it is clearly more accurate on our eval and its quota covers a full run (about 165 agent calls plus judge calls). Otherwise keep it as a backup for whole runs.
 
   Rules either way: switch models between runs only, never mid-run within an eval, and give each model its own baseline. Automatic 429 failover is acceptable only for non-eval agent use, after the served-model logging lands.
-- [ ] **[feature, Med, Substantial]** **Agent vs. raw LLM benchmark (public write-up).** Decisions confirmed 2026-10-10 in `docs/research/2026-10-09-agent-vs-raw-llm-benchmark-decisions.md` (Round 2: settled); research in `docs/research/2026-10-09-agent-vs-raw-llm-benchmark.md`. Next step: `/wayfinder` map. Starts after the phase 2 v2 questions and the served-model/token-logging item above land. Roadmap slot: before the monorepo phase.
+- [ ] **[feature, Med, Substantial]** **Agent vs. raw LLM benchmark (public write-up).** Decisions (Rounds 1–3, confirmed 2026-10-10 and 2026-10-12) in `docs/research/2026-10-09-agent-vs-raw-llm-benchmark-decisions.md`; research in `docs/research/2026-10-09-agent-vs-raw-llm-benchmark.md`. Map: `docs/plans/2026-10-12-agent-vs-raw-llm-benchmark-map.md` (charted 2026-10-12); next: frontier ticket "B2 answer format", then "B3 under the token cap" (feasibility probes done 2026-10-12). Building starts after the phase 2 v2 questions and the served-model/token-logging item above land. Roadmap slot: before the monorepo phase.
 
 ### From the 2026-10-06 data expansion phase 1 review
 
