@@ -27,6 +27,7 @@ import argparse
 import json
 import time
 from datetime import date, timedelta
+from pathlib import Path
 
 import requests
 
@@ -45,13 +46,15 @@ REQUEST_DELAY_SECONDS = 0.3  # match xbrl_facts.py's courtesy delay
 _RECENT_CUTOFF_DAYS = 400
 
 
-def fetch_company_facts(ticker: str) -> dict:
+def fetch_company_facts(ticker: str, cache_dir: Path | None = None) -> dict:
     """Fetch a company's full companyfacts payload (every tag it has ever
     reported, across all taxonomies), cached to disk indefinitely -- same
     rationale as xbrl_facts.fetch_concept: SEC data for a past period
-    doesn't change once filed, delete the cache file to force a refetch."""
-    CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    cache_path = CACHE_DIR / f"{ticker}_companyfacts.json"
+    doesn't change once filed, delete the cache file to force a refetch.
+    `cache_dir` defaults to CACHE_DIR, read at call time."""
+    cache_dir = cache_dir if cache_dir is not None else CACHE_DIR
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    cache_path = cache_dir / f"{ticker}_companyfacts.json"
     if cache_path.exists():
         return json.loads(cache_path.read_text(encoding="utf-8"))
 

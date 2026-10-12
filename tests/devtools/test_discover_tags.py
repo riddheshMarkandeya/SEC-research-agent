@@ -124,3 +124,17 @@ def test_fetch_company_facts_uses_the_tickers_cik_in_the_url(monkeypatch, tmp_pa
 
     assert calls == ["https://data.sec.gov/api/xbrl/companyfacts/CIK0001045810.json"]
     assert timeouts == [SEC_REQUEST_TIMEOUT_SECONDS]
+
+
+def test_fetch_company_facts_reads_a_given_cache_dir_without_fetching(monkeypatch, tmp_path):
+    import json
+
+    from sec_agent.devtools import discover_tags
+
+    (tmp_path / "NVDA_companyfacts.json").write_text(json.dumps(FAKE_COMPANY_FACTS), encoding="utf-8")
+
+    def no_network(*args, **kwargs):
+        raise AssertionError("fetched despite a cached file")
+
+    monkeypatch.setattr(discover_tags.requests, "get", no_network)
+    assert fetch_company_facts("NVDA", cache_dir=tmp_path) == FAKE_COMPANY_FACTS

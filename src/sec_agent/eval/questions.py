@@ -13,6 +13,7 @@ import jsonschema
 from jsonschema.exceptions import best_match
 
 from sec_agent.eval.grading import entry_companies
+from sec_agent.prompts.agent_tools import CLAIM_UNITS
 from sec_agent.sources.companies import COMPANIES
 from sec_agent.verification.numeric_utils import match_tolerance, normalize
 
@@ -28,6 +29,46 @@ CATEGORIES = (
 TRAPS = ("none", "look-alike", "fiscal-label", "false-premise", "not-disclosed", "out-of-corpus", "future-period")
 REFUSAL_KINDS = ("not_covered", "not_yet_filed", "never_disclosed", "false_premise")
 V2_TAGS = ("category", "steps", "answer_source", "trap", "needs_calculate")
+# The `calculate` tool's operations: a derivation records the steps a
+# correct answer takes with it, so the authoring check can redo them.
+DERIVATION_OPERATIONS = ("add", "subtract", "multiply", "divide", "percent_of", "percent_change")
+
+# A unit outside the claim enum could never match a claim, so a typo in
+# a trap's unit would silently disable the trap.
+_UNIT = {"enum": CLAIM_UNITS}
+_DERIVATION_REF = {"$ref": "#/$defs/derivation"}
+_DERIVATION_INPUT = {
+    "oneOf": [
+        # A figure printed in a filing; `part` names its gold rows.
+        {
+            "type": "object",
+            "properties": {"value": {"type": "number"}, "unit": _UNIT, "part": {"type": "string", "minLength": 1}},
+            "required": ["value", "unit", "part"],
+            "additionalProperties": False,
+        },
+        # A number no filing prints, such as the 2 of an average.
+        {
+            "type": "object",
+            "properties": {"value": {"type": "number"}, "unit": _UNIT, "constant": {"const": True}},
+            "required": ["value", "unit", "constant"],
+            "additionalProperties": False,
+        },
+        # An earlier step of a compound chain.
+        {
+            "type": "object",
+            "properties": {"derivation": _DERIVATION_REF},
+            "required": ["derivation"],
+            "additionalProperties": False,
+        },
+    ]
+}
+# One `calculate` call, operands in the tool's operand_a/operand_b order.
+_DERIVATION = {
+    "type": "object",
+    "properties": {"operation": {"enum": list(DERIVATION_OPERATIONS)}, "a": _DERIVATION_INPUT, "b": _DERIVATION_INPUT},
+    "required": ["operation", "a", "b"],
+    "additionalProperties": False,
+}
 
 _VALUE = {
     "type": "object",
@@ -38,14 +79,15 @@ _VALUE = {
         # label isn't one ticker: ["JPM", "BAC"] for a gap between them.
         "companies": {"type": "array", "items": {"enum": sorted(COMPANIES)}, "minItems": 1, "uniqueItems": True},
         "expected_value": {"type": "number"},
-        "expected_unit": {"type": "string"},
+        "expected_unit": _UNIT,
+        "derivation": _DERIVATION_REF,
     },
     "required": ["ticker", "expected_value", "expected_unit"],
     "additionalProperties": False,
 }
 _FORBIDDEN_VALUE = {
     "type": "object",
-    "properties": {"value": {"type": "number"}, "unit": {"type": "string"}, "ticker": {"enum": sorted(COMPANIES)}},
+    "properties": {"value": {"type": "number"}, "unit": _UNIT, "ticker": {"enum": sorted(COMPANIES)}},
     "required": ["value", "unit"],
     "additionalProperties": False,
 }
@@ -68,11 +110,15 @@ QUESTION_SCHEMA = {
         "tickers": {"type": "array", "items": {"type": "string"}, "minItems": 1},
         "skip": {"type": "boolean"},
         "expected_value": {"type": "number"},
-        "expected_unit": {"type": "string"},
+        "expected_unit": _UNIT,
+        "derivation": _DERIVATION_REF,
         "expected": {"type": "array", "items": _VALUE, "minItems": 1},
         "criteria": {"type": "string", "minLength": 1},
         "accepted": _NON_EMPTY_STRINGS,
         "refusal_kind": {"enum": list(REFUSAL_KINDS)},
+        # Terms whose absence from the company's filings shows the value
+        # was never disclosed; the authoring check searches for them.
+        "absence_terms": _NON_EMPTY_STRINGS,
         "readings": {**_NON_EMPTY_STRINGS, "minItems": 2},
         "forbidden_values": {"type": "array", "items": _FORBIDDEN_VALUE, "minItems": 1},
         # Relative, like the default 1%: 0.02 widens it to 2%.
@@ -93,10 +139,15 @@ QUESTION_SCHEMA = {
         _when_type("text", ["accepted"]),
         _when_type("refusal", ["refusal_kind"]),
         _when_type("clarify", ["readings"]),
+        {
+            "if": {"required": ["refusal_kind"], "properties": {"refusal_kind": {"const": "never_disclosed"}}},
+            "then": {"required": ["absence_terms"]},
+        },
     ],
     # A per-question tolerance must say why the default 1% isn't enough.
     "dependentRequired": {"category": list(V2_TAGS), "tolerance": ["tolerance_note"]},
     "additionalProperties": False,
+    "$defs": {"derivation": _DERIVATION},
 }
 
 
@@ -176,6 +227,17 @@ def _check_trap_values(question: dict, label: str) -> None:
                 )
 
 
+# Fields one question type alone may carry. Checked here rather than in
+# the schema, whose error for such a rule doesn't name the field.
+_TYPE_ONLY_FIELDS = {"absence_terms": "refusal", "derivation": "numeric"}
+
+
+def _check_type_only_fields(question: dict, label: str) -> None:
+    for key, qtype in _TYPE_ONLY_FIELDS.items():
+        if key in question and question["type"] != qtype:
+            raise ValueError(f"malformed eval question {label} at $.{key}: only a {qtype} question has one")
+
+
 _VALIDATOR = jsonschema.Draft202012Validator(QUESTION_SCHEMA)
 
 
@@ -192,6 +254,7 @@ def validate_questions(questions: list[dict]) -> None:
         if error is not None:
             where = "" if error.json_path == "$" else f" at {error.json_path}"
             raise ValueError(f"malformed eval question {label}{where}: {error.message}")
+        _check_type_only_fields(question, label)
         _check_trap_tickers(question, label)
         _check_entry_companies(question, label)
         _check_trap_values(question, label)

@@ -213,3 +213,88 @@ def test_a_trap_is_not_checked_against_a_cross_company_entry():
     question = _bank_comparison(**V2_TAGS, forbidden_values=[{"value": 80.5, "unit": "billion", "ticker": "JPM"}])
     question["expected"].append({"ticker": "NII-gap", "expected_value": 80.5, "expected_unit": "billion"})
     validate_questions([question])
+
+
+def _growth(**extra) -> dict:
+    """Year-over-year growth, from two anchored revenue figures."""
+    return {
+        "operation": "percent_change",
+        "a": {"value": 177.6, "unit": "billion", "part": "revenue-2024"},
+        "b": {"value": 182.4, "unit": "billion", "part": "revenue-2025"},
+        **extra,
+    }
+
+
+def _average_of_two() -> dict:
+    """(x + y) / 2: a nested step, then an unanchored constant."""
+    return {
+        "operation": "divide",
+        "a": {"derivation": {"operation": "add",
+                             "a": {"value": 177.6, "unit": "billion", "part": "revenue-2024"},
+                             "b": {"value": 182.4, "unit": "billion", "part": "revenue-2025"}}},
+        "b": {"value": 2, "unit": "raw", "constant": True},
+    }
+
+
+@pytest.mark.parametrize("derivation", [_growth(), _average_of_two()])
+def test_a_derivation_validates_on_a_numeric_question_and_on_an_entry(derivation):
+    validate_questions([_numeric(derivation=derivation)])
+    question = _bank_comparison()
+    question["expected"][0]["derivation"] = derivation
+    validate_questions([question])
+
+
+@pytest.mark.parametrize(
+    "derivation, fragment",
+    [
+        (_growth(operation="modulo"), "modulo"),
+        ({k: v for k, v in _growth().items() if k != "b"}, "'b' is a required property"),
+        (_growth(b={"value": 182.4, "unit": "billion", "part": "p", "constant": True}), "derivation.b"),
+        (_growth(b={"value": 182.4, "unit": "billion"}), "derivation.b"),
+        (_growth(b={"derivation": _growth(), "value": 1.0}), "derivation.b"),
+        (_growth(b={"value": 182.4, "unit": "billion", "constant": False}), "derivation.b"),
+    ],
+)
+def test_a_malformed_derivation_is_rejected(derivation, fragment):
+    with pytest.raises(ValueError) as e:
+        validate_questions([_numeric(derivation=derivation)])
+    assert fragment in str(e.value)
+
+
+def test_a_unit_typo_is_rejected_wherever_a_unit_appears():
+    with pytest.raises(ValueError, match=r"at \$\.expected_unit: 'bilion'"):
+        validate_questions([_numeric(expected_unit="bilion")])
+    question = _bank_comparison()
+    question["expected"][0]["expected_unit"] = "bilion"
+    with pytest.raises(ValueError, match=r"at \$\.expected\[0\]\.expected_unit: 'bilion'"):
+        validate_questions([question])
+    with pytest.raises(ValueError, match=r"at \$\.forbidden_values\[0\]\.unit: 'bilion'"):
+        validate_questions([_numeric(forbidden_values=[{"value": 1.0, "unit": "bilion"}])])
+    with pytest.raises(ValueError, match=r"at \$\.derivation\.b: .*'bilion'|at \$\.derivation\.b\.unit"):
+        validate_questions([_numeric(derivation=_growth(b={"value": 182.4, "unit": "bilion", "part": "p"}))])
+
+
+def _never_disclosed(**extra) -> dict:
+    return {"id": "nd", "ticker": "AAPL", "question": "How many iPhones did Apple sell in fiscal 2025?",
+            "type": "refusal", "refusal_kind": "never_disclosed", **extra}
+
+
+def test_a_never_disclosed_refusal_must_record_its_absence_terms():
+    with pytest.raises(ValueError, match="'nd'.*absence_terms"):
+        validate_questions([_never_disclosed()])
+    with pytest.raises(ValueError, match="absence_terms"):
+        validate_questions([_never_disclosed(absence_terms=[])])
+    validate_questions([_never_disclosed(absence_terms=["units sold", "iPhone units"])])
+
+
+def test_absence_terms_belong_to_refusals_only():
+    with pytest.raises(ValueError, match=r"'q1' at \$\.absence_terms: only a refusal question"):
+        validate_questions([_numeric(absence_terms=["units sold"])])
+    validate_questions([{"id": "r", "ticker": "XOM", "question": "q", "type": "refusal",
+                         "refusal_kind": "not_yet_filed", "absence_terms": ["2030"]}])
+
+
+def test_a_top_level_derivation_belongs_to_a_numeric_question_only():
+    question = {"id": "t", "ticker": "CAT", "question": "q", "type": "text", "accepted": ["x"], "derivation": _growth()}
+    with pytest.raises(ValueError, match=r"'t' at \$\.derivation: only a numeric question"):
+        validate_questions([question])
