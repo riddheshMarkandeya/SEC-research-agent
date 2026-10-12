@@ -123,7 +123,7 @@ def test_run_agent_refuses_a_text_answer_given_again_after_forcing(monkeypatch):
     capture_events(monkeypatch, log_calls)
     monkeypatch.setattr("sec_agent.agent.agent.BACKENDS", {"gemini": (fake_start, None, fake_send_followup)})
 
-    answer, all_results, warnings, withheld_answer, details = run_agent("What was Apple's revenue?", backend="gemini")
+    answer, all_results, warnings, withheld_answer, details, *_ = run_agent("What was Apple's revenue?", backend="gemini")
 
     assert followups == ["submit_answer"]
     assert answer == NO_SUBMISSION_REFUSAL
@@ -153,7 +153,7 @@ def test_run_agent_forces_submit_on_a_text_answer_at_the_budget_edge(monkeypatch
     monkeypatch.setattr("sec_agent.agent.agent.BACKENDS", {"gemini": (fake_start, None, fake_send_followup)})
     monkeypatch.setattr("sec_agent.agent.submission.verify_claims", lambda *a: [])
 
-    answer, all_results, warnings, withheld_answer, _ = run_agent("What was Apple's revenue?", backend="gemini")
+    answer, all_results, warnings, withheld_answer, *_ = run_agent("What was Apple's revenue?", backend="gemini")
 
     assert followups == ["submit_answer"]
     assert answer == "Revenue was $100 billion."
@@ -184,7 +184,7 @@ def test_run_agent_refuses_a_text_answer_once_the_final_turn_is_spent(monkeypatc
         "sec_agent.agent.agent.BACKENDS", {"gemini": (fake_start, lambda state, results, force_tool=None: text_turn, None)}
     )
 
-    answer, all_results, warnings, withheld_answer, details = run_agent(
+    answer, all_results, warnings, withheld_answer, details, *_ = run_agent(
         "What was Apple's revenue?", backend="gemini", verbose=True
     )
 
@@ -217,7 +217,7 @@ def test_run_agent_text_after_forcing_regates_a_submission_cached_by_the_retry(m
 
     monkeypatch.setattr("sec_agent.agent.submission.verify_claims", fake_verify_claims)
 
-    answer, all_results, warnings, withheld_answer, _ = run_agent("What was the value?", backend="gemini")
+    answer, all_results, warnings, withheld_answer, *_ = run_agent("What was the value?", backend="gemini")
 
     assert verify_calls == ["The value was 100.", "The value was 100."]
     assert answer == "The value was 100."
@@ -240,7 +240,7 @@ def test_run_agent_returns_generic_timeout_message_unchanged_when_iterations_exh
 
     monkeypatch.setattr("sec_agent.agent.agent.BACKENDS", {"gemini": _repeating_backend(fake_start)})
 
-    answer, all_results, warnings, withheld_answer, _ = run_agent("What was Apple's revenue?", backend="gemini")
+    answer, all_results, warnings, withheld_answer, *_ = run_agent("What was Apple's revenue?", backend="gemini")
 
     assert answer == (
         "I wasn't able to finish answering within the allotted number of searches. "
@@ -281,7 +281,7 @@ def test_run_agent_final_turn_safety_net_rescues_a_clean_refusal(monkeypatch):
     log_calls = []
     capture_events(monkeypatch, log_calls)
 
-    answer, all_results, warnings, withheld_answer, _ = run_agent("What was the value?", backend="gemini")
+    answer, all_results, warnings, withheld_answer, *_ = run_agent("What was the value?", backend="gemini")
 
     # One ordinary dispatch round trip (calls_made 1 -> 2), then exactly
     # one forced final-turn round trip once the budget is exhausted.
@@ -334,7 +334,7 @@ def test_run_agent_tool_calls_after_the_forced_final_turn_end_the_run(monkeypatc
         lambda call, question, all_results, searched_tickers, verbose: "search result",
     )
 
-    answer, all_results, warnings, withheld_answer, _ = run_agent("What was the value?", backend="gemini")
+    answer, all_results, warnings, withheld_answer, *_ = run_agent("What was the value?", backend="gemini")
 
     forced_calls = [c for c in send_tool_results_calls if c[1] == "submit_answer"]
     assert len(forced_calls) == 1  # spent exactly once, never repeated
@@ -378,7 +378,7 @@ def test_run_agent_spontaneous_submit_answer_with_valid_claims_passes(monkeypatc
         "sec_agent.agent.submission.verify_claims", lambda claims, all_results, question, answer_text: []
     )
 
-    answer, all_results, warnings, withheld_answer, _ = run_agent("What was the value?", backend="gemini")
+    answer, all_results, warnings, withheld_answer, *_ = run_agent("What was the value?", backend="gemini")
 
     assert answer == "The value was 100."
     assert warnings == []
@@ -417,7 +417,7 @@ def test_run_agent_submit_answer_bad_claims_retries_on_gemini_then_succeeds(monk
     )
     monkeypatch.setattr("sec_agent.agent.submission.verify_claims", lambda claims, all_results, question, answer_text: next(verify_calls))
 
-    answer, all_results, warnings, withheld_answer, _ = run_agent("What was the value?", backend="gemini")
+    answer, all_results, warnings, withheld_answer, *_ = run_agent("What was the value?", backend="gemini")
 
     assert answer == "The value was 100, corrected."
     assert warnings == []
@@ -452,7 +452,7 @@ def test_run_agent_mixed_submit_and_search_turn_requests_resubmission(monkeypatc
         "sec_agent.agent.agent.dispatch_tool_call", lambda call, question, all_results, searched_tickers, verbose: "search results here"
     )
 
-    answer, all_results, warnings, withheld_answer, _ = run_agent("What was the value?", backend="gemini")
+    answer, all_results, warnings, withheld_answer, *_ = run_agent("What was the value?", backend="gemini")
 
     assert answer == "The value was 100, now grounded."
     # Both the search result AND a resubmission request went back in the
@@ -484,7 +484,7 @@ def test_run_agent_mixed_submit_and_search_on_last_turn_salvages_the_submission(
     monkeypatch.setattr("sec_agent.agent.agent.BACKENDS", {"gemini": (fake_start, None, None)})
     monkeypatch.setattr("sec_agent.agent.submission.verify_claims", lambda claims, all_results, question, answer_text: [])
 
-    answer, all_results, warnings, withheld_answer, _ = run_agent("What was the value?", backend="gemini")
+    answer, all_results, warnings, withheld_answer, *_ = run_agent("What was the value?", backend="gemini")
 
     assert answer == "The value was 100."
     assert answer != (
@@ -509,7 +509,7 @@ def test_run_agent_text_reply_on_gemini_forces_submit_answer(monkeypatch):
     monkeypatch.setattr("sec_agent.agent.agent.BACKENDS", {"gemini": (fake_start, None, fake_send_followup)})
     monkeypatch.setattr("sec_agent.agent.submission.verify_claims", lambda claims, all_results, question, answer_text: [])
 
-    answer, all_results, warnings, withheld_answer, _ = run_agent("What was Apple's revenue?", backend="gemini")
+    answer, all_results, warnings, withheld_answer, *_ = run_agent("What was Apple's revenue?", backend="gemini")
 
     assert answer == "Apple's revenue was $100 billion [1]."
     assert len(forced_calls) == 1
@@ -530,7 +530,7 @@ def test_run_agent_malformed_submit_answer_args_produces_no_structured_answer_wa
 
     monkeypatch.setattr("sec_agent.agent.agent.BACKENDS", {"gemini": _repeating_backend(fake_start)})
 
-    answer, all_results, warnings, withheld_answer, _ = run_agent("What was the value?", backend="gemini")
+    answer, all_results, warnings, withheld_answer, *_ = run_agent("What was the value?", backend="gemini")
 
     assert len(warnings) == 1
     assert "schema" in warnings[0].lower()
@@ -587,7 +587,7 @@ def test_run_agent_submit_answer_retry_exhausting_budget_reverifies_against_curr
 
     monkeypatch.setattr("sec_agent.agent.submission.verify_claims", fake_verify_claims)
 
-    answer, all_results, warnings, withheld_answer, _ = run_agent("What was the value?", backend="gemini")
+    answer, all_results, warnings, withheld_answer, *_ = run_agent("What was the value?", backend="gemini")
 
     # Called once at retry-decision time (0 results, fails) and once more
     # at the exhausted-budget fallback (1 result by then, passes) --
@@ -619,7 +619,7 @@ def test_run_agent_invalid_submit_then_exhausted_budget_refuses_instead_of_crash
         lambda call, question, all_results, searched_tickers, verbose: all_results.append({"text": "extra"}) or "search result",
     )
 
-    answer, all_results, warnings, withheld_answer, details = run_agent("What was the value?", backend="gemini")
+    answer, all_results, warnings, withheld_answer, details, *_ = run_agent("What was the value?", backend="gemini")
 
     assert [d["check"] for d in details] == ["no_structured_answer"]
     assert withheld_answer == ""
@@ -692,7 +692,7 @@ def test_run_agent_retries_after_the_forced_final_turn_and_forces_submit(monkeyp
     log_calls = []
     capture_events(monkeypatch, log_calls)
 
-    answer, _, warnings, withheld_answer, _ = run_agent("What was the value?", backend="gemini")
+    answer, _, warnings, withheld_answer, *_ = run_agent("What was the value?", backend="gemini")
 
     assert sends[1:] == [
         ("tool_results", ["search_filings"], "submit_answer"),
@@ -770,7 +770,7 @@ def test_run_agent_tool_call_after_a_forced_mixed_edge_retry_ends_the_run(monkey
     sends = _install_scripted_backend(monkeypatch, _MIXED_TURN, [_SEARCH_TURN])
     verify_calls = _verify_sequence(monkeypatch, [[_BAD], [_BAD]])
 
-    answer, _, _, withheld_answer, _ = run_agent("What was the value?", backend="gemini")
+    answer, _, _, withheld_answer, *_ = run_agent("What was the value?", backend="gemini")
 
     assert sends[1:] == [("tool_results", ["search_filings", "submit_answer"], "submit_answer")]
     assert verify_calls == ["The value was 100.", "The value was 100."]
@@ -797,7 +797,7 @@ def test_run_agent_tool_call_after_a_forced_retry_ends_the_run(monkeypatch):
     sends = _install_scripted_backend(monkeypatch, _SEARCH_TURN, [_submit_turn("The value was 100."), _SEARCH_TURN])
     verify_calls = _verify_sequence(monkeypatch, [[_BAD], [_BAD]])
 
-    answer, _, _, withheld_answer, _ = run_agent("What was the value?", backend="gemini")
+    answer, _, _, withheld_answer, *_ = run_agent("What was the value?", backend="gemini")
 
     assert sends[1:] == [
         ("tool_results", ["search_filings"], None),
@@ -836,7 +836,7 @@ def test_run_agent_never_complying_model_stays_within_max_plus_two_requests(monk
     )
     _verify_sequence(monkeypatch, [[_BAD], [_BAD]])
 
-    _, _, _, withheld_answer, _ = run_agent("What was the value?", backend="gemini")
+    _, _, _, withheld_answer, *_ = run_agent("What was the value?", backend="gemini")
 
     assert sends[1:] == [
         ("followup", [], "submit_answer"),
@@ -868,7 +868,7 @@ def test_run_agent_backend_default_follows_config(monkeypatch):
     monkeypatch.setitem(llm_backends.BACKENDS, "totally-custom-backend", _repeating_backend(fake_start))
     monkeypatch.setattr("sec_agent.agent.submission.verify_claims", lambda claims, all_results, question, answer_text: [])
 
-    answer, all_results, warnings, withheld_answer, _ = run_agent("What was the value?")
+    answer, all_results, warnings, withheld_answer, *_ = run_agent("What was the value?")
 
     assert answer == "The value was 100."
 
@@ -898,7 +898,7 @@ def test_run_agent_does_not_send_withheld_answer_to_the_span(monkeypatch):
 
     monkeypatch.setattr("sec_agent.agent.agent.traced_span", fake_traced_span)
 
-    answer, all_results, warnings, withheld_answer, _ = run_agent("What was Apple's revenue?", backend="gemini")
+    answer, all_results, warnings, withheld_answer, *_ = run_agent("What was Apple's revenue?", backend="gemini")
 
     assert withheld_answer == "Apple's revenue was $100 billion [1]."
     assert len(captured_outputs) == 1
@@ -986,7 +986,7 @@ def test_run_agent_always_failing_submits_stay_within_max_plus_two_requests(monk
     log_calls = []
     capture_events(monkeypatch, log_calls)
 
-    _, _, warnings, withheld_answer, _ = run_agent("What was the value?", backend="gemini")
+    _, _, warnings, withheld_answer, *_ = run_agent("What was the value?", backend="gemini")
 
     assert sends[1:] == [_RETRY, _RETRY, _FORCED_RETRY, _FORCED_RETRY]
     assert len(sends) == max_iterations + 2
@@ -1063,5 +1063,47 @@ def test_run_agent_with_no_reserve_ends_at_the_budget_without_a_send(monkeypatch
 
     assert sends[1:] == []
     assert result.answer == answer
+    assert result.claims == []
     [ended] = _events(log_calls, "submit_turns_ended")
     assert (ended["reason"], ended["ending"]) == ("no_turn_left", ending)
+
+
+_CLAIMS_A = [{"value": 100.0, "unit": "raw", "citation_index": 1, "quote": "first"}]
+_CLAIMS_B = [{"value": 101.0, "unit": "raw", "citation_index": 2, "quote": "second"}]
+
+
+def test_run_agent_carries_the_accepted_submissions_claims(monkeypatch):
+    _install_scripted_backend(monkeypatch, _submit_turn(claims=_CLAIMS_A), [])
+    _verify_sequence(monkeypatch, [[]])
+
+    result = run_agent("What was the value?", backend="gemini")
+
+    assert result.withheld_answer is None
+    assert result.claims == _CLAIMS_A
+
+
+def test_run_agent_carries_the_claims_of_a_submission_the_gate_withheld(monkeypatch):
+    # The retry's own claims, not the first submission's.
+    monkeypatch.setattr("sec_agent.agent.agent.MAX_TOOL_ITERATIONS", 1)
+    _install_scripted_backend(
+        monkeypatch, _SEARCH_TURN, [_submit_turn("first", _CLAIMS_A), _submit_turn("second", _CLAIMS_B)]
+    )
+    _verify_sequence(monkeypatch, [[_BAD], [_BAD]])
+
+    result = run_agent("What was the value?", backend="gemini")
+
+    assert result.withheld_answer == "second"
+    assert result.claims == _CLAIMS_B
+
+
+def test_run_agent_carries_the_cached_submissions_claims_when_the_run_ends_on_a_tool_call(monkeypatch):
+    monkeypatch.setattr("sec_agent.agent.agent.MAX_TOOL_ITERATIONS", 1)
+    _install_scripted_backend(
+        monkeypatch, ModelTurn(tool_calls=[], text="thinking"), [_submit_turn("first", _CLAIMS_A), _SEARCH_TURN]
+    )
+    _verify_sequence(monkeypatch, [[_BAD], [_BAD]])
+
+    result = run_agent("What was the value?", backend="gemini")
+
+    assert result.withheld_answer == "first"
+    assert result.claims == _CLAIMS_A

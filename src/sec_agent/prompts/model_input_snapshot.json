@@ -1122,6 +1122,43 @@
    }
   ]
  },
+ "judge_criteria": {
+  "clarify": [
+   {
+    "system": "You are grading an AI assistant's answer against a specific pass/fail criteria. Be strict: the criteria must be clearly satisfied by the answer text, not just plausible in general. The answer may cite dates or filings that fall after your own training cutoff -- do not treat a date as evidence of fabrication merely because it is unfamiliar to you. Only treat a date as hypothetical or fabricated if it falls after the real current date stated in the prompt below. Respond with exactly two lines: the first line is either PASS or FAIL, the second line is a one-sentence reason.",
+    "temperature": 0.0,
+    "user": "Today's real date is 2026-09-24. Treat filing/financial data dated at or before today as real.\n\nQuestion asked: Q {q}?\n\nGrading criteria: The question is ambiguous between these readings: reading {a}; reading b. The answer passes if it asks which reading is meant, or if it answers every one of these readings and labels which figure belongs to which. It fails if it answers only one reading without saying the question could mean another. For this question: Detail {d}.\n\nAI assistant's answer:\nAnswer {a}.\n\nDoes the answer satisfy the grading criteria?"
+   }
+  ],
+  "refusal_false_premise": [
+   {
+    "system": "You are grading an AI assistant's answer against a specific pass/fail criteria. Be strict: the criteria must be clearly satisfied by the answer text, not just plausible in general. The answer may cite dates or filings that fall after your own training cutoff -- do not treat a date as evidence of fabrication merely because it is unfamiliar to you. Only treat a date as hypothetical or fabricated if it falls after the real current date stated in the prompt below. Respond with exactly two lines: the first line is either PASS or FAIL, the second line is a one-sentence reason.",
+    "temperature": 0.0,
+    "user": "Today's real date is 2026-09-24. Treat filing/financial data dated at or before today as real.\n\nQuestion asked: Q {q}?\n\nGrading criteria: The question rests on a false premise. The answer should point out that the premise is wrong and correct it from the filings, rather than accepting the premise and explaining it. For this question: Detail {d}.\n\nAI assistant's answer:\nAnswer {a}.\n\nDoes the answer satisfy the grading criteria?"
+   }
+  ],
+  "refusal_never_disclosed": [
+   {
+    "system": "You are grading an AI assistant's answer against a specific pass/fail criteria. Be strict: the criteria must be clearly satisfied by the answer text, not just plausible in general. The answer may cite dates or filings that fall after your own training cutoff -- do not treat a date as evidence of fabrication merely because it is unfamiliar to you. Only treat a date as hypothetical or fabricated if it falls after the real current date stated in the prompt below. Respond with exactly two lines: the first line is either PASS or FAIL, the second line is a one-sentence reason.",
+    "temperature": 0.0,
+    "user": "Today's real date is 2026-09-24. Treat filing/financial data dated at or before today as real.\n\nQuestion asked: Q {q}?\n\nGrading criteria: The answer should say that the company's filings do not disclose the requested figure, rather than stating a figure, deriving one from unrelated numbers, or substituting a different metric as if it were the one asked for. A refusal that gives a different reason (for example, that the period or company is not covered) does not pass. For this question: Detail {d}.\n\nAI assistant's answer:\nAnswer {a}.\n\nDoes the answer satisfy the grading criteria?"
+   }
+  ],
+  "refusal_not_covered": [
+   {
+    "system": "You are grading an AI assistant's answer against a specific pass/fail criteria. Be strict: the criteria must be clearly satisfied by the answer text, not just plausible in general. The answer may cite dates or filings that fall after your own training cutoff -- do not treat a date as evidence of fabrication merely because it is unfamiliar to you. Only treat a date as hypothetical or fabricated if it falls after the real current date stated in the prompt below. Respond with exactly two lines: the first line is either PASS or FAIL, the second line is a one-sentence reason.",
+    "temperature": 0.0,
+    "user": "Today's real date is 2026-09-24. Treat filing/financial data dated at or before today as real.\n\nQuestion asked: Q {q}?\n\nGrading criteria: The answer should decline to give the requested figure because the company or period asked about is not covered by the filings available to the assistant. It must not state a figure as the answer or estimate one. A refusal that gives a different reason (for example, that the company never discloses the figure) does not pass. For this question: Detail {d}.\n\nAI assistant's answer:\nAnswer {a}.\n\nDoes the answer satisfy the grading criteria?"
+   }
+  ],
+  "refusal_not_yet_filed": [
+   {
+    "system": "You are grading an AI assistant's answer against a specific pass/fail criteria. Be strict: the criteria must be clearly satisfied by the answer text, not just plausible in general. The answer may cite dates or filings that fall after your own training cutoff -- do not treat a date as evidence of fabrication merely because it is unfamiliar to you. Only treat a date as hypothetical or fabricated if it falls after the real current date stated in the prompt below. Respond with exactly two lines: the first line is either PASS or FAIL, the second line is a one-sentence reason.",
+    "temperature": 0.0,
+    "user": "Today's real date is 2026-09-24. Treat filing/financial data dated at or before today as real.\n\nQuestion asked: Q {q}?\n\nGrading criteria: The answer should decline to give the requested figure because the period asked about has not been reported yet (no filing covering it exists). It must not state a figure for that period or forecast one. A refusal that gives a different reason (for example, that the company is not covered) does not pass. For this question: Detail {d}.\n\nAI assistant's answer:\nAnswer {a}.\n\nDoes the answer satisfy the grading criteria?"
+   }
+  ]
+ },
  "mcp": {
   "mcp_compare_missing": {
    "error": "not available for this metric/period"

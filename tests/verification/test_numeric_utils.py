@@ -15,8 +15,17 @@ from sec_agent.verification.numeric_utils import (
     extract_numbers,
     extract_numbers_with_paren_flag,
     extract_numbers_with_spans,
+    match_tolerance,
     normalize,
 )
+
+
+@pytest.mark.parametrize(
+    "norm, relative, expected",
+    [(1000.0, None, 10.0), (1000.0, 0.02, 20.0), (1.0, None, 0.05), (-1000.0, None, 10.0)],
+)
+def test_match_tolerance_is_relative_with_a_floor(norm, relative, expected):
+    assert match_tolerance(norm, relative) == pytest.approx(expected)
 
 
 # ---------------------------------------------------------------------------

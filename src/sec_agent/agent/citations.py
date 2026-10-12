@@ -13,6 +13,7 @@ from sec_agent.verification.numeric_utils import (
     UNIT_MULTIPLIERS,
     extract_numbers,
     extract_numbers_with_paren_flag,
+    match_tolerance,
     normalize,
     normalize_for_match,
     text_coverage,
@@ -26,21 +27,15 @@ from sec_agent.verification.table_grounding import (
 )
 from sec_agent.agent.tool_results import citation_header
 
-_CITATION_MARKER = re.compile(r"\[(\d+)\]")
 _CITATION_WINDOW_CHARS = 150
 
 
-# Broader than _CITATION_MARKER on purpose: matches a comma-separated
-# multi-source bracket like "[1, 3, 5]" too, not just a single-index
-# "[1]". _CITATION_MARKER can't just be widened to cover this --
-# _iter_citation_claims (the eval grader's walk) goes marker-by-marker via
-# finditer() and reads group(1) as ONE index, so widening it would break
-# that per-index logic, not just the pattern.
-# This one exists solely for verify_claims()'s coverage check, which
-# only needs to strip citation-marker-SHAPED text before scanning for
-# numbers -- it never reads the indices out (a bracket's own bare digits
-# would otherwise be extracted as spurious uncovered-number claims).
-_ANY_CITATION_BRACKET = re.compile(r"\[\s*\d+(?:\s*,\s*\d+)*\s*\]")
+# A citation marker: a single-source "[1]" or a multi-source "[1, 3, 5]",
+# which cross-company answers use. The eval grader's walk reads the
+# indices out of each match; verify_claims() only strips marker-shaped
+# text before scanning for numbers (a bracket's own bare digits would
+# otherwise be extracted as spurious uncovered-number claims).
+ANY_CITATION_BRACKET = re.compile(r"\[\s*\d+(?:\s*,\s*\d+)*\s*\]")
 
 
 # Text that looks number-shaped but isn't a claim to verify -- stripped
@@ -268,8 +263,9 @@ def _iter_citation_claims(answer_text: str, all_results: list[dict]):
     number. value_is_citation_verified() consumes it to check whether a
     single target value's claims are ever verified.
 
-    For each citation marker, only the text since the previous citation
-    marker (capped at _CITATION_WINDOW_CHARS) is checked, so a claim
+    For each citation marker ("[n]" or a multi-source "[n, m]", whose
+    indices each yield the window's claims), only the text since the
+    previous marker (capped at _CITATION_WINDOW_CHARS) is checked, so a claim
     isn't accidentally "verified" by a number attributed to an earlier
     citation elsewhere in the same sentence. Known limitation: an answer
     that shows multi-step derivation work *between* a claim and its
@@ -278,23 +274,24 @@ def _iter_citation_claims(answer_text: str, all_results: list[dict]):
     detection — this is a best-effort heuristic, not an exhaustive
     grounding check."""
     window_start = 0
-    for match in _CITATION_MARKER.finditer(answer_text):
-        n = int(match.group(1))
+    for match in ANY_CITATION_BRACKET.finditer(answer_text):
         window = answer_text[max(window_start, match.start() - _CITATION_WINDOW_CHARS) : match.start()]
         window_start = match.end()
-        if not (1 <= n <= len(all_results)):
-            continue
-
         claimed = extract_numbers(_NON_CLAIM_PATTERN.sub("", window))
         if not claimed:
             continue
 
-        source_normalized = number_candidates(all_results[n - 1]["text"])
-        for value, unit in claimed:
-            category, norm = normalize(value, unit)
-            tolerance = max(0.01 * abs(norm), 0.05)
-            verified = any(c == category and abs(sn - norm) <= tolerance for c, sn in source_normalized)
-            yield n, value, unit, verified
+        # A multi-source bracket checks the same window against each of
+        # its sources in turn.
+        for n in (int(index) for index in re.findall(r"\d+", match.group())):
+            if not (1 <= n <= len(all_results)):
+                continue
+            source_normalized = number_candidates(all_results[n - 1]["text"])
+            for value, unit in claimed:
+                category, norm = normalize(value, unit)
+                tolerance = match_tolerance(norm)
+                verified = any(c == category and abs(sn - norm) <= tolerance for c, sn in source_normalized)
+                yield n, value, unit, verified
 
 
 CitationWarning = NamedTuple(
@@ -310,7 +307,9 @@ CitationWarning = NamedTuple(
 )
 
 
-def value_is_citation_verified(value: float, unit: str, answer_text: str, all_results: list[dict]) -> bool:
+def value_is_citation_verified(
+    value: float, unit: str, answer_text: str, all_results: list[dict], tolerance: float | None = None
+) -> bool:
     """Whether `value` is properly grounded everywhere it's cited in
     `answer_text`, used by eval_harness.py to check ONE specific expected
     value.
@@ -328,14 +327,18 @@ def value_is_citation_verified(value: float, unit: str, answer_text: str, all_re
     its citations is properly grounded — a redundant second, wrong
     citation for an otherwise-correct value shouldn't fail the check.
     Returns False only if every citation attached to it fails
-    verification."""
+    verification.
+
+    `tolerance` (relative) decides which claims count as `value`, and
+    must be the grader's own: a wider grader match with a narrower claim
+    match would find no claims and wave a miscited value through."""
     target_category, target_norm = normalize(value, unit)
-    tolerance = max(0.01 * abs(target_norm), 0.05)
+    limit = match_tolerance(target_norm, tolerance)
 
     matches = []
     for _, claimed_value, claimed_unit, verified in _iter_citation_claims(answer_text, all_results):
         category, norm = normalize(claimed_value, claimed_unit)
-        if category == target_category and abs(norm - target_norm) <= tolerance:
+        if category == target_category and abs(norm - target_norm) <= limit:
             matches.append(verified)
     return True if not matches else any(matches)
 
@@ -494,7 +497,7 @@ def _verify_numeric_claim(
             quote=quote.raw,
         )
     category, norm = normalize(value, unit)
-    tolerance = max(0.01 * abs(norm), 0.05)
+    tolerance = match_tolerance(norm)
     quote_candidates = number_candidates(quote.grounding, unit_source=source_text)
     if not any(c == category and abs(v - norm) <= tolerance for c, v in quote_candidates):
         return CitationWarning(
@@ -597,7 +600,7 @@ def verify_claims(
     live, by direct call, in code review. The result must still earn
     coverage the normal way, same as any other claimed value. Citation-
     bracket text is also stripped before extraction, guarding the same
-    hazard `answer_numbers`'s own `_ANY_CITATION_BRACKET` strip below
+    hazard `answer_numbers`'s own `ANY_CITATION_BRACKET` strip below
     exists for -- belt-and-suspenders, since the bracketed "operands
     from results [N] and [M])" text only ever appears after "=" and so
     is already excluded by the split above on today's exact rendering.
@@ -625,11 +628,9 @@ def verify_claims(
     # Strip [n]/[n, m, ...] citation markers before extracting --
     # otherwise a bare digit INSIDE a marker (e.g. the "1" in "[1]", or
     # each of 1/3/5 in a multi-source "[1, 3, 5]") is itself picked up as
-    # its own spurious uncovered claim. _ANY_CITATION_BRACKET (not
-    # _CITATION_MARKER) specifically to also catch the multi-index form
-    # -- see that constant's own comment.
+    # its own spurious uncovered claim.
     answer_numbers = extract_numbers_with_paren_flag(
-        _NON_CLAIM_PATTERN.sub("", _ANY_CITATION_BRACKET.sub("", answer_text))
+        _NON_CLAIM_PATTERN.sub("", ANY_CITATION_BRACKET.sub("", answer_text))
     )
     # Only the portion before "=" (the two operands) -- everything from
     # "=" onward is the RESULT itself, which must still earn its own
@@ -640,7 +641,7 @@ def verify_claims(
     calculated_candidates: list[tuple[str, float]] = [
         candidate
         for expression in calculated_expressions
-        for candidate in number_candidates(_ANY_CITATION_BRACKET.sub("", expression))
+        for candidate in number_candidates(ANY_CITATION_BRACKET.sub("", expression))
     ]
     identity_values = _percent_identity_values(calculated_expressions)
 
@@ -660,7 +661,7 @@ def verify_claims(
         if unit == "raw" and value in identity_values:
             continue
         category, norm = normalize(value, unit)
-        tolerance = max(0.01 * abs(norm), 0.05)
+        tolerance = match_tolerance(norm)
         if _covered(category, norm, tolerance) or (paren_negative and _covered(category, -norm, tolerance)):
             continue
         key = (category, norm)

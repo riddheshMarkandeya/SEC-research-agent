@@ -41,6 +41,38 @@ def test_value_is_citation_verified_ignores_an_out_of_range_citation_index():
     assert value_is_citation_verified(20.0, "percent", "The rate was 20%. [5]", [_fake_result()]) is True
 
 
+# Multi-source brackets ("[1, 6]"), which cross-company answers use: each
+# index in the bracket is checked like a single marker, and the value is
+# verified if any of them grounds it.
+def _two_sources() -> list[dict]:
+    return [_fake_result(text="Total assets were $331,233 million."), _fake_result(text="Revenue was $72.4 billion.")]
+
+
+def test_value_cited_in_a_multi_source_bracket_is_verified_by_any_of_its_sources():
+    answer = "Revenue was $72.4 billion [1, 2]."
+    assert value_is_citation_verified(72.4, "billion", answer, _two_sources()) is True
+
+
+def test_value_cited_in_a_multi_source_bracket_none_grounds_is_unverified():
+    # Before multi-source brackets were read, this value counted as uncited
+    # and passed.
+    answer = "Revenue was $99.9 billion [1, 2]."
+    assert value_is_citation_verified(99.9, "billion", answer, _two_sources()) is False
+
+
+def test_out_of_range_index_inside_a_multi_source_bracket_is_ignored():
+    answer = "Revenue was $72.4 billion [2, 7]."
+    assert value_is_citation_verified(72.4, "billion", answer, _two_sources()) is True
+    assert value_is_citation_verified(99.9, "billion", "Revenue was $99.9 billion [7, 9].", _two_sources()) is True
+
+
+def test_multi_source_bracket_digits_stay_out_of_the_next_markers_window():
+    # The "2" inside "[1, 2]" must not become a claim attributed to [1].
+    answer = "Revenue was $72.4 billion [1, 2]. Assets [1]."
+    assert value_is_citation_verified(2.0, "raw", answer, _two_sources()) is True
+    assert value_is_citation_verified(72.4, "billion", answer, _two_sources()) is True
+
+
 @pytest.mark.parametrize(
     "value, answer",
     [
@@ -617,15 +649,14 @@ def test_verify_claims_does_not_count_a_form_name_as_a_number(form):
 
 def test_verify_claims_multi_index_citation_bracket_digits_not_treated_as_uncovered_numbers():
     # Real false positive found live 2026-09-11 (41-question baseline
-    # re-run after the structured-claims redesign): _CITATION_MARKER
+    # re-run after the structured-claims redesign): a single-index pattern
     # (r"\[(\d+)\]") only strips a SINGLE-index bracket like "[1]" before
     # the coverage check runs extract_numbers() on answer_text -- a
     # multi-source bracket like "[1, 3, 5]" (crm-revenue-q1fy27's real
     # answer) or "[1, 17]" (msft-net-income-fy2025-indirect's) survives
     # untouched, so the bare digits 1/3/5 (or 1/17) inside it get
     # extracted as their own spurious uncovered-number claims and refuse
-    # an otherwise fully-grounded answer. (_CITATION_MARKER, used by the
-    # eval grader's walk, doesn't recognize "[1, 5]" as a marker at all.)
+    # an otherwise fully-grounded answer.
     results = [_fake_result(text="Revenue was $11,133 million, up 13 percent year-over-year.")]
     claims = [
         _valid_submitted_claim(value=11133.0, unit="million", quote="Revenue was $11,133 million"),

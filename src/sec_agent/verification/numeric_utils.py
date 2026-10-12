@@ -217,6 +217,17 @@ def normalize(value: float, unit: str) -> tuple[str, float]:
     return "scale", value * UNIT_MULTIPLIERS.get(unit, 1.0)
 
 
+# Two numbers match when they differ by at most this fraction of the
+# expected one, with a small absolute floor for values near zero.
+DEFAULT_TOLERANCE = 0.01
+
+
+def match_tolerance(norm: float, relative: float | None = None) -> float:
+    """The absolute match tolerance around a normalized value: `relative`
+    (default DEFAULT_TOLERANCE) of it, never below 0.05."""
+    return max((DEFAULT_TOLERANCE if relative is None else relative) * abs(norm), 0.05)
+
+
 # Shared with agent._QUOTE_COVERAGE_THRESHOLD (an alias for this, not a
 # second constant) and table_grounding.py's region-coverage check -- see
 # docs/decisions/2026-09-13-table-grounding-region-scoped-matching.md

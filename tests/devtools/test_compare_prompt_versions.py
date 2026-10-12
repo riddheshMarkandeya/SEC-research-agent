@@ -412,3 +412,76 @@ def test_main_fingerprint_mode_names_excluded_reports(tmp_path, capsys):
     _write(tmp_path, "20260924T000001Z", [_row("q", True)], _provenance("fpA", dirty=True))
     assert cpv.main([str(p) for p in sorted(tmp_path.glob("*.json"))]) == 0
     assert "1 dirty or unverified report(s) excluded" in capsys.readouterr().out
+
+
+# ---------------------------------------------------------------------------
+# Question files: v1 and v2 reports never pool
+# ---------------------------------------------------------------------------
+def _with_questions(path: str, agent: str = "fpA") -> dict:
+    provenance = _provenance(agent)
+    provenance["config"] = {"gemini_model": "m1", "questions": {"path": path, "sha256": "abc"}}
+    return provenance
+
+
+def test_questions_path_defaults_to_the_v1_file_for_reports_written_before_it_was_recorded(tmp_path):
+    [old, new] = _reports(
+        tmp_path,
+        [
+            ("20260924T010000Z", {"a": True}, _provenance("fpA")),
+            ("20260924T020000Z", {"a": True}, _with_questions("eval/v2_questions.jsonl")),
+        ],
+    )
+    assert cpv.questions_path(old) == "eval/eval_questions.jsonl"
+    assert cpv.questions_path(new) == "eval/v2_questions.jsonl"
+
+
+def test_main_fingerprint_mode_leaves_out_other_question_files(tmp_path, capsys):
+    # Same agent fingerprint (v2 then v1 on the next day, per the gating
+    # rule): without the filter both would land in one group.
+    for i in range(3):
+        _write(tmp_path, f"20260924T00000{i}Z", [_row("q", True)], _provenance("fpA"))
+        _write(tmp_path, f"20260925T00000{i}Z", [_row("v", False)], _with_questions("eval/v2_questions.jsonl"))
+    code = cpv.main([str(p) for p in sorted(tmp_path.glob("*.json"))])
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "3 report(s) from other question files left out (see --questions)" in out
+    assert "3/3" in out
+
+
+def test_main_fingerprint_mode_selects_the_v2_file_with_questions(tmp_path, capsys):
+    for i in range(3):
+        _write(tmp_path, f"20260924T00000{i}Z", [_row("q", True)], _provenance("fpA"))
+        _write(tmp_path, f"20260925T00000{i}Z", [_row("v", False)], _with_questions("eval/v2_questions.jsonl"))
+    cpv.main([*(str(p) for p in sorted(tmp_path.glob("*.json"))), "--questions", "eval/v2_questions.jsonl"])
+    out = capsys.readouterr().out
+    assert "0/3" in out and "3/3" not in out
+
+
+@pytest.mark.parametrize(
+    "spelling",
+    ["eval/v2_questions.jsonl", "NATIVE", "./eval/../eval/v2_questions.jsonl", "ABSOLUTE"],
+)
+def test_questions_argument_is_matched_however_it_is_spelled(spelling, monkeypatch):
+    monkeypatch.chdir(cpv.PROJECT_ROOT)
+    if spelling == "NATIVE":
+        spelling = str(Path("eval") / "v2_questions.jsonl")
+    elif spelling == "ABSOLUTE":
+        spelling = str(cpv.PROJECT_ROOT / "eval" / "v2_questions.jsonl")
+    assert cpv.root_relative_questions(spelling) == "eval/v2_questions.jsonl"
+
+
+def test_questions_argument_outside_the_repo_is_kept_as_given(tmp_path):
+    outside = tmp_path / "q.jsonl"
+    # Spelled as eval_harness records it: the platform's own separators.
+    assert cpv.root_relative_questions(str(outside)) == str(outside.resolve())
+
+
+def test_consistency_warnings_name_a_judge_criteria_change(tmp_path):
+    def stamped(name, criteria):
+        provenance = _provenance("fpA")
+        provenance["prompts"]["judge_criteria"] = criteria
+        return (name, {"a": True}, provenance)
+
+    base = _reports(tmp_path, [stamped("b0", "c1")])
+    candidate = _reports(tmp_path, [stamped("c0", "c2")])
+    assert any("judge_criteria fingerprint" in w for w in cpv.consistency_warnings(base, candidate))

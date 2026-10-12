@@ -59,6 +59,7 @@ from pathlib import Path
 from sec_agent.agent import dispatch, submission
 from sec_agent import config
 from sec_agent.eval import eval_harness
+from sec_agent.eval.grading import claim_attributions
 from sec_agent.devtools import rerank_cache, trace_query
 from sec_agent import tracing
 from sec_agent.sources import xbrl_facts
@@ -75,6 +76,11 @@ _OBSERVED_FIELDS = {
 }
 _LIST_CAP = 20
 _PROGRESS_EVERY = 25
+# Grade flips that aren't a grader change, listed after the ones that are.
+_SET_APART_GRADE_CHANGES = (
+    ("tool_drift", "Grade changes on runs whose tool results changed (not the grader)"),
+    ("refused", "Grade changes on runs the gate refuses now (not a verdict change)"),
+)
 
 # Every record the agent's tracing would have written during a replayed
 # call lands here instead of on disk, see install_trace_capture().
@@ -252,12 +258,16 @@ def fidelity(calls: list[dict], logged_result_count: int | None, rebuilt_count: 
     return drift
 
 
-def grade(q: dict | None, answer_text: str, all_results: list[dict]) -> bool | None:
-    """The eval grader's verdict on the submitted text as if the gate let it
-    through. None for judged or unknown questions, which need an LLM judge."""
-    if q is None or q.get("type") not in ("numeric", "comparison"):
-        return None
-    return eval_harness._grade_by_type(q, answer_text, all_results)[0]
+def grade(
+    q: dict | None, answer_text: str, all_results: list[dict], claims: list[dict]
+) -> tuple[bool | None, str | None]:
+    """The eval grader's verdict and detail on the submitted text as if the
+    gate let it through, with `claims` attributed to the sources they cite
+    for the v2 company checks. (None, None) for unknown questions and for
+    judged, refusal and clarify ones, which need an LLM judge."""
+    if q is None or q.get("type") not in eval_harness.DETERMINISTIC_TYPES:
+        return None, None
+    return eval_harness._grade_by_type(q, answer_text, all_results, claim_attributions(claims, all_results))
 
 
 def replay_run(run: RunTrace, search, questions: dict[str, dict]) -> dict:
@@ -272,20 +282,24 @@ def replay_run(run: RunTrace, search, questions: dict[str, dict]) -> dict:
         "now_checks": None,
         "now_messages": None,
         "correct": None,
+        "grade_detail": None,
         "drift": fidelity(calls, run.logged_result_count, len(all_results)),
         "replay_error": error,
         "calls": calls,
     }
     if error is not None:
         return record
-    answer_text, warnings = submission.submission_warnings(
-        run.final_submit.get("input") or {}, all_results, run.question
+    args = run.final_submit.get("input") or {}
+    answer_text, warnings = submission.submission_warnings(args, all_results, run.question)
+    correct, grade_detail = grade(
+        questions.get(run.qid), answer_text, all_results, submission.submitted_claims(args)
     )
     record.update(
         now_refused=bool(warnings),
         now_checks=submission.count_citation_checks(warnings),
         now_messages=[w.message for w in warnings],
-        correct=grade(questions.get(run.qid), answer_text, all_results),
+        correct=correct,
+        grade_detail=grade_detail,
     )
     return record
 
@@ -306,6 +320,7 @@ def _new_summary() -> dict:
         "recovered": {"correct": [], "wrong": [], "ungraded": []},
         "newly_refused": {"correct": [], "wrong": [], "ungraded": []},
         "check_changes": [],
+        "grade_changes": {"now_correct": [], "now_wrong": [], "refused": [], "tool_drift": []},
         "drifted": [],
         "drifted_changes": [],
         "errored": [],
@@ -318,13 +333,15 @@ def _new_summary() -> dict:
 
 def _tally_against_base(record: dict, base: dict | None, s: dict) -> None:
     """Adds one record's differences from its baseline replay to the
-    buckets: a missing baseline run, changed tool results, errors, then the
-    verdict itself."""
+    buckets: a missing baseline run, a changed grade, changed tool results,
+    errors, then the verdict itself."""
     label = _label(record)
     if base is None:
         s["only_in_candidate"].append(label)
         return
-    if [c["content_sha256"] for c in base["calls"]] != [c["content_sha256"] for c in record["calls"]]:
+    drifted = [c["content_sha256"] for c in base["calls"]] != [c["content_sha256"] for c in record["calls"]]
+    _tally_grade_change(record, base, s, drifted)
+    if drifted:
         s["tool_drift"].append(label)
     if record["replay_error"] is not None or base["replay_error"] is not None:
         same = record["replay_error"] == base["replay_error"]
@@ -332,6 +349,26 @@ def _tally_against_base(record: dict, base: dict | None, s: dict) -> None:
         return
     then = (base["now_refused"], base["now_checks"], base["now_messages"])
     _tally(record, then, s, against_logged=False)
+
+
+def _tally_grade_change(record: dict, base: dict, s: dict, drifted: bool) -> None:
+    """A grader change shows up as the same submitted text graded
+    differently, whether or not the gate verdict moved too. Two kinds of
+    flip are listed apart: on a run whose tool results changed, since the
+    citation check grades against those results and drift alone can flip
+    it; and on a run the gate refuses now, whose grade is of text the user
+    never sees, so the flip isn't a change in the eval's verdict. Drift
+    wins when both apply, since it can explain the flip on its own."""
+    then, now = base["correct"], record["correct"]
+    if then is None or now is None or then == now:
+        return
+    if drifted:
+        kind = "tool_drift"
+    elif record["now_refused"]:
+        kind = "refused"
+    else:
+        kind = "now_correct" if now else "now_wrong"
+    s["grade_changes"][kind].append(_label(record))
 
 
 def _tally(record: dict, then: tuple[bool, dict | None, list[str] | None], s: dict, *, against_logged: bool) -> None:
@@ -386,7 +423,8 @@ def summarize(records: list[dict], base: list[dict] | None = None) -> dict:
 
 def compare_failed(s: dict) -> bool:
     """True when anything differs: any flip, check or message change, hash
-    drift, new or changed error, or unmatched run."""
+    drift, new or changed error, or unmatched run. Grade changes are listed
+    for review but don't fail: a grader fix is meant to change grades."""
     flips = [*s["recovered"].values(), *s["newly_refused"].values()]
     others = [s["check_changes"], s["errored"], s["tool_drift"], s["only_in_base"], s["only_in_candidate"]]
     return any(flips) or any(others)
@@ -411,6 +449,20 @@ def _bucket_line(title: str, bucket: dict) -> list[str]:
     return lines
 
 
+def _grade_change_lines(s: dict) -> list[str]:
+    changes = s["grade_changes"]
+    up, down = changes["now_correct"], changes["now_wrong"]
+    lines = [
+        f"Grade changes (same submitted text): {len(up) + len(down)} "
+        f"({len(up)} now correct, {len(down)} now wrong)",
+        *_listed("now correct", up),
+        *_listed("now wrong", down),
+    ]
+    for key, title in _SET_APART_GRADE_CHANGES:
+        lines += [f"{title}: {len(changes[key])}", *_listed("runs", changes[key])]
+    return lines
+
+
 def format_summary(s: dict, counts: dict) -> str:
     lines = [
         f"Replayed: {s['replayed']} runs (errored {len(s['errored'])}, drifted {len(s['drifted'])}; "
@@ -421,6 +473,7 @@ def format_summary(s: dict, counts: dict) -> str:
         *_bucket_line("Newly refused (passed -> refused)", s["newly_refused"]),
         f"Check changes (same outcome, different checks or messages): {len(s['check_changes'])}",
         *_listed("runs", s["check_changes"]),
+        *_grade_change_lines(s),
         f"Tool-result drift: {len(s['tool_drift'])}",
         *_listed("runs", s["tool_drift"]),
         *_listed("Only in baseline", s["only_in_base"]),

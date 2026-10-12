@@ -396,17 +396,54 @@ def test_fidelity_flags_total_result_count_mismatch():
 # ---------------------------------------------------------------------------
 # grade and replay_run
 # ---------------------------------------------------------------------------
-def test_grade_only_numeric_and_comparison_questions(monkeypatch):
-    monkeypatch.setattr("sec_agent.eval.eval_harness._grade_by_type", lambda q, text, retrieved: (text == "right", "detail"))
+def test_grade_only_deterministic_questions(monkeypatch):
+    monkeypatch.setattr(
+        "sec_agent.eval.eval_harness._grade_by_type",
+        lambda q, text, retrieved, attributions: (text == "right", "detail"),
+    )
 
-    assert grade({"type": "numeric"}, "right", []) is True
-    assert grade({"type": "comparison"}, "wrong", []) is False
-    assert grade({"type": "judged"}, "right", []) is None
-    assert grade(None, "right", []) is None
+    assert grade({"type": "numeric"}, "right", [], []) == (True, "detail")
+    assert grade({"type": "comparison"}, "wrong", [], []) == (False, "detail")
+    assert grade({"type": "judged"}, "right", [], []) == (None, None)
+    assert grade({"type": "refusal"}, "right", [], []) == (None, None)
+    assert grade({"type": "text"}, "right", [], []) == (True, "detail")
+    assert grade(None, "right", [], []) == (None, None)
+
+
+def test_grade_attributes_the_submitted_claims_to_their_cited_sources(monkeypatch):
+    seen = []
+    monkeypatch.setattr(
+        "sec_agent.eval.eval_harness._grade_by_type",
+        lambda q, text, retrieved, attributions: (seen.append(attributions), (True, "detail"))[1],
+    )
+    results = [{"text": "Net revenue was $182.4 billion.", "metadata": {"ticker": "JPM", "chunk_index": "0"}}]
+    claims = [{"citation_index": 1, "value": 182.4, "unit": "billion", "quote": "Net revenue was $182.4 billion"}]
+
+    grade({"type": "comparison"}, "text", results, claims)
+
+    assert seen == [[{**claims[0], "tickers": ["JPM"]}]]
+
+
+def test_replay_run_grades_with_the_final_submissions_claims(capture, monkeypatch):
+    seen = []
+    monkeypatch.setattr(
+        "sec_agent.eval.eval_harness._grade_by_type",
+        lambda q, text, retrieved, attributions: (seen.append(attributions), (False, "not attributed"))[1],
+    )
+    claims = [{"citation_index": 1, "value": 100.0, "unit": "raw", "quote": "q"}]
+    run = _run([], submit_input={"answer_text": "It was 100 [1].", "claims": claims}, result_count=0)
+
+    record = replay_run(run, _fake_search, {"qid-1": {"type": "numeric"}})
+
+    # No result to cite, so the claim's company is unknown.
+    assert seen == [[{**claims[0], "tickers": []}]]
+    assert (record["correct"], record["grade_detail"]) == (False, "not attributed")
 
 
 def test_replay_run_invalid_submit_is_refused_and_graded(capture, monkeypatch):
-    monkeypatch.setattr("sec_agent.eval.eval_harness._grade_by_type", lambda q, text, retrieved: (False, "detail"))
+    monkeypatch.setattr(
+        "sec_agent.eval.eval_harness._grade_by_type", lambda q, text, retrieved, attributions: (False, "detail")
+    )
     run = _run(
         [_span("r1", "search_filings", {"query": "rev"}, {"result_count": 1})],
         submit_input={"claims": "not-a-list"},
@@ -429,6 +466,7 @@ def test_replay_run_valid_submit_passes(capture):
     record = replay_run(run, _fake_search, {})
 
     assert (record["now_refused"], record["now_checks"], record["correct"]) == (False, {}, None)
+    assert record["grade_detail"] is None
 
 
 def test_replay_run_error_leaves_verdict_empty(capture):
@@ -519,6 +557,60 @@ def test_summarize_against_baseline_flags_a_changed_warning_message():
     assert compare_failed(s) is True
 
 
+def test_summarize_against_baseline_lists_grade_flips_without_failing():
+    # A grader-only change: same gate verdicts, different grades.
+    base = [
+        _record("up", False, False, correct=False),
+        _record("down", False, False, correct=True),
+        _record("same", False, False, correct=True),
+        _record("ungraded", False, False, correct=None),
+        _record("refused", True, True, correct=False),
+    ]
+    cand = [
+        _record("up", False, False, correct=True),
+        _record("down", False, False, correct=False),
+        _record("same", False, False, correct=True),
+        _record("ungraded", False, False, correct=None),
+        _record("refused", True, True, correct=True),
+    ]
+
+    s = summarize(cand, base)
+
+    assert s["grade_changes"] == {
+        "now_correct": ["q-up (up)"],
+        "now_wrong": ["q-down (down)"],
+        "refused": ["q-refused (refused)"],
+        "tool_drift": [],
+    }
+    # Refused now, so the grade is of text the user never saw.
+    assert compare_failed(s) is False
+    text = format_summary(s, _COUNTS)
+    assert "Grade changes (same submitted text): 2 (1 now correct, 1 now wrong)" in text
+    assert "Grade changes on runs the gate refuses now (not a verdict change): 1" in text
+
+
+def test_grade_flip_is_listed_even_when_the_gate_verdict_also_changed():
+    base = [_record("a", True, True, correct=False)]
+    cand = [_record("a", True, False, correct=True)]
+
+    s = summarize(cand, base)
+
+    assert s["grade_changes"]["now_correct"] == ["q-a (a)"]
+    assert s["recovered"]["correct"] == ["q-a (a)"]
+
+
+def test_grade_flip_on_a_run_whose_sources_changed_is_set_apart():
+    # Grading reads the rebuilt sources, so drift alone can flip a grade.
+    base = [_record("a", False, False, correct=True, shas=("h1",))]
+    cand = [_record("a", False, False, correct=False, shas=("h2",))]
+
+    s = summarize(cand, base)
+
+    assert s["grade_changes"] == {"now_correct": [], "now_wrong": [], "refused": [], "tool_drift": ["q-a (a)"]}
+    assert s["tool_drift"] == ["q-a (a)"]
+    assert "Grade changes on runs whose tool results changed (not the grader): 1" in format_summary(s, _COUNTS)
+
+
 def test_identical_baseline_does_not_fail():
     records = [_record("a", True, True), _record("b", False, False)]
 
@@ -577,7 +669,7 @@ def trace_env(tmp_path, monkeypatch, capture):
         ],
     )
     questions = tmp_path / "questions.jsonl"
-    _write_jsonl(questions, [{"id": "q-one", "question": "What was it?", "type": "judged"}])
+    _write_jsonl(questions, [{"id": "q-one", "ticker": "AAPL", "question": "What was it?", "type": "judged", "criteria": "c"}])
     return tmp_path, ["--file", str(trace_file), "--questions", str(questions)]
 
 

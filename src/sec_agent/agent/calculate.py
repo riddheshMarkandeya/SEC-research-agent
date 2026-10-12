@@ -4,6 +4,8 @@ arithmetic in Python, and returns a result entry the model can cite like
 any other source.
 """
 
+import re
+
 from sec_agent.verification.numeric_utils import normalize
 from sec_agent.prompts import agent_messages as msg
 from sec_agent.prompts.agent_tools import CALCULATE_TOOL_SCHEMA, CLAIM_UNITS
@@ -246,3 +248,20 @@ def calculation_as_result(result: dict, args: dict) -> dict:
             "chunk_index": "calculated",
         },
     }
+
+
+# Built from the template itself, so the reader can't drift from what
+# calculation_as_result writes.
+_OPERANDS_TAIL = re.compile(
+    re.escape(msg.CALCULATION_RESULT_TEMPLATE.split("{value}", 1)[1])
+    .replace(re.escape("{idx_a}"), r"(\d+)")
+    .replace(re.escape("{idx_b}"), r"(\d+)")
+    + "$"
+)
+
+
+def calculation_operand_indices(result: dict) -> tuple[int, int] | None:
+    """The two operand citation indices a calculate result was computed
+    from, read back from its rendered text; None for any other text."""
+    match = _OPERANDS_TAIL.search(result["text"])
+    return (int(match.group(1)), int(match.group(2))) if match else None
