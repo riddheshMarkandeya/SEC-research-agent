@@ -22,10 +22,12 @@ from sec_agent.agent.dispatch import dispatch_tool_call
 from sec_agent.agent.submission import (
     NO_SUBMISSION_CITATION_WARNING,
     AgentResult,
+    Submission,
     finalize_answer,
     format_claim_retry_message,
     partition_submit_call,
     submission_warnings,
+    submitted_claims,
 )
 from sec_agent.agent.tool_results import format_citation_key
 from sec_agent.config import DEFAULT_BACKEND
@@ -189,7 +191,10 @@ def _handle_submit_turn(args: dict, other: list[dict], ctx: _AgentContext, loop_
                 return retry
             _log_turns_ended(ctx, loop_state, reason="no_turn_left", ending="gate_refused")
         result = finalize_answer(
-            answer_text, warnings, ctx.all_results, backend=ctx.backend, retries=loop_state.retries
+            Submission(answer_text, warnings, submitted_claims(args)),
+            ctx.all_results,
+            backend=ctx.backend,
+            retries=loop_state.retries,
         )
         return _LoopStep(result=result)
 
@@ -348,11 +353,13 @@ def _end_run(turn: Any, ctx: _AgentContext, loop_state: _AgentLoopState, reason:
     structured to verify) and pending tool calls get the generic
     budget-exhausted answer."""
     ending: Ending
+    claims: list[dict] = []
     if loop_state.last_submit_args is not None:
         ending = "cached"
         # The cached args may be the schema-invalid ones that drew the
         # retry, so they go back through the full gate.
         answer, warnings = submission_warnings(loop_state.last_submit_args, ctx.all_results, ctx.question)
+        claims = submitted_claims(loop_state.last_submit_args)
     elif turn is not None:
         ending = "no_submission"
         if ctx.verbose:
@@ -362,7 +369,9 @@ def _end_run(turn: Any, ctx: _AgentContext, loop_state: _AgentLoopState, reason:
         ending = "budget_message"
         answer, warnings = msg.BUDGET_EXHAUSTED_ANSWER, []
     _log_turns_ended(ctx, loop_state, reason=reason, ending=ending)
-    return finalize_answer(answer, warnings, ctx.all_results, backend=ctx.backend, retries=loop_state.retries)
+    return finalize_answer(
+        Submission(answer, warnings, claims), ctx.all_results, backend=ctx.backend, retries=loop_state.retries
+    )
 
 
 def _run_agent_impl(question: str, backend: str, verbose: bool = False) -> AgentResult:

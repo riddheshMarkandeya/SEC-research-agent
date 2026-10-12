@@ -3,7 +3,9 @@ Unit tests for calculate.py: operand grounding, the arithmetic, and the
 result entry a calculation becomes.
 """
 
-from sec_agent.agent.calculate import call_calculate, calculation_as_result
+import pytest
+
+from sec_agent.agent.calculate import call_calculate, calculation_as_result, calculation_operand_indices
 from sec_agent.agent.tool_results import format_results_block
 from tests.agent.helpers import _fake_result, _valid_calculate_args
 
@@ -352,3 +354,14 @@ def test_calculation_as_result_has_metadata_required_by_format_results_block():
     # calculate result is ever rendered back to the model.
     block = format_results_block([entry], 3)
     assert "[3]" in block
+
+
+@pytest.mark.parametrize("operation", ["percent_of", "percent_change", "divide"])
+def test_calculation_operand_indices_reads_back_what_calculation_as_result_wrote(operation):
+    args = _valid_calculate_args(operation=operation, citation_index_a=12, citation_index_b=3)
+    entry = calculation_as_result({"value": 1.5, "unit": "percent"}, args)
+    assert calculation_operand_indices(entry) == (12, 3)
+
+
+def test_calculation_operand_indices_is_none_without_the_operand_tail():
+    assert calculation_operand_indices({"text": "Revenue was $10 billion [1] and [2].", "metadata": {}}) is None

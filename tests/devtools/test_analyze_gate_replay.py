@@ -397,18 +397,53 @@ def test_fidelity_flags_total_result_count_mismatch():
 # grade and replay_run
 # ---------------------------------------------------------------------------
 def test_grade_only_deterministic_questions(monkeypatch):
-    monkeypatch.setattr("sec_agent.eval.eval_harness._grade_by_type", lambda q, text, retrieved: (text == "right", "detail"))
+    monkeypatch.setattr(
+        "sec_agent.eval.eval_harness._grade_by_type",
+        lambda q, text, retrieved, attributions: (text == "right", "detail"),
+    )
 
-    assert grade({"type": "numeric"}, "right", []) is True
-    assert grade({"type": "comparison"}, "wrong", []) is False
-    assert grade({"type": "judged"}, "right", []) is None
-    assert grade({"type": "refusal"}, "right", []) is None
-    assert grade({"type": "text"}, "right", []) is True
-    assert grade(None, "right", []) is None
+    assert grade({"type": "numeric"}, "right", [], []) == (True, "detail")
+    assert grade({"type": "comparison"}, "wrong", [], []) == (False, "detail")
+    assert grade({"type": "judged"}, "right", [], []) == (None, None)
+    assert grade({"type": "refusal"}, "right", [], []) == (None, None)
+    assert grade({"type": "text"}, "right", [], []) == (True, "detail")
+    assert grade(None, "right", [], []) == (None, None)
+
+
+def test_grade_attributes_the_submitted_claims_to_their_cited_sources(monkeypatch):
+    seen = []
+    monkeypatch.setattr(
+        "sec_agent.eval.eval_harness._grade_by_type",
+        lambda q, text, retrieved, attributions: (seen.append(attributions), (True, "detail"))[1],
+    )
+    results = [{"text": "Net revenue was $182.4 billion.", "metadata": {"ticker": "JPM", "chunk_index": "0"}}]
+    claims = [{"citation_index": 1, "value": 182.4, "unit": "billion", "quote": "Net revenue was $182.4 billion"}]
+
+    grade({"type": "comparison"}, "text", results, claims)
+
+    assert seen == [[{**claims[0], "tickers": ["JPM"]}]]
+
+
+def test_replay_run_grades_with_the_final_submissions_claims(capture, monkeypatch):
+    seen = []
+    monkeypatch.setattr(
+        "sec_agent.eval.eval_harness._grade_by_type",
+        lambda q, text, retrieved, attributions: (seen.append(attributions), (False, "not attributed"))[1],
+    )
+    claims = [{"citation_index": 1, "value": 100.0, "unit": "raw", "quote": "q"}]
+    run = _run([], submit_input={"answer_text": "It was 100 [1].", "claims": claims}, result_count=0)
+
+    record = replay_run(run, _fake_search, {"qid-1": {"type": "numeric"}})
+
+    # No result to cite, so the claim's company is unknown.
+    assert seen == [[{**claims[0], "tickers": []}]]
+    assert (record["correct"], record["grade_detail"]) == (False, "not attributed")
 
 
 def test_replay_run_invalid_submit_is_refused_and_graded(capture, monkeypatch):
-    monkeypatch.setattr("sec_agent.eval.eval_harness._grade_by_type", lambda q, text, retrieved: (False, "detail"))
+    monkeypatch.setattr(
+        "sec_agent.eval.eval_harness._grade_by_type", lambda q, text, retrieved, attributions: (False, "detail")
+    )
     run = _run(
         [_span("r1", "search_filings", {"query": "rev"}, {"result_count": 1})],
         submit_input={"claims": "not-a-list"},
@@ -431,6 +466,7 @@ def test_replay_run_valid_submit_passes(capture):
     record = replay_run(run, _fake_search, {})
 
     assert (record["now_refused"], record["now_checks"], record["correct"]) == (False, {}, None)
+    assert record["grade_detail"] is None
 
 
 def test_replay_run_error_leaves_verdict_empty(capture):

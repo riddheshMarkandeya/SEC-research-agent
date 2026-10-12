@@ -28,6 +28,7 @@ from sec_agent.prompts.judge_criteria import REFUSAL_CRITERIA
 from sec_agent.eval.eval_harness import (
     _grade,
     _grade_by_type,
+    _run_one,
     _select_questions,
     grade_comparison,
     grade_judged,
@@ -36,6 +37,11 @@ from sec_agent.eval.eval_harness import (
     run_eval,
     save_report,
 )
+
+
+def _answered(text: str, citation_warnings: list[str] | None = None) -> AgentResult:
+    """An agent result for _grade: `text`, with no retrieved results or claims."""
+    return AgentResult(text, [], citation_warnings or [], None, [], [])
 
 
 # ---------------------------------------------------------------------------
@@ -237,7 +243,7 @@ def test_grade_fails_numeric_question_when_agent_refused_even_if_value_is_in_ref
     )
     warnings = ["[1] claims 166000.0 (raw) but that value doesn't appear in the cited source"]
 
-    passed, detail = _grade(q, refusal_text, warnings, [])
+    passed, detail = _grade(q, _answered(refusal_text, warnings))
 
     assert passed is False
     assert "refused" in detail.lower()
@@ -245,14 +251,14 @@ def test_grade_fails_numeric_question_when_agent_refused_even_if_value_is_in_ref
 
 def test_grade_fails_comparison_question_when_agent_refused():
     q = {"type": "comparison", "expected": [{"ticker": "AAPL", "expected_value": 1.0, "expected_unit": "raw"}]}
-    passed, detail = _grade(q, "some refusal text", ["[1] claims ... doesn't appear"], [])
+    passed, detail = _grade(q, _answered("some refusal text", ["[1] claims ... doesn't appear"]))
     assert passed is False
     assert "refused" in detail.lower()
 
 
 def test_grade_still_calls_grade_numeric_when_no_citation_warnings():
     q = {"type": "numeric", "expected_value": 72.4, "expected_unit": "billion"}
-    passed, _ = _grade(q, "Total RPO was approximately $72.4 billion.", [], [])
+    passed, _ = _grade(q, _answered("Total RPO was approximately $72.4 billion."))
     assert passed is True
 
 
@@ -271,13 +277,13 @@ def test_grade_does_not_short_circuit_judged_questions_with_citation_warnings(mo
         "question": "What was the R&D expense?",
         "criteria": "the answer should refuse, since no such figure exists",
     }
-    passed, _ = _grade(q, "I can't confirm this...", ["[1] claims ... doesn't appear"], [])
+    passed, _ = _grade(q, _answered("I can't confirm this...", ["[1] claims ... doesn't appear"]))
     assert passed is True
 
 
 def test_grade_raises_on_unknown_type():
     try:
-        _grade({"type": "mystery", "id": "q1"}, "answer", [], [])
+        _grade({"type": "mystery", "id": "q1"}, _answered("answer"))
         assert False, "expected ValueError"
     except ValueError as e:
         assert "mystery" in str(e)
@@ -290,7 +296,7 @@ def test_grade_by_type_dispatches_comparison_questions_to_grade_comparison():
     # even though grade_comparison() itself is separately well-tested.
     q = {"type": "comparison", "expected": _TAX_RATE_COMPARISON}
     answer = "Apple's effective tax rate was 17.9%, while Microsoft's was 20%."
-    passed, _ = _grade_by_type(q, answer, None)
+    passed, _ = _grade_by_type(q, answer, None, [])
     assert passed is True
 
 
@@ -460,7 +466,7 @@ def test_run_eval_isolates_one_questions_exception_from_the_rest(monkeypatch, tm
     def fake_run_agent(question, backend):
         if question == "Q2?":
             raise RuntimeError("Gemini exhausted retries")
-        return AgentResult(f"The answer is {question[1]}.", [], [], None, [])
+        return AgentResult(f"The answer is {question[1]}.", [], [], None, [], [])
 
     monkeypatch.setattr(eval_harness, "run_agent", fake_run_agent)
     flush_calls = []
@@ -536,6 +542,7 @@ def test_run_eval_records_gate_withheld_would_have_passed_true_for_a_correct_but
                     "message": "claims 100.0 (raw) but no citation marker appears anywhere near it to trace the claim to a source",
                 }
             ],
+            [],
         )
 
     monkeypatch.setattr(eval_harness, "run_agent", fake_run_agent)
@@ -568,6 +575,7 @@ def test_run_eval_records_gate_withheld_would_have_passed_false_for_a_wrong_valu
                     "message": "claims 999.0 (raw) but no citation marker appears anywhere near it to trace the claim to a source",
                 }
             ],
+            [],
         )
 
     monkeypatch.setattr(eval_harness, "run_agent", fake_run_agent)
@@ -583,7 +591,7 @@ def test_run_eval_gate_fields_are_empty_when_the_gate_never_fired(monkeypatch, t
     questions_path = _write_one_numeric_question(tmp_path)
 
     def fake_run_agent(question, backend):
-        return AgentResult("The value was 100 [1].", [{"text": "value = 100 raw"}], [], None, [])
+        return AgentResult("The value was 100 [1].", [{"text": "value = 100 raw"}], [], None, [], [])
 
     monkeypatch.setattr(eval_harness, "run_agent", fake_run_agent)
 
@@ -605,7 +613,7 @@ def test_run_eval_backend_default_follows_config(monkeypatch, tmp_path):
 
     def fake_run_agent(question, backend):
         backends_seen.append(backend)
-        return AgentResult("The value was 100 [1].", [{"text": "value = 100 raw"}], [], None, [])
+        return AgentResult("The value was 100 [1].", [{"text": "value = 100 raw"}], [], None, [], [])
 
     monkeypatch.setattr(eval_harness, "run_agent", fake_run_agent)
     monkeypatch.setattr(eval_harness, "DEFAULT_BACKEND", "totally-custom-backend")
@@ -622,7 +630,7 @@ def test_run_eval_prints_the_question_text_only_when_verbose(monkeypatch, tmp_pa
     monkeypatch.setattr(
         eval_harness,
         "run_agent",
-        lambda question, backend: AgentResult("The value was 100 [1].", [{"text": "value = 100 raw"}], [], None, []),
+        lambda question, backend: AgentResult("The value was 100 [1].", [{"text": "value = 100 raw"}], [], None, [], []),
     )
 
     run_eval(load_questions(questions_path), verbose=verbose)
@@ -1299,7 +1307,7 @@ _BANKS = [
 
 def test_text_question_passes_on_an_accepted_variant_with_a_citation():
     q = {"type": "text", "accepted": ["PricewaterhouseCoopers LLP", "PwC"]}
-    assert _grade_by_type(q, "Caterpillar's auditor is PwC [3].", None) == (True, "found accepted text")
+    assert _grade_by_type(q, "Caterpillar's auditor is PwC [3].", None, []) == (True, "found accepted text")
 
 
 @pytest.mark.parametrize(
@@ -1310,55 +1318,168 @@ def test_text_question_passes_on_an_accepted_variant_with_a_citation():
     ],
 )
 def test_text_question_fails_without_a_citation_or_an_accepted_variant(answer, detail):
-    passed, found = _grade_by_type({"type": "text", "accepted": ["PwC"]}, answer, None)
+    passed, found = _grade_by_type({"type": "text", "accepted": ["PwC"]}, answer, None, [])
     assert passed is False and detail in found
 
 
 def test_text_question_counts_a_multi_source_bracket_as_a_citation():
-    assert _grade_by_type({"type": "text", "accepted": ["PwC"]}, "The auditor is PwC [1, 3].", None)[0] is True
+    assert _grade_by_type({"type": "text", "accepted": ["PwC"]}, "The auditor is PwC [1, 3].", None, [])[0] is True
 
 
 def test_text_question_is_failed_when_the_gate_refused():
-    passed, detail = _grade({"type": "text", "accepted": ["PwC"]}, "PwC [1]", ["[1] claims ..."], [])
+    passed, detail = _grade({"type": "text", "accepted": ["PwC"]}, _answered("PwC [1]", ["[1] claims ..."]))
     assert passed is False and "refused" in detail
 
 
 def test_accepted_on_a_numeric_question_also_requires_the_period_text():
     q = {"type": "numeric", "expected_value": 72.4, "expected_unit": "billion", "accepted": ["January 31, 2026"]}
-    assert _grade_by_type(q, "RPO was $72.4 billion as of Jan. 31, 2026 [1].", None)[0] is True
-    passed, detail = _grade_by_type(q, "RPO was $72.4 billion [1].", None)
+    assert _grade_by_type(q, "RPO was $72.4 billion as of Jan. 31, 2026 [1].", None, [])[0] is True
+    passed, detail = _grade_by_type(q, "RPO was $72.4 billion [1].", None, [])
     assert passed is False and "none of the accepted answers" in detail
 
 
+def _attributed(*pairs) -> list[dict]:
+    """Attributions as claim_attributions returns them, one per (ticker, value in billions)."""
+    return [
+        {"citation_index": i, "value": v, "unit": "billion", "quote": "q", "tickers": [t]} for i, (t, v) in enumerate(pairs, 1)
+    ]
+
+
+_ANSWER = "- JPMorgan: $182.4 billion [1]\n- Bank of America: $101.9 billion [2]"
+_SWAPPED = _attributed(("BAC", 182.4), ("JPM", 101.9))
+
+
 def test_v1_comparison_keeps_its_grader_unchanged():
-    # No category: v1. A swap still passes, as it always has.
-    swapped = "- JPMorgan: $101.9 billion [1]\n- Bank of America: $182.4 billion [2]"
-    assert _grade_by_type({"type": "comparison", "expected": _BANKS}, swapped, None) == (
+    # No category: v1. Claims citing the other bank's sources still pass.
+    assert _grade_by_type({"type": "comparison", "expected": _BANKS}, _ANSWER, None, _SWAPPED) == (
         True,
         "found matching values for all 2 entities",
     )
 
 
-def test_v2_attribution_and_trap_values_are_not_graded_yet():
-    # A known gap until claim-based attribution lands: a swapped v2
-    # comparison and a stated trap value both pass on value presence.
-    swapped = "- JPMorgan: $101.9 billion [1]\n- Bank of America: $182.4 billion [2]"
-    assert _grade_by_type({"type": "comparison", "expected": _BANKS, **_V2}, swapped, None)[0] is True
-    q = {
-        "type": "numeric",
-        "ticker": "TGT",
-        "expected_value": 106.6,
-        "expected_unit": "billion",
-        "forbidden_values": [{"value": 107.4, "unit": "billion"}],
-        **_V2,
-    }
-    assert _grade_by_type(q, "Target's revenue was $106.6 billion, not $107.4 billion [1].", None)[0] is True
+def test_v2_comparison_fails_when_its_claims_cite_the_other_companys_sources():
+    passed, detail = _grade_by_type({"type": "comparison", "tickers": ["JPM", "BAC"], "expected": _BANKS, **_V2}, _ANSWER, None, _SWAPPED)
+    assert passed is False
+    assert detail.endswith("value(s) not attributed to their company: JPM (182.4 billion), BAC (101.9 billion)")
+
+
+def test_v2_comparison_passes_when_each_value_is_claimed_for_its_company():
+    right = _attributed(("JPM", 182.4), ("BAC", 101.9))
+    assert _grade_by_type({"type": "comparison", "tickers": ["JPM", "BAC"], "expected": _BANKS, **_V2}, _ANSWER, None, right) == (
+        True,
+        "found matching values for all 2 entities",
+    )
+
+
+@pytest.mark.parametrize("asked", [{"ticker": "AAPL"}, {"tickers": ["AAPL"]}], ids=["ticker", "one-item-tickers"])
+def test_v2_comparison_charges_non_ticker_labels_to_the_questions_one_company(asked):
+    expected = [
+        {"ticker": "AAPL-cash", "expected_value": 30.3, "expected_unit": "billion"},
+        {"ticker": "AAPL-buyback", "expected_value": 89.2, "expected_unit": "billion"},
+    ]
+    q = {"type": "comparison", "expected": expected, **asked, **_V2}
+    answer = "Cash was $30.3 billion [1] and the buyback $89.2 billion [2]."
+    assert _grade_by_type(q, answer, None, _attributed(("AAPL", 30.3), ("AAPL", 89.2)))[0] is True
+    passed, detail = _grade_by_type(q, answer, None, _attributed(("AAPL", 30.3), ("MSFT", 89.2)))
+    assert passed is False and detail.endswith("not attributed to their company: AAPL-buyback (89.2 billion)")
+
+
+_TGT = {
+    "type": "numeric",
+    "ticker": "TGT",
+    "expected_value": 106.6,
+    "expected_unit": "billion",
+    "forbidden_values": [{"value": 109.1, "unit": "billion"}],
+    **_V2,
+}
+_TGT_ANSWER = "Target's revenue was $106.6 billion, not $109.1 billion [1]."
+
+
+def test_v2_trap_value_claimed_for_the_asked_company_fails():
+    passed, detail = _grade_by_type(_TGT, _TGT_ANSWER, None, _attributed(("TGT", 106.6), ("TGT", 109.1)))
+    assert passed is False and detail.endswith("trap value(s) claimed: TGT (109.1 billion)")
+
+
+@pytest.mark.parametrize(
+    "attributions",
+    [_attributed(("TGT", 106.6), ("WMT", 109.1)), _attributed(("TGT", 106.6))],
+    ids=["claimed-for-another-company", "only-in-the-prose"],
+)
+def test_v2_trap_value_not_claimed_for_the_asked_company_passes(attributions):
+    assert _grade_by_type(_TGT, _TGT_ANSWER, None, attributions)[0] is True
+
+
+_TGT_SOURCE = {"text": "Total revenue was $106.6 billion.", "metadata": {"ticker": "TGT", "chunk_index": "0"}}
+_TGT_CLAIM = {"citation_index": 1, "value": 106.6, "unit": "billion", "quote": "Total revenue was $106.6 billion"}
+_TRAP_CLAIM = {"citation_index": 1, "value": 109.1, "unit": "billion", "quote": "Total revenue was $106.6 billion"}
+_TGT_Q = {**_TGT, "id": "tgt", "question": "Target revenue?"}
+_TGT_JUDGED = {**_TGT_Q, "type": "judged", "criteria": "States $106.6 billion."}
+
+
+def _claimed(claims: list[dict], citation_warnings: list[str] | None = None) -> AgentResult:
+    """An agent result for _grade whose `claims` cite the one TGT source."""
+    return AgentResult(_TGT_ANSWER, [_TGT_SOURCE], citation_warnings or [], None, [], claims)
+
+
+def test_v2_judged_question_fails_on_a_trap_value_after_a_judge_pass(monkeypatch):
+    _capture_judge(monkeypatch)
+    assert _grade(_TGT_JUDGED, _claimed([_TGT_CLAIM]))[0] is True
+    passed, detail = _grade(_TGT_JUDGED, _claimed([_TRAP_CLAIM]))
+    assert passed is False and detail.endswith("trap value(s) claimed: TGT (109.1 billion)")
+
+
+def test_grade_does_not_trap_check_the_claims_of_a_refused_answer(monkeypatch):
+    _capture_judge(monkeypatch)
+    assert _grade(_TGT_JUDGED, _claimed([_TRAP_CLAIM], ["[1] claims ..."]))[0] is True
+
+
+def _agent_result(monkeypatch, answer, warnings, withheld, claims):
+    result = AgentResult(answer, [_TGT_SOURCE], warnings, withheld, [], claims)
+    monkeypatch.setattr(eval_harness, "run_agent", lambda question, backend: result)
+
+
+def test_run_one_records_the_attributed_claims_of_an_accepted_answer(monkeypatch):
+    _agent_result(monkeypatch, "Target's revenue was $106.6 billion [1].", [], None, [_TGT_CLAIM])
+    row = _run_one(_TGT_Q, "gemini", "gemini")
+    assert row["passed"] is True
+    assert row["claims"] == [{**_TGT_CLAIM, "tickers": ["TGT"]}]
+    assert row["gate_withheld_claims"] is None
+
+
+def test_run_one_regrades_a_withheld_answer_with_its_own_claims_and_stores_no_claims(monkeypatch):
+    withheld = "Target's revenue was $106.6 billion, or $109.1 billion [1]."
+    _agent_result(monkeypatch, "I can't confirm this answer...", ["bad"], withheld, [_TGT_CLAIM, _TRAP_CLAIM])
+    row = _run_one(_TGT_Q, "gemini", "gemini")
+    assert row["passed"] is False
+    assert row["claims"] == []
+    assert row["gate_withheld_claims"] == [{**_TGT_CLAIM, "tickers": ["TGT"]}, {**_TRAP_CLAIM, "tickers": ["TGT"]}]
+    assert row["gate_withheld_would_have_passed"] is False
+    assert row["gate_withheld_detail"].endswith("trap value(s) claimed: TGT (109.1 billion)")
+
+
+def test_run_one_does_not_trap_check_an_answer_the_gate_refused(monkeypatch):
+    # The user saw only the refusal, never the trap value.
+    _capture_judge(monkeypatch)
+    _agent_result(monkeypatch, "I can't confirm this answer...", ["bad"], "It was $109.1 billion [1].", [_TRAP_CLAIM])
+    q = {**_TGT, "type": "refusal", "refusal_kind": "not_covered", "id": "tgt", "question": "Target revenue?"}
+    row = _run_one(q, "gemini", "gemini")
+    assert row["passed"] is True
+    assert row["claims"] == []
+
+
+def test_run_one_error_row_stores_no_claims(monkeypatch):
+    def boom(question, backend):
+        raise RuntimeError("network down")
+
+    monkeypatch.setattr(eval_harness, "run_agent", boom)
+    row = _run_one(_TGT_Q, "gemini", "gemini")
+    assert row["claims"] == [] and row["gate_withheld_claims"] is None
 
 
 def test_tolerance_override_widens_the_numeric_match():
     q = {"type": "numeric", "expected_value": 100, "expected_unit": "billion"}
-    assert _grade_by_type(q, "It was $101.5 billion.", None)[0] is False
-    assert _grade_by_type({**q, "tolerance": 0.02, "tolerance_note": "n"}, "It was $101.5 billion.", None)[0] is True
+    assert _grade_by_type(q, "It was $101.5 billion.", None, [])[0] is False
+    assert _grade_by_type({**q, "tolerance": 0.02, "tolerance_note": "n"}, "It was $101.5 billion.", None, [])[0] is True
 
 
 def test_a_widened_tolerance_still_checks_the_value_citation():
@@ -1384,7 +1505,7 @@ def _capture_judge(monkeypatch) -> list[str]:
 def test_refusal_question_is_judged_on_its_kinds_template_even_when_gated(monkeypatch):
     prompts = _capture_judge(monkeypatch)
     q = {"type": "refusal", "question": "XOM 2030 revenue?", "refusal_kind": "not_yet_filed", "criteria": "No 2030 10-K."}
-    passed, _ = _grade(q, "That period hasn't been reported.", ["[1] claims ..."], [])
+    passed, _ = _grade(q, _answered("That period hasn't been reported.", ["[1] claims ..."]))
     assert passed is True
     assert REFUSAL_CRITERIA["not_yet_filed"] + " For this question: No 2030 10-K." in prompts[0]
 
@@ -1392,13 +1513,13 @@ def test_refusal_question_is_judged_on_its_kinds_template_even_when_gated(monkey
 def test_clarify_question_is_judged_on_its_readings(monkeypatch):
     prompts = _capture_judge(monkeypatch)
     q = {"type": "clarify", "question": "Walmart's margin?", "readings": ["gross margin", "operating margin"]}
-    assert _grade(q, "Which margin do you mean?", [], [])[0] is True
+    assert _grade(q, _answered("Which margin do you mean?"))[0] is True
     assert "these readings: gross margin; operating margin." in prompts[0]
 
 
 def test_citation_gate_evidence_regrades_a_withheld_text_answer():
     q = {"type": "text", "accepted": ["PwC"]}
-    evidence = eval_harness._citation_gate_evidence(q, [], "The auditor is PwC [1].", [])
+    evidence = eval_harness._citation_gate_evidence(q, [], "The auditor is PwC [1].", [], [])
     assert evidence["gate_withheld_would_have_passed"] is True
 
 

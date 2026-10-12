@@ -7,11 +7,13 @@ retry and refusal messages, and partition_submit_call.
 from typing import cast
 from sec_agent.agent.submission import (
     AgentResult,
+    Submission,
     partition_submit_call,
     finalize_answer,
     format_claim_retry_message,
     _format_refusal_message,
     submission_warnings,
+    submitted_claims,
 )
 from sec_agent.agent.citations import CitationWarning
 from sec_agent.prompts.agent_messages import (
@@ -52,8 +54,8 @@ def test_submission_warnings_valid_args_delegates_to_verify_claims(monkeypatch):
 
 
 def test_finalize_answer_passes_through_when_no_warnings():
-    result = finalize_answer("the answer", [], [], backend="gemini", retries=0)
-    assert result == AgentResult("the answer", [], [], None, [])
+    result = finalize_answer(Submission("the answer", [], []), [], backend="gemini", retries=0)
+    assert result == AgentResult("the answer", [], [], None, [], [])
 
 
 def test_finalize_answer_refuses_when_warnings_present():
@@ -67,7 +69,7 @@ def test_finalize_answer_refuses_when_warnings_present():
             quote=None,
         )
     ]
-    result = finalize_answer("the answer", warnings, cast(list[dict], ["result"]), backend="gemini", retries=0)
+    result = finalize_answer(Submission("the answer", warnings, []), cast(list[dict], ["result"]), backend="gemini", retries=0)
     assert result.answer == _format_refusal_message(["[1] claims 100.0 ... doesn't appear"])
     assert result.results == ["result"]
     assert result.citation_warnings == ["[1] claims 100.0 ... doesn't appear"]
@@ -92,13 +94,13 @@ def test_finalize_answer_returns_the_withheld_answer_when_refusing():
             quote=None,
         )
     ]
-    result = finalize_answer("the model's answer", warnings, [], backend="gemini", retries=1)
+    result = finalize_answer(Submission("the model's answer", warnings, []), [], backend="gemini", retries=1)
     assert result.withheld_answer == "the model's answer"
     assert result.answer != "the model's answer"  # the refusal text, not the raw answer
 
 
 def test_finalize_answer_withheld_answer_is_none_when_passing():
-    result = finalize_answer("the model's answer", [], [], backend="gemini", retries=0)
+    result = finalize_answer(Submission("the model's answer", [], []), [], backend="gemini", retries=0)
     assert result.withheld_answer is None
     assert result.answer == "the model's answer"
 
@@ -112,7 +114,7 @@ def test_finalize_answer_withheld_answer_is_none_when_passing():
 # that actually refused the answer.
 # ---------------------------------------------------------------------------
 def test_finalize_answer_citation_warning_details_empty_when_passing():
-    result = finalize_answer("the answer", [], [], backend="gemini", retries=0)
+    result = finalize_answer(Submission("the answer", [], []), [], backend="gemini", retries=0)
     assert result.citation_warning_details == []
 
 
@@ -132,7 +134,7 @@ def test_finalize_answer_citation_warning_details_matches_the_actual_warnings():
             quote="the model's claimed quote text",
         )
     ]
-    result = finalize_answer("the answer", warnings, [], backend="gemini", retries=0)
+    result = finalize_answer(Submission("the answer", warnings, []), [], backend="gemini", retries=0)
     assert result.citation_warning_details == [
         {
             "check": "quote_not_found",
@@ -166,7 +168,7 @@ def test_finalize_answer_logs_citation_gate_refused_with_check_counts(monkeypatc
             quote=None,
         ),
     ]
-    finalize_answer("the model's answer", warnings, cast(list[dict], ["result"]), backend="gemini", retries=1)
+    finalize_answer(Submission("the model's answer", warnings, []), cast(list[dict], ["result"]), backend="gemini", retries=1)
 
     assert len(log_calls) == 1
     category, fields = log_calls[0]
@@ -183,7 +185,7 @@ def test_finalize_answer_logs_citation_gate_refused_with_check_counts(monkeypatc
 def test_finalize_answer_does_not_log_when_passing(monkeypatch):
     log_calls = []
     capture_events(monkeypatch, log_calls)
-    finalize_answer("the model's answer", [], [], backend="gemini", retries=0)
+    finalize_answer(Submission("the model's answer", [], []), [], backend="gemini", retries=0)
     assert log_calls == []
 
 
@@ -294,3 +296,19 @@ def test_partition_submit_call_mixed_turn():
 
 def test_partition_submit_call_empty():
     assert partition_submit_call([]) == (None, [])
+
+
+def test_submitted_claims_returns_the_claims_of_valid_args():
+    claims = [{"value": 100.0, "unit": "raw", "citation_index": 1, "quote": "the reported value was 100"}]
+    assert submitted_claims({"answer_text": "It was 100 [1].", "claims": claims}) == claims
+
+
+def test_submitted_claims_is_empty_for_schema_invalid_args():
+    assert submitted_claims({"answer_text": "It was 100 [1].", "claims": "not a list"}) == []
+
+
+def test_finalize_answer_carries_the_claims_whether_or_not_it_refuses():
+    claims = [{"value": 100.0, "unit": "raw", "citation_index": 1, "quote": "q"}]
+    warnings = [CitationWarning(check="quote_not_found", citation_index=1, value=100.0, unit="raw", message="bad", quote=None)]
+    assert finalize_answer(Submission("a", [], claims), [], backend="gemini", retries=0).claims == claims
+    assert finalize_answer(Submission("a", warnings, claims), [], backend="gemini", retries=0).claims == claims

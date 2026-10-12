@@ -59,6 +59,7 @@ from pathlib import Path
 from sec_agent.agent import dispatch, submission
 from sec_agent import config
 from sec_agent.eval import eval_harness
+from sec_agent.eval.grading import claim_attributions
 from sec_agent.devtools import rerank_cache, trace_query
 from sec_agent import tracing
 from sec_agent.sources import xbrl_facts
@@ -257,13 +258,16 @@ def fidelity(calls: list[dict], logged_result_count: int | None, rebuilt_count: 
     return drift
 
 
-def grade(q: dict | None, answer_text: str, all_results: list[dict]) -> bool | None:
-    """The eval grader's verdict on the submitted text as if the gate let it
-    through. None for unknown questions and for judged, refusal and clarify
-    ones, which need an LLM judge."""
+def grade(
+    q: dict | None, answer_text: str, all_results: list[dict], claims: list[dict]
+) -> tuple[bool | None, str | None]:
+    """The eval grader's verdict and detail on the submitted text as if the
+    gate let it through, with `claims` attributed to the sources they cite
+    for the v2 company checks. (None, None) for unknown questions and for
+    judged, refusal and clarify ones, which need an LLM judge."""
     if q is None or q.get("type") not in eval_harness.DETERMINISTIC_TYPES:
-        return None
-    return eval_harness._grade_by_type(q, answer_text, all_results)[0]
+        return None, None
+    return eval_harness._grade_by_type(q, answer_text, all_results, claim_attributions(claims, all_results))
 
 
 def replay_run(run: RunTrace, search, questions: dict[str, dict]) -> dict:
@@ -278,20 +282,24 @@ def replay_run(run: RunTrace, search, questions: dict[str, dict]) -> dict:
         "now_checks": None,
         "now_messages": None,
         "correct": None,
+        "grade_detail": None,
         "drift": fidelity(calls, run.logged_result_count, len(all_results)),
         "replay_error": error,
         "calls": calls,
     }
     if error is not None:
         return record
-    answer_text, warnings = submission.submission_warnings(
-        run.final_submit.get("input") or {}, all_results, run.question
+    args = run.final_submit.get("input") or {}
+    answer_text, warnings = submission.submission_warnings(args, all_results, run.question)
+    correct, grade_detail = grade(
+        questions.get(run.qid), answer_text, all_results, submission.submitted_claims(args)
     )
     record.update(
         now_refused=bool(warnings),
         now_checks=submission.count_citation_checks(warnings),
         now_messages=[w.message for w in warnings],
-        correct=grade(questions.get(run.qid), answer_text, all_results),
+        correct=correct,
+        grade_detail=grade_detail,
     )
     return record
 

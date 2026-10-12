@@ -93,7 +93,15 @@ AgentResult = NamedTuple(
         ("citation_warnings", list[str]),  # unchanged shape/strings -- every existing caller's contract
         ("withheld_answer", str | None),  # the model's actual answer text iff the gate refused it, else None
         ("citation_warning_details", list[dict]),  # [w._asdict() for w in warnings] -- see finalize_answer
+        ("claims", list[dict]),  # the final submission's claims, accepted or withheld; [] when none was made
     ],
+)
+
+# What finalize_answer gates: the answer text, the warnings that would
+# refuse it, and the claims behind it ([] when nothing structured was
+# submitted). One value, to keep finalize_answer under PLR0913.
+Submission = NamedTuple(
+    "Submission", [("answer", str), ("warnings", list[CitationWarning]), ("claims", list[dict])]
 )
 
 
@@ -132,9 +140,16 @@ def submission_warnings(
     return answer_text, verify_claims(args["claims"], all_results, question, answer_text)
 
 
-def finalize_answer(
-    answer: str, warnings: list["CitationWarning"], all_results: list[dict], *, backend: str, retries: int
-) -> AgentResult:
+def submitted_claims(args: dict) -> list[dict]:
+    """The claims of one submit_answer call, or [] when its args fail the
+    schema (then there are no claims to trust the shape of). Shared by the
+    live loop and the offline replay, like submission_warnings."""
+    if validate_tool_args("submit_answer", SUBMIT_TOOL_SCHEMA, args):
+        return []
+    return args["claims"]
+
+
+def finalize_answer(submission: Submission, all_results: list[dict], *, backend: str, retries: int) -> AgentResult:
     """Single choke point for every run_agent() return site: withholds
     `answer` in favor of a refusal (see _format_refusal_message) whenever
     citation warnings remain, so the hard gate can't be bypassed by a
@@ -158,14 +173,20 @@ def finalize_answer(
     here -- NOT re-derived by a second pass elsewhere -- so every
     consumer sees exactly the checks that refused the answer.
 
+    The submission's `claims` are kept whether the gate accepts or
+    withholds the answer, so a grader can take each value's company from
+    the source it cites. They're required, never defaulted: a default list
+    would be shared by every result.
+
     A refusal made only of no_submission warnings gets
     NO_SUBMISSION_REFUSAL instead of REFUSAL_TEMPLATE: nothing was
     submitted, so saying claims failed verification would be false. Mixed
     with any claim warning, the claims wording is the true one."""
+    answer, warnings, claims = submission
     messages = [w.message for w in warnings]
     details = [w._asdict() for w in warnings]
     if not warnings:
-        return AgentResult(answer, all_results, messages, None, details)
+        return AgentResult(answer, all_results, messages, None, details, claims)
 
     log_event(
         "citation_gate_refused",
@@ -181,4 +202,4 @@ def finalize_answer(
         refusal = msg.NO_SUBMISSION_REFUSAL
     else:
         refusal = _format_refusal_message(messages)
-    return AgentResult(refusal, all_results, messages, answer, details)
+    return AgentResult(refusal, all_results, messages, answer, details, claims)

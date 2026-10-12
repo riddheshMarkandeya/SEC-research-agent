@@ -6,7 +6,7 @@ import json
 import pytest
 
 from sec_agent.config import QUESTIONS_PATH
-from sec_agent.eval.questions import validate_questions
+from sec_agent.eval.questions import question_tickers, single_ticker, validate_questions
 
 V2_TAGS = {
     "category": "cross-company",
@@ -107,4 +107,109 @@ def test_a_trap_value_on_a_multi_ticker_question_must_name_its_ticker():
     with pytest.raises(ValueError, match=r"'q1' at \$\.forbidden_values\[0\]: names no ticker"):
         validate_questions([question])
     question["forbidden_values"][0]["ticker"] = "BAC"
+    validate_questions([question])
+
+
+def test_a_one_item_tickers_list_is_the_default_trap_ticker():
+    question = _numeric(forbidden_values=[{"value": 1.0, "unit": "billion"}])
+    question["tickers"] = [question.pop("ticker")]
+    validate_questions([question])
+
+
+def test_a_trap_value_whose_match_band_overlaps_the_expected_values_is_rejected():
+    # 179.0 is outside 1% of 182.4, but an answer of 180.6 is within 1% of both.
+    with pytest.raises(ValueError, match=r"'q1' at \$\.forbidden_values\[0\]: 179\.0 billion overlaps"):
+        validate_questions([_numeric(forbidden_values=[{"value": 179.0, "unit": "billion"}])])
+    validate_questions([_numeric(forbidden_values=[{"value": 178.0, "unit": "billion"}])])
+    with pytest.raises(ValueError, match="overlaps the grading tolerance"):
+        validate_questions(
+            [_numeric(forbidden_values=[{"value": 178.0, "unit": "billion"}], tolerance=0.02, tolerance_note="n")]
+        )
+
+
+def _bank_comparison(**extra) -> dict:
+    question = _numeric(
+        type="comparison",
+        expected=[
+            {"ticker": "JPM", "expected_value": 182.4, "expected_unit": "billion"},
+            {"ticker": "BAC-net-revenue", "companies": ["BAC"], "expected_value": 101.9, "expected_unit": "billion"},
+        ],
+        **extra,
+    )
+    del question["expected_value"], question["expected_unit"], question["ticker"]
+    question["tickers"] = ["JPM", "BAC"]
+    return question
+
+
+def test_a_trap_value_is_checked_against_its_own_companys_entries_only():
+    with pytest.raises(ValueError, match="overlaps the grading tolerance of the expected 101.9 billion"):
+        validate_questions([_bank_comparison(forbidden_values=[{"value": 101.5, "unit": "billion", "ticker": "BAC"}])])
+    # BAC's value claimed for JPM is the swap a trap exists to catch.
+    validate_questions([_bank_comparison(forbidden_values=[{"value": 101.9, "unit": "billion", "ticker": "JPM"}])])
+
+
+def test_an_expected_value_of_unknown_company_is_checked_against_every_trap():
+    # Asked about two banks, the expected value could be either one's.
+    question = _numeric(forbidden_values=[{"value": 182.0, "unit": "billion", "ticker": "BAC"}])
+    question["tickers"] = ["JPM", "BAC"]
+    del question["ticker"]
+    with pytest.raises(ValueError, match="overlaps the grading tolerance of the expected 182.4 billion"):
+        validate_questions([question])
+
+
+@pytest.mark.parametrize(
+    "names, tickers, single",
+    [
+        ({"ticker": "JPM"}, ["JPM"], "JPM"),
+        ({"tickers": ["JPM"]}, ["JPM"], "JPM"),
+        ({"tickers": ["JPM", "BAC"]}, ["BAC", "JPM"], None),
+        ({"ticker": "JPM", "tickers": ["JPM", "BAC"]}, ["BAC", "JPM"], None),
+        ({"ticker": "JPM", "tickers": ["JPM"]}, ["JPM"], "JPM"),
+    ],
+)
+def test_a_questions_companies_are_named_across_both_fields(names, tickers, single):
+    assert (question_tickers(names), single_ticker(names)) == (tickers, single)
+
+
+def test_an_entrys_companies_must_be_known_tickers():
+    question = _bank_comparison()
+    question["expected"][1]["companies"] = ["BofA"]
+    with pytest.raises(ValueError, match=r"at \$\.expected\[1\]\.companies\[0\]: 'BofA'"):
+        validate_questions([question])
+
+
+def test_a_ticker_label_cannot_name_other_companies():
+    question = _bank_comparison()
+    question["expected"][0]["companies"] = ["JPM"]
+    validate_questions([question])
+    for other in (["BAC"], ["JPM", "BAC"]):
+        question["expected"][0]["companies"] = other
+        with pytest.raises(ValueError, match=r"at \$\.expected\[0\]: label 'JPM' is a ticker, but companies names"):
+            validate_questions([question])
+
+
+@pytest.mark.parametrize(
+    "entry",
+    [
+        {"ticker": "TGT", "expected_value": 1.0, "expected_unit": "billion"},
+        {"ticker": "TGT-net-revenue", "companies": ["TGT"], "expected_value": 1.0, "expected_unit": "billion"},
+    ],
+)
+def test_an_entrys_companies_must_be_the_questions_own(entry):
+    question = _bank_comparison()
+    question["expected"].append(entry)
+    with pytest.raises(ValueError, match=r"at \$\.expected\[2\]: TGT is not one of the question's companies"):
+        validate_questions([question])
+
+
+def test_a_trap_must_name_a_known_ticker():
+    question = _bank_comparison(forbidden_values=[{"value": 80.5, "unit": "billion", "ticker": "BofA"}])
+    with pytest.raises(ValueError, match=r"at \$\.forbidden_values\[0\]\.ticker: 'BofA'"):
+        validate_questions([question])
+
+
+def test_a_trap_is_not_checked_against_a_cross_company_entry():
+    # A correct gap claim cites both banks, so it can never hit a JPM-only trap.
+    question = _bank_comparison(**V2_TAGS, forbidden_values=[{"value": 80.5, "unit": "billion", "ticker": "JPM"}])
+    question["expected"].append({"ticker": "NII-gap", "expected_value": 80.5, "expected_unit": "billion"})
     validate_questions([question])

@@ -26,8 +26,12 @@ Six grading strategies, chosen per-question by its "type" field
     for the question's refusal kind or its list of readings.
 
 v2 questions (those with a "category") also fail a comparison whose
-values are attributed to the wrong company, and any answer that
-attributes a listed trap value to the asked company.
+values aren't claimed for their own company, and any answer that claims
+a listed trap value for the company it's charged to. A claimed value's
+companies are those behind the source its submit_answer claim cites
+(both, for a calculation across two), never read from the prose; an
+answer the citation gate refused is never trap-checked, since the user
+only saw the refusal.
 
 Usage:
     python -m sec_agent.eval.eval_harness
@@ -56,9 +60,17 @@ from pathlib import Path
 from transformers.utils import logging as hf_logging
 
 from sec_agent.agent.agent import run_agent
+from sec_agent.agent.submission import AgentResult
 from sec_agent.agent.citations import ANY_CITATION_BRACKET, value_is_citation_verified
-from sec_agent.eval.grading import judge_criteria_for, text_matches
-from sec_agent.eval.questions import validate_questions
+from sec_agent.eval.grading import (
+    claim_attributions,
+    forbidden_hits,
+    judge_criteria_for,
+    misattributed,
+    text_matches,
+    value_matcher,
+)
+from sec_agent.eval.questions import question_tickers, single_ticker, validate_questions
 from sec_agent.sources.companies import COMPANIES_PATH
 from sec_agent.config import (
     CHROMA_DIR,
@@ -79,7 +91,7 @@ from sec_agent.config import (
 from sec_agent.llm.llm_backends import BACKENDS, complete, require_backend
 from sec_agent.retrieval.index_chunks import STALE_INDEX_NOTE, corpus_provenance
 from sec_agent.tracing import flush, log_event
-from sec_agent.verification.numeric_utils import extract_numbers, match_tolerance, normalize
+from sec_agent.verification.numeric_utils import extract_numbers
 from sec_agent.prompts import SNAPSHOT_PATH, prompt_fingerprint
 from sec_agent.prompts.judge import JUDGE_SYSTEM_PROMPT, JUDGE_USER_TEMPLATE
 
@@ -89,8 +101,8 @@ CITATION_PATTERN = ANY_CITATION_BRACKET
 # ---------------------------------------------------------------------------
 # Numeric grading
 # ---------------------------------------------------------------------------
-# extract_numbers()/normalize() live in numeric_utils.py, shared with
-# citations.py's citation checks -- see numeric_utils.py's docstring for why.
+# extract_numbers() lives in numeric_utils.py, shared with citations.py's
+# citation checks; value_matcher() is the graders' shared match rule.
 
 
 def grade_numeric(
@@ -101,14 +113,10 @@ def grade_numeric(
     tolerance: float | None = None,
 ) -> tuple[bool, str]:
     """`tolerance` is relative; None means the default 1%."""
-    expected_category, expected_norm = normalize(expected_value, expected_unit)
-    limit = match_tolerance(expected_norm, tolerance)
+    matches = value_matcher(expected_value, expected_unit, tolerance)
 
     for value, unit in extract_numbers(answer_text):
-        category, norm = normalize(value, unit)
-        if category != expected_category:
-            continue
-        if abs(norm - expected_norm) <= limit:
+        if matches(value, unit):
             # A plain-text match isn't enough on its own: the value must
             # also be grounded wherever it's cited. all_results is optional
             # (None skips this) for callers with no citation context. The
@@ -145,7 +153,7 @@ def grade_comparison(
     "cited a value that isn't actually in any source," the two failure
     modes this type has concretely hit; a full entity-swap check would
     need a smarter (likely LLM-judge-based) check layered on top.
-    v2 questions get a lexical attribution check on top, in
+    v2 questions get a claim-based attribution check on top, in
     _grade_by_type().
     """
     missing = []
@@ -270,7 +278,28 @@ def grade_text(answer_text: str, accepted: list[str]) -> tuple[bool, str]:
     return True, "found accepted text"
 
 
-def _grade_by_type(q: dict, answer_text: str, retrieved: list[dict] | None) -> tuple[bool, str]:
+def _attribution_failure(q: dict, attributions: list[dict]) -> str | None:
+    """Why a v2 answer fails its company checks, or None: a comparison
+    value no claim states from exactly its entry's companies (so a gap
+    across two banks needs a calculation citing both), or a trap value
+    claimed from the company it's charged to alone (the question's one
+    company by default)."""
+    if "category" not in q:
+        return None
+    tolerance = q.get("tolerance")
+    if q["type"] == "comparison":
+        missing = misattributed(q["expected"], attributions, tolerance, question_tickers(q))
+        if missing:
+            return f"value(s) not attributed to their company: {', '.join(missing)}"
+    hits = forbidden_hits(q.get("forbidden_values", []), attributions, single_ticker(q), tolerance)
+    if hits:
+        return f"trap value(s) claimed: {', '.join(hits)}"
+    return None
+
+
+def _grade_by_type(
+    q: dict, answer_text: str, retrieved: list[dict] | None, attributions: list[dict]
+) -> tuple[bool, str]:
     """The deterministic grade of a DETERMINISTIC_TYPES question, shared by
     _grade() (the real verdict), _citation_gate_evidence() (would the
     withheld text have passed) and the offline gate replay, so all three
@@ -279,9 +308,9 @@ def _grade_by_type(q: dict, answer_text: str, retrieved: list[dict] | None) -> t
     A value or text match is checked first; on a pass, an `accepted`
     list on a numeric or comparison question must also match (an
     ambiguous question's answer has to name which reading it took).
-    Which company a value belongs to, and `forbidden_values`, aren't
-    graded yet: that check is to come from the agent's submitted claims
-    and the ticker of the source each one cites, not from the prose."""
+    A v2 question then also needs _attribution_failure to find nothing in
+    `attributions` (claim_attributions of the graded text's claims).
+    It's a required argument so no caller can skip the check silently."""
     tolerance = q.get("tolerance")
     if q["type"] == "numeric":
         passed, detail = grade_numeric(answer_text, q["expected_value"], q["expected_unit"], retrieved, tolerance)
@@ -293,12 +322,20 @@ def _grade_by_type(q: dict, answer_text: str, retrieved: list[dict] | None) -> t
         return passed, detail
     if q["type"] != "text" and "accepted" in q and not text_matches(answer_text, q["accepted"]):
         return False, f"{detail}, but none of the accepted answers found: {', '.join(q['accepted'])}"
+    failure = _attribution_failure(q, attributions)
+    if failure:
+        return False, f"{detail}, but {failure}"
     return True, detail
 
 
-def _grade(
-    q: dict, answer_text: str, citation_warnings: list[str], retrieved: list[dict], judge_backend: str = "gemini"
-) -> tuple[bool, str]:
+def _accepted_attributions(result: AgentResult) -> list[dict]:
+    """The company attributions of an answer the citation gate accepted.
+    A refused answer has none: its claims were never verified, and the
+    user only saw the refusal, so it's never trap-checked or recorded."""
+    return [] if result.citation_warnings else claim_attributions(result.claims, result.results)
+
+
+def _grade(q: dict, result: AgentResult, judge_backend: str = "gemini") -> tuple[bool, str]:
     """Dispatches to the right grading strategy for question type
     q["type"], kept separate from run_eval()'s live agent loop so it's
     testable without network/LLM calls (same rationale as
@@ -315,17 +352,29 @@ def _grade(
     checks the actual answer text against its criteria, which is the
     correct way to check whether refusing was the right call.
 
+    `result` is the agent's answer being graded. A v2 judged, refusal or
+    clarify question with `forbidden_values` fails a judge PASS whose
+    accepted claims state a trap value.
+
     `judge_backend` is passed straight through to grade_judged() -- see
     run_eval()'s docstring for why it isn't just reused from `backend`."""
-    if citation_warnings and q["type"] in DETERMINISTIC_TYPES:
+    answer_text = result.answer
+    attributions = _accepted_attributions(result)
+    if result.citation_warnings and q["type"] in DETERMINISTIC_TYPES:
         return False, "agent refused to answer (hard-gated on unverified citation(s)) -- no value to grade"
     if q["type"] in DETERMINISTIC_TYPES:
-        return _grade_by_type(q, answer_text, retrieved)
+        return _grade_by_type(q, answer_text, result.results, attributions)
     if q["type"] == "judged":
-        return grade_judged(q["question"], answer_text, q["criteria"], judge_backend)
-    if q["type"] in ("refusal", "clarify"):
-        return grade_judged(q["question"], answer_text, judge_criteria_for(q), judge_backend)
-    raise ValueError(f"Unknown question type: {q['type']!r} in question {q['id']!r}")
+        criteria = q["criteria"]
+    elif q["type"] in ("refusal", "clarify"):
+        criteria = judge_criteria_for(q)
+    else:
+        raise ValueError(f"Unknown question type: {q['type']!r} in question {q['id']!r}")
+    passed, detail = grade_judged(q["question"], answer_text, criteria, judge_backend)
+    failure = _attribution_failure(q, attributions) if passed else None
+    if failure:
+        return False, f"{detail} -- but {failure}"
+    return passed, detail
 
 
 def _empty_citation_gate_evidence() -> dict:
@@ -334,20 +383,24 @@ def _empty_citation_gate_evidence() -> dict:
     would hand every row in a batch the SAME list object via a shallow
     `dict(...)`/`**` copy -- harmless today since nothing mutates it in
     place, but a silent corrupt-every-other-row trap waiting for the
-    next edit that does. See
-    docs/decisions/2026-09-10-citation-gate-measurement-instrumentation.md."""
+    next edit that does."""
     return {
         "withheld_answer": None,
         "gate_withheld_would_have_passed": None,
         "gate_withheld_detail": None,
+        "gate_withheld_claims": None,
         "citation_warning_details": [],
     }
 
 
 def _citation_gate_evidence(
-    q: dict, retrieved: list[dict], withheld_answer: str | None, citation_warning_details: list[dict]
+    q: dict,
+    retrieved: list[dict],
+    withheld_answer: str | None,
+    citation_warning_details: list[dict],
+    withheld_claims: list[dict],
 ) -> dict:
-    """The 4 additive report fields the citation-gate FP/FN measurement
+    """The 5 additive report fields the citation-gate FP/FN measurement
     work needs. `_grade()`'s own short-circuit still scores a hard-gated
     numeric/comparison question as FAIL -- that user-facing verdict is
     untouched here. This is purely additional evidence: what the model
@@ -359,7 +412,9 @@ def _citation_gate_evidence(
     and a passing row has nothing withheld to re-grade in the
     first place. `gate_withheld_would_have_passed` re-runs the SAME
     grade_numeric()/grade_comparison() (via _grade_by_type(), shared with
-    _grade()'s real verdict) the real verdict would have used.
+    _grade()'s real verdict) the real verdict would have used, with the
+    withheld submission's own claims for the company checks; their
+    attributions are kept as `gate_withheld_claims`.
 
     `citation_warning_details` is passed straight through from
     `AgentResult.citation_warning_details` (the caller already has it)
@@ -369,12 +424,14 @@ def _citation_gate_evidence(
     if withheld_answer is None or q["type"] not in DETERMINISTIC_TYPES:
         return _empty_citation_gate_evidence()
 
-    would_pass, would_detail = _grade_by_type(q, withheld_answer, retrieved)
+    withheld_attributions = claim_attributions(withheld_claims, retrieved)
+    would_pass, would_detail = _grade_by_type(q, withheld_answer, retrieved, withheld_attributions)
 
     return {
         "withheld_answer": withheld_answer,
         "gate_withheld_would_have_passed": would_pass,
         "gate_withheld_detail": would_detail,
+        "gate_withheld_claims": withheld_attributions,
         "citation_warning_details": citation_warning_details,
     }
 
@@ -449,8 +506,11 @@ def _run_one(q: dict, backend: str, judge_backend: str) -> dict:
         # this stat.
         has_citation = not citation_warnings and bool(CITATION_PATTERN.search(answer_text))
 
-        passed, detail = _grade(q, answer_text, citation_warnings, retrieved, judge_backend)
-        gate_fields = _citation_gate_evidence(q, retrieved, result.withheld_answer, result.citation_warning_details)
+        passed, detail = _grade(q, result, judge_backend)
+        attributions = _accepted_attributions(result)
+        gate_fields = _citation_gate_evidence(
+            q, retrieved, result.withheld_answer, result.citation_warning_details, result.claims
+        )
     except Exception as e:
         # Broad on purpose: a network error, exhausted retries, or an
         # unexpected bug in run_agent()/_grade() should all fail just
@@ -464,6 +524,7 @@ def _run_one(q: dict, backend: str, judge_backend: str) -> dict:
             "detail": f"{type(e).__name__}: {e}",
             "has_citation": False,
             "citation_warnings": [],
+            "claims": [],
             "answer": None,
             "n_chunks_retrieved": 0,
             **_empty_citation_gate_evidence(),
@@ -475,6 +536,7 @@ def _run_one(q: dict, backend: str, judge_backend: str) -> dict:
         "detail": detail,
         "has_citation": has_citation,
         "citation_warnings": citation_warnings,
+        "claims": attributions,
         "answer": answer_text,
         "n_chunks_retrieved": len(retrieved),
         **gate_fields,

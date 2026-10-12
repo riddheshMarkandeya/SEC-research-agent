@@ -463,7 +463,7 @@ def _render_judge_criteria(mp) -> dict:
     out = {}
     for key, q in questions.items():
         captured.clear()
-        eval_harness._grade({**q, "question": "Q {q}?"}, "Answer {a}.", [], [])
+        eval_harness._grade({**q, "question": "Q {q}?"}, submission.AgentResult("Answer {a}.", [], [], None, [], []))
         out[key] = list(captured)
     return out
 

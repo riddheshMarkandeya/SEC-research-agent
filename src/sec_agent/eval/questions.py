@@ -12,6 +12,10 @@ silently ignored field.
 import jsonschema
 from jsonschema.exceptions import best_match
 
+from sec_agent.eval.grading import entry_companies
+from sec_agent.sources.companies import COMPANIES
+from sec_agent.verification.numeric_utils import match_tolerance, normalize
+
 CATEGORIES = (
     "extraction",
     "numerical-reasoning",
@@ -28,7 +32,11 @@ V2_TAGS = ("category", "steps", "answer_source", "trap", "needs_calculate")
 _VALUE = {
     "type": "object",
     "properties": {
+        # A label; it names the entry's company only when it is exactly a ticker.
         "ticker": {"type": "string"},
+        # The companies a claim of this value must come from, when the
+        # label isn't one ticker: ["JPM", "BAC"] for a gap between them.
+        "companies": {"type": "array", "items": {"enum": sorted(COMPANIES)}, "minItems": 1, "uniqueItems": True},
         "expected_value": {"type": "number"},
         "expected_unit": {"type": "string"},
     },
@@ -37,7 +45,7 @@ _VALUE = {
 }
 _FORBIDDEN_VALUE = {
     "type": "object",
-    "properties": {"value": {"type": "number"}, "unit": {"type": "string"}, "ticker": {"type": "string"}},
+    "properties": {"value": {"type": "number"}, "unit": {"type": "string"}, "ticker": {"enum": sorted(COMPANIES)}},
     "required": ["value", "unit"],
     "additionalProperties": False,
 }
@@ -92,11 +100,23 @@ QUESTION_SCHEMA = {
 }
 
 
+def question_tickers(question: dict) -> list[str]:
+    """The companies a question asks about across its `ticker` and
+    `tickers` fields, sorted."""
+    return sorted({*question.get("tickers", []), *([question["ticker"]] if "ticker" in question else [])})
+
+
+def single_ticker(question: dict) -> str | None:
+    """The one company a question asks about; None when it names several."""
+    tickers = question_tickers(question)
+    return tickers[0] if len(tickers) == 1 else None
+
+
 def _check_trap_tickers(question: dict, label: str) -> None:
     """A trap value is charged to the asked company unless it names
     another; a question asking about several companies has no single
     default, so each of its trap values must name one."""
-    if "ticker" in question:
+    if single_ticker(question) is not None:
         return
     for i, trap in enumerate(question.get("forbidden_values", [])):
         if "ticker" not in trap:
@@ -104,6 +124,56 @@ def _check_trap_tickers(question: dict, label: str) -> None:
                 f"malformed eval question {label} at $.forbidden_values[{i}]: names no ticker, "
                 "and the question has no single ticker to default to"
             )
+
+
+def _check_entry_companies(question: dict, label: str) -> None:
+    """An entry's companies must be among the question's, or no correct
+    answer can pass it. Grading goes by `companies`, so a ticker label
+    beside it must agree, or failures would name the wrong company."""
+    tickers = question_tickers(question)
+    for i, entry in enumerate(question.get("expected", [])):
+        where = f"malformed eval question {label} at $.expected[{i}]"
+        if "companies" in entry and entry["ticker"] in COMPANIES and entry["companies"] != [entry["ticker"]]:
+            raise ValueError(
+                f"{where}: label {entry['ticker']!r} is a ticker, but companies names {', '.join(entry['companies'])}"
+            )
+        outside = entry_companies(entry, tickers) - set(tickers)
+        if outside:
+            raise ValueError(f"{where}: {', '.join(sorted(outside))} is not one of the question's companies")
+
+
+def _bands_overlap(a: tuple[float, str], b: tuple[float, str], tolerance: float | None) -> bool:
+    """Whether some value would match both (value, unit)s under the
+    graders' rule: same unit category, and each within its tolerance."""
+    (category_a, norm_a), (category_b, norm_b) = normalize(*a), normalize(*b)
+    reach = match_tolerance(norm_a, tolerance) + match_tolerance(norm_b, tolerance)
+    return category_a == category_b and abs(norm_a - norm_b) <= reach
+
+
+def _check_trap_values(question: dict, label: str) -> None:
+    """A correct answer must never count as a trap hit, so no value may
+    match both a trap and an expected value claimed from that trap's
+    company alone. A numeric question about several companies doesn't
+    say whose its value is, so it's compared with every trap."""
+    tickers = question_tickers(question)
+    default = single_ticker(question)
+    expected: list[tuple[set[str] | None, float, str]] = [
+        (entry_companies(e, tickers), e["expected_value"], e["expected_unit"])
+        for e in question.get("expected", [])
+    ]
+    if "expected_value" in question:
+        expected.append(({default} if default else None, question["expected_value"], question["expected_unit"]))
+    for i, trap in enumerate(question.get("forbidden_values", [])):
+        company = trap.get("ticker", default)
+        for companies, value, unit in expected:
+            if companies in ({company}, None) and _bands_overlap(
+                (trap["value"], trap["unit"]), (value, unit), question.get("tolerance")
+            ):
+                raise ValueError(
+                    f"malformed eval question {label} at $.forbidden_values[{i}]: {trap['value']} {trap['unit']} "
+                    f"overlaps the grading tolerance of the expected {value} {unit}, so a correct answer "
+                    "could count as a trap hit"
+                )
 
 
 _VALIDATOR = jsonschema.Draft202012Validator(QUESTION_SCHEMA)
@@ -123,6 +193,8 @@ def validate_questions(questions: list[dict]) -> None:
             where = "" if error.json_path == "$" else f" at {error.json_path}"
             raise ValueError(f"malformed eval question {label}{where}: {error.message}")
         _check_trap_tickers(question, label)
+        _check_entry_companies(question, label)
+        _check_trap_values(question, label)
         if question["id"] in seen:
             raise ValueError(f"duplicate question id {question['id']!r}")
         seen.add(question["id"])
