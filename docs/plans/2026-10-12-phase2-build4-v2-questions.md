@@ -278,14 +278,14 @@ it. Types `numeric` / `comparison` / `text` / `judged` / `refusal` / `clarify`.
 | N8 | numerical-reasoning | numeric | none | JNJ | 3 | yes | table | yes | 3 | `v2-jnj-oncology-share-change-2025`; compound |
 | N9 | numerical-reasoning | numeric | none | JNJ | 2 | no | table | | 3 | `v2-jnj-net-margin-2025` |
 | N10 | numerical-reasoning | numeric | none | AAPL | 3 | yes | table | yes | 3 | `v2-aapl-services-sales-share-change-fy2025`; compound; tech single-company (hard). Services' share of net sales, not of gross margin (batch 3); Services sales are dimensioned in XBRL, so a gap |
-| P1 | cross-period | numeric | none | JPM | 2 | no | table | | 4 | |
-| P2 | cross-period | numeric | none | BAC | 2 | no | table | | 4 | |
-| P3 | cross-period | numeric | none | TGT | 2 | no | text | yes | 4 | e.g. comparable sales change |
-| P4 | cross-period | numeric | none | WMT | 2 | no | table | | 4 | |
-| P5 | cross-period | numeric | fiscal-label | WMT | 2 | no | table | | 4 | |
-| P6 | cross-period | numeric | fiscal-label | JNJ | 2 | no | table | | 4 | |
-| P7 | cross-period | numeric | none | XOM | 2 | yes | table | | 4 | |
-| P8 | cross-period | numeric | none | CAT | 2 | no | text | yes | 4 | e.g. backlog change |
+| P1 | cross-period | numeric | none | JPM | 2 | no | table | | 4 | `v2-jpm-net-income-growth-q2-2026` |
+| P2 | cross-period | numeric | none | BAC | 2 | no | table | | 4 | `v2-bac-total-assets-growth-2025` |
+| P3 | cross-period | numeric | none | TGT | 1 | no | both | yes | 4 | `v2-tgt-comparable-sales-q2-2026`; a printed change, so steps 1, and source both (table and prose; batch 4) |
+| P4 | cross-period | numeric | none | WMT | 2 | no | table | | 4 | `v2-wmt-avg-net-income-fy2024-fy2026` |
+| P5 | cross-period | numeric | fiscal-label | WMT | 2 | no | table | | 4 | `v2-wmt-operating-income-growth-fy2025` |
+| P6 | cross-period | numeric | fiscal-label | JNJ | 2 | no | table | | 4 | `v2-jnj-sales-growth-fy2023` |
+| P7 | cross-period | numeric | none | XOM | 2 | yes | table | | 4 | `v2-xom-total-assets-growth-h1-2026` |
+| P8 | cross-period | numeric | none | CAT | 2 | yes | text | yes | 4 | `v2-cat-backlog-increase-h1-2026`; backlog change from the 10-K to the Q2 10-Q, so calc (batch 4, user decision) |
 | C1 | cross-company | comparison | look-alike | JPM, BAC | 2 | yes | table | | 5 | a gap between the two banks |
 | C2 | cross-company | comparison | look-alike | JPM, BAC | 2 | no | table | | 5 | |
 | C3 | cross-company | comparison | look-alike | TGT, WMT | 2 | yes | table | | 5 | |
@@ -308,7 +308,7 @@ it. Types `numeric` / `comparison` / `text` / `judged` / `refusal` / `clarify`.
 compound), cross-period 8, cross-company 9, text/footnote 8 = 56. Single-company slots: JPM 6,
 BAC 6, TGT 6, WMT 6, XOM 7, JNJ 7, CAT 6 (44), tech 2, COST 1. Cross-company appearances: JPM 2,
 BAC 2, TGT 2, WMT 3, XOM 3, JNJ 2, CAT 2; tech 3 slots (C5, C6, C9), so tech 5 in all.
-Fiscal-label 4 (E3, E4, P5, P6) plus A6 and C4. Gaps 9 (E1, E5, N6, N8, N10, P3, P8, T2, T4; N10 found in batch 3). `needs_calculate` 9 (N1, N2, N4, N6, N8, N10, P7, C1, C3). `judged` 2.
+Fiscal-label 4 (E3, E4, P5, P6) plus A6 and C4. Gaps 9 (E1, E5, N6, N8, N10, P3, P8, T2, T4; N10 found in batch 3). `needs_calculate` 10 (N1, N2, N4, N6, N8, N10, P7, P8, C1, C3; P8 added in batch 4). `judged` 2.
 
 **Batches.** 1: R1–R8, A1–A3 (11). 2: E1–E7, A4–A6 (10, two open forks). 3: N1–N10. 4:
 P1–P8. 5: C1–C9. 6: T1–T8. Each later batch re-confirms its plan with the user.
