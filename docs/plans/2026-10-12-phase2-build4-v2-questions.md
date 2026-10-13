@@ -268,16 +268,16 @@ it. Types `numeric` / `comparison` / `text` / `judged` / `refusal` / `clarify`.
 | E5 | extraction | numeric | none | XOM | 1 | no | table | yes | 2 | `v2-xom-production-2025`; an operating figure |
 | E6 | extraction | numeric | none | JNJ | 1 | no | table | | 2 | `v2-jnj-innovative-medicine-sales-2025` |
 | E7 | extraction | numeric (`xbrl_source`) | none | CAT | 1 | no | table | | 2 | `v2-cat-operating-profit-2020`; pre-FY2024 answerable twin of R8: CAT 2020 operating profit, XBRL-only, checked against companyfacts, no gold rows |
-| N1 | numerical-reasoning | numeric | none | JPM | 2 | yes | table | | 3 | |
-| N2 | numerical-reasoning | numeric | none | JPM | 3 | yes | both | | 3 | compound; sector ratio (e.g. bank efficiency ratio) |
-| N3 | numerical-reasoning | numeric | none | BAC | 2 | no | table | | 3 | |
-| N4 | numerical-reasoning | numeric | none | TGT | 2 | yes | table | | 3 | |
-| N5 | numerical-reasoning | numeric | none | WMT | 2 | no | table | | 3 | |
-| N6 | numerical-reasoning | numeric | none | XOM | 3 | yes | both | yes | 3 | compound |
-| N7 | numerical-reasoning | numeric | none | XOM | 2 | no | table | | 3 | |
-| N8 | numerical-reasoning | numeric | none | JNJ | 3 | yes | table | yes | 3 | compound |
-| N9 | numerical-reasoning | numeric | none | JNJ | 2 | no | table | | 3 | |
-| N10 | numerical-reasoning | numeric | none | AAPL | 3 | yes | table | | 3 | compound; tech single-company (hard) |
+| N1 | numerical-reasoning | numeric | none | JPM | 2 | yes | table | | 3 | `v2-jpm-nii-share-2025`; reported basis |
+| N2 | numerical-reasoning | numeric | none | JPM | 3 | yes | table | | 3 | `v2-jpm-expense-vs-revenue-growth-2025`; compound; source changed from both to table in batch 3 (no prose input is precise enough) |
+| N3 | numerical-reasoning | numeric | none | BAC | 2 | no | table | | 3 | `v2-bac-net-income-growth-2025`; restated 2024 input, read from the 2025 10-K |
+| N4 | numerical-reasoning | numeric | none | TGT | 2 | yes | table | | 3 | `v2-tgt-capex-share-of-ocf-fy2025` |
+| N5 | numerical-reasoning | numeric | none | WMT | 2 | no | table | | 3 | `v2-wmt-operating-income-growth-fy2026` |
+| N6 | numerical-reasoning | numeric | none | XOM | 3 | yes | table | yes | 3 | `v2-xom-upstream-earnings-per-boe-2025`; compound; source changed from both to table in batch 3 |
+| N7 | numerical-reasoning | numeric | none | XOM | 2 | no | table | | 3 | `v2-xom-roa-2024`; year-end assets |
+| N8 | numerical-reasoning | numeric | none | JNJ | 3 | yes | table | yes | 3 | `v2-jnj-oncology-share-change-2025`; compound |
+| N9 | numerical-reasoning | numeric | none | JNJ | 2 | no | table | | 3 | `v2-jnj-net-margin-2025` |
+| N10 | numerical-reasoning | numeric | none | AAPL | 3 | yes | table | yes | 3 | `v2-aapl-services-sales-share-change-fy2025`; compound; tech single-company (hard). Services' share of net sales, not of gross margin (batch 3); Services sales are dimensioned in XBRL, so a gap |
 | P1 | cross-period | numeric | none | JPM | 2 | no | table | | 4 | |
 | P2 | cross-period | numeric | none | BAC | 2 | no | table | | 4 | |
 | P3 | cross-period | numeric | none | TGT | 2 | no | text | yes | 4 | e.g. comparable sales change |
@@ -308,7 +308,7 @@ it. Types `numeric` / `comparison` / `text` / `judged` / `refusal` / `clarify`.
 compound), cross-period 8, cross-company 9, text/footnote 8 = 56. Single-company slots: JPM 6,
 BAC 6, TGT 6, WMT 6, XOM 7, JNJ 7, CAT 6 (44), tech 2, COST 1. Cross-company appearances: JPM 2,
 BAC 2, TGT 2, WMT 3, XOM 3, JNJ 2, CAT 2; tech 3 slots (C5, C6, C9), so tech 5 in all.
-Fiscal-label 4 (E3, E4, P5, P6) plus A6 and C4. Gaps 8 (E1, E5, N6, N8, P3, P8, T2, T4). `needs_calculate` 9 (N1, N2, N4, N6, N8, N10, P7, C1, C3). `judged` 2.
+Fiscal-label 4 (E3, E4, P5, P6) plus A6 and C4. Gaps 9 (E1, E5, N6, N8, N10, P3, P8, T2, T4; N10 found in batch 3). `needs_calculate` 9 (N1, N2, N4, N6, N8, N10, P7, C1, C3). `judged` 2.
 
 **Batches.** 1: R1–R8, A1–A3 (11). 2: E1–E7, A4–A6 (10, two open forks). 3: N1–N10. 4:
 P1–P8. 5: C1–C9. 6: T1–T8. Each later batch re-confirms its plan with the user.

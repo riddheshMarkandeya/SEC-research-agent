@@ -8,8 +8,11 @@ Per question it checks that:
   1. every gold figure has a verbatim anchor, found in its own company's
      chunk files and showing the figure;
   2. every derived value recomputes, with the `calculate` tool's own
-     arithmetic, to the expected value, and that rounding in the inputs
-     stays inside the grading band (or the question's tolerance);
+     arithmetic, to the expected value; that its exact result, as is and
+     rounded to the expected value's decimals (what an agent doing the
+     arithmetic itself reports), is inside the grading band (or the
+     question's tolerance); and that rounding in the inputs keeps it
+     there;
   3. each anchored figure is cross-checked against the company's XBRL
      facts from the same filing (INFO only: a match names the tag);
   4. a never-disclosed refusal's absence terms appear nowhere in the
@@ -56,6 +59,7 @@ import re
 import sys
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
+from decimal import ROUND_HALF_UP, Decimal
 from functools import partial
 from itertools import product
 from pathlib import Path
@@ -304,10 +308,10 @@ def _compute(derivation: dict, shifts: dict[int, float], rounded: bool) -> tuple
     return normalize(value, unit)
 
 
-def rounding_spread(derivation: dict) -> float:
-    """Half the width of the range the exact result spans when each
-    anchored input is anywhere within half a unit of its printed last
-    digit; constants are exact. Infinite when a corner divides by zero."""
+def _corner_results(derivation: dict) -> list[float] | None:
+    """The exact result at every corner of the range the anchored inputs
+    span, each anywhere within half a unit of its printed last digit;
+    constants are exact. None when a corner divides by zero."""
     inputs = _anchored_inputs(derivation)
     results = []
     for signs in product((-1, 1), repeat=len(inputs)):
@@ -315,8 +319,50 @@ def rounding_spread(derivation: dict) -> float:
         try:
             results.append(_compute(derivation, shifts, rounded=False)[1])
         except DerivationError:
-            return math.inf
-    return (max(results) - min(results)) / 2
+            return None
+    return results
+
+
+@dataclass(frozen=True)
+class Rounding:
+    """Where a derivation's exact result lands around its expected value,
+    all normalized. `rounded_exact` is the exact result at the expected
+    value's decimals: what an agent doing the arithmetic itself reports.
+    `spread` is half the corners' range and `reach` the farthest corner's
+    distance from expected; both are infinite when a corner divides by
+    zero."""
+
+    expected: float
+    exact: float
+    rounded_exact: float
+    spread: float
+    reach: float
+
+    def offset_fits(self, band: float) -> bool:
+        return abs(self.exact - self.expected) <= band and abs(self.rounded_exact - self.expected) <= band
+
+    def fits(self, band: float) -> bool:
+        return self.reach <= band and abs(self.rounded_exact - self.expected) <= band
+
+
+def rounding(figure: dict) -> Rounding:
+    """The Rounding of a figure whose derivation computes (no
+    DerivationError) in its expected unit's category."""
+    unit = figure["expected_unit"]
+    expected = normalize(figure["expected_value"], unit)[1]
+    exact = _compute(figure["derivation"], {}, rounded=False)[1]
+    rounded_exact = normalize(_round_half_up(_in_unit(exact, unit), _decimals(figure["expected_value"])), unit)[1]
+    corners = _corner_results(figure["derivation"])
+    if corners is None:
+        return Rounding(expected, exact, rounded_exact, math.inf, math.inf)
+    spread = (max(corners) - min(corners)) / 2
+    return Rounding(expected, exact, rounded_exact, spread, max(abs(c - expected) for c in corners))
+
+
+def _round_half_up(value: float, decimals: int) -> float:
+    """Rounds the decimal digits as a person reporting the figure does:
+    2.675 -> 2.68, where round() gives 2.67 (binary value, ties to even)."""
+    return float(Decimal(repr(value)).quantize(Decimal(1).scaleb(-decimals), rounding=ROUND_HALF_UP))
 
 
 def _in_unit(norm: float, unit: str) -> float:
@@ -333,26 +379,41 @@ def _derived_figures(question: dict) -> list[tuple[str, dict]]:
     ]
 
 
-def _check_spread(where: str, spread: float, figure: dict, tolerance: float | None) -> list[Finding]:
+def _check_rounding(where: str, r: Rounding, figure: dict, tolerance: float | None, recomputes: bool) -> list[Finding]:
+    """The INFO line, then at most one ERROR, offset before spread: the
+    exact result's offset is the likelier fix. Once the tool's own result
+    has missed the band, a wrong expected_value is the likely cause, so
+    only the spread is judged: an offset error would repeat that one."""
     unit = figure["expected_unit"]
-    expected_norm = normalize(figure["expected_value"], unit)[1]
-    default_band = match_tolerance(expected_norm)
-    band = match_tolerance(expected_norm, tolerance)
-    shown = f"+/-{_in_unit(spread, unit):.3g} {unit}"
-    relative = f"{spread / abs(expected_norm):.2%} of expected" if expected_norm else "expected is zero"
-    findings = [Finding(INFO, f"{where}: rounding spread {shown} ({relative}); "
-                              f"default band +/-{_in_unit(default_band, unit):.3g}")]
-    if spread > band and tolerance is None:
-        findings.append(Finding(ERROR, f"{where}: needs a tolerance (spread {shown}, {relative})"))
-    elif spread > band:
-        findings.append(Finding(ERROR, f"{where}: spread {shown} exceeds the tolerance {tolerance:g} "
+    band = match_tolerance(r.expected, tolerance)
+    shown = f"+/-{_in_unit(r.spread, unit):.3g} {unit}"
+    relative = f"{r.spread / abs(r.expected):.2%} of expected" if r.expected else "expected is zero"
+    decimals = _decimals(figure["expected_value"])
+    exact = f"{_in_unit(r.exact, unit):.{decimals + 3}f} {unit}"
+    rounds_to = f"{_in_unit(r.rounded_exact, unit):.{decimals}f}"
+    default_band = _in_unit(match_tolerance(r.expected), unit)
+    findings = [Finding(INFO, f"{where}: rounding spread {shown} ({relative}); exact result {exact} "
+                              f"(rounds to {rounds_to}); default band +/-{default_band:.3g}")]
+    if recomputes and not r.offset_fits(band):
+        findings.append(Finding(ERROR, f"{where}: exact result {exact} (rounds to {rounds_to}) is outside the band of "
+                                       f"expected {figure['expected_value']:g} {unit}: check expected_value, or "
+                                       f"{'set a' if tolerance is None else 'widen the'} tolerance"))
+        return findings
+    if (r.reach if recomputes else r.spread) <= band:
+        return findings
+    reaching = f", reaching {_in_unit(r.reach, unit):.3g} from expected" if recomputes else ""
+    if tolerance is None:
+        findings.append(Finding(ERROR, f"{where}: needs a tolerance (spread {shown}, {relative}{reaching})"))
+    else:
+        findings.append(Finding(ERROR, f"{where}: spread {shown}{reaching} exceeds the tolerance {tolerance:g} "
                                        f"(band +/-{_in_unit(band, unit):.3g})"))
     return findings
 
 
 def _check_derivation(where: str, figure: dict, tolerance: float | None) -> tuple[list[Finding], bool | None]:
-    """One derivation's findings, and whether its spread fits the default
-    band (None when the spread couldn't be assessed)."""
+    """One derivation's findings, and whether its exact result and its
+    inputs' rounding fit the default band (None when they couldn't be
+    assessed, or the tool's own result missed the band)."""
     findings = []
     if not _anchored_inputs(figure["derivation"]):
         findings.append(Finding(ERROR, f"{where}: no input is anchored, so nothing ties it to a filing"))
@@ -364,20 +425,24 @@ def _check_derivation(where: str, figure: dict, tolerance: float | None) -> tupl
     expected_category, expected_norm = normalize(figure["expected_value"], unit)
     # A normalized result is in raw units unless it's a percentage.
     result_unit = "percent" if category == "percent" else "raw"
-    if not value_matcher(figure["expected_value"], unit, tolerance)(result, result_unit):
+    recomputes = value_matcher(figure["expected_value"], unit, tolerance)(result, result_unit)
+    if not recomputes:
         shown = f"{_in_unit(result, unit):g} {unit}" if category == expected_category else f"{result:g} {category}"
         findings.append(Finding(ERROR, f"{where}: recomputes to {shown}, outside the grading band of the "
                                        f"expected {figure['expected_value']:g} {unit}"))
     if category != expected_category:
         return findings, None  # a spread in another unit than the band's means nothing
-    spread = rounding_spread(figure["derivation"])
-    return findings + _check_spread(where, spread, figure, tolerance), spread <= match_tolerance(expected_norm)
+    r = rounding(figure)
+    fits_default = r.fits(match_tolerance(expected_norm)) if recomputes else None
+    return findings + _check_rounding(where, r, figure, tolerance, recomputes), fits_default
 
 
 def check_derivations(question: dict, ctx: Context) -> list[Finding]:
     """Each derivation recomputes, as the tool would, to within the
-    grading band of its expected value, and its inputs' rounding spread
-    fits the band the question grades with."""
+    grading band of its expected value; its exact result, as is and
+    rounded to the expected value's decimals, lands in that band too; and
+    so does every corner of its inputs' rounding range (when the tool's
+    result misses, only the range's width is judged)."""
     tolerance = question.get("tolerance")
     findings: list[Finding] = []
     fits: list[bool | None] = []
@@ -387,7 +452,7 @@ def check_derivations(question: dict, ctx: Context) -> list[Finding]:
         fits.append(fits_default)
     if tolerance is not None and fits and all(fit is True for fit in fits):
         findings.append(Finding(WARN, f"tolerance {tolerance:g} is unneeded: the default band covers every "
-                                      "derivation's spread"))
+                                      "derivation's exact result and spread"))
     return findings
 
 

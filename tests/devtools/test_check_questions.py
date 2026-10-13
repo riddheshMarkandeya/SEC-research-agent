@@ -153,15 +153,19 @@ def test_a_derivation_that_recomputes_to_another_value_is_an_error():
     ]
 
 
-def test_a_compound_derivation_with_a_constant_recomputes():
+def _average_revenue():
     # The average of two years' revenue: (182,447 + 177,556) / 2 = 180,001.5 million.
-    question = _numeric(expected_value=180.0, expected_unit="billion", derivation={
+    return {
         "operation": "divide",
         "a": {"derivation": {"operation": "add",
                              "a": {"value": 182447, "unit": "million", "part": "revenue-2025"},
                              "b": {"value": 177556, "unit": "million", "part": "revenue-2024"}}},
         "b": {"value": 2, "unit": "raw", "constant": True},
-    })
+    }
+
+
+def test_a_compound_derivation_with_a_constant_recomputes():
+    question = _numeric(expected_value=180.0, expected_unit="billion", derivation=_average_revenue())
     assert _derivation_findings(question, cq.ERROR) == []
 
 
@@ -194,6 +198,8 @@ def _rounded_growth(**extra):
 def test_a_spread_wider_than_the_default_band_needs_a_tolerance():
     [error] = _derivation_findings(_rounded_growth(), cq.ERROR)
     assert error.startswith("derivation: needs a tolerance (spread +/-0.057")
+    # The exact 2.7027 sits off expected, so the far corner reaches past the spread.
+    assert error.endswith(", reaching 0.0598 from expected)")
 
 
 def test_a_spread_wider_than_the_set_tolerance_is_an_error():
@@ -206,7 +212,7 @@ def test_a_spread_wider_than_the_set_tolerance_is_an_error():
 
 def test_a_tolerance_the_spread_doesnt_need_is_a_warning():
     assert _derivation_findings(_growth_question(tolerance=0.02, tolerance_note="n"), cq.WARN) == [
-        "tolerance 0.02 is unneeded: the default band covers every derivation's spread"
+        "tolerance 0.02 is unneeded: the default band covers every derivation's exact result and spread"
     ]
 
 
@@ -218,6 +224,82 @@ def test_a_comparison_entrys_derivation_is_checked_and_named():
         "expected 'JPM-growth' derivation: recomputes to 2.8 percent, outside the grading band of the expected "
         "3.1 percent"
     ]
+
+
+def _growth_gap(a, b, expected, **extra):
+    # The points by which growth a/1,000,000 outpaced b/1,000,000: the tool
+    # rounds each growth rate to 1 decimal before subtracting.
+    return _numeric(expected_value=expected, expected_unit="percent", derivation={
+        "operation": "subtract",
+        "a": {"derivation": {"operation": "percent_change", "a": {"value": a, "unit": "raw", "part": "a"},
+                             "b": {"value": 1000000, "unit": "raw", "part": "base-a"}}},
+        "b": {"derivation": {"operation": "percent_change", "a": {"value": b, "unit": "raw", "part": "b"},
+                             "b": {"value": 1000000, "unit": "raw", "part": "base-b"}}},
+    }, **extra)
+
+
+# Tool: 4.2 - 2.8 = 1.4, as expected. Exact: 4.1502 - 2.849 = 1.3012.
+EXACT_OUT = (1041502, 1028490, 1.4)
+# Tool: 20.0 - 2.9 = 17.1, inside 17.0's band of +/-0.17. Exact: 20.04 - 2.88
+# = 17.16, also inside, but an agent reports it as 17.2, which is outside.
+ROUNDED_EXACT_OUT = (1200400, 1028800, 17.0)
+
+
+@pytest.mark.parametrize(("case", "exact", "rounds_to"), [(EXACT_OUT, "1.3012", "1.3"),
+                                                          (ROUNDED_EXACT_OUT, "17.1600", "17.2")])
+def test_an_exact_result_outside_the_band_is_an_error_though_the_tool_lands_inside(case, exact, rounds_to):
+    a, b, expected = case
+    assert _derivation_findings(_growth_gap(a, b, expected), cq.ERROR) == [
+        f"derivation: exact result {exact} percent (rounds to {rounds_to}) is outside the band of expected "
+        f"{expected:g} percent: check expected_value, or set a tolerance"
+    ]
+
+
+@pytest.mark.parametrize(("case", "tolerance"), [(EXACT_OUT, 0.075), (ROUNDED_EXACT_OUT, 0.012)])
+def test_a_tolerance_wide_enough_for_the_exact_result_is_needed_and_passes(case, tolerance):
+    question = _growth_gap(*case, tolerance=tolerance, tolerance_note="n")
+    assert _derivation_findings(question, cq.ERROR) == []
+    assert _derivation_findings(question, cq.WARN) == []
+
+
+def test_the_info_line_reports_the_exact_result():
+    [info] = _derivation_findings(_growth_question(), cq.INFO)
+    assert "exact result 2.7546 percent" in info
+
+
+def test_a_wrong_expected_value_is_one_error_not_an_offset_error_too():
+    a, b, _ = EXACT_OUT
+    [error] = _derivation_findings(_growth_gap(a, b, 2.0), cq.ERROR)
+    assert error.startswith("derivation: recomputes to 1.4 percent")
+
+
+def test_an_offset_inside_a_comparison_entrys_derivation_is_named():
+    gap = _growth_gap(*EXACT_OUT)
+    entry = {"ticker": "JPM-gap", "companies": ["JPM"], "expected_value": 1.4, "expected_unit": "percent",
+             "derivation": gap["derivation"]}
+    question = _comparison([entry, {"ticker": "BAC", "expected_value": 101887, "expected_unit": "million"}])
+    [error] = _derivation_findings(question, cq.ERROR)
+    assert error.startswith("expected 'JPM-gap' derivation: exact result 1.3012 percent")
+
+
+def test_an_offset_past_a_set_tolerance_says_to_widen_it():
+    [error] = _derivation_findings(_growth_gap(*EXACT_OUT, tolerance=0.02, tolerance_note="n"), cq.ERROR)
+    assert error.endswith("check expected_value, or widen the tolerance")
+
+
+def test_the_reported_rounding_is_half_up_on_the_decimal_digits():
+    # As floats, 2.675 is just below and round() gives 2.67; a person reports 2.68.
+    assert cq._round_half_up(2.675, 2) == 2.68
+    assert cq._round_half_up(17.16, 1) == 17.2
+
+
+def test_no_unneeded_tolerance_warning_when_the_tool_misses_a_tight_tolerance():
+    # The tool's 180.0 billion misses 179.0's 0.1% band but fits the default 1% one.
+    question = _numeric(expected_value=179.0, expected_unit="billion", tolerance=0.001, tolerance_note="n",
+                        derivation=_average_revenue())
+    [error] = _derivation_findings(question, cq.ERROR)
+    assert error.startswith("derivation: recomputes to 180.001 billion")
+    assert _derivation_findings(question, cq.WARN) == []
 
 
 # ---------------------------------------------------------------------------
