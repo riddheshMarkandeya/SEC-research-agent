@@ -269,6 +269,108 @@ def test_many_matching_facts_are_capped():
 
 
 # ---------------------------------------------------------------------------
+# 9. XBRL-only figures
+# ---------------------------------------------------------------------------
+XBRL_SOURCE = {"tag": "us-gaap:OperatingIncomeLoss", "accession": "A20", "start": "2020-01-01", "end": "2020-12-31"}
+
+
+def _xbrl_only(**extra):
+    return _numeric(**{"expected_value": 4553, "xbrl_source": XBRL_SOURCE, **extra})
+
+
+def _fact_2020(val=4553000000, **extra):
+    return {"start": "2020-01-01", "end": "2020-12-31", "val": val, "accn": "A20", "form": "10-K", **extra}
+
+
+def _xbrl_findings(question, facts, chunks=(JPM_REVENUE,), gold=()):
+    ctx = _ctx(list(gold), chunks=chunks, facts=facts)
+    return [(f.level, f.message) for f in cq.check_question(question, ctx) if f.level != cq.INFO or "xbrl_source" in f.message]
+
+
+def test_an_xbrl_only_figure_matching_its_fact_is_info():
+    facts = _facts(_fact_2020(), _fact_2020(accn="A21"), tag="OperatingIncomeLoss")
+    assert _xbrl_findings(_xbrl_only(), facts) == [
+        (cq.INFO, "xbrl_source: us-gaap:OperatingIncomeLoss = 4553000000 USD (2020-01-01..2020-12-31, 10-K)")
+    ]
+
+
+def test_an_xbrl_only_figure_matches_within_its_printed_precision():
+    facts = _facts(_fact_2020(4553400000), tag="OperatingIncomeLoss")
+    assert [level for level, _ in _xbrl_findings(_xbrl_only(), facts)] == [cq.INFO]
+
+
+def test_an_xbrl_only_figure_the_fact_disagrees_with_is_an_error():
+    facts = _facts(_fact_2020(4600000000), tag="OperatingIncomeLoss")
+    assert _xbrl_findings(_xbrl_only(), facts) == [
+        (cq.ERROR, "xbrl_source: us-gaap:OperatingIncomeLoss in A20 (2020-01-01..2020-12-31) is 4600000000 USD, "
+                   "not 4553 million")
+    ]
+
+
+@pytest.mark.parametrize("fact, tag", [
+    (_fact_2020(accn="A21"), "OperatingIncomeLoss"),
+    (_fact_2020(), "Revenues"),
+    (_fact_2020(start="2020-10-01"), "OperatingIncomeLoss"),
+])
+def test_no_fact_for_the_sources_tag_filing_and_period_is_an_error(fact, tag):
+    assert _xbrl_findings(_xbrl_only(), _facts(fact, tag=tag)) == [
+        (cq.ERROR, "xbrl_source: no us-gaap:OperatingIncomeLoss fact in A20 for 2020-01-01..2020-12-31")
+    ]
+
+
+def test_an_instant_source_does_not_match_a_duration_fact_of_the_same_end():
+    source = {k: v for k, v in XBRL_SOURCE.items() if k != "start"}
+    facts = _facts(_fact_2020(), tag="OperatingIncomeLoss")
+    assert _xbrl_findings(_xbrl_only(xbrl_source=source), facts) == [
+        (cq.ERROR, "xbrl_source: no us-gaap:OperatingIncomeLoss fact in A20 for 2020-12-31")
+    ]
+
+
+def test_later_filings_disagreeing_on_the_sources_fact_are_a_warning():
+    # The fact tool may answer from a later filing's comparative column. A
+    # second, disagreeing fact in the source filing itself isn't another filing's.
+    facts = _facts(_fact_2020(), _fact_2020(accn="A21"), _fact_2020(4600000000, accn="A22"),
+                   _fact_2020(4553000, accn="A20"),
+                   _fact_2020(1, accn="A22", start="2020-10-01"), tag="OperatingIncomeLoss")
+    assert _xbrl_findings(_xbrl_only(), facts)[1:] == [
+        (cq.WARN, "xbrl_source: another filing reports us-gaap:OperatingIncomeLoss for 2020-01-01..2020-12-31 "
+                  "as 4600000000 USD (A22), which the fact tool may return instead")
+    ]
+
+
+def test_unreadable_facts_leave_an_xbrl_only_figure_unverified_which_is_an_error():
+    assert _xbrl_findings(_xbrl_only(), OSError("disk full")) == [
+        (cq.ERROR, "xbrl_source: JPM's XBRL facts couldn't be read, so the figure is unverified: disk full")
+    ]
+
+
+def test_an_xbrl_only_figure_needs_a_single_company():
+    question = {k: v for k, v in _xbrl_only(tickers=["JPM", "BAC"]).items() if k != "ticker"}
+    assert _xbrl_findings(question, {}) == [
+        (cq.ERROR, "xbrl_source: the question names several companies, so whose facts to read is unclear")
+    ]
+
+
+def test_a_gold_row_on_an_xbrl_only_question_is_an_error():
+    facts = _facts(_fact_2020(), tag="OperatingIncomeLoss")
+    gold = [_gold(anchor="Net income | 57,048")]
+    assert [m for level, m in _xbrl_findings(_xbrl_only(), facts, gold=gold) if level == cq.ERROR] == [
+        "gold row 'value' (A1): an XBRL-only figure takes no gold rows"
+    ]
+
+
+def test_an_xbrl_only_figure_printed_in_its_companys_chunks_is_a_warning():
+    printed = _chunk("A7", 2, "Operating profit | 4,553 | 6,647")
+    elsewhere = _chunk("B7", 2, "Operating profit | 4,553", ticker="BAC")
+    facts = _facts(_fact_2020(), tag="OperatingIncomeLoss")
+    assert _xbrl_findings(_xbrl_only(), facts, chunks=(JPM_REVENUE, elsewhere))[1:] == []
+    assert _xbrl_findings(_xbrl_only(), facts, chunks=(JPM_REVENUE, printed))[1:] == [
+        (cq.WARN, "xbrl_source: the figure is printed in A7#2; if that's this line item and period, it isn't "
+                  "XBRL-only, so give it a gold row instead")
+    ]
+
+
+# ---------------------------------------------------------------------------
 # 4. Absence
 # ---------------------------------------------------------------------------
 def _never_disclosed(terms, ticker="JPM"):
@@ -423,7 +525,7 @@ def test_a_compound_derivations_parts_are_its_anchored_inputs_at_any_depth():
     {"id": "q1", "ticker": "JPM", "question": "q", "type": "refusal", "refusal_kind": "false_premise"},
     {"id": "q1", "ticker": "JPM", "question": "q", "type": "clarify", "readings": ["annual", "quarterly"]},
 ], ids=["refusal", "clarify"])
-def test_refusal_and_clarify_rows_get_the_chunk_match_check_only(question):
+def test_refusal_and_clarify_rows_get_the_chunk_match_and_company_checks_only(question):
     # A false premise's correct figure, or a clarify question's readings,
     # are labelled by hand under any part name; none is required.
     assert _errors(question, _ctx()) == []
@@ -431,6 +533,8 @@ def test_refusal_and_clarify_rows_get_the_chunk_match_check_only(question):
     assert _errors(question, _ctx([_gold(part="annual", anchor="missing")])) == [
         "gold row 'annual' (A1): anchor 'missing' is in no chunk of its filing"
     ]
+    bac_row = _gold(part="correct-figure", accession="B1", anchor="101,887")
+    assert _errors(question, _ctx([bac_row])) == ["gold row 'correct-figure' (B1): its chunk is BAC's, not JPM's"]
 
 
 def test_a_spread_whose_range_reaches_a_zero_divisor_is_unbounded():

@@ -92,6 +92,21 @@ _FORBIDDEN_VALUE = {
     "additionalProperties": False,
 }
 _NON_EMPTY_STRINGS = {"type": "array", "items": {"type": "string", "minLength": 1}, "minItems": 1}
+# `pattern`, not `format`: the validator doesn't enforce formats.
+_DATE = {"type": "string", "pattern": r"^\d{4}-\d{2}-\d{2}$"}
+# The companyfacts fact a figure printed in no ingested chunk comes from.
+# No `start` means an instant fact, such as a balance-sheet item.
+_XBRL_SOURCE = {
+    "type": "object",
+    "properties": {
+        "tag": {"type": "string", "pattern": r"^[\w-]+:\w+$"},
+        "accession": {"type": "string", "minLength": 1},
+        "start": _DATE,
+        "end": _DATE,
+    },
+    "required": ["tag", "accession", "end"],
+    "additionalProperties": False,
+}
 
 
 def _when_type(qtype: str, required: list[str]) -> dict:
@@ -112,6 +127,10 @@ QUESTION_SCHEMA = {
         "expected_value": {"type": "number"},
         "expected_unit": _UNIT,
         "derivation": _DERIVATION_REF,
+        # The figure is in XBRL only, with no ingested chunk printing it,
+        # so the authoring check verifies it against companyfacts and it
+        # has no gold rows.
+        "xbrl_source": _XBRL_SOURCE,
         "expected": {"type": "array", "items": _VALUE, "minItems": 1},
         "criteria": {"type": "string", "minLength": 1},
         "accepted": _NON_EMPTY_STRINGS,
@@ -229,13 +248,26 @@ def _check_trap_values(question: dict, label: str) -> None:
 
 # Fields one question type alone may carry. Checked here rather than in
 # the schema, whose error for such a rule doesn't name the field.
-_TYPE_ONLY_FIELDS = {"absence_terms": "refusal", "derivation": "numeric"}
+_TYPE_ONLY_FIELDS = {"absence_terms": "refusal", "derivation": "numeric", "xbrl_source": "numeric"}
 
 
 def _check_type_only_fields(question: dict, label: str) -> None:
     for key, qtype in _TYPE_ONLY_FIELDS.items():
         if key in question and question["type"] != qtype:
             raise ValueError(f"malformed eval question {label} at $.{key}: only a {qtype} question has one")
+
+
+def _check_xbrl_source(question: dict, label: str) -> None:
+    """A derived value is checked through its anchored inputs instead,
+    and XBRL stores a ratio as a fraction, which no percent figure
+    matches."""
+    if "xbrl_source" not in question:
+        return
+    where = f"malformed eval question {label} at $.xbrl_source"
+    if "derivation" in question:
+        raise ValueError(f"{where}: a derivation's value is checked through its anchored inputs, not one fact")
+    if question["expected_unit"] == "percent":
+        raise ValueError(f"{where}: XBRL stores a ratio as a fraction, so a percent figure can't be checked")
 
 
 _VALIDATOR = jsonschema.Draft202012Validator(QUESTION_SCHEMA)
@@ -255,6 +287,7 @@ def validate_questions(questions: list[dict]) -> None:
             where = "" if error.json_path == "$" else f" at {error.json_path}"
             raise ValueError(f"malformed eval question {label}{where}: {error.message}")
         _check_type_only_fields(question, label)
+        _check_xbrl_source(question, label)
         _check_trap_tickers(question, label)
         _check_entry_companies(question, label)
         _check_trap_values(question, label)

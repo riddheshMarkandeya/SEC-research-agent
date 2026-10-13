@@ -7,8 +7,9 @@ Per template, one question from eval/eval_questions_v2.jsonl and:
   - a known-good answer, expected PASS;
   - for not_covered, not_yet_filed and never_disclosed, a refusal giving
     another kind's reason, expected FAIL;
-  - for not_covered, a terse good refusal and a good one on the
-    period-not-covered question (v2-cat-backlog-2020), expected PASS;
+  - for not_covered, a terse good refusal and two good ones on the
+    period-not-covered question (v2-cat-backlog-2020), one saying its
+    2020 data has no backlog figure, expected PASS;
   - for not_yet_filed, a good refusal citing no filing (PASS) and the
     latest 10-Q's figure given as the unreported period's (FAIL);
   - for false_premise, an answer that accepts the premise, expected FAIL
@@ -32,11 +33,10 @@ Usage (from a worktree, PYTHONPATH=src so the worktree's code runs):
     python tests/manual/verify_v2_judge_templates.py
 """
 
-import json
 import sys
 
 from sec_agent import config
-from sec_agent.eval.eval_harness import grade_judged, load_questions
+from sec_agent.eval.eval_harness import grade_judged, load_questions, load_report
 from sec_agent.eval.grading import judge_criteria_for
 
 V2_QUESTIONS = config.PROJECT_ROOT / "eval" / "eval_questions_v2.jsonl"
@@ -57,6 +57,7 @@ RUNS = {
     ("v2-tgt-margin-fy2025", "one reading unlabelled"): 5,
     ("v2-cost-net-sales-fy2025", "good, terse"): 5,
     ("v2-cat-backlog-2020", "good (period not covered)"): 5,
+    ("v2-cat-backlog-2020", "good (2020 data, no backlog)"): 5,
     ("v2-wmt-revenue-fy2029", "good, no filing cited"): 5,
     ("v2-tgt-margin-fy2025", "one reading over two years"): 5,
 }
@@ -79,6 +80,13 @@ CASES = [
     ("v2-cat-backlog-2020", "good (period not covered)", (
         "I can't give Caterpillar's backlog at the end of 2020: the Caterpillar filings available to me start "
         "in 2024 [1], so that period isn't covered by my sources."
+    ), True),
+    # The fact tool does reach 2020 (v2-cat-operating-profit-2020), so an
+    # answer saying so must still pass.
+    ("v2-cat-backlog-2020", "good (2020 data, no backlog)", (
+        "Caterpillar's structured financial data reaches back to 2020 [1], but it has no order backlog "
+        "figure, and the Caterpillar filings available to me start in 2024, so I can't give the backlog at "
+        "the end of 2020."
     ), True),
     ("v2-cost-net-sales-fy2025", "wrong reason (never disclosed)", (
         "Costco's filings do not disclose a net sales figure for fiscal 2025, so I can't give one."
@@ -162,9 +170,7 @@ REFUSAL_TEMPLATE_QIDS = [
 
 
 def _stored_answer(report: str) -> str:
-    data = json.loads((config.RESULTS_DIR / f"{report}.json").read_text(encoding="utf-8"))
-    # Early reports are a bare list of results; later ones wrap it with metadata.
-    results = data if isinstance(data, list) else data["results"]
+    results = load_report(config.RESULTS_DIR / f"{report}.json")["results"]
     row = next((r for r in results if r["id"] == CONTROL_QID), None)
     if row is None or row["answer"] is None:
         raise ValueError(f"{report}: no stored answer for {CONTROL_QID}")

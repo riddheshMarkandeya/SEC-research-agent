@@ -258,16 +258,16 @@ it. Types `numeric` / `comparison` / `text` / `judged` / `refusal` / `clarify`.
 | A1 | ambiguous | clarify | none | TGT | 1 | no | both | | 1 | `v2-tgt-margin-fy2025`; margin variant |
 | A2 | ambiguous | clarify | none | CAT | 1 | no | table | | 1 | `v2-cat-largest-source-2025`; segment vs geography |
 | A3 | ambiguous | clarify | none | BAC | 1 | no | text | | 1 | `v2-bac-net-income-no-period`; flow item, no period. Anchors pinned to the latest 10-K/10-Q; re-anchor when BAC's Q3 2026 10-Q is ingested |
-| A4 | ambiguous | numeric (+ period check, open) | none | JNJ | 1 | no | table | | 2 | balance-sheet item, no period: answer the latest and name it. How the period is graded (`text` matcher beside `numeric`) is a schema fork, decided in batch 2's plan |
-| A5 | ambiguous | numeric (+ period check, open) | none | XOM | 1 | no | table | | 2 | relative time ("last quarter"); expires on XOM's next ingest |
-| A6 | ambiguous | numeric (+ period check, open) | fiscal-label | TGT | 1 | no | table | | 2 | calendar vs fiscal year; the fiscal reading is the default |
-| E1 | extraction | numeric | none | JPM | 1 | no | table | yes | 2 | a regulatory ratio (e.g. CET1) |
-| E2 | extraction | numeric | none | BAC | 1 | no | table | | 2 | |
-| E3 | extraction | numeric | fiscal-label | TGT | 1 | no | table | | 2 | |
-| E4 | extraction | numeric | fiscal-label | WMT | 1 | no | table | | 2 | |
-| E5 | extraction | numeric | none | XOM | 1 | no | table | yes | 2 | an operating figure (e.g. production volume) |
-| E6 | extraction | numeric | none | JNJ | 1 | no | table | | 2 | |
-| E7 | extraction | numeric (open) | none | CAT | 1 | no | table | | 2 | pre-FY2024 answerable twin of R8: an XBRL-only figure (e.g. CAT 2020 revenue). Needs an XBRL-sourced gold form; open checker/schema fork, decided in batch 2's plan |
+| A4 | ambiguous | numeric + `accepted` period | none | JNJ | 1 | no | table | | 2 | `v2-jnj-cash-latest`; balance-sheet item, no period: answer the latest and name it. Re-anchor when JNJ's Q3 2026 10-Q is ingested |
+| A5 | ambiguous | numeric + `accepted` period | none | XOM | 1 | no | table | | 2 | `v2-xom-net-income-last-quarter`; relative time ("last quarter"); re-anchor when XOM's Q3 2026 10-Q is ingested |
+| A6 | ambiguous | numeric + `accepted` period | fiscal-label | TGT | 1 | no | table | | 2 | `v2-tgt-net-sales-2025`; calendar vs fiscal year; the fiscal reading is the default |
+| E1 | extraction | numeric | none | JPM | 1 | no | table | yes | 2 | `v2-jpm-cet1-2025`; a regulatory ratio |
+| E2 | extraction | numeric | none | BAC | 1 | no | table | | 2 | `v2-bac-total-deposits-2025` |
+| E3 | extraction | numeric | fiscal-label | TGT | 1 | no | table | | 2 | `v2-tgt-operating-income-fy2024` |
+| E4 | extraction | numeric | fiscal-label | WMT | 1 | no | table | | 2 | `v2-wmt-total-revenues-fy2026` |
+| E5 | extraction | numeric | none | XOM | 1 | no | table | yes | 2 | `v2-xom-production-2025`; an operating figure |
+| E6 | extraction | numeric | none | JNJ | 1 | no | table | | 2 | `v2-jnj-innovative-medicine-sales-2025` |
+| E7 | extraction | numeric (`xbrl_source`) | none | CAT | 1 | no | table | | 2 | `v2-cat-operating-profit-2020`; pre-FY2024 answerable twin of R8: CAT 2020 operating profit, XBRL-only, checked against companyfacts, no gold rows |
 | N1 | numerical-reasoning | numeric | none | JPM | 2 | yes | table | | 3 | |
 | N2 | numerical-reasoning | numeric | none | JPM | 3 | yes | both | | 3 | compound; sector ratio (e.g. bank efficiency ratio) |
 | N3 | numerical-reasoning | numeric | none | BAC | 2 | no | table | | 3 | |
@@ -357,7 +357,9 @@ Plan-reviewer (opus), 1 round. Every finding was folded in:
 
 ## Review log
 
-Not started: paused at the judge misjudgements below, for the user to decide the order.
+This batch's code was reviewed together with batch 2's. See
+`docs/reviews/2026-10-13-phase2-build4-batches1-2.md` and the Review log in
+`docs/plans/2026-10-13-phase2-build4-batch2.md`.
 
 ## Addendum
 

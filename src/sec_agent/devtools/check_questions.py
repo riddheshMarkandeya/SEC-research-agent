@@ -17,12 +17,15 @@ Per question it checks that:
   5. a question with something to grade names covered companies only;
   6. a multi-company question's non-ticker entries list their companies;
   7. no trap value sits in a gold chunk beside the answer (WARN);
-  8. no id repeats one from the v1 file.
+  8. no id repeats one from the v1 file;
+  9. an XBRL-only figure (`xbrl_source`) is its source fact's value, and
+     is printed in none of the company's chunks (WARN).
 
 Authoring checklist:
   - Draft from the chunk files and the filings, never through the
     agent's tools.
-  - Give each figure gold rows with a short verbatim anchor.
+  - Give each figure gold rows with a short verbatim anchor, or, for a
+    figure no ingested chunk prints, an `xbrl_source` and no gold rows.
   - Pick trap values that a correct answer has no reason to state and
     cite. Not the comparative column printed beside the answer: a claim
     that states the trap value for the asked company fails the answer.
@@ -42,7 +45,7 @@ Exit status: 0 with no errors, 1 on any error, 2 on a usage or read
 failure.
 
 Usage (from a worktree, PYTHONPATH=src so the worktree's code runs):
-  python -m sec_agent.devtools.check_questions --questions eval/eval_questions_v2.jsonl \
+  python -m sec_agent.devtools.check_questions --questions eval/eval_questions_v2.jsonl \\
       --gold eval/retrieval_gold_v2.jsonl
   python -m sec_agent.devtools.check_questions --questions FILE --ids a,b --chunks-dir DIR --xbrl-cache-dir DIR
 """
@@ -169,7 +172,8 @@ def _part_list(question: dict) -> list[Part] | None:
     """Every part the question's figures need, a name possibly repeated.
     None for a judge-graded question (judged, refusal, clarify): its parts,
     such as a false premise's correct figure or each clarify reading, are
-    labelled by hand and optional, so only their chunk match is checked."""
+    labelled by hand and optional, so only their chunk match and company
+    are checked."""
     tickers = question_tickers(question)
     qtype = question["type"]
     if qtype in ("judged", "refusal", "clarify"):
@@ -213,24 +217,29 @@ def _anchor_shows(part: Part, anchor: str) -> bool:
     return bool(figure_matches(anchor, part.value, part.unit))
 
 
+def _foreign_rows(rows: list[dict], companies: frozenset[str], ctx: Context) -> list[Finding]:
+    """Rows whose chunk belongs to a company other than their figure's."""
+    owners = ", ".join(sorted(companies))
+    return [
+        Finding(ERROR, f"gold row {row['part']!r} ({row['accession']}): its chunk is {ticker}'s, not {owners}'s")
+        for row in rows
+        for ticker in sorted({c["metadata"]["ticker"] for c in ctx.matched_chunks(row)} - companies)
+    ]
+
+
 def _check_part(part: Part, rows: list[dict], ctx: Context) -> list[Finding]:
     if not rows:
         return [Finding(ERROR, f"part {part.name!r}: no gold rows")]
-    findings = []
-    for row in rows:
-        for ticker in sorted({c["metadata"]["ticker"] for c in ctx.matched_chunks(row)} - part.companies):
-            owners = ", ".join(sorted(part.companies))
-            findings.append(Finding(ERROR, f"gold row {part.name!r} ({row['accession']}): its chunk is {ticker}'s, "
-                                           f"not {owners}'s"))
+    findings = _foreign_rows(rows, part.companies, ctx)
     if not any(_anchor_shows(part, row["anchor"]) for row in rows):
         findings.append(Finding(ERROR, f"part {part.name!r}: no anchor shows {part.describe()}"))
     return findings
 
 
 def check_anchors(question: dict, ctx: Context) -> list[Finding]:
-    """Every gold row is found in a chunk of its filing; each gold part
-    has rows, in its own companies' filings, one of whose anchors shows
-    the figure; and no row names a part the question doesn't have."""
+    """Every gold row is found in a chunk of its filing, of one of its
+    figure's companies; each gold part has rows, one of whose anchors
+    shows the figure; and no row names a part the question doesn't have."""
     rows = ctx.gold_by_qid.get(question["id"], [])
     findings = [
         Finding(ERROR, f"gold row {row['part']!r} ({row['accession']}): anchor {row['anchor']!r} "
@@ -238,9 +247,12 @@ def check_anchors(question: dict, ctx: Context) -> list[Finding]:
         for row in rows
         if not ctx.matched_chunks(row)
     ]
+    if "xbrl_source" in question:
+        return findings + [Finding(ERROR, f"gold row {row['part']!r} ({row['accession']}): an XBRL-only figure "
+                                          "takes no gold rows") for row in rows]
     part_list = _part_list(question)
     if part_list is None:
-        return findings
+        return findings + _foreign_rows(rows, frozenset(question_tickers(question)), ctx)
     findings += _part_clashes(part_list)
     parts = {p.name: p for p in part_list}
     for name in sorted({row["part"] for row in rows} - parts.keys()):
@@ -403,19 +415,34 @@ def _index_facts(facts: dict) -> FactIndex:
     return index
 
 
+def _printed_figure(value: float, unit: str) -> Callable[[float], bool]:
+    """Whether an XBRL value is the figure at its printed precision: within
+    half a unit of the last printed digit, plus a float-error allowance.
+    Magnitudes are compared, as a filing prints a loss in parentheses."""
+    target = abs(normalize(value, unit)[1])
+    precision = 0.5 * 10 ** -_decimals(value) * UNIT_MULTIPLIERS.get(unit, 1.0) + 1e-9 * target
+    return lambda fact_value: abs(abs(fact_value) - target) <= precision
+
+
+def _period(entry: dict) -> str:
+    return f"{entry['start']}..{entry['end']}" if "start" in entry else entry["end"]
+
+
+def _describe_fact(taxonomy: str, tag: str, unit: str, entry: dict) -> str:
+    return f"{taxonomy}:{tag} = {entry['val']} {unit} ({_period(entry)}, {entry.get('form', '?')})"
+
+
 def _xbrl_matches(part: Part, accessions: set[str], facts: FactIndex) -> list[str]:
     """The facts from the part's filings whose value is the part's figure
     at its printed precision, described for the author to check by eye."""
     assert part.value is not None and part.unit is not None
-    target = abs(normalize(part.value, part.unit)[1])
-    # Half a unit of the last printed digit, plus a float-error allowance.
-    precision = 0.5 * 10 ** -_decimals(part.value) * UNIT_MULTIPLIERS.get(part.unit, 1.0) + 1e-9 * target
-    found = set()
-    for taxonomy, tag, unit, entry in (fact for accession in accessions for fact in facts.get(accession, [])):
-        if abs(abs(entry["val"]) - target) <= precision:
-            period = f"{entry['start']}..{entry['end']}" if "start" in entry else entry["end"]
-            found.add(f"{taxonomy}:{tag} = {entry['val']} {unit} ({period}, {entry.get('form', '?')})")
-    return sorted(found)
+    is_figure = _printed_figure(part.value, part.unit)
+    return sorted({
+        _describe_fact(*fact)
+        for accession in accessions
+        for fact in facts.get(accession, [])
+        if is_figure(fact[3]["val"])
+    })
 
 
 def check_xbrl(question: dict, ctx: Context) -> list[Finding]:
@@ -554,9 +581,77 @@ def check_id_collision(question: dict, ctx: Context) -> list[Finding]:
     return []
 
 
+# ---------------------------------------------------------------------------
+# 9. XBRL-only figures
+# ---------------------------------------------------------------------------
+def _source_facts(source: dict, facts: FactIndex) -> list[tuple[str, str, str, dict]]:
+    """Every filing's facts with the source's tag and exact period: no
+    `start` matches only an instant fact."""
+    taxonomy, tag = source["tag"].split(":", 1)
+    return [
+        fact for accession_facts in facts.values() for fact in accession_facts
+        if fact[0] == taxonomy and fact[1] == tag
+        and fact[3]["end"] == source["end"] and fact[3].get("start") == source.get("start")
+    ]
+
+
+def _check_source_fact(question: dict, facts: FactIndex) -> list[Finding]:
+    """The source filing's fact is the figure; another filing reporting it
+    otherwise, such as a restated comparative, is one the fact tool may
+    answer from instead."""
+    source = question["xbrl_source"]
+    value, unit = question["expected_value"], question["expected_unit"]
+    is_figure = _printed_figure(value, unit)
+    period, accession = _period(source), source["accession"]
+    agreeing, disagreeing = [], []
+    for fact in _source_facts(source, facts):
+        (agreeing if is_figure(fact[3]["val"]) else disagreeing).append(fact)
+    match = next((fact for fact in agreeing if fact[3].get("accn") == accession), None)
+    if match is None:
+        own = [fact for fact in disagreeing if fact[3].get("accn") == accession]
+        if not own:
+            return [Finding(ERROR, f"xbrl_source: no {source['tag']} fact in {accession} for {period}")]
+        found = ", ".join(sorted({f"{fact[3]['val']} {fact[2]}" for fact in own}))
+        return [Finding(ERROR, f"xbrl_source: {source['tag']} in {accession} ({period}) is {found}, "
+                               f"not {value:g} {unit}")]
+    findings = [Finding(INFO, f"xbrl_source: {_describe_fact(*match)}")]
+    others = (fact for fact in disagreeing if fact[3].get("accn") != accession)
+    for fact in sorted(others, key=lambda f: f[3].get("accn", "")):
+        findings.append(Finding(WARN, f"xbrl_source: another filing reports {source['tag']} for {period} as "
+                                      f"{fact[3]['val']} {fact[2]} ({fact[3].get('accn', '?')}), which the fact "
+                                      "tool may return instead"))
+    return findings
+
+
+def check_xbrl_source(question: dict, ctx: Context) -> list[Finding]:
+    """An XBRL-only figure is its source fact's value at the printed
+    precision. Unlike check 3 an unreadable fetch is an error: the fact
+    is this figure's only verification. The figure printed in one of the
+    company's chunks may mean it has an anchor after all."""
+    if "xbrl_source" not in question:
+        return []
+    ticker = single_ticker(question)
+    if ticker is None:
+        return [Finding(ERROR, "xbrl_source: the question names several companies, so whose facts to read is unclear")]
+    facts = ctx.facts(ticker)
+    if isinstance(facts, str):
+        return [Finding(ERROR, f"xbrl_source: {ticker}'s XBRL facts couldn't be read, so the figure is unverified: "
+                               f"{facts}")]
+    findings = _check_source_fact(question, facts)
+    value, unit = question["expected_value"], question["expected_unit"]
+    printed = next((c for c in ctx.chunks if c["metadata"]["ticker"] == ticker
+                    and figure_matches(c["text"], value, unit)), None)
+    if printed is not None:
+        where = f"{printed['metadata']['accessionNumber']}#{printed['metadata']['chunk_index']}"
+        findings.append(Finding(WARN, f"xbrl_source: the figure is printed in {where}; if that's this line item and "
+                                      "period, it isn't XBRL-only, so give it a gold row instead"))
+    return findings
+
+
 CHECKS: tuple[Callable[[dict, Context], list[Finding]], ...] = (
     check_anchors, check_derivations, check_xbrl, check_absence,
     check_tickers, check_entry_companies, check_traps_beside_answer, check_id_collision,
+    check_xbrl_source,
 )
 
 

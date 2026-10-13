@@ -298,3 +298,33 @@ def test_a_top_level_derivation_belongs_to_a_numeric_question_only():
     question = {"id": "t", "ticker": "CAT", "question": "q", "type": "text", "accepted": ["x"], "derivation": _growth()}
     with pytest.raises(ValueError, match=r"'t' at \$\.derivation: only a numeric question"):
         validate_questions([question])
+
+
+XBRL_SOURCE = {"tag": "us-gaap:OperatingIncomeLoss", "accession": "0000018230-21-000063",
+               "start": "2020-01-01", "end": "2020-12-31"}
+
+
+@pytest.mark.parametrize("source", [XBRL_SOURCE, {k: v for k, v in XBRL_SOURCE.items() if k != "start"}])
+def test_a_numeric_question_may_name_its_xbrl_source(source):
+    validate_questions([_numeric(xbrl_source=source)])
+
+
+@pytest.mark.parametrize(
+    "question, fragment",
+    [
+        ({"id": "q1", "ticker": "CAT", "question": "q", "type": "text", "accepted": ["x"], "xbrl_source": XBRL_SOURCE},
+         "only a numeric question"),
+        (_numeric(xbrl_source=XBRL_SOURCE, derivation=_growth()), "derivation"),
+        (_numeric(expected_value=14.6, expected_unit="percent", xbrl_source=XBRL_SOURCE), "percent"),
+        (_numeric(xbrl_source={**XBRL_SOURCE, "frame": "CY2020"}), "frame"),
+        (_numeric(xbrl_source={k: v for k, v in XBRL_SOURCE.items() if k != "end"}), "end"),
+        (_numeric(xbrl_source={k: v for k, v in XBRL_SOURCE.items() if k != "tag"}), "tag"),
+        (_numeric(xbrl_source={**XBRL_SOURCE, "tag": "OperatingIncomeLoss"}), "OperatingIncomeLoss"),
+        (_numeric(xbrl_source={**XBRL_SOURCE, "end": "12/31/2020"}), "12/31/2020"),
+        (_numeric(xbrl_source={**XBRL_SOURCE, "start": "2020-1-1"}), "2020-1-1"),
+    ],
+)
+def test_a_malformed_xbrl_source_is_rejected_naming_the_field(question, fragment):
+    with pytest.raises(ValueError, match=r"'q1' at \$\.xbrl_source") as e:
+        validate_questions([question])
+    assert fragment in str(e.value)
