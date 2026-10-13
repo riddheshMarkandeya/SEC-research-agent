@@ -78,10 +78,10 @@ Full questions, options and reasoning:
   - The headline grades every condition on the value alone, with identical code.
   - A citation axis is recorded for each stated figure: verified / unverified / uncited.
   - AG's citation-gate withholds are counted inside its declined bucket.
-- **Answer format** (Q14):
+- **Answer format** (Q14; schema part superseded by "B2 answer format" below):
   - AG and the ablations keep `submit_answer`.
-  - B0–B4 return `answer` (prose), `claims` (company, value, unit, period) and `refused`,
-    through a response schema.
+  - ~~B0–B4 return prose, claims and `refused` through a response schema.~~ B0–B4 answer in
+    prose plus a claim trailer instead.
   - Value grading reads the prose and attribution reads the claims, exactly as for AG.
   - No extractor model.
 - **Cutoff split** (Q8): post-cutoff means filed after the model's public release (3.5
@@ -114,6 +114,29 @@ Full questions, options and reasoning:
 - **Report** (Q11): a script builds a Markdown report under `docs/` from saved eval reports,
   with a summary in the README. A visual page comes later.
 
+- **B2 answer format** (grilling, 2026-10-12; revisits Q14's schema because B2 can't use one):
+  - **Every baseline (B0–B4) answers in prose, then a fixed trailer**: `CLAIMS:`, then one
+    `CLAIM: ticker | value | unit | period` line per figure, or a single `REFUSED` line. One
+    parser serves them all, so B0 and B2 differ only in Search. The pilot's couldn't-parse
+    threshold guards the lost constrained decoding. AG and the ablations keep `submit_answer`.
+  - **Companies are matched by ticker.** The prompt gives the corpus ticker list, and the parser
+    also accepts `companies.json` names and aliases. An unmatched company is a logged
+    attribution failure, not couldn't-parse.
+  - **The trailer decides declined vs. stated.** `REFUSED` or no claim lines means declined. A
+    missing or malformed trailer means couldn't parse. Values are graded from the prose.
+    Prose/trailer disagreements are a counted diagnostic, not an outcome.
+  - **B2's citation axis** labels each stated figure from the groundingSupports covering its prose
+    sentence:
+    - cited, primary: sec.gov or the company's own domain;
+    - cited, third-party: other sites only;
+    - uncited: no support covers it.
+
+    Both "cited" labels count as unverified on the shared axis.
+  - **Probe** (3 grounded calls, under $0.01): grounding metadata survived on all 3. Supports
+    cover the prose only, never the trailer. All 3 trailers parsed. One claim said "Advanced
+    Micro Devices" rather than AMD, which is why ticker matching is needed. Searches ran 1 for a
+    single-company question and 4 for a two-company question.
+
 - **Gemini quota and model facts** (research, 2026-10-12):
   - Search grounding is not on the free tier, so B2 needs billing.
   - 3.8 Flash's free tier is 20 RPD.
@@ -140,20 +163,6 @@ Full questions, options and reasoning:
   threats → `docs/research/2026-10-09-agent-vs-raw-llm-benchmark.md`
 
 ## Open tickets
-
-### B2 answer format
-- Question: B2 can return structured claims or its grounding record (search queries, source
-  URLs, which answer span each source supports), not both, since JSON output drops the metadata.
-  Which does B2 give up, or does it take two calls?
-  - Option: prose plus grounding. Value grading reads the prose as usual. Attribution/trap
-    checks and the `refused` flag are missing for B2.
-  - Option: schema JSON. It matches the other baselines, but B2's citation axis can't be
-    measured and the dated-snapshot log loses what was searched.
-  - Option: two calls, a grounded prose call then a no-tools call that structures it. This is an
-    extractor model, which Q14 rejected; here it would feed only attribution.
-- Type: grilling.
-- Blocked by: none.
-- Status: open
 
 ### B3 under the token cap
 - Question: All 20 BAC/JPM filings exceed the free tier's 250K TPM in a single call, and most
