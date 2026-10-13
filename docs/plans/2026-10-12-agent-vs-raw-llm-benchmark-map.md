@@ -102,15 +102,14 @@ Full questions, options and reasoning:
     couldn't-parse threshold.
   - A pilot run precedes the preregistration.
 - **Quota split** (Q4, Q20, Q21):
-  - Free tier: AG, B0, B3, B4 and the ablations.
-  - A paid project: B2, B1 and the judge. That costs about a dollar or two; B2's searches stay
-    inside the 5,000 free each month.
+  - Free tier: AG, B0, B4 and the ablations.
+  - A paid project: B2, B1, the judge and (since "B3 under the token cap") B3. B2/B1/judge cost
+    about a dollar or two; B2's searches stay inside the 5,000 free each month.
   - This is a narrow exception; the parked paid-tier decision stays open.
 - **B2 logging** (assumption A): every call logs `webSearchQueries`, `groundingChunks` and
   `groundingSupports`. B2 is published as a dated snapshot, with its run dates stated.
-- **B3 scope** (assumption C, partly reopened): single-filing questions take the whole filing,
-  context first. The 250K-token rule for multi-company questions is reopened by the ticket "B3
-  under the token cap": every BAC and JPM filing alone exceeds 250K.
+- **B3 scope** (assumption C; its 250K-token rule superseded by "B3 under the token cap"
+  below): single-filing questions take the whole filing, context first.
 - **Report** (Q11): a script builds a Markdown report under `docs/` from saved eval reports,
   with a summary in the README. A visual page comes later.
 
@@ -136,6 +135,26 @@ Full questions, options and reasoning:
     cover the prose only, never the trailer. All 3 trailers parsed. One claim said "Advanced
     Micro Devices" rather than AMD, which is why ticker matching is needed. Searches ran 1 for a
     single-company question and 4 for a two-company question.
+
+- **B3 under the token cap** (grilling, 2026-10-13; supersedes assumption C's 250K rule):
+  - **All of B3 runs on the paid project through the Batch API**: banks, multi-company and
+    the rest alike, with no n/a carve-out at 250K. Rejected: free tier with banks n/a (drops
+    v2's BAC/JPM look-alike traps); paid only for over-cap prompts (saves about $1 but splits
+    one condition across two execution paths).
+  - **Cost**: B3 runs once (Q10), about 16–21M input tokens per 104-question run. Paid 3.5
+    Flash-Lite is a flat $0.30/M ($0.15/M on Batch), with no surcharge above 200K, and implicit
+    caching is on by default. That makes about $2.50–3, before cache hits. The credit is topped
+    up as needed; the user stops spending only if it gets excessive.
+  - **Over the 1M-token window**: the question is n/a for B3, and the n and IDs are reported.
+    No trimming, model-side trimming or Files API upload: each is hidden retrieval or an
+    extractor step (Q14). Every single filing fits; a JPM+BAC 10-K pair is about 926K.
+  - **Prompt**: filing(s) first, multi-filing order fixed alphabetically by ticker (a stable
+    prefix for cache hits), then the shared confidence instruction and the claim trailer.
+  - **Pilot**: at least one bank whole-filing call (>250K) and one multi-company call, which
+    confirm Batch accepts them and measure the real cost per question including cache hits.
+    The preregistration records that cost.
+  - Prices: https://ai.google.dev/gemini-api/docs/pricing and
+    https://ai.google.dev/gemini-api/docs/caching, read 2026-10-13.
 
 - **Gemini quota and model facts** (research, 2026-10-12):
   - Search grounding is not on the free tier, so B2 needs billing.
@@ -164,18 +183,6 @@ Full questions, options and reasoning:
 
 ## Open tickets
 
-### B3 under the token cap
-- Question: All 20 BAC/JPM filings exceed the free tier's 250K TPM in a single call, and most
-  multi-company prompts would too. How does B3 handle them?
-  - Option: run B3 on the paid tier (4M TPM). Roughly $3–5 per 104-question run, above the
-    current $5 credit once repeats are counted.
-  - Option: free tier, with bank filings and over-cap prompts marked n/a for B3 and the n
-    reported. That drops the same-sector pair that v2's look-alike traps rely on.
-  - Option: paid for over-cap prompts only, free for the rest.
-- Type: grilling.
-- Blocked by: none. The exact n per option is only known once v2 lands.
-- Status: open
-
 ### Ablation list
 - Question: Which A-x conditions run in phase 3? Candidates: −`search_filings`,
   −`get_financial_fact`, −`calculate`, −`compare_financial_metric`, −rerank.
@@ -201,6 +208,9 @@ Full questions, options and reasoning:
   Q22; Q5 limits this one to Gemini).
 - **Non-Gemini model families**: Q5. Each needs a new tool-calling backend.
 - **A visual HTML report page**: Q11, later, once the numbers are stable.
+- **A consumer chat-app upload baseline** (a whole filing uploaded to a chat app, which may
+  silently truncate or retrieve): a different condition from "Gemini API, re-runnable" (user,
+  "B3 under the token cap").
 - **A private held-out question split**: n ≈ 56 is too small to halve. Preregistration covers
   the after-the-fact-choice risk instead.
 
