@@ -3,6 +3,14 @@ for v2 `refusal` and `clarify` questions. eval/grading.judge_criteria_for
 fills these in; grade_judged sends the result as its criteria. Kept apart
 from judge.py so v1's judge fingerprint doesn't move when these change."""
 
+# Appended to the reason-kind templates. A canned "couldn't verify my
+# answer" text explains the assistant's own failure, not the question, so
+# it must not pass as the reason.
+REASON_ABOUT_QUESTION = (
+    " A refusal that gives no reason about the company, period or figure asked about (for example, only that "
+    "the assistant could not verify its own answer against its sources, or ran out of steps) does not pass."
+)
+
 # One per refusal_kind. A refusal passes only with its own kind's reason:
 # "not covered" for a figure that was never disclosed hides a real gap
 # in what the agent knows about its sources.
@@ -12,18 +20,23 @@ REFUSAL_CRITERIA = {
         "is not covered by the filings available to the assistant. It must not state a figure as the answer "
         "or estimate one. A refusal that gives a different reason (for example, that the company never "
         "discloses the figure) does not pass."
+        + REASON_ABOUT_QUESTION
     ),
     "not_yet_filed": (
         "The answer should decline to give the requested figure because the period asked about has not been "
         "reported yet (no filing covering it exists). It must not state a figure for that period or forecast "
         "one. A refusal that gives a different reason (for example, that the company is not covered) does "
-        "not pass."
+        "not pass. Citing the most recent filing that is available, dated on or before today, to show what "
+        "has been reported is allowed but not required. A figure from that filing presented as the figure for "
+        "the period asked about still fails."
+        + REASON_ABOUT_QUESTION
     ),
     "never_disclosed": (
         "The answer should say that the company's filings do not disclose the requested figure, rather than "
         "stating a figure, deriving one from unrelated numbers, or substituting a different metric as if it "
         "were the one asked for. A refusal that gives a different reason (for example, that the period or "
         "company is not covered) does not pass."
+        + REASON_ABOUT_QUESTION
     ),
     "false_premise": (
         "The question rests on a false premise. The answer should point out that the premise is wrong and "
@@ -35,8 +48,10 @@ REFUSAL_CRITERIA = {
 # with "; ".
 CLARIFY_CRITERIA = (
     "The question is ambiguous between these readings: {readings}. The answer passes if it asks which reading "
-    "is meant, or if it answers every one of these readings and labels which figure belongs to which. It fails "
-    "if it answers only one reading without saying the question could mean another."
+    "is meant, or if it answers every one of these readings and says which figure belongs to which reading. "
+    "Naming the reading next to each figure in an ordinary sentence is enough; no particular format is "
+    "required, and such an answer does not also need to ask which reading is meant. It fails if it answers "
+    "only one reading without saying the question could mean another."
 )
 
 # Appended to a template when the question adds its own detail
@@ -44,5 +59,5 @@ CLARIFY_CRITERIA = (
 QUESTION_DETAIL = " For this question: {criteria}"
 
 # Hashed into prompts.prompt_fingerprint().
-FINGERPRINTED = ("REFUSAL_CRITERIA", "CLARIFY_CRITERIA", "QUESTION_DETAIL")
+FINGERPRINTED = ("REASON_ABOUT_QUESTION", "REFUSAL_CRITERIA", "CLARIFY_CRITERIA", "QUESTION_DETAIL")
 NOT_FINGERPRINTED = ()
