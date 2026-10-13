@@ -42,7 +42,8 @@ Exit status: 0 with no errors, 1 on any error, 2 on a usage or read
 failure.
 
 Usage (from a worktree, PYTHONPATH=src so the worktree's code runs):
-  python -m sec_agent.devtools.check_questions --questions eval/eval_questions_v2.jsonl
+  python -m sec_agent.devtools.check_questions --questions eval/eval_questions_v2.jsonl \
+      --gold eval/retrieval_gold_v2.jsonl
   python -m sec_agent.devtools.check_questions --questions FILE --ids a,b --chunks-dir DIR --xbrl-cache-dir DIR
 """
 
@@ -166,10 +167,12 @@ def _figure_parts(name: str, figure: dict, companies: frozenset[str]) -> list[Pa
 
 def _part_list(question: dict) -> list[Part] | None:
     """Every part the question's figures need, a name possibly repeated.
-    None for a judged question, whose parts are labelled by hand."""
+    None for a judge-graded question (judged, refusal, clarify): its parts,
+    such as a false premise's correct figure or each clarify reading, are
+    labelled by hand and optional, so only their chunk match is checked."""
     tickers = question_tickers(question)
     qtype = question["type"]
-    if qtype == "judged":
+    if qtype in ("judged", "refusal", "clarify"):
         return None
     parts: list[Part] = []
     if qtype == "numeric":
@@ -178,7 +181,7 @@ def _part_list(question: dict) -> list[Part] | None:
         for entry in question["expected"]:
             companies = frozenset(entry_companies(entry, tickers))
             parts += _figure_parts(entry["ticker"], entry, companies)
-    elif qtype == "text":
+    else:  # text, the last type the schema allows
         parts = [Part("value", frozenset(tickers), accepted=tuple(question["accepted"]))]
     return parts
 
@@ -542,11 +545,12 @@ def check_traps_beside_answer(question: dict, ctx: Context) -> list[Finding]:
 
 
 def check_id_collision(question: dict, ctx: Context) -> list[Finding]:
-    """Gold rows are keyed by question id and shared between the files, so
-    an id may not repeat one from the v1 file."""
+    """An id may not repeat one from the v1 file: gold rows and eval
+    reports are keyed by id, so a repeat would mix the two suites' rows
+    wherever they're read together."""
     if question["id"] in ctx.other_ids:
         return [Finding(ERROR, f"id {question['id']!r} is already used in the v1 question file, "
-                               "and gold rows are keyed by id")]
+                               "and gold rows and reports are keyed by id")]
     return []
 
 

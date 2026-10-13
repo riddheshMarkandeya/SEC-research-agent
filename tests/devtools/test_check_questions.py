@@ -341,7 +341,7 @@ def test_a_trap_printed_beside_the_answer_is_a_warning():
 
 def test_an_id_used_in_the_other_question_file_is_an_error():
     assert cq.check_id_collision(_numeric(), _ctx(other_ids=frozenset({"q1"}))) == [
-        cq.Finding(cq.ERROR, "id 'q1' is already used in the v1 question file, and gold rows are keyed by id")
+        cq.Finding(cq.ERROR, "id 'q1' is already used in the v1 question file, and gold rows and reports are keyed by id")
     ]
     assert cq.check_id_collision(_numeric(), _ctx()) == []
 
@@ -419,9 +419,18 @@ def test_a_compound_derivations_parts_are_its_anchored_inputs_at_any_depth():
     assert _errors(question, _ctx(GROWTH_GOLD)) == []
 
 
-def test_a_refusal_has_no_gold_parts():
-    refusal = {"id": "q1", "ticker": "JPM", "question": "q", "type": "refusal", "refusal_kind": "not_yet_filed"}
-    assert _errors(refusal, _ctx([_gold()])) == ["gold row part 'value' is not one of this question's parts ()"]
+@pytest.mark.parametrize("question", [
+    {"id": "q1", "ticker": "JPM", "question": "q", "type": "refusal", "refusal_kind": "false_premise"},
+    {"id": "q1", "ticker": "JPM", "question": "q", "type": "clarify", "readings": ["annual", "quarterly"]},
+], ids=["refusal", "clarify"])
+def test_refusal_and_clarify_rows_get_the_chunk_match_check_only(question):
+    # A false premise's correct figure, or a clarify question's readings,
+    # are labelled by hand under any part name; none is required.
+    assert _errors(question, _ctx()) == []
+    assert _errors(question, _ctx([_gold(part="correct-figure")])) == []
+    assert _errors(question, _ctx([_gold(part="annual", anchor="missing")])) == [
+        "gold row 'annual' (A1): anchor 'missing' is in no chunk of its filing"
+    ]
 
 
 def test_a_spread_whose_range_reaches_a_zero_divisor_is_unbounded():
